@@ -1,5 +1,8 @@
 # Exploration of Nonogram solvers, combinatorics, etc.
 
+import collections
+
+
 class NoSolution(Exception):
   """No possible solution to this Nonogram."""
   pass
@@ -8,7 +11,7 @@ BLANK = "."
 FULL = "X"
 
 class Grid:
-  def __init__(self, num_rows=None, num_cols=None, grid=None):
+  def __init__(self, *, num_rows=None, num_cols=None, grid=None):
     if grid:
       self.grid = grid
     else:
@@ -125,8 +128,21 @@ def LineSolve(nono):
 
 
 # Enumerate puzzles
-def EnumGrid(num_rows, num_cols):
-  pass
+def EnumAllRows(length):
+  if length == 0:
+    yield []
+  else:
+    for sub in EnumAllRows(length - 1):
+      for cell in [BLANK, FULL]:
+        yield sub + [cell]
+
+def EnumAllGrids(num_rows, num_cols):
+  if num_rows == 0:
+    yield []
+  else:
+    for sub in EnumAllGrids(num_rows - 1, num_cols):
+      for row in EnumAllRows(num_cols):
+        yield sub + [row]
 
 def Line2Spec(line):
   spec = []
@@ -148,6 +164,21 @@ def Grid2Spec(grid):
   col_specs = tuple(Line2Spec(line) for line in grid.EnumCols())
   return (row_specs, col_specs)
 
+
+def NumNonograms(num_rows, num_cols):
+  """Count number of valid Nonograms with specific dimentions."""
+  specs_count = collections.Counter()
+  for grid in EnumAllGrids(num_rows, num_cols):
+    grid = Grid(grid=grid)
+    spec = Grid2Spec(grid)
+    specs_count[spec] += 1
+  return sum(1 for spec, count in specs_count.items() if count == 1)
+
+
+# Number of square Nonograms (which can be solved uniquely).
+# See also: http://oeis.org/A242876
+for dim in range(1, 5):
+  print(dim, NumNonograms(dim, dim), 2**(dim * dim))
 
 # Grid2Spec example
 snake = ParseGrid(

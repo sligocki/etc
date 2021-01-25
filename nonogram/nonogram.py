@@ -7,29 +7,23 @@ class NoSolution(Exception):
 BLANK = "."
 FULL = "X"
 
-class Nonogram:
-  def __init__(self, row_specs, col_specs):
-    self.row_specs = row_specs
-    self.col_specs = col_specs
-    # First index row, second index col.
-    # Initialized to all None since we don't know color yet.
-    self.grid = [[None for _ in range(len(self.col_specs))]
-                 for _ in range(len(self.row_specs))]
-
-  def GetDim(self, direction):
-    if direction == 0:
-      return len(self.row_specs)
+class Grid:
+  def __init__(self, num_rows=None, num_cols=None, grid=None):
+    if grid:
+      self.grid = grid
     else:
-      return len(self.col_specs)
+      # First index row, second index col.
+      # Initialized to all None since we don't know color yet.
+      self.grid = [[None for _ in range(num_cols)] for _ in range(num_rows)]
 
   def GetLine(self, direction, index):
     if direction == 0:
       # Row
-      return (self.row_specs[index], self.grid[index])
+      return self.grid[index]
     else:
       assert direction == 1
       # Column
-      return (self.col_specs[index], [row[index] for row in self.grid])
+      return [row[index] for row in self.grid]
 
   def SetLine(self, direction, index, line):
     if direction == 0:
@@ -41,8 +35,38 @@ class Nonogram:
       for i, row in enumerate(self.grid):
         row[index] = line[i]
 
-  def GridStr(self):
+  def EnumRows(self):
+    for row in self.grid:
+      yield row
+
+  def EnumCols(self):
+    for index in range(len(self.grid[0])):
+      yield [row[index] for row in self.grid]
+
+  def __str__(self):
     return "\n".join("".join(row) for row in self.grid)
+
+def ParseGrid(s):
+  grid = []
+  for line in s.split("\n"):
+    grid.append(tuple(line))
+  return Grid(grid=tuple(grid))
+
+
+class Nonogram:
+  def __init__(self, row_specs, col_specs):
+    self.specs = [row_specs, col_specs]
+    self.grid = Grid(num_rows = len(row_specs),
+                     num_cols = len(col_specs))
+
+  def GetDim(self, direction):
+    return len(self.specs[direction])
+
+  def GetLine(self, direction, index):
+    return (self.specs[direction][index], self.grid.GetLine(direction, index))
+
+  def SetLine(self, direction, index, line):
+    self.grid.SetLine(direction, index, line)
 
 
 # Solvers
@@ -104,21 +128,40 @@ def LineSolve(nono):
 def EnumGrid(num_rows, num_cols):
   pass
 
-def EnumRows(grid):
-  for row in grid:
-    yield row
-
-def EnumCols(grid):
-  for index in range(len(grid[0])):
-    yield [row[index] for row in grid]
+def Line2Spec(line):
+  spec = []
+  chunk = 0
+  for cell in line:
+    if cell == BLANK:
+      if chunk:
+        spec.append(chunk)
+        chunk = 0
+    else:
+      assert cell == FULL
+      chunk += 1
+  if chunk:
+    spec.append(chunk)
+  return tuple(spec)
 
 def Grid2Spec(grid):
-  row_specs = tuple(Line2Spec(line) for line in EnumRows(grid))
+  row_specs = tuple(Line2Spec(line) for line in grid.EnumRows())
+  col_specs = tuple(Line2Spec(line) for line in grid.EnumCols())
+  return (row_specs, col_specs)
 
 
-# Test LineSolve
+# Grid2Spec example
+snake = ParseGrid(
+  "XXXXX\n"
+  "X....\n"
+  "XXXXX\n"
+  "....X\n"
+  "XXXXX"
+)
+print("Grid2Spec:", Grid2Spec(snake))
+
+# LineSolve example
 clown = Nonogram(row_specs = [[4], [1, 3], [10], [1, 1, 1, 1], [1, 2, 1],
                               [1, 2, 1], [1, 1, 1], [1, 2, 1], [1, 1], [8]],
                  col_specs = [[1, 2], [2, 2, 1], [2, 2], [1, 2, 1], [1, 1, 2, 1, 1],
                               [3, 2, 1, 1], [4, 1, 1], [2, 2], [2, 2, 1], [1, 2]])
-print(LineSolve(clown).GridStr())
+print(str(LineSolve(clown).grid))

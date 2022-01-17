@@ -7,6 +7,7 @@ class NoSolution(Exception):
   """No possible solution to this Nonogram."""
   pass
 
+UNKNOWN = "?"
 BLANK = "."
 FULL = "X"
 
@@ -16,8 +17,8 @@ class Grid:
       self.grid = grid
     else:
       # First index row, second index col.
-      # Initialized to all None since we don't know color yet.
-      self.grid = [[None for _ in range(num_cols)] for _ in range(num_rows)]
+      # Initialized to all UNKNOWN since we don't know color yet.
+      self.grid = [[UNKNOWN for _ in range(num_cols)] for _ in range(num_rows)]
 
   def GetLine(self, direction, index):
     if direction == 0:
@@ -37,6 +38,9 @@ class Grid:
       # Column
       for i, row in enumerate(self.grid):
         row[index] = line[i]
+
+  def CountUnknown(self):
+    return sum(row.count(UNKNOWN) for row in self.grid)
 
   def EnumRows(self):
     for row in self.grid:
@@ -95,7 +99,7 @@ def EnumLines(spec, line_len):
 def MatchesLine(new_line, old_line):
   assert len(new_line) == len(old_line)
   for i in range(len(old_line)):
-    if old_line[i] != None and new_line[i] != old_line[i]:
+    if old_line[i] != UNKNOWN and new_line[i] != old_line[i]:
       return False
   return True
 
@@ -105,7 +109,7 @@ def UpdateLine(spec, old_line):
   if len(pos_lines) == 0:
     raise NoSolution
 
-  new_line = [None for _ in range(len(old_line))]
+  new_line = [UNKNOWN for _ in range(len(old_line))]
   for index in range(len(old_line)):
     pos_cell = set(line[index] for line in pos_lines)
     if len(pos_cell) == 1:
@@ -165,20 +169,30 @@ def Grid2Spec(grid):
   return (row_specs, col_specs)
 
 
-def NumNonograms(num_rows, num_cols):
+def ListNonograms(num_rows, num_cols):
   """Count number of valid Nonograms with specific dimentions."""
   specs_count = collections.Counter()
   for grid in EnumAllGrids(num_rows, num_cols):
     grid = Grid(grid=grid)
     spec = Grid2Spec(grid)
     specs_count[spec] += 1
-  return sum(1 for spec, count in specs_count.items() if count == 1)
+  return [spec for spec, count in specs_count.items() if count == 1]
 
 
 # Number of square Nonograms (which can be solved uniquely).
 # See also: http://oeis.org/A242876
 for dim in range(1, 5):
-  print(dim, NumNonograms(dim, dim), 2**(dim * dim))
+  print(dim, len(ListNonograms(dim, dim)), 2**(dim * dim))
+print()
+
+for row_spec, col_spec in ListNonograms(2, 4):
+  nono = Nonogram(row_specs=row_spec, col_specs=col_spec)
+  nono = LineSolve(nono)
+  if nono.grid.CountUnknown() > 0:
+    print(row_spec, col_spec)
+    print(str(nono.grid))
+    print()
+print()
 
 # Grid2Spec example
 snake = ParseGrid(
@@ -189,6 +203,7 @@ snake = ParseGrid(
   "XXXXX"
 )
 print("Grid2Spec:", Grid2Spec(snake))
+print()
 
 # LineSolve example
 clown = Nonogram(row_specs = [[4], [1, 3], [10], [1, 1, 1, 1], [1, 2, 1],

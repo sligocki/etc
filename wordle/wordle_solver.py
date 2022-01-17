@@ -64,6 +64,28 @@ def categorize_by_feedback(guess, answers):
     feedback_answers[feedback].add(answer)
   return feedback_answers
 
+def max_category(categories):
+  big_key = None
+  big_category = None
+  max_size = -1
+  for key, category in categories.items():
+    if len(category) > max_size:
+      big_key = key
+      big_category = category
+      max_size = len(big_category)
+  return big_key, big_category
+
+def min_category(categories):
+  small_key = None
+  small_category = None
+  min_size = math.inf
+  for key, category in categories.items():
+    if len(category) < min_size:
+      small_key = key
+      small_category = category
+      min_size = len(small_category)
+  return small_key, small_category
+
 # Top results:
 #   AESIR, REAIS, SERAI : 168
 #   AYRIE               : 171
@@ -71,20 +93,32 @@ def categorize_by_feedback(guess, answers):
 #   ALOES               : 174
 #   REALO               : 176
 #   STOAE               : 177
-def min_max_categories(all_words, answers):
-  max_categories = {}
+def max_categories(all_words, answers):
+  biggest_categories = {}
   for i, guess in enumerate(all_words):
     feedback_answers = categorize_by_feedback(guess, answers)
-    max_categories[guess] = max(len(cat) for cat in feedback_answers.values())
+    biggest_categories[guess] = max_category(feedback_answers)
     if i % 1000 == 0:
-      print(i, guess, max_categories[guess], time.process_time())
-  score_word = [(score, word) for (word, score) in max_categories.items()]
-  score_word.sort()
-  print(score_word[:10])
+      print(" ...", i, guess, len(biggest_categories[guess]), time.process_time())
+  return biggest_categories
+
+def min_max_categories(all_words, answers):
+  big_categories = max_categories(all_words, answers)
+  best_guess, category = min_category({guess: cat for (guess, (_, cat)) in big_categories.items()})
+  return best_guess, big_categories[best_guess][0], category
+
+def iterate_min_max_categories(all_words, answers):
+  remaining_answers = answers
+  while len(remaining_answers) > 1:
+    optimal_guess, worst_response, category = min_max_categories(all_words, remaining_answers)
+    print(f"{optimal_guess:10s} {worst_response} {len(category):6_d}")
+    remaining_answers = category
+
 
 # A coule tests
-print(evaulate_guess("yabbe", "abbey"))
+#print(evaulate_guess("yabbe", "abbey"))
 all_words = load_dict()
 answers = load_answers()
 #first_word_max_colors(all_words, answers)
-min_max_categories(all_words, answers)
+#min_max_categories(all_words, answers)
+iterate_min_max_categories(all_words, answers)

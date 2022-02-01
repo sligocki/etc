@@ -36,7 +36,7 @@ class Cricket(Pet):
 class Duck(Pet):
   def __init__(self):
     super().__init__("Duck", 1, 2)
-    self.triggers["sell"] = ("boost", "all_shop", None, 1, 2)
+    self.triggers["sell"] = ("boost", "all_shop", None, 0, 1)
 
 class Fish(Pet):
   def __init__(self):
@@ -45,7 +45,7 @@ class Fish(Pet):
 
 class Horse(Pet):
   def __init__(self):
-    super().__init__("Horse", 1, 1)
+    super().__init__("Horse", 2, 1)
     self.triggers["friend_summon"] = ("boost", "trigger", None, 1, 0)
 
 class Mosquito(Pet):
@@ -60,7 +60,7 @@ class Otter(Pet):
 
 class Pig(Pet):
   def __init__(self):
-    super().__init__("Pig", 2, 2)
+    super().__init__("Pig", 3, 1)
     self.triggers["sell"] = ("gold", +1)
 
 class Sloth(Pet):

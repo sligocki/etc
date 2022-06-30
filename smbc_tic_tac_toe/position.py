@@ -3,13 +3,24 @@ Basic position encoding.
 
 Exports simple interface:
  * init_pos : Position
+ * players : list(Players)
+ * get_player(pos : Position) -> Player
+ * other_player(player : Player) -> Player
  * eval_pos(pos : Position) -> Player or None
  * list_moves(pos : Position) -> list(Position)
 """
 
+players = ["X", "O"]
 _kBlank = "."
 init_pos = (_kBlank * 9, "X")
-_kOtherPlayer = {"X" : "O", "O": "X"}
+
+def get_player(pos):
+  board, player = pos
+  return player
+
+def other_player(player):
+  _kOtherPlayer = {"X" : "O", "O": "X"}
+  return _kOtherPlayer[player]
 
 _kWinPatterns = (
   [[c + 3*r for c in range(3)] for r in range(3)] +  # Rows
@@ -43,5 +54,5 @@ def list_moves(pos):
   for i, cell in enumerate(board):
     if cell == _kBlank:
       new_board = _move(board, i, player)
-      new_poses.append((new_board, _kOtherPlayer[player]))
+      new_poses.append((new_board, other_player(player)))
   return new_poses

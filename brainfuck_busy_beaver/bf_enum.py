@@ -19,6 +19,25 @@ def bf_enum(size):
             yield prefix + "[" + loop + "]"
 
 
+def bf_enum_opt(size):
+  """Optimized version of bf_enum, avoids certain unhelpful patterns."""
+  if size == 0:
+    yield ""
+  else:
+    # First enumerate all programs that end in a non-] instruction.
+    for prefix in bf_enum(size - 1):
+      for i in "+-><":
+        yield prefix + i
+    # Second enumerate all programs which end in a [] loop.
+    if size >= 2:
+      # Optimization: Don't allow trivial loops (they never halt).
+      for loop_len in range(1, (size - 2) + 1):
+        prefix_len = size - 2 - loop_len
+        for prefix in bf_enum(prefix_len):
+          for loop in bf_enum(loop_len):
+            yield prefix + "[" + loop + "]"
+
+
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("size", type=int)

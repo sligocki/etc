@@ -14,7 +14,7 @@ def sim_all(size, steps_cutoff):
   best_steps_prog = None
   max_score = -1
   best_score_prog = None
-  for prog in bf_enum.bf_enum(size):
+  for prog in bf_enum.bf_enum_opt(size):
     sim = bf_sim.BFSim(prog)
     sim.run(steps_cutoff)
     num_total += 1

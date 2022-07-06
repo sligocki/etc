@@ -39,6 +39,9 @@ class BFSim:
   def is_running(self):
     return self.instr < len(self.prog)
 
+  def score(self):
+    return max(self.tape.values(), default=0)
+
   def run(self, steps, verbose=False):
     end_step = self.num_steps + steps
     while self.num_steps < end_step and self.is_running():
@@ -88,7 +91,7 @@ def main():
   else:
     print("Halted")
   print("Num steps:", sim.num_steps)
-  print("Max register:", max(sim.tape.values()))
+  print("Max register:", sim.score())
   print("Sum registers:", sum(sim.tape.values()))
 
 if __name__ == "__main__":

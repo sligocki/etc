@@ -6,12 +6,17 @@ def bf_enum(size):
   if size == 0:
     yield ""
   else:
-    for sub in bf_enum(size - 1):
+    # First enumerate all programs that end in a non-] instruction.
+    for prefix in bf_enum(size - 1):
       for i in "+-><":
-        yield sub + i
+        yield prefix + i
+    # Second enumerate all programs which end in a [] loop.
     if size >= 2:
-      for sub in bf_enum(size - 2):
-        yield "[" + sub + "]"
+      for loop_len in range((size - 2) + 1):
+        prefix_len = size - 2 - loop_len
+        for prefix in bf_enum(prefix_len):
+          for loop in bf_enum(loop_len):
+            yield prefix + "[" + loop + "]"
 
 
 def main():

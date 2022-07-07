@@ -20,6 +20,16 @@ def match_parens(s):
   assert not stack, s
   return match_locs
 
+def tape_str(tape, head_loc):
+  parts = []
+  tape[head_loc]
+  for loc in range(min(tape.keys()), max(tape.keys()) + 1):
+    if loc == head_loc:
+      parts.append(f"({tape[loc]:2})")
+    else:
+      parts.append(f" {tape[loc]:2} ")
+  return " ".join(parts)
+
 class BFSim:
   def __init__(self, bf_prog: str):
     self.prog = bf_prog
@@ -46,9 +56,7 @@ class BFSim:
     end_step = self.num_steps + steps
     while self.num_steps < end_step and self.is_running():
       if verbose:
-        print(self.tape, self.loc, self.tape[self.loc])
-        print(self.prog, self.instr, self.prog[self.instr])
-        print(self.num_steps)
+        print(f"{self.num_steps:5_d}", self.prog[self.instr], tape_str(self.tape, self.loc))
       self.step()
 
   def step(self):

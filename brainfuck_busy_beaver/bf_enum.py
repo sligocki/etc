@@ -25,7 +25,7 @@ def bf_enum_opt(size):
     yield ""
   else:
     # First enumerate all programs that end in a non-] instruction.
-    for prefix in bf_enum(size - 1):
+    for prefix in bf_enum_opt(size - 1):
       for i in "+-><":
         yield prefix + i
     # Second enumerate all programs which end in a [] loop.
@@ -33,8 +33,8 @@ def bf_enum_opt(size):
       # Optimization: Don't allow trivial loops (they never halt).
       for loop_len in range(1, (size - 2) + 1):
         prefix_len = size - 2 - loop_len
-        for prefix in bf_enum(prefix_len):
-          for loop in bf_enum(loop_len):
+        for prefix in bf_enum_opt(prefix_len):
+          for loop in bf_enum_opt(loop_len):
             yield prefix + "[" + loop + "]"
 
 

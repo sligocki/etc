@@ -41,7 +41,8 @@ def _bf_enum_opt_help(size, *, allow_end_loop=True, only_end_loop=False):
       max_loop_len = size - 2
       for loop_len in reversed(range(1, max_loop_len + 1)):
         prefix_len = size - 2 - loop_len
-        for prefix in _bf_enum_opt_help(prefix_len):
+        # Optimization: Do not allow ][. Second loop will never run!
+        for prefix in _bf_enum_opt_help(prefix_len, allow_end_loop = False):
           # Optimization: Do not allow ]]. If the inner loop ever runs, the
           # outer one will exit immediately, so the outer loop is pointless.
           for loop in _bf_enum_opt_help(loop_len, allow_end_loop = False):
@@ -68,17 +69,14 @@ def main():
   parser.add_argument("--max-size", type=int, default=10)
   args = parser.parse_args()
 
-  for size in range(1, args.max_size + 1):
-    # All programs
-    total_count = 0
-    for prog in bf_enum(size):
-      if args.verbose:
-        print(prog)
-      total_count += 1
-
-    # Optimal enumeration
+  for size in range(args.max_size + 1):
+    total_count = sum(1 for prog in bf_enum(size))
     opt_count = sum(1 for prog in bf_enum_opt(size))
     print(f"Size {size:4d} / Total {total_count:11_d} / Opt {opt_count:11_d}")
+
+  for size in range(args.max_size + 1, args.max_size + 5):
+    opt_count = sum(1 for prog in bf_enum_opt(size))
+    print(f"Size {size:4d} / Total {'N/A':11s} / Opt {opt_count:11_d}")
 
 if __name__ == "__main__":
   main()

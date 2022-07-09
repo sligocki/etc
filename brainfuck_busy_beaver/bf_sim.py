@@ -56,7 +56,7 @@ class BFSim:
     end_step = self.num_steps + steps
     while self.num_steps < end_step and self.is_running():
       if verbose:
-        print(f"{self.num_steps:5_d}", self.prog[self.instr], tape_str(self.tape, self.loc))
+        print(f"{self.num_steps:5_d} : {self.instr:3d} {self.prog[self.instr]} :  {tape_str(self.tape, self.loc)}")
       self.step()
 
   def step(self):

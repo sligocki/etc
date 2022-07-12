@@ -78,7 +78,7 @@ class BFSim:
           # Jump to opening [. Then increment will move into loop.
           self.instr = self.jump_loc[self.instr]
       else:
-        raise BF_Format_Error(bf)
+        raise BF_Format_Error(self.prog, self.instr)
 
       # Advance to next instruction.
       self.instr += 1
@@ -98,9 +98,10 @@ def main():
     print("Over steps")
   else:
     print("Halted")
-  print("Num steps:", sim.num_steps)
-  print("Max register:", sim.score())
-  print("Sum registers:", sum(sim.tape.values()))
+  print(f"Program size: {len(args.bf_prog):_d}")
+  print(f"Num steps: {sim.num_steps:_d}")
+  print(f"Max register: {sim.score():_d}")
+  print(f"Sum registers: {sum(sim.tape.values()):_d}")
 
 if __name__ == "__main__":
   main()

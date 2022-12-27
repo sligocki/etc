@@ -77,7 +77,8 @@ class BFSim:
         if self.tape[self.loc] != 0:
           # Jump to opening [. Then increment will move into loop.
           self.instr = self.jump_loc[self.instr]
-      else:
+      elif self.prog[self.instr] != ".":
+        # Treat "." as no-op.
         raise BF_Format_Error(self.prog, self.instr)
 
       # Advance to next instruction.

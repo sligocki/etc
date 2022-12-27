@@ -19,16 +19,18 @@ def bf_enum(size):
             yield prefix + "[" + loop + "]"
 
 # Optimization: Don't allow wasted pairs of instructinos:
-kSimpleInstr = {
-  "+" : "+><",  # No +-
-  "-" : "-><",  # No -+
-  ">" : "+->",  # No ><
-  "<" : "+-<",  # No <>
+kExcludePairs = {
+  "+" : frozenset("-"),   # No +-
+  "-" : frozenset("+-"),   # No -+ or --
+  ">" : frozenset("<-"),  # No >< or >-
+  "<" : frozenset(">-"),  # No <> or <-
+  "]" : frozenset("-"),    # No ]-
 }
 def simple_instr_opt(prev):
-  if prev and prev[-1] in kSimpleInstr:
-    return kSimpleInstr[prev[-1]]
-  return "+-><"
+  next = set("+-><")
+  if prev and prev[-1] in kExcludePairs:
+    next.difference_update(kExcludePairs[prev[-1]])
+  return next
 
 def _bf_enum_opt_help(size, *, allow_end_loop=True, only_end_loop=False):
   """Optimized version of bf_enum, avoids certain unhelpful patterns."""

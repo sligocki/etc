@@ -43,10 +43,13 @@ def sim_all(size, steps_cutoff, *,
         print("  xxx  ", sim.num_steps, sim.score(), prog)
 
   print(f"Simulated {num_total:_} BFs of size {size} for {steps_cutoff:_} steps:")
-  print(f" * Total steps: {total_steps:_} ({total_steps / (time.time() - start_time):_.0f} steps / s)")
-  print(f" * Halted {num_halt:_} / {num_total:_} = {num_halt/num_total:.1%}")
-  print(f" * Max score: {max_score:_} {best_score_prog}")
-  print(f" * Steps: Max: {max_steps:_} {best_steps_prog}  (Mean: {halt_steps / num_halt:_.0f})")
+  if num_total > 0:
+    print(f" * Total steps: {total_steps:_} ({total_steps / (time.time() - start_time):_.0f} steps / s)")
+    print(f" * Halted {num_halt:_} / {num_total:_} = {num_halt/num_total:.1%}")
+    print(f" * Max score: {max_score:_} {best_score_prog}")
+    print(f" * Steps: Max: {max_steps:_} {best_steps_prog}", end="")
+    if num_halt > 0:
+      print(f"  (Mean: {halt_steps / num_halt:_.0f})")
 
 
 def main():

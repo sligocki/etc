@@ -12,15 +12,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 # from fractions import Fraction
 import functools
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, TypeAlias
 
 import nashpy
 import numpy as np
 
 
 # Types
-Card = int
-Value = np.float64
+Card : TypeAlias = int
+Value : TypeAlias = np.float64
 
 @dataclass(frozen=True)
 class Hand:
@@ -74,7 +74,7 @@ def play(state : State, move : Move) -> State:
   return State(hand1, hand2)
 
 
-Strategy = np.array # array of Value
+Strategy : TypeAlias = np.array # array of Value
 
 @dataclass(frozen=True)
 class StrategyNode:

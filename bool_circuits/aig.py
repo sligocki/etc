@@ -175,24 +175,6 @@ def explore_semantics(num_inputs : int, num_outputs : int) -> None:
 # NS(n,m,0) = (2n+2)^m
 # NS(n,1,1) = 4 n^2 - 10n + 8?
 
-def debug_gate_order():
-  global ORDER_GATES
-  num_inputs, num_outputs, num_gates = 3,1,2
-
-  # Load all semantics using gate ordering
-  funcs = set()
-  ORDER_GATES = True
-  for c in enum_circuits(num_inputs, num_outputs, num_gates):
-    funcs.add(semantics(c))
-
-  # Find semantics without gate ordering that isn't in this set
-  ORDER_GATES = False
-  for c in enum_circuits(num_inputs, num_outputs, num_gates):
-    s = semantics(c)
-    if s not in funcs:
-      print(c, s)
-      funcs.add(s)
-
 
 def main():
   parser = argparse.ArgumentParser()
@@ -202,4 +184,5 @@ def main():
 
   explore_semantics(args.num_inputs, args.num_outputs)
 
-main()
+if __name__ == "__main__":
+  main()

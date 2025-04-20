@@ -17,6 +17,13 @@ from typing import Iterator
 type List[T] = tuple[T, ...]
 
 
+## Boolean function datatypes
+# An n-input, m-output Boolean function (bf) should have 2^n rows with m booleans each.
+#   * len(bf) = 2^n
+#   * forall k, len(bf[k]) = m
+type BoolFunc = List[List[bool]]
+
+
 @dataclass
 class InputLead:
   index: int
@@ -42,6 +49,7 @@ class OrGate:
 
 @dataclass
 class Circuit:
+  num_inputs: int
   and_plane: List[AndGate]
   or_plane: List[OrGate]
 
@@ -83,15 +91,45 @@ def enum_circuits(num_inputs: int, num_outputs: int,
                   num_ands: int, num_trans: int) -> Iterator[Circuit]:
   for and_plane in enum_and_planes(num_inputs, num_ands):
     num_or_trans = num_trans - count_and_trans(and_plane)
-    if num_or_trans > 0:
+    if num_or_trans >= 0:
       for or_plane in enum_or_planes(num_ands, num_outputs, num_or_trans):
-        yield Circuit(and_plane, or_plane)
+        yield Circuit(num_inputs, and_plane, or_plane)
 
+
+def semantics(circuit: Circuit) -> BoolFunc:
+  """Evaluate the boolean function that this circuit computes."""
+  results = []
+  for assignments in itertools.product((False, True), repeat=circuit.num_inputs):
+    results.append(circuit.eval(assignments))
+  return tuple(results)
+
+
+def explore_semantics(num_inputs : int, num_outputs : int) -> None:
+  start_time = time.time()
+  funcs = set()
+  total_funcs = (2**num_outputs)**(2**num_inputs)
+  num_circuits = 0
+  print(f"Total # Boolean Functions: {total_funcs:_d}")
+  print()
+  for num_ands in range(2**num_inputs + 1):
+    for num_trans in range(2*num_ands, (num_inputs + num_outputs) * num_ands + 1):
+      for c in enum_circuits(num_inputs, num_outputs, num_ands, num_trans):
+        funcs.add(semantics(c))
+        num_circuits += 1
+      print(f"{num_inputs:2d} {num_outputs:2d} {num_ands:2d} {num_trans:2d} : "
+            f"{len(funcs):11_d} {num_circuits:15_d}  ({time.time() - start_time:8_.2f}s)")
+      if len(funcs) == total_funcs:
+        print("Done")
+        return
+    print()
 
 def main():
-  n,m = 2,2
-  for a in range(2**n + 1):
-    for t in range((n+m)*a + 1):
-      num_circuits = sum(1 for _ in enum_circuits(n,m,a,t))
-      print(n,m,a,t,num_circuits)
-main()
+  parser = argparse.ArgumentParser()
+  parser.add_argument("num_inputs", type=int)
+  parser.add_argument("num_outputs", type=int)
+  args = parser.parse_args()
+
+  explore_semantics(args.num_inputs, args.num_outputs)
+
+if __name__ == "__main__":
+  main()

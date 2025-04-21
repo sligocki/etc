@@ -160,6 +160,7 @@ def semantics(circuit : Circuit) -> BoolFunc:
   return tuple(results)
 
 def explore_semantics(num_inputs : int, num_outputs : int) -> None:
+  """Explore minimal AIGs for computing all Boolean functions of a given size."""
   start_time = time.time()
   funcs = set()
   num_circuits = 0

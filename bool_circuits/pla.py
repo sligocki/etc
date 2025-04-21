@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import total_ordering
 import itertools
+import math
 import time
 from typing import Iterator
 
@@ -104,7 +105,9 @@ def semantics(circuit: Circuit) -> BoolFunc:
   return tuple(results)
 
 
-def explore_semantics(num_inputs : int, num_outputs : int) -> None:
+def explore_sem_and(num_inputs : int, num_outputs : int) -> None:
+  """Explore minimal PLAs for computing all Boolean functions of a given size.
+  Ordered first by minimizing # AND gates, second by minimizing # transistors/dots."""
   start_time = time.time()
   funcs = set()
   total_funcs = (2**num_outputs)**(2**num_inputs)
@@ -123,13 +126,37 @@ def explore_semantics(num_inputs : int, num_outputs : int) -> None:
         return
     print()
 
+def explore_sem_trans(num_inputs : int, num_outputs : int) -> None:
+  """Like explore_sem_and() but ordered first by minimize # transistors.
+  Apears to be waaay slower. (2,4) went from 2min -> 1hr."""
+  start_time = time.time()
+  funcs = set()
+  in_p2 = 2**num_inputs
+  total_funcs = (2**num_outputs)**in_p2
+  num_circuits = 0
+  print(f"Total # Boolean Functions: {total_funcs:_d}")
+  print()
+  for num_trans in range((num_inputs + num_outputs) * in_p2 + 1):
+    min_ands = math.ceil(num_trans / (num_inputs + num_outputs))
+    max_ands = num_trans // 2
+    for num_ands in range(min_ands, max_ands + 1):
+      for c in enum_circuits(num_inputs, num_outputs, num_ands, num_trans):
+        funcs.add(semantics(c))
+        num_circuits += 1
+      print(f"{num_inputs:2d} {num_outputs:2d} {num_ands:2d} {num_trans:2d} : "
+            f"{len(funcs):11_d} {num_circuits:15_d}  ({time.time() - start_time:8_.2f}s)")
+      if len(funcs) == total_funcs:
+        print("Done")
+        return
+    print()
+
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("num_inputs", type=int)
   parser.add_argument("num_outputs", type=int)
   args = parser.parse_args()
 
-  explore_semantics(args.num_inputs, args.num_outputs)
+  explore_sem_and(args.num_inputs, args.num_outputs)
 
 if __name__ == "__main__":
   main()

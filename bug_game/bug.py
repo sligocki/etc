@@ -10,7 +10,7 @@ import math
 # Nees to allow float b/c math.inf is technially a float ...
 type Cell = int | float
 
-@dataclass
+@dataclass(frozen=True)
 class Loc:
   x: int
   y: int
@@ -85,6 +85,24 @@ def runtime(pos: State) -> int:
     # print
   return num_steps
 
+def is_solvable(pos: State) -> bool:
+  """DFS search of space to find if a path exists from bug to destination."""
+  visited = {pos.bug_loc}
+  todo = [pos.bug_loc]
+  while todo:
+    loc = todo.pop()
+    for dir in DIRS:
+      new_loc = loc + dir
+      if new_loc == pos.dest_loc:
+        # DFS found a path
+        return True
+      if new_loc not in visited:
+        visited.add(new_loc)
+        if pos.board[new_loc] != math.inf:
+          todo.append(new_loc)
+  # DFS failed to connect to dest
+  return False
+
 def parse_board(board_str: str) -> State:
   board : list[list[Cell]]= []
   for line in board_str.splitlines():
@@ -126,10 +144,13 @@ def board_to_str(state: State) -> str:
 def show(board_str: str) -> None:
   state = parse_board(board_str)
   print(board_to_str(state))
-  score = runtime(state)
-  print("Score:", score)
-  print(board_to_str(state))
-  print()
+  if is_solvable(state):
+    score = runtime(state)
+    print("Score:", score)
+    print(board_to_str(state))
+    print()
+  else:
+    print("No path to destination")
 
 
 def main():
@@ -142,24 +163,3 @@ def main():
 
 if __name__ == "__main__":
   main()
-
-# savask test 1: should run 20 steps
-# show("""
-# @@@@@@
-# @    @
-# @    @
-# @ @ @@
-# @ @  @
-# @@@@@@
-# """)
-# # savask test 2: should run 630 steps
-# show("""
-# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-# @   @    @ @@@@ @  @ @@@@ @@ @
-# @ @ @@ @  @ @     @ @ @      @
-# @   @  @ @ @@  @@        @@ @@
-# @             @           @ @@
-# @ @  @@ @ @   @@@  @  @   @  @
-# @     @   @  @    @   @ @@   @
-# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-# """)

@@ -90,10 +90,9 @@ def parse_board(board_str: str) -> State:
     if line.strip():
       # @ is wall, everything else is open.
       # Add extra walls on left and right
-      board.append([math.inf] + [math.inf if x == "@" else 0 for x in line.strip()] + [math.inf])
+      board.append([math.inf if x == "@" else 0 for x in line.strip()])
   # Add extra walls on top and bottom
   width = len(board[0])
-  board = [[math.inf]*width] + board + [[math.inf]*width]
   height = len(board)
   # Start at top-left
   start = Loc(1, 1)
@@ -127,9 +126,25 @@ def show(board_str: str) -> None:
   score = runtime(state)
   print("Score:", score)
   print(board_to_str(state))
+  print()
 
+# savask test 1: should run 20 steps
 show("""
-....
-....
-.@.@
-.@..""")
+@@@@@@
+@    @
+@    @
+@ @ @@
+@ @  @
+@@@@@@
+""")
+# savask test 2: should run 630 steps
+show("""
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@   @    @ @@@@ @  @ @@@@ @@ @
+@ @ @@ @  @ @     @ @ @      @
+@   @  @ @ @@  @@        @@ @@
+@             @           @ @@
+@ @  @@ @ @   @@@  @  @   @  @
+@     @   @  @    @   @ @@   @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+""")

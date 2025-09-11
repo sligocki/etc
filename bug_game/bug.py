@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import dataclass
 import math
+import string
+from typing import Iterator
 
 
 # Encoding: Wall = inf, otherwise value equals number of times visited.
 # Thus we can use same algorithm to find next cell to travel to by minimizing over neighbor values.
 # Nees to allow float b/c math.inf is technially a float ...
 type Cell = int | float
+WALL : Cell = math.inf
 
 @dataclass(frozen=True)
 class Loc:
@@ -33,12 +37,15 @@ DIRS : list[Dir] = [
   Loc( 0, -1),  # Up
   Loc(-1,  0),  # Left
 ]
+START_DIR : Dir = Loc( 0, -1)  # Up
 
 @dataclass
 class Board:
   # Stored as data[y][x]
   data: list[list[Cell]]
 
+  def x_size(self) -> int:
+    return len(self.data[0])
   def y_size(self) -> int:
     return len(self.data)
 
@@ -46,6 +53,17 @@ class Board:
     return self.data[loc.y][loc.x]
   def __setitem__(self, loc: Loc, val: Cell) -> None:
     self.data[loc.y][loc.x] = val
+
+  def copy(self) -> Board:
+    return Board(copy.deepcopy(self.data))
+  
+  def __iter__(self) -> Iterator[Loc]:
+    for x in range(1, self.x_size() - 1):
+      for y in range(1, self.y_size() - 1):
+        yield Loc(x, y)
+
+  def max(self) -> int:
+    return max(cost for loc in self if (cost := self[loc]) != WALL)
 
 @dataclass
 class State:
@@ -75,6 +93,10 @@ class State:
     self.bug_dir = best_dir
     self.bug_loc += best_dir
 
+  def copy(self) -> State:
+    return State(self.board.copy(), self.bug_loc, self.bug_dir, self.dest_loc)
+
+
 def runtime(pos: State) -> int:
   num_steps = 0
   while pos.is_running():
@@ -98,30 +120,32 @@ def is_solvable(pos: State) -> bool:
         return True
       if new_loc not in visited:
         visited.add(new_loc)
-        if pos.board[new_loc] != math.inf:
+        if pos.board[new_loc] != WALL:
           todo.append(new_loc)
   # DFS failed to connect to dest
   return False
 
+def board_to_state(board: Board) -> State:
+  return State(
+    board = board,
+    bug_loc = Loc(1, 1),
+    bug_dir = START_DIR,
+    dest_loc = Loc(board.x_size() - 2, board.y_size() - 2))
+
+
 def parse_board(board_str: str) -> State:
+  # NOTE: This depends upon the board string having walls on full parimeter!
   board : list[list[Cell]]= []
   for line in board_str.splitlines():
     if line.strip():
       # @ is wall, everything else is open.
-      # Add extra walls on left and right
-      board.append([math.inf if x in "@#" else 0 for x in line.strip()])
-  # Add extra walls on top and bottom
-  width = len(board[0])
-  height = len(board)
-  # Start at top-left
-  start = Loc(1, 1)
-  # Start dir is UP
-  dir = Loc(0, 1)
-  # End at bottom-right
-  dest = Loc(width - 2, height - 2)
-  return State(Board(board), start, dir, dest)
+      board.append([WALL if x in "@#" else 0 for x in line.strip()])
+  return board_to_state(Board(board))
+
 
 def board_to_str(state: State) -> str:
+  max_cost = state.board.max()
+  max_log_cost = math.log2(max_cost + 1) if max_cost else 1
   lines = []
   for y in range(state.board.y_size()):
     line = []
@@ -130,14 +154,14 @@ def board_to_str(state: State) -> str:
         line.append("B")
       elif Loc(x,y) == state.dest_loc:
         line.append("F")
-      elif cell == math.inf:
+      elif cell == WALL:
         line.append("#")
       elif cell == 0:
         line.append(".")
-      elif cell < 10:
-        line.append(str(cell))
       else:
-        line.append("+")
+        log_cost = math.log2(cell)
+        x = 26 * log_cost / max_log_cost
+        line.append(string.ascii_lowercase[int(x)])
     lines.append("".join(line))
   return "\n".join(lines)
 
@@ -147,6 +171,7 @@ def show(board_str: str) -> None:
   if is_solvable(state):
     score = runtime(state)
     print("Score:", score)
+    print("Max Visit Count:", state.board.max())
     print(board_to_str(state))
     print()
   else:

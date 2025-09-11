@@ -143,6 +143,15 @@ def parse_board(board_str: str) -> State:
   return board_to_state(Board(board))
 
 
+HEATMAP_CHARS_BASIC = string.digits + string.ascii_lowercase
+HEATMAP_CHARS_LOG = string.ascii_lowercase
+def heatmap_encode(val, max_val):
+  if max_val < len(HEATMAP_CHARS_BASIC):
+    return HEATMAP_CHARS_BASIC[val]
+  else:
+    x = len(HEATMAP_CHARS_LOG) * math.log(val) / math.log(max_val + 1)
+    return HEATMAP_CHARS_LOG[int(x)]
+
 def board_to_str(state: State) -> str:
   max_cost = state.board.max()
   max_log_cost = math.log2(max_cost + 1) if max_cost else 1
@@ -159,9 +168,7 @@ def board_to_str(state: State) -> str:
       elif cell == 0:
         line.append(".")
       else:
-        log_cost = math.log2(cell)
-        x = 26 * log_cost / max_log_cost
-        line.append(string.ascii_lowercase[int(x)])
+        line.append(heatmap_encode(cell, max_cost))
     lines.append("".join(line))
   return "\n".join(lines)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 import math
 
@@ -90,7 +91,7 @@ def parse_board(board_str: str) -> State:
     if line.strip():
       # @ is wall, everything else is open.
       # Add extra walls on left and right
-      board.append([math.inf if x == "@" else 0 for x in line.strip()])
+      board.append([math.inf if x in "@#" else 0 for x in line.strip()])
   # Add extra walls on top and bottom
   width = len(board[0])
   height = len(board)
@@ -112,7 +113,9 @@ def board_to_str(state: State) -> str:
       elif Loc(x,y) == state.dest_loc:
         line.append("F")
       elif cell == math.inf:
-        line.append("@")
+        line.append("#")
+      elif cell == 0:
+        line.append(".")
       elif cell < 10:
         line.append(str(cell))
       else:
@@ -128,23 +131,35 @@ def show(board_str: str) -> None:
   print(board_to_str(state))
   print()
 
+
+def main():
+  parser = argparse.ArgumentParser()
+  parser.add_argument("infile")
+  args = parser.parse_args()
+
+  with open(args.infile) as f:
+    show(f.read())
+
+if __name__ == "__main__":
+  main()
+
 # savask test 1: should run 20 steps
-show("""
-@@@@@@
-@    @
-@    @
-@ @ @@
-@ @  @
-@@@@@@
-""")
-# savask test 2: should run 630 steps
-show("""
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-@   @    @ @@@@ @  @ @@@@ @@ @
-@ @ @@ @  @ @     @ @ @      @
-@   @  @ @ @@  @@        @@ @@
-@             @           @ @@
-@ @  @@ @ @   @@@  @  @   @  @
-@     @   @  @    @   @ @@   @
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-""")
+# show("""
+# @@@@@@
+# @    @
+# @    @
+# @ @ @@
+# @ @  @
+# @@@@@@
+# """)
+# # savask test 2: should run 630 steps
+# show("""
+# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# @   @    @ @@@@ @  @ @@@@ @@ @
+# @ @ @@ @  @ @     @ @ @      @
+# @   @  @ @ @@  @@        @@ @@
+# @             @           @ @@
+# @ @  @@ @ @   @@@  @  @   @  @
+# @     @   @  @    @   @ @@   @
+# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# """)

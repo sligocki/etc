@@ -102,9 +102,6 @@ def runtime(pos: State) -> int:
   while pos.is_running():
     pos.step()
     num_steps += 1
-    # print(num_steps, pos.bug_loc)
-    # print(board_str(pos))
-    # print
   return num_steps
 
 def is_solvable(pos: State) -> bool:
@@ -138,7 +135,7 @@ def parse_board(board_str: str) -> State:
   board : list[list[Cell]]= []
   for line in board_str.splitlines():
     if line.strip():
-      # @ is wall, everything else is open.
+      # #/@ means wall, everything else is open.
       board.append([WALL if x in "@#" else 0 for x in line.strip()])
   return board_to_state(Board(board))
 
@@ -172,26 +169,35 @@ def board_to_str(state: State) -> str:
     lines.append("".join(line))
   return "\n".join(lines)
 
-def show(board_str: str) -> None:
+def show(board_str: str, verbose: bool) -> None:
   state = parse_board(board_str)
   print(board_to_str(state))
-  if is_solvable(state):
-    score = runtime(state)
-    print("Score:", score)
-    print("Max Visit Count:", state.board.max())
-    print(board_to_str(state))
-    print()
-  else:
+  print()
+  if not is_solvable(state):
     print("No path to destination")
+    return
+
+  num_steps = 0
+  while state.is_running():
+    state.step()
+    num_steps += 1
+    if verbose:
+      print(board_to_str(state))
+      print()
+  print("Score:", num_steps)
+  print("Max Visit Count:", state.board.max())
+  print(board_to_str(state))
+  print()
 
 
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("infile")
+  parser.add_argument("--verbose", "-v", action="store_true")
   args = parser.parse_args()
 
   with open(args.infile) as f:
-    show(f.read())
+    show(f.read(), verbose = args.verbose)
 
 if __name__ == "__main__":
   main()

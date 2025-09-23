@@ -7,6 +7,9 @@ import math
 import string
 from typing import Iterator
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
 
 # Encoding: Wall = inf, otherwise value equals number of times visited.
 # Thus we can use same algorithm to find next cell to travel to by minimizing over neighbor values.
@@ -169,7 +172,7 @@ def board_to_str(state: State) -> str:
     lines.append("".join(line))
   return "\n".join(lines)
 
-def show(board_str: str, verbose: bool) -> None:
+def show(board_str: str, verbose: bool, plot_x: bool) -> None:
   state = parse_board(board_str)
   print(board_to_str(state))
   print()
@@ -178,10 +181,13 @@ def show(board_str: str, verbose: bool) -> None:
     return
 
   num_steps = 0
+  xs = [state.bug_loc.x]
   while state.is_running():
     state.step()
     num_steps += 1
+    xs.append(state.bug_loc.x)
     if verbose:
+      print("Step:", num_steps)
       print(board_to_str(state))
       print()
   print("Score:", num_steps)
@@ -189,15 +195,26 @@ def show(board_str: str, verbose: bool) -> None:
   print(board_to_str(state))
   print()
 
+  if plot_x:
+    # Plot x position over time
+    fig, ax = plt.subplots()
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax.grid()
+    ax.plot(xs, marker=".")
+    ax.set_xlabel("Step Number")
+    ax.set_ylabel("X Position")
+    plt.show()
+
 
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("infile")
   parser.add_argument("--verbose", "-v", action="store_true")
+  parser.add_argument("--plot-x", "-x", action="store_true")
   args = parser.parse_args()
 
   with open(args.infile) as f:
-    show(f.read(), verbose = args.verbose)
+    show(f.read(), verbose = args.verbose, plot_x = args.plot_x)
 
 if __name__ == "__main__":
   main()

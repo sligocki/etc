@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 
 from base import State, Program
-from parse import parse_program, prime_factor
+from parse import load_program, prime_factor
 
 def step(prog: Program, state: State) -> tuple[State | None, int]:
   for rule_num, rule in enumerate(prog):
@@ -21,8 +21,11 @@ def run(prog: Program, state: State, num_steps: int) -> State | None:
 
 
 def sim(prog: Program, state: State, print_rule: int) -> None:
-  print("Program:", prog)
+  print(f"Program size: {prog.size()}")
+  print(prog)
+  print()
   print("Start:", state)
+  print()
 
   num_steps = 0
   while state is not None:
@@ -40,9 +43,9 @@ def main():
   parser.add_argument("--start", type=int, default=2)
   args = parser.parse_args()
 
-  prog = parse_program(args.program)
+  prog = load_program(args.program)
   start = prime_factor(args.start)
-  start.resize(prog[0].size)
+  start.resize(prog.num_vars())
 
   sim(prog, start, args.print_rule)
 

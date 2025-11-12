@@ -1,4 +1,5 @@
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 
@@ -25,7 +26,7 @@ def normalize_program(prog: Program) -> None:
   for rule in prog:
     rule.resize(size)
 
-def parse_program(prog_str: str) -> Program:
+def parse_fractions(prog_str: str) -> Program:
   rule_strs = prog_str.removeprefix("[").removesuffix("]").split(",")
   fracs = []
   width = 0
@@ -40,4 +41,25 @@ def parse_program(prog_str: str) -> Program:
     top.resize(width)
     bot.resize(width)
     prog.append(top - bot)
-  return prog
+  return Program(prog)
+
+def parse_vectors(prog_str: str) -> Program:
+  prog = []
+  for line in prog_str.split("\n"):
+    line = line.strip().removeprefix("[").removesuffix("]")
+    if line:
+      prog.append(np.fromstring(line, dtype=int, sep=" "))
+  return Program(prog)
+
+
+def load_program(prog_or_filename: str | Path) -> Program:
+  if not prog_or_filename.startswith("["):
+    with open(prog_or_filename, "r") as f:
+      prog_str = f.read()
+  else:
+    prog_str = prog_or_filename
+
+  if "/" in prog_str:
+    return parse_fractions(prog_str)
+  else:
+    return parse_vectors(prog_str)

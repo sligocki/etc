@@ -11,15 +11,31 @@ def print_program(prog: Program):
   print()
   print(prog)
 
+def latex_str(prog: Program) -> str:
+  def cell_str(cell: int) -> str:
+    if cell:
+      return f"{cell:+5d}"
+    else:
+      return " "*5
+
+  rows = []
+  for rule in prog.rules:
+    rows.append(" & ".join(cell_str(cell) for cell in rule.array))
+  return r"\begin{bmatrix}" + "\n" + " \\\\\n".join(rows) + "\n" + r"\end{bmatrix}"
+
 
 def main() -> None:
   parser = argparse.ArgumentParser()
   parser.add_argument("programs", nargs="+")
+  parser.add_argument("--latex", action="store_true")
   args = parser.parse_args()
 
   for arg in args.programs:
     prog = load_program(arg)
-    print_program(prog)
+    if args.latex:
+      print(latex_str(prog))
+    else:
+      print_program(prog)
     print()
 
 if __name__ == "__main__":

@@ -1,13 +1,13 @@
 import argparse
 
-import numpy as np
-
 from base import State, Program
-from parse import load_program, prime_factor
+from parse import load_program
 
 
 def sim(prog: Program, in_state: State, print_rule: int) -> None:
   print(f"Program cost: {prog.cost()}")
+  print(prog.fractions_str())
+  print()
   print(prog)
   print()
   print("Start:", in_state)
@@ -31,8 +31,7 @@ def main() -> None:
   args = parser.parse_args()
 
   prog = load_program(args.program)
-  start_vals = prime_factor(args.start)
-  start = State.from_seq(start_vals, prog.num_registers())
+  start = State.from_int(args.start, prog.num_registers())
 
   sim(prog, start, args.print_rule)
 

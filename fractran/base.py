@@ -1,6 +1,9 @@
 from dataclasses import dataclass
+from fractions import Fraction
 
 import numpy as np
+
+from primes import prime_factor, factors_to_frac, factors_to_int
 
 
 def make_array(vals, width: int) -> np.ndarray:
@@ -19,6 +22,8 @@ class Rule:
 
   def __str__(self) -> str:
     return str(self.array)
+  def as_fraction(self) -> Fraction:
+    return factors_to_frac(list(self.array))
 
   def cost(self) -> int:
     return np.abs(self.array).sum()
@@ -30,8 +35,9 @@ class State:
   array: np.ndarray
 
   @staticmethod
-  def from_seq(vals, num_registers: int) -> State:
-    return State(make_array(vals, num_registers))
+  def from_int(val: int, num_registers: int) -> State:
+    factors = prime_factor(val)
+    return State(make_array(factors, num_registers))
 
   def try_apply(self, rule: Rule) -> State | None:
     new_array = self.array + rule.array
@@ -42,6 +48,8 @@ class State:
 
   def __str__(self) -> str:
     return str(self.array)
+  def as_int(self) -> int:
+    return factors_to_int(list(self.array))
 
 @dataclass(frozen=True)
 class Program:
@@ -61,9 +69,9 @@ class Program:
     # We treat "halt" as applying rule after last rule (max_rule_num+1).
     return (None, self.num_rules())
 
-
-  # def __iter__(self):
-  #   yield from self.rules
-
   def __str__(self) -> str:
     return "\n".join(str(rule) for rule in self.rules)
+  def as_fractions(self) -> list[Fraction]:
+    return [rule.as_fraction() for rule in self.rules]
+  def fractions_str(self) -> str:
+    return "[" + ", ".join(str(frac) for frac in self.as_fractions()) + "]"

@@ -1,20 +1,15 @@
+#!/usr/bin/env python3
+
 import argparse
 
 from base import State, Program
 from parse import load_program
+from show import print_program
 
 
-def sim(prog: Program, in_state: State, print_rule: int) -> None:
-  print(f"Program cost: {prog.cost()}")
-  print(prog.fractions_str())
-  print()
-  print(prog)
-  print()
-  print("Start:", in_state)
-  print()
-
+def sim(prog: Program, start: State, print_rule: int) -> None:
   num_steps = 0
-  state : State | None = in_state
+  state : State | None = start
   while state is not None:
     next_state, rule_num = prog.step(state)
     num_steps += 1
@@ -32,6 +27,11 @@ def main() -> None:
 
   prog = load_program(args.program)
   start = State.from_int(args.start, prog.num_registers())
+
+  print_program(prog)
+  print()
+  print("Start:", start)
+  print()
 
   sim(prog, start, args.print_rule)
 

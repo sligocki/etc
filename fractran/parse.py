@@ -7,7 +7,7 @@ from primes import prime_factor
 
 
 def parse_fractions(prog_str: str) -> Program:
-  rule_strs = prog_str.removeprefix("[").removesuffix("]").split(",")
+  rule_strs = prog_str.strip().removeprefix("[").removesuffix("]").split(",")
   fracs = []
   num_reg = 0
   for rule_str in rule_strs:

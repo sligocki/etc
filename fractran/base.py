@@ -6,10 +6,11 @@ import numpy as np
 from primes import prime_factor, factors_to_frac, factors_to_int
 
 
-def make_array(vals, width: int) -> np.ndarray:
+def make_array(vals, width: int = 0) -> np.ndarray:
   arr = np.array(vals, dtype=int)
-  assert width >= arr.size, (arr, width)
-  arr.resize(width)
+  if width:
+    assert width >= arr.size, (arr, width)
+    arr.resize(width)
   return arr
 
 @dataclass(frozen=True)

@@ -29,15 +29,38 @@ def parse_vectors(prog_str: str) -> Program:
       prog.append(Rule(np.fromstring(line, dtype=int, sep=" ")))
   return Program(prog)
 
-
-def load_program(prog_or_filename: str | Path) -> Program:
-  if Path(prog_or_filename).exists():
-    with open(prog_or_filename, "r") as f:
-      prog_str = f.read()
-  else:
-    prog_str = str(prog_or_filename)
-
+def parse_program(prog_str: str) -> Program:
   if "/" in prog_str:
     return parse_fractions(prog_str)
   else:
     return parse_vectors(prog_str)
+
+def read_file(filename_record: str) -> str:
+  if ":" in filename_record:
+    filename, record_num = filename_record.split(":")
+    filename = Path(filename)
+    record_num = int(record_num)
+  else:
+    filename = Path(filename_record)
+    record_num = None
+  if not filename.exists():
+    raise FileExistsError(filename)
+  with open(filename, "r") as f:
+    if record_num is not None:
+      # TODO: This assumes 1 record per line, which is not "currently" true for vec format.
+      return f.readlines()[record_num]
+    else:
+      return f.read()
+
+def load_program(prog_or_filename: str) -> Program:
+  if not prog_or_filename.startswith("["):
+    prog_str = read_file(prog_or_filename)
+  else:
+    prog_str = str(prog_or_filename)
+
+  return parse_program(prog_str)
+
+def enum_programs(filename: Path):
+  with open(filename, "r") as f:
+    for line in f:
+      yield parse_program(line)

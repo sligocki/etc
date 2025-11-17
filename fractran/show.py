@@ -6,7 +6,8 @@ from base import Program
 from parse import load_program
 
 def print_program(prog: Program):
-  print(f"Program cost: {prog.cost()}")
+  print(f"Size: {prog.cost()}")
+  print(f"Bit size: {prog.bit_size()}")
   print(prog.fractions_str())
   print()
   print(prog)

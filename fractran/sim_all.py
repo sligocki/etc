@@ -24,7 +24,8 @@ def run(prog: Program, start: State, max_steps: int) -> SimResult:
   while state is not None and num_steps < max_steps:
     prev_state = state
     state, _ = prog.step(state)
-    num_steps += 1
+    if state is not None:
+      num_steps += 1
   return SimResult(halted=(state is None), num_steps=num_steps, final_state=prev_state)
 
 

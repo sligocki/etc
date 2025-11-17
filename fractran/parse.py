@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import numpy as np
 
@@ -22,11 +23,18 @@ def parse_fractions(prog_str: str) -> Program:
   return Program(prog)
 
 def parse_vectors(prog_str: str) -> Program:
+  matches = re.findall("\[ *([-+0-9 ]*?) *\]", prog_str)
+  rows = []
+  max_width = 0
+  for match in matches:
+    if match:
+      row = np.fromstring(match, dtype=int, sep=" ")
+      max_width = max(max_width, row.size)
+      rows.append(row)
   prog = []
-  for line in prog_str.split("\n"):
-    line = line.strip().removeprefix("[").removesuffix("]")
-    if line:
-      prog.append(Rule(np.fromstring(line, dtype=int, sep=" ")))
+  for row in rows:
+    row.resize(max_width)
+    prog.append(Rule(row))
   return Program(prog)
 
 def parse_program(prog_str: str) -> Program:

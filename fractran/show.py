@@ -13,10 +13,7 @@ def print_program(prog: Program):
 
 def latex_str(prog: Program) -> str:
   def cell_str(cell: int) -> str:
-    if cell:
-      return f"{cell:+5d}"
-    else:
-      return " "*5
+    return f"{cell:5d}"
 
   rows = []
   for rule in prog.rules:

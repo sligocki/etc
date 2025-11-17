@@ -28,7 +28,11 @@ def parse_vectors(prog_str: str) -> Program:
   max_width = 0
   for match in matches:
     if match:
-      row = np.fromstring(match, dtype=int, sep=" ")
+      try:
+        row = np.fromstring(match, dtype=int, sep=" ")
+      except:
+        print("Error parsing row:", match)
+        raise
       max_width = max(max_width, row.size)
       rows.append(row)
   prog = []

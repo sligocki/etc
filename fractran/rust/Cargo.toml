@@ -1,0 +1,10 @@
+[package]
+name = "pvas_sim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+prime_factorization = "1.0"
+primal = "0.3"
+rayon = "1.8"
+indicatif = {version = "0.18", features = ["rayon"]}

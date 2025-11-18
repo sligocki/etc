@@ -1,13 +1,11 @@
 mod parse;
 mod program;
 
-use crate::parse::parse_program;
+use crate::parse::{parse_program, load_lines};
 use crate::program::{Int, SimResult, State};
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use std::env;
-use std::fs::File;
-use std::io::{self, BufRead};
 use std::time::{Duration, Instant};
 
 struct TaskResult {
@@ -34,7 +32,7 @@ fn parse_and_sim(program_str: &str, steps_limit: Int) -> TaskResult {
 
 // --- The Main Runner ---
 
-fn main() -> io::Result<()> {
+fn main() {
     // 1. Parse Command Line Arguments
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
@@ -45,28 +43,9 @@ fn main() -> io::Result<()> {
     let filename = &args[1];
     let steps_limit: Int = args[2].parse().expect("Invalid step count provided");
 
-    // 2. Read All Programs into a Vector
-    let file = File::open(filename)?;
-    let reader = io::BufReader::new(file);
-
-    let programs: Vec<String> = reader
-        .lines()
-        .filter_map(|line| {
-            let line = line.ok()?;
-            let trimmed = line.trim();
-            if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("//") {
-                Some(trimmed.to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-
+    // 2. Load all program strings
+    let programs = load_lines(filename);
     let num_programs = programs.len();
-    if num_programs == 0 {
-        println!("No valid programs found in file.");
-        return Ok(());
-    }
 
     println!(
         "Simulating {} programs for {} steps using {} threads",
@@ -85,7 +64,7 @@ fn main() -> io::Result<()> {
 
     let wallclock_time_sec = wallclock_start_time.elapsed().as_secs_f64();
 
-    // 4. Reporting and Summary
+    // 4. Summarize results
     let halted_count = results.iter().filter(|r| r.sim.halted).count();
     let frac_halted = halted_count as f64 / num_programs as f64;
     let total_steps_simulated: Int = results.iter().map(|r| r.sim.total_steps).sum();
@@ -112,6 +91,4 @@ fn main() -> io::Result<()> {
     println!("  Total: {:.2} core-sec", total_thread_runtime_sec);
     println!("  Mean:  {:.2} core-sec / program", mean_runtime_sec);
     println!("  Max:   {:.2} core-sec", max_runtime_sec);
-
-    Ok(())
 }

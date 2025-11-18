@@ -2,9 +2,10 @@ use crate::program::{Int, Program, Rule};
 use primal::Primes;
 use prime_factorization::Factorization;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, BufRead};
 
-// --- Parsing & Conversion Logic ---
-
+// Parse a Fractran program and convert into vector form.
 pub fn parse_program(program_str: &str) -> Program {
     // 1. Clean and split string
     let clean_str = program_str.replace(['[', ']', ' '], "");
@@ -76,4 +77,23 @@ pub fn parse_program(program_str: &str) -> Program {
     }
 
     Program { rules }
+}
+
+// Load all program strings from a file (without parsing).
+pub fn load_lines(filename: &str) -> Vec<String> {
+    let file = File::open(filename).expect("File not found");
+    let reader = io::BufReader::new(file);
+
+    reader
+        .lines()
+        .filter_map(|line| {
+            let line = line.ok()?;
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("//") {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }

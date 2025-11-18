@@ -1,4 +1,4 @@
-use crate::pvas::{Int, Program, Rule};
+use crate::program::{Int, Program, Rule};
 use primal::Primes;
 use prime_factorization::Factorization;
 use std::collections::HashMap;

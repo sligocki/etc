@@ -1,8 +1,8 @@
 mod parse;
-mod pvas;
+mod program;
 
 use crate::parse::parse_program;
-use crate::pvas::{Int, State, SimResult};
+use crate::program::{Int, SimResult, State};
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use std::env;

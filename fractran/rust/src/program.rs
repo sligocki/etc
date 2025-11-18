@@ -35,7 +35,7 @@ impl State {
 
 impl Rule {
     pub fn new(data: Vec<Int>) -> Rule {
-        Rule {data}
+        Rule { data }
     }
 
     pub fn num_registers(&self) -> usize {
@@ -62,7 +62,10 @@ impl Program {
         self.rules.len()
     }
     pub fn num_registers(&self) -> usize {
-        self.rules.first().expect("Program has rules").num_registers()
+        self.rules
+            .first()
+            .expect("Program has rules")
+            .num_registers()
     }
 
     // Returns true if a rule was applied, false if halted.

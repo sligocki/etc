@@ -1,8 +1,8 @@
 mod parse;
 mod pvas;
 
-use crate::parse::parse_and_convert;
-use crate::pvas::{Int, SimResult};
+use crate::parse::parse_program;
+use crate::pvas::{Int, State, SimResult};
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use std::env;
@@ -18,8 +18,9 @@ struct TaskResult {
 // Helper function to run the simulation and collect results
 fn parse_and_sim(program_str: &str, steps_limit: Int) -> TaskResult {
     let start_time = Instant::now();
-    let (pvas, mut state) = parse_and_convert(program_str);
-    let sim_result = pvas.run(&mut state, steps_limit);
+    let prog = parse_program(program_str);
+    let mut state = State::start(&prog);
+    let sim_result = prog.run(&mut state, steps_limit);
 
     if sim_result.halted {
         println!("  Halt: {} steps: {}", sim_result.total_steps, program_str);

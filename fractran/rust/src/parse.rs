@@ -1,11 +1,11 @@
-use crate::pvas::{Int, PVAS};
+use crate::pvas::{Int, Program, Rule};
 use primal::Primes;
 use prime_factorization::Factorization;
 use std::collections::HashMap;
 
 // --- Parsing & Conversion Logic ---
 
-pub fn parse_and_convert(program_str: &str) -> (PVAS, Vec<Int>) {
+pub fn parse_program(program_str: &str) -> Program {
     // 1. Clean and split string
     let clean_str = program_str.replace(['[', ']', ' '], "");
     let parts: Vec<&str> = clean_str.split(',').collect();
@@ -53,15 +53,15 @@ pub fn parse_and_convert(program_str: &str) -> (PVAS, Vec<Int>) {
     }
 
     // 4. Build Matrix
-    let num_rules = rules_fractions.len();
-    let mut matrix_flat = vec![0 as Int; dims * num_rules];
+    let mut rules: Vec<Rule> = Vec::new();
 
-    for (row, (num, den)) in rules_fractions.iter().enumerate() {
+    for (num, den) in rules_fractions.iter() {
+        let mut rule = vec![0 as Int; dims];
         // Handle Numerator (Additions)
         let num_factors = Factorization::run(*num);
         for p in num_factors.factors {
             if let Some(&col) = prime_map.get(&p) {
-                matrix_flat[row * dims + col] += 1;
+                rule[col] += 1;
             }
         }
 
@@ -69,18 +69,11 @@ pub fn parse_and_convert(program_str: &str) -> (PVAS, Vec<Int>) {
         let den_factors = Factorization::run(*den);
         for p in den_factors.factors {
             if let Some(&col) = prime_map.get(&p) {
-                matrix_flat[row * dims + col] -= 1;
+                rule[col] -= 1;
             }
         }
+        rules.push(Rule::new(rule));
     }
 
-    let pvas = PVAS::new(matrix_flat, dims, num_rules);
-
-    // 5. Initial State: N=2 corresponds to 2^1, so index 0 = 1, others = 0.
-    let mut state = vec![0 as Int; dims];
-    if dims > 0 {
-        state[0] = 1;
-    }
-
-    (pvas, state)
+    Program { rules }
 }

@@ -6,17 +6,6 @@ import numpy as np
 from primes import prime_factor, factors_to_frac, factors_to_int
 
 
-def fib_size(n: int) -> int:
-  """Size of `n` when encoded using Fibinacci coding
-    https://en.wikipedia.org/wiki/Fibonacci_coding
-    1 -> "11", 2 -> "011", 3 -> "0011", 4 -> "1011", ..."""
-  # Fib size increases by one at each fib number, starting from size 2 for 1.
-  size, a, b = 1, 1, 1
-  while b <= n:
-    a, b = b, a+b
-    size += 1
-  return size
-
 def make_array(vals, width: int = 0) -> np.ndarray:
   arr = np.array(vals, dtype=int)
   if width:
@@ -40,10 +29,6 @@ class Rule:
   def cost(self) -> int:
     """Measure size of rule in number of prime factors of both num and denom."""
     return np.abs(self.array).sum()
-  def bit_size(self) -> int:
-    """Measure size of rule in bits using Fibinacci coding."""
-    top, bot = self.as_fraction().as_integer_ratio()
-    return fib_size(top) + fib_size(bot)
   def num_registers(self) -> int:
     return self.array.size
 
@@ -79,9 +64,6 @@ class Program:
   def cost(self) -> int:
     """Measure size of program in number of prime factors of all fractions + num rules."""
     return self.num_rules() + sum(rule.cost() for rule in self.rules)
-  def bit_size(self) -> int:
-    """Measure size of program in bits using a prefix-free encoding using Fibinacci coding."""
-    return fib_size(self.num_rules()) + sum(rule.bit_size() for rule in self.rules)
 
   def step(self, state: State) -> tuple[State | None, int]:
     for rule_num, rule in enumerate(self.rules):

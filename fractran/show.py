@@ -3,11 +3,12 @@
 import argparse
 
 from base import Program
+from bit_code import fib_code_size
 from parse import load_program
 
 def print_program(prog: Program):
   print(f"Size: {prog.cost()}")
-  print(f"Bit size: {prog.bit_size()}")
+  print(f"Bit size: {fib_code_size(prog)}")
   print(prog.fractions_str())
   print()
   print(prog)

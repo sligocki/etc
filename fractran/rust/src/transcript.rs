@@ -2,7 +2,7 @@
 
 use crate::program::{Int, Program, State};
 use crate::state_diff::{StateDiff, StateDiffBound};
-use infinitable::{Finite, Infinity, NegativeInfinity};
+use infinitable::{Finite, Infinity};
 use std::cmp;
 
 // A transition is a description of which rule applied at each step and
@@ -54,7 +54,7 @@ pub fn transcript(prog: &Program, mut state: State, num_steps: Int) -> Vec<Trans
 //    state -> state + delta
 #[derive(Debug, PartialEq)]
 pub struct DiffRule {
-    pub min: StateDiffBound,
+    pub min: StateDiff,
     pub max: StateDiffBound,
     pub delta: StateDiff,
 }
@@ -63,7 +63,7 @@ impl DiffRule {
     // Create a no-op DiffRule that always applies and does nothing.
     pub fn noop(size: usize) -> DiffRule {
         DiffRule {
-            min: StateDiffBound::new(vec![NegativeInfinity; size]),
+            min: StateDiff::new(vec![0; size]),
             max: StateDiffBound::new(vec![Infinity; size]),
             delta: StateDiff::new(vec![0; size]),
         }
@@ -88,10 +88,10 @@ impl DiffRule {
         let delta = prog.rules[trans.reg_fail.len()].data.clone();
         let min_vals = delta
             .iter()
-            .map(|n| if *n < 0 { Finite(-n) } else { NegativeInfinity })
+            .map(|n| if *n < 0 { -n } else { 0 })
             .collect();
         Some(DiffRule {
-            min: StateDiffBound::new(min_vals),
+            min: StateDiff::new(min_vals),
             max: StateDiffBound::new(max_vals),
             delta: StateDiff::new(delta),
         })
@@ -111,17 +111,16 @@ impl DiffRule {
     // Compute the DiffRule that corresponds to applying self and then other if possible.
     // Returns None if it is impossible to apply both rules in sequence.
     pub fn combine(&self, other: &DiffRule) -> Option<DiffRule> {
-        let first_delta: StateDiffBound = (&self.delta).into();
         // Compute min values for state before applying first_delta and then comparing to other.min.
-        let other_min = &other.min - &first_delta;
+        let other_min = &other.min - &self.delta;
         // Note: self.min: [0, 1, 2]  and  other_min: [1, 0, 0]   ->   min: [1, 1, 2]
         // ie: we need to choose max values pointwise.
         let min = self.min.pointwise_max(&other_min);
 
-        let other_max = &other.max - &first_delta;
+        let other_max = &other.max - &(&self.delta).into();
         let max = self.max.pointwise_min(&other_max);
 
-        if min <= max {
+        if max >= StateDiffBound::from(&min) {
             Some(DiffRule {
                 min,
                 max,
@@ -156,7 +155,7 @@ mod tests {
         let ta = trans![];
         let ra = DiffRule {
             max: sdb![Infinity, Infinity, Infinity],
-            min: sdb![NegativeInfinity, Finite(1), Finite(1)],
+            min: sd![0, 1, 1],
             delta: sd![1, -1, -1],
         };
         assert_eq!(eval_trans(&prog, &sa), ta);
@@ -166,7 +165,7 @@ mod tests {
         let tb = trans![2];
         let rb = DiffRule {
             max: sdb![Infinity, Infinity, Finite(0)],
-            min: sdb![Finite(1), NegativeInfinity, NegativeInfinity],
+            min: sd![1, 0, 0],
             delta: sd![-1, 2, 0],
         };
         assert_eq!(eval_trans(&prog, &sb), tb);
@@ -176,7 +175,7 @@ mod tests {
         let tc = trans![1];
         let rc = DiffRule {
             max: sdb![Infinity, Finite(0), Infinity],
-            min: sdb![Finite(1), NegativeInfinity, NegativeInfinity],
+            min: sd![1, 0, 0],
             delta: sd![-1, 2, 0],
         };
         assert_eq!(eval_trans(&prog, &sc), tc);
@@ -186,7 +185,7 @@ mod tests {
         let td = trans![1, 0];
         let rd = DiffRule {
             max: sdb![Finite(0), Finite(0), Infinity],
-            min: sdb![NegativeInfinity, NegativeInfinity, Finite(2)],
+            min: sd![0, 0, 2],
             delta: sd![0, 1, -2],
         };
         assert_eq!(eval_trans(&prog, &sd), td);
@@ -217,7 +216,7 @@ mod tests {
         let trans_vec = transcript(&hydra, shw, 2);
         let rule = DiffRule::from_trans_vec(&hydra, &trans_vec);
         let exp_rule = DiffRule {
-            min: sdb![Finite(1), Finite(0), NegativeInfinity, NegativeInfinity, Finite(2), NegativeInfinity],
+            min: sd![1, 0, 0, 0, 2, 0],
             max: sdb![Finite(1), Infinity, Infinity, Infinity, Infinity, Infinity],
             delta: sd![0, 0, 0, 0, -2, 3],
         };

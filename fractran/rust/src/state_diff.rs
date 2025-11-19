@@ -68,9 +68,15 @@ impl PartialOrd for StateDiff {
         let min_ord = element_ords.iter().min()?;
         let max_ord = element_ords.iter().max()?;
         match (min_ord, max_ord) {
+            // All equal
             (Ordering::Equal, Ordering::Equal) => Some(Ordering::Equal),
-            (Ordering::Less, Ordering::Equal) => Some(Ordering::Less),
-            (Ordering::Equal, Ordering::Greater) => Some(Ordering::Greater),
+            // Some less, some greater -> not comparible
+            (Ordering::Less, Ordering::Greater) => None,
+            // All ≤
+            (Ordering::Less, _) => Some(Ordering::Less),
+            // All ≥
+            (_, Ordering::Greater) => Some(Ordering::Greater),
+            // Impossible, but compiler doesn't know that.
             _ => None,
         }
     }
@@ -128,5 +134,15 @@ mod tests {
         // b and c are not comparible
         assert!(!(b <= c));
         assert!(!(c <= b));
+
+        let d = sd![1, 2, 3];
+        assert!(a <= d);
+        assert!(b <= d);
+        assert!(c <= d);
+
+        let max = sd![Int::MAX, Int::MAX, Int::MAX];
+        assert!(a <= max);
+        assert!(b <= max);
+        assert!(c <= max);
     }
 }

@@ -1,8 +1,7 @@
-mod parse;
-mod program;
+// Simulate all programs in a file for some number of steps and keep track of halting times.
 
-use crate::parse::{parse_program, load_lines};
-use crate::program::{Int, SimResult, State};
+use fractran::parse::{load_lines, parse_program};
+use fractran::program::{Int, SimResult, State};
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use std::env;
@@ -29,8 +28,6 @@ fn parse_and_sim(program_str: &str, steps_limit: Int) -> TaskResult {
         duration: start_time.elapsed(),
     }
 }
-
-// --- The Main Runner ---
 
 fn main() {
     // 1. Parse Command Line Arguments
@@ -67,13 +64,26 @@ fn main() {
     // 4. Summarize results
     let halted_count = results.iter().filter(|r| r.sim.halted).count();
     let frac_halted = halted_count as f64 / num_programs as f64;
+    let max_halt_steps = results
+        .iter()
+        .map(|r| if r.sim.halted { r.sim.total_steps } else { 0 })
+        .max()
+        .unwrap();
     let total_steps_simulated: Int = results.iter().map(|r| r.sim.total_steps).sum();
 
     let wallclock_rate = total_steps_simulated as f64 / wallclock_time_sec;
 
-    let runtimes = results.iter().map(|r| r.duration);
-    let max_runtime_sec = runtimes.clone().max().unwrap().as_secs_f64();
-    let total_thread_runtime_sec = runtimes.sum::<Duration>().as_secs_f64();
+    let max_runtime_sec = results
+        .iter()
+        .map(|r| r.duration)
+        .max()
+        .unwrap()
+        .as_secs_f64();
+    let total_thread_runtime_sec = results
+        .iter()
+        .map(|r| r.duration)
+        .sum::<Duration>()
+        .as_secs_f64();
     let mean_runtime_sec = total_thread_runtime_sec / num_programs as f64;
 
     println!("\nResults Summary:");
@@ -83,6 +93,7 @@ fn main() {
         num_programs,
         frac_halted * 100.0
     );
+    println!("  Max Halt Steps: {}", max_halt_steps);
     println!("  Total steps: {}", total_steps_simulated);
     println!("Wallclock Time:");
     println!("  {:.2} seconds", wallclock_time_sec);

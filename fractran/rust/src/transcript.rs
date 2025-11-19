@@ -59,6 +59,11 @@ pub struct DiffRule {
 }
 
 impl DiffRule {
+    // Compute DiffRule corresponding to an single transition.
+    // Based on one transition, the delta is just the applicable rule and
+    // the min is just the the negation of all the negaive values in rule.
+    // The max is based off of all the previous rules failing to apply and
+    // depends on the specific Trans.reg_fail values.
     pub fn from_trans(prog: &Program, trans: &Trans) -> DiffRule {
         let mut max_vals = vec![Int::MAX; prog.num_registers()];
         for (rule, reg_fail) in prog.rules.iter().zip(trans.reg_fail.iter()) {
@@ -75,14 +80,26 @@ impl DiffRule {
         }
     }
 
-    pub fn combine(&self, other: &DiffRule) -> DiffRule {
+    // Compute the DiffRule that corresponds to applying self and then other if possible.
+    // Returns None if it is impossible to apply both rules in sequence.
+    pub fn combine(&self, other: &DiffRule) -> Option<DiffRule> {
+        // Compute min values for state before applying self.delta and then comparing to other.min.
         let other_min = &other.min - &self.delta;
-        let other_max = &other.max - &self.delta;
+        // Note: self.min: [0, 1, 2]  and  other_min: [1, 0, 0]   ->   min: [1, 1, 2]
+        // ie: we need to choose max values pointwise.
+        let min = self.min.pointwise_max(&other_min);
 
-        DiffRule {
-            min: self.min.pointwise_max(&other_min),
-            max: self.max.pointwise_min(&other_max),
-            delta: &self.delta + &other.delta,
+        let other_max = &other.max - &self.delta;
+        let max = self.max.pointwise_min(&other_max);
+
+        if min <= max {
+            Some(DiffRule {
+                min,
+                max,
+                delta: &self.delta + &other.delta,
+            })
+        } else {
+            None
         }
     }
 }

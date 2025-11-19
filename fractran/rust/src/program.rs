@@ -9,7 +9,7 @@ pub struct State {
 // Fractran/pVAS rule ()
 #[derive(Debug)]
 pub struct Rule {
-    data: Vec<Int>,
+    pub data: Vec<Int>,
 }
 
 #[derive(Debug)]

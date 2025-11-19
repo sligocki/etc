@@ -12,7 +12,7 @@ fn main() {
         std::process::exit(1);
     }
     let filename_record = &args[1];
-    let print_steps = 1_000_000_000;
+    let print_steps = 100_000_000;
 
     let prog = load_program(filename_record).expect("Couldn't load program from file");
     let mut state = State::start(&prog);

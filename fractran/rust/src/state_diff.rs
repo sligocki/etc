@@ -1,6 +1,6 @@
 // TODO: Use this in Program to implement Rule/State?
 
-use infinitable::{Infinitable, Infinity, NegativeInfinity};
+use infinitable::{Infinitable, Infinity, NegativeInfinity, Finite};
 use std::cmp::{self, Ordering};
 use std::ops::{Add, AddAssign, Sub};
 
@@ -18,6 +18,12 @@ where
 pub type StateDiff = StateDiffBase<Int>;
 // Useful for min/max bounds where default is either +- infinity.
 pub type StateDiffBound = StateDiffBase<Infinitable<Int>>;
+
+impl From<&StateDiff> for StateDiffBound {
+    fn from(sd: &StateDiff) -> StateDiffBound {
+        StateDiffBound { data: sd.data.iter().map(|x| Finite(*x)).collect() }
+    }
+}
 
 impl<T> StateDiffBase<T>
 where
@@ -129,7 +135,6 @@ macro_rules! sdb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use infinitable::Finite;
 
     #[test]
     fn test_add_sub() {
@@ -182,7 +187,7 @@ mod tests {
     fn test_order_bound() {
         let min = StateDiffBound::new_min(3);
         let max = StateDiffBound::new_max(3);
-        let x = sdb![Finite(10), Finite(-20), Finite(0)];
+        let x = StateDiffBound::from(&sd![10, -20, 0]);
         assert!(min <= max);
         assert!(min <= x);
         assert!(x <= max);

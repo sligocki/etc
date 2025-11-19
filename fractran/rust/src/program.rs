@@ -1,13 +1,13 @@
 pub type Int = i64;
 
 // Fractran/pVAS configuration state
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct State {
     data: Vec<Int>,
 }
 
 // Fractran/pVAS rule ()
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Rule {
     pub data: Vec<Int>,
 }
@@ -24,6 +24,10 @@ pub struct SimResult {
 }
 
 impl State {
+    pub fn new(data: Vec<Int>) -> State {
+        State { data }
+    }
+
     // Initial state (scaled to number of registers of program).
     pub fn start(prog: &Program) -> State {
         let num_regs = prog.num_registers();
@@ -101,3 +105,43 @@ impl Program {
         }
     }
 }
+
+#[macro_export]
+macro_rules! state {
+    ($($x:expr),* $(,)?) => {
+        State::new(vec![$($x),*])
+    };
+}
+
+#[macro_export]
+macro_rules! rule {
+    ($($x:expr),* $(,)?) => {
+        Rule::new(vec![$($x),*])
+    };
+}
+
+// let p = prog![ 1, -1, -1;
+//               -1,  2,  0;
+//                0,  1, -2];
+#[macro_export]
+macro_rules! prog {
+    // The pattern matches rows separated by semicolons (;).
+    // Inside each row, expressions are separated by commas (,).
+    // $(;)? allows for an optional trailing semicolon.
+    ( $( $( $x:expr ),* );* ) => {
+        Program { rules: vec![
+            $(
+                Rule::new(vec![ $( $x ),* ])
+            ),*
+        ] }
+    }
+}
+
+// TODO: Add tests
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+
+//     #[test]
+//     fn test_foo() {}
+// }

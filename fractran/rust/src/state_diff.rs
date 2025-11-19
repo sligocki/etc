@@ -77,6 +77,7 @@ impl PartialOrd for StateDiff {
 }
 
 // sd![...] = StateDiff::new(vec![...])
+// #[macro_export]
 macro_rules! sd {
     ($($x:expr),* $(,)?) => {
         StateDiff::new(vec![$($x),*])
@@ -85,7 +86,6 @@ macro_rules! sd {
 
 #[cfg(test)]
 mod tests {
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
 
     #[test]

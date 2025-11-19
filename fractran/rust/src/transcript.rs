@@ -6,6 +6,7 @@ use std::cmp;
 
 // A transition is a description of which rule applied at each step and
 // why the previous rules did not apply.
+#[derive(Debug, PartialEq)]
 pub struct Trans {
     // For each previous rule, which register caused the rule to not apply
     // (because it would go negative).
@@ -13,11 +14,17 @@ pub struct Trans {
 }
 
 pub fn step(prog: &Program, state: &mut State) -> Trans {
-    let reg_fail = prog
-        .rules
-        .iter()
-        .filter_map(|r| r.can_apply(state).err())
-        .collect();
+    let mut reg_fail: Vec<usize> = Vec::new();
+    for rule in prog.rules.iter() {
+        match rule.can_apply(state) {
+            Err(reg) => {
+                reg_fail.push(reg);
+            }
+            Ok(_) => {
+                break;
+            }
+        }
+    }
     Trans { reg_fail }
 }
 
@@ -32,6 +39,7 @@ pub fn transcript(prog: &Program, state: &mut State, num_steps: Int) -> Vec<Tran
 // Inductive Diff Rule based on a Trans.
 // If min ≤ state ≤ max:
 //    state -> state + delta
+#[derive(Debug, PartialEq)]
 pub struct DiffRule {
     pub min: StateDiff,
     pub max: StateDiff,
@@ -65,4 +73,38 @@ impl DiffRule {
     }
 }
 
-// TODO: Add tests
+#[macro_export]
+macro_rules! trans {
+    ($($x:expr),* $(,)?) => {
+        Trans { reg_fail: vec![$($x),*] }
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::Rule;
+    use crate::{prog, state};
+
+    #[test]
+    fn test_trans() {
+        let prog = prog![ 1, -1, -1;
+                         -1,  2,  0;
+                          0,  1, -2];
+
+        let a = state![1, 2, 3];
+        assert_eq!(step(&prog, &mut a.clone()), trans![]);
+
+        let b = state![1, 2, 0];
+        assert_eq!(step(&prog, &mut b.clone()), trans![2]);
+
+        let c = state![1, 0, 3];
+        assert_eq!(step(&prog, &mut c.clone()), trans![1]);
+
+        let d = state![0, 0, 3];
+        assert_eq!(step(&prog, &mut d.clone()), trans![1, 0]);
+
+        let e = state![0, 0, 1];
+        assert_eq!(step(&prog, &mut e.clone()), trans![1, 0, 2]);
+    }
+}

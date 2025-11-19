@@ -103,10 +103,7 @@ impl DiffRule {
         let rules = trans_vec.iter().map(|t| DiffRule::from_trans(prog, t));
         let mut comb_rule = DiffRule::noop(prog.num_registers());
         for rule in rules {
-            // println!(" Walrus A: {:?}", comb_rule);
-            // println!(" Walrus B: {:?}", rule);
             comb_rule = comb_rule.combine(&rule?)?;
-            // println!(" Walrus C: {:?}", comb_rule);
         }
         Some(comb_rule)
     }
@@ -123,8 +120,6 @@ impl DiffRule {
 
         let other_max = &other.max - &first_delta;
         let max = self.max.pointwise_min(&other_max);
-
-        // println!(" Walrus D: {:?} {:?} {}", min, max, min <= max);
 
         if min <= max {
             Some(DiffRule {
@@ -203,29 +198,29 @@ mod tests {
         assert_eq!(DiffRule::from_trans(&prog, &te), None);
     }
 
-    // #[test]
-    // fn test_transcript() {
-    //     // Hydra simulator: [507/22, 26/33, 245/2, 5/21, 1/3, 11/13, 22/5]
-    //     // S(h, w) = [1, 0, 0, w, h-3, 0]
-    //     let hydra = prog![
-    //         -1,  1,  0,  0, -1,  2;
-    //          1, -1,  0,  0, -1,  1;
-    //         -1,  0,  1,  2,  0,  0;
-    //          0, -1,  1, -1,  0,  0;
-    //          0, -1,  0,  0,  0,  0;
-    //          0,  0,  0,  0,  1, -1;
-    //          1,  0, -1,  0,  1,  0;
-    //     ];
+    #[test]
+    fn test_transcript() {
+        // Hydra simulator: [507/22, 26/33, 245/2, 5/21, 1/3, 11/13, 22/5]
+        // S(h, w) = [1, 0, 0, w, h-3, 0]
+        let hydra = prog![
+            -1,  1,  0,  0, -1,  2;
+             1, -1,  0,  0, -1,  1;
+            -1,  0,  1,  2,  0,  0;
+             0, -1,  1, -1,  0,  0;
+             0, -1,  0,  0,  0,  0;
+             0,  0,  0,  0,  1, -1;
+             1,  0, -1,  0,  1,  0;
+        ];
 
-    //     // [1, 0, 0, w, h+2, H] -> [1, 0, 0, w, h, H+3]
-    //     let shw = state![1, 0, 0, 10, 10, 0];
-    //     let trans_vec = transcript(&hydra, shw, 2);
-    //     let rule = DiffRule::from_trans_vec(&hydra, &trans_vec);
-    //     let exp_rule = DiffRule {
-    //         min: sdb![Finite(1), NegativeInfinity, NegativeInfinity, NegativeInfinity, Finite(2), NegativeInfinity],
-    //         max: sdb![Finite(1), Finite(0), Infinity, Infinity, Infinity, Infinity],
-    //         delta: sd![0, 0, 0, 0, -2, 3],
-    //     };
-    //     assert_eq!(rule, Some(exp_rule));
-    // }
+        // [1, 0, 0, w, h+2, H] -> [1, 0, 0, w, h, H+3]
+        let shw = state![1, 0, 0, 10, 10, 0];
+        let trans_vec = transcript(&hydra, shw, 2);
+        let rule = DiffRule::from_trans_vec(&hydra, &trans_vec);
+        let exp_rule = DiffRule {
+            min: sdb![Finite(1), Finite(0), NegativeInfinity, NegativeInfinity, Finite(2), NegativeInfinity],
+            max: sdb![Finite(1), Infinity, Infinity, Infinity, Infinity, Infinity],
+            delta: sd![0, 0, 0, 0, -2, 3],
+        };
+        assert_eq!(rule, Some(exp_rule));
+    }
 }

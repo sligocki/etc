@@ -1,7 +1,7 @@
 // TODO: Use this in Program to implement Rule/State?
 
 use std::cmp::{self, Ordering};
-use std::ops::{Add, AddAssign,Sub};
+use std::ops::{Add, AddAssign, Sub};
 
 pub type Int = i64;
 
@@ -32,8 +32,8 @@ impl StateDiff {
     }
 }
 
-impl AddAssign for StateDiff {
-    fn add_assign(&mut self, other: Self) {
+impl AddAssign<&StateDiff> for StateDiff {
+    fn add_assign(&mut self, other: &StateDiff) {
         for (val, delta) in self.data.iter_mut().zip(other.data.iter()) {
             *val += delta;
         }
@@ -76,4 +76,57 @@ impl PartialOrd for StateDiff {
     }
 }
 
-// TODO: Add tests
+// sd![...] = StateDiff::new(vec![...])
+macro_rules! sd {
+    ($($x:expr),* $(,)?) => {
+        StateDiff::new(vec![$($x),*])
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+
+    #[test]
+    fn test_add_sub() {
+        let mut a = sd![9, -4, 5, 6, -4];
+        let b = sd![0, -2, -9, 0, 6];
+
+        let c = sd![9, -6, -4, 6, 2];
+        assert_eq!(&a + &b, c);
+
+        let d = sd![9, -2, 14, 6, -10];
+        assert_eq!(&a - &b, d);
+
+        a += &b;
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn test_min_max() {
+        let a = sd![9, -4, 5, -6, -4];
+        let b = sd![0, -2, 9, 0, 6];
+
+        let min = sd![0, -4, 5, -6, -4];
+        assert_eq!(a.pointwise_min(&b), min);
+        assert_eq!(b.pointwise_min(&a), min);
+
+        let max = sd![9, -2, 9, 0, 6];
+        assert_eq!(a.pointwise_max(&b), max);
+        assert_eq!(b.pointwise_max(&a), max);
+    }
+
+    #[test]
+    fn test_order() {
+        let a = sd![0, 0, 0];
+        let b = sd![0, 0, 1];
+        let c = sd![0, 1, 0];
+
+        assert!(a <= b);
+        assert!(a <= c);
+        // b and c are not comparible
+        assert!(!(b <= c));
+        assert!(!(c <= b));
+    }
+}

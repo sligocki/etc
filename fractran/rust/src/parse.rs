@@ -97,3 +97,18 @@ pub fn load_lines(filename: &str) -> Vec<String> {
         })
         .collect()
 }
+
+// Parse a filename with optional trailing :n record number (defaults to 0).
+pub fn split_filename_record(filename_record: &str) -> (String, usize) {
+    match filename_record.split_once(":") {
+        Some((left, right)) => (left.to_string(), right.parse().expect("Invalid record_num")),
+        None => (filename_record.to_string(), 0),
+    }
+}
+
+pub fn load_program(filename_record: &str) -> Option<Program> {
+    let (filename, record_num) = split_filename_record(filename_record);
+    let lines = load_lines(&filename);
+    let prog_str = lines.iter().nth(record_num)?;
+    Some(parse_program(prog_str))
+}

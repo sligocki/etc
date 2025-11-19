@@ -1,7 +1,8 @@
 // Evaluate the "transcript" or rule history for a simulation.
 
 use crate::program::{Int, Program, State};
-use crate::state_diff::StateDiff;
+use crate::state_diff::{StateDiff, StateDiffBound};
+use infinitable::{Finite, Infinity, NegativeInfinity};
 use std::cmp;
 
 // A transition is a description of which rule applied at each step and
@@ -40,10 +41,10 @@ pub fn step(prog: &Program, state: &mut State) -> Trans {
 }
 
 // Simulate for num_steps keeping track of Trans at each step.
-pub fn transcript(prog: &Program, state: &mut State, num_steps: Int) -> Vec<Trans> {
+pub fn transcript(prog: &Program, mut state: State, num_steps: Int) -> Vec<Trans> {
     let mut ret: Vec<Trans> = Vec::new();
     for _ in 0..num_steps {
-        ret.push(step(prog, state))
+        ret.push(step(prog, &mut state))
     }
     ret
 }
@@ -53,8 +54,8 @@ pub fn transcript(prog: &Program, state: &mut State, num_steps: Int) -> Vec<Tran
 //    state -> state + delta
 #[derive(Debug, PartialEq)]
 pub struct DiffRule {
-    pub min: StateDiff,
-    pub max: StateDiff,
+    pub min: StateDiffBound,
+    pub max: StateDiffBound,
     pub delta: StateDiff,
 }
 
@@ -62,8 +63,8 @@ impl DiffRule {
     // Create a no-op DiffRule that always applies and does nothing.
     pub fn noop(size: usize) -> DiffRule {
         DiffRule {
-            min: StateDiff::new(vec![0; size]),
-            max: StateDiff::new(vec![Int::MAX; size]),
+            min: StateDiffBound::new(vec![NegativeInfinity; size]),
+            max: StateDiffBound::new(vec![Infinity; size]),
             delta: StateDiff::new(vec![0; size]),
         }
     }
@@ -78,17 +79,20 @@ impl DiffRule {
         if trans.reg_fail.len() >= prog.num_rules() {
             return None;
         }
-        let mut max_vals = vec![Int::MAX; prog.num_registers()];
+        let mut max_vals = vec![Infinity; prog.num_registers()];
         for (rule, reg_fail) in prog.rules.iter().zip(trans.reg_fail.iter()) {
             // if rule r += -n failed, then r <= n-1
             let max_val = (-rule.data[*reg_fail]) - 1;
-            max_vals[*reg_fail] = cmp::min(max_vals[*reg_fail], max_val);
+            max_vals[*reg_fail] = cmp::min(max_vals[*reg_fail], Finite(max_val));
         }
         let delta = prog.rules[trans.reg_fail.len()].data.clone();
-        let min_vals = delta.iter().map(|n| cmp::max(-n, 0)).collect();
+        let min_vals = delta
+            .iter()
+            .map(|n| if *n < 0 { Finite(-n) } else { NegativeInfinity })
+            .collect();
         Some(DiffRule {
-            min: StateDiff::new(min_vals),
-            max: StateDiff::new(max_vals),
+            min: StateDiffBound::new(min_vals),
+            max: StateDiffBound::new(max_vals),
             delta: StateDiff::new(delta),
         })
     }
@@ -99,7 +103,10 @@ impl DiffRule {
         let rules = trans_vec.iter().map(|t| DiffRule::from_trans(prog, t));
         let mut comb_rule = DiffRule::noop(prog.num_registers());
         for rule in rules {
+            // println!(" Walrus A: {:?}", comb_rule);
+            // println!(" Walrus B: {:?}", rule);
             comb_rule = comb_rule.combine(&rule?)?;
+            // println!(" Walrus C: {:?}", comb_rule);
         }
         Some(comb_rule)
     }
@@ -107,14 +114,17 @@ impl DiffRule {
     // Compute the DiffRule that corresponds to applying self and then other if possible.
     // Returns None if it is impossible to apply both rules in sequence.
     pub fn combine(&self, other: &DiffRule) -> Option<DiffRule> {
-        // Compute min values for state before applying self.delta and then comparing to other.min.
-        let other_min = &other.min - &self.delta;
+        let first_delta: StateDiffBound = (&self.delta).into();
+        // Compute min values for state before applying first_delta and then comparing to other.min.
+        let other_min = &other.min - &first_delta;
         // Note: self.min: [0, 1, 2]  and  other_min: [1, 0, 0]   ->   min: [1, 1, 2]
         // ie: we need to choose max values pointwise.
         let min = self.min.pointwise_max(&other_min);
 
-        let other_max = &other.max - &self.delta;
+        let other_max = &other.max - &first_delta;
         let max = self.max.pointwise_min(&other_max);
+
+        // println!(" Walrus D: {:?} {:?} {}", min, max, min <= max);
 
         if min <= max {
             Some(DiffRule {
@@ -139,7 +149,7 @@ macro_rules! trans {
 mod tests {
     use super::*;
     use crate::program::Rule;
-    use crate::{prog, sd, state};
+    use crate::{prog, sd, sdb, state};
 
     #[test]
     fn test_trans() {
@@ -150,8 +160,8 @@ mod tests {
         let sa = state![1, 2, 3];
         let ta = trans![];
         let ra = DiffRule {
-            max: sd![Int::MAX, Int::MAX, Int::MAX],
-            min: sd![0, 1, 1],
+            max: sdb![Infinity, Infinity, Infinity],
+            min: sdb![NegativeInfinity, Finite(1), Finite(1)],
             delta: sd![1, -1, -1],
         };
         assert_eq!(eval_trans(&prog, &sa), ta);
@@ -160,8 +170,8 @@ mod tests {
         let sb = state![1, 2, 0];
         let tb = trans![2];
         let rb = DiffRule {
-            max: sd![Int::MAX, Int::MAX, 0],
-            min: sd![1, 0, 0],
+            max: sdb![Infinity, Infinity, Finite(0)],
+            min: sdb![Finite(1), NegativeInfinity, NegativeInfinity],
             delta: sd![-1, 2, 0],
         };
         assert_eq!(eval_trans(&prog, &sb), tb);
@@ -170,8 +180,8 @@ mod tests {
         let sc = state![1, 0, 3];
         let tc = trans![1];
         let rc = DiffRule {
-            max: sd![Int::MAX, 0, Int::MAX],
-            min: sd![1, 0, 0],
+            max: sdb![Infinity, Finite(0), Infinity],
+            min: sdb![Finite(1), NegativeInfinity, NegativeInfinity],
             delta: sd![-1, 2, 0],
         };
         assert_eq!(eval_trans(&prog, &sc), tc);
@@ -180,8 +190,8 @@ mod tests {
         let sd = state![0, 0, 3];
         let td = trans![1, 0];
         let rd = DiffRule {
-            max: sd![0, 0, Int::MAX],
-            min: sd![0, 0, 2],
+            max: sdb![Finite(0), Finite(0), Infinity],
+            min: sdb![NegativeInfinity, NegativeInfinity, Finite(2)],
             delta: sd![0, 1, -2],
         };
         assert_eq!(eval_trans(&prog, &sd), td);
@@ -192,4 +202,30 @@ mod tests {
         assert_eq!(eval_trans(&prog, &se), te);
         assert_eq!(DiffRule::from_trans(&prog, &te), None);
     }
+
+    // #[test]
+    // fn test_transcript() {
+    //     // Hydra simulator: [507/22, 26/33, 245/2, 5/21, 1/3, 11/13, 22/5]
+    //     // S(h, w) = [1, 0, 0, w, h-3, 0]
+    //     let hydra = prog![
+    //         -1,  1,  0,  0, -1,  2;
+    //          1, -1,  0,  0, -1,  1;
+    //         -1,  0,  1,  2,  0,  0;
+    //          0, -1,  1, -1,  0,  0;
+    //          0, -1,  0,  0,  0,  0;
+    //          0,  0,  0,  0,  1, -1;
+    //          1,  0, -1,  0,  1,  0;
+    //     ];
+
+    //     // [1, 0, 0, w, h+2, H] -> [1, 0, 0, w, h, H+3]
+    //     let shw = state![1, 0, 0, 10, 10, 0];
+    //     let trans_vec = transcript(&hydra, shw, 2);
+    //     let rule = DiffRule::from_trans_vec(&hydra, &trans_vec);
+    //     let exp_rule = DiffRule {
+    //         min: sdb![Finite(1), NegativeInfinity, NegativeInfinity, NegativeInfinity, Finite(2), NegativeInfinity],
+    //         max: sdb![Finite(1), Finite(0), Infinity, Infinity, Infinity, Infinity],
+    //         delta: sd![0, 0, 0, 0, -2, 3],
+    //     };
+    //     assert_eq!(rule, Some(exp_rule));
+    // }
 }

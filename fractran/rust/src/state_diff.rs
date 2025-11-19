@@ -1,6 +1,6 @@
 // TODO: Use this in Program to implement Rule/State?
 
-use infinitable::{Infinitable, Infinity, NegativeInfinity, Finite};
+use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
 use std::cmp::{self, Ordering};
 use std::ops::{Add, AddAssign, Sub};
 
@@ -21,7 +21,9 @@ pub type StateDiffBound = StateDiffBase<Infinitable<Int>>;
 
 impl From<&StateDiff> for StateDiffBound {
     fn from(sd: &StateDiff) -> StateDiffBound {
-        StateDiffBound { data: sd.data.iter().map(|x| Finite(*x)).collect() }
+        StateDiffBound {
+            data: sd.data.iter().map(|x| Finite(*x)).collect(),
+        }
     }
 }
 

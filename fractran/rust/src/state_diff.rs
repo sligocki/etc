@@ -77,7 +77,7 @@ impl PartialOrd for StateDiff {
 }
 
 // sd![...] = StateDiff::new(vec![...])
-// #[macro_export]
+#[macro_export]
 macro_rules! sd {
     ($($x:expr),* $(,)?) => {
         StateDiff::new(vec![$($x),*])

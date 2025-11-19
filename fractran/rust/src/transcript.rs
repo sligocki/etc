@@ -13,7 +13,8 @@ pub struct Trans {
     pub reg_fail: Vec<usize>,
 }
 
-pub fn step(prog: &Program, state: &mut State) -> Trans {
+// Evaluate details of which rule applies and why prev do not.
+pub fn eval_trans(prog: &Program, state: &State) -> Trans {
     let mut reg_fail: Vec<usize> = Vec::new();
     for rule in prog.rules.iter() {
         match rule.can_apply(state) {
@@ -28,6 +29,17 @@ pub fn step(prog: &Program, state: &mut State) -> Trans {
     Trans { reg_fail }
 }
 
+// Evaluate Trans and also apply applicable rule.
+pub fn step(prog: &Program, state: &mut State) -> Trans {
+    let trans = eval_trans(prog, state);
+    let rule_num = trans.reg_fail.len();
+    if rule_num < prog.num_rules() {
+        prog.rules[rule_num].apply(state);
+    }
+    trans
+}
+
+// Simulate for num_steps keeping track of Trans at each step.
 pub fn transcript(prog: &Program, state: &mut State, num_steps: Int) -> Vec<Trans> {
     let mut ret: Vec<Trans> = Vec::new();
     for _ in 0..num_steps {
@@ -50,7 +62,9 @@ impl DiffRule {
     pub fn from_trans(prog: &Program, trans: &Trans) -> DiffRule {
         let mut max_vals = vec![Int::MAX; prog.num_registers()];
         for (rule, reg_fail) in prog.rules.iter().zip(trans.reg_fail.iter()) {
-            max_vals[*reg_fail] = cmp::min(max_vals[*reg_fail], -rule.data[*reg_fail])
+            // if rule r += -n failed, then r <= n-1
+            let max_val = (-rule.data[*reg_fail]) - 1;
+            max_vals[*reg_fail] = cmp::min(max_vals[*reg_fail], max_val);
         }
         let delta = prog.rules[trans.reg_fail.len()].data.clone();
         let min_vals = delta.iter().map(|n| cmp::max(-n, 0)).collect();
@@ -84,7 +98,7 @@ macro_rules! trans {
 mod tests {
     use super::*;
     use crate::program::Rule;
-    use crate::{prog, state};
+    use crate::{prog, sd, state};
 
     #[test]
     fn test_trans() {
@@ -92,19 +106,49 @@ mod tests {
                          -1,  2,  0;
                           0,  1, -2];
 
-        let a = state![1, 2, 3];
-        assert_eq!(step(&prog, &mut a.clone()), trans![]);
+        let sa = state![1, 2, 3];
+        let ta = trans![];
+        let ra = DiffRule {
+            max: sd![Int::MAX, Int::MAX, Int::MAX],
+            min: sd![0, 1, 1],
+            delta: sd![1, -1, -1],
+        };
+        assert_eq!(eval_trans(&prog, &sa), ta);
+        assert_eq!(DiffRule::from_trans(&prog, &ta), ra);
 
-        let b = state![1, 2, 0];
-        assert_eq!(step(&prog, &mut b.clone()), trans![2]);
+        let sb = state![1, 2, 0];
+        let tb = trans![2];
+        let rb = DiffRule {
+            max: sd![Int::MAX, Int::MAX, 0],
+            min: sd![1, 0, 0],
+            delta: sd![-1, 2, 0],
+        };
+        assert_eq!(eval_trans(&prog, &sb), tb);
+        assert_eq!(DiffRule::from_trans(&prog, &tb), rb);
 
-        let c = state![1, 0, 3];
-        assert_eq!(step(&prog, &mut c.clone()), trans![1]);
+        let sc = state![1, 0, 3];
+        let tc = trans![1];
+        let rc = DiffRule {
+            max: sd![Int::MAX, 0, Int::MAX],
+            min: sd![1, 0, 0],
+            delta: sd![-1, 2, 0],
+        };
+        assert_eq!(eval_trans(&prog, &sc), tc);
+        assert_eq!(DiffRule::from_trans(&prog, &tc), rc);
 
-        let d = state![0, 0, 3];
-        assert_eq!(step(&prog, &mut d.clone()), trans![1, 0]);
+        let sd = state![0, 0, 3];
+        let td = trans![1, 0];
+        let rd = DiffRule {
+            max: sd![0, 0, Int::MAX],
+            min: sd![0, 0, 2],
+            delta: sd![0, 1, -2],
+        };
+        assert_eq!(eval_trans(&prog, &sd), td);
+        assert_eq!(DiffRule::from_trans(&prog, &td), rd);
 
-        let e = state![0, 0, 1];
-        assert_eq!(step(&prog, &mut e.clone()), trans![1, 0, 2]);
+        let se = state![0, 0, 1];
+        let te = trans![1, 0, 2];
+        assert_eq!(eval_trans(&prog, &se), te);
+        // prog halts on se, so no DiffRule
     }
 }

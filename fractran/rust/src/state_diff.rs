@@ -10,7 +10,7 @@ pub type Int = i64;
 #[derive(Debug, PartialEq, Clone)]
 pub struct StateDiffBase<T>
 where
-    T: Add + Ord + Clone,
+    T: Add + Sub<Output = T> + Ord + Clone,
 {
     data: Vec<T>,
 }
@@ -21,7 +21,7 @@ pub type StateDiffBound = StateDiffBase<Infinitable<Int>>;
 
 impl<T> StateDiffBase<T>
 where
-    T: Add + Ord + Clone,
+    T: Add + Sub<Output = T> + Ord + Clone,
 {
     pub fn new(data: Vec<T>) -> Self {
         Self { data }
@@ -72,17 +72,20 @@ impl Add for &StateDiff {
     }
 }
 
-impl Sub for &StateDiff {
-    type Output = StateDiff;
+impl<T> Sub for &StateDiffBase<T>
+where
+    T: Add + Sub<Output = T> + Ord + Clone,
+{
+    type Output = StateDiffBase<T>;
 
-    fn sub(self, other: &StateDiff) -> StateDiff {
-        self.map_with(other, |(a, b)| a - b)
+    fn sub(self, other: Self) -> Self::Output {
+        self.map_with(other, |(a, b)| a.clone() - b.clone())
     }
 }
 
 impl<T> PartialOrd for StateDiffBase<T>
 where
-    T: Add + Ord + Clone,
+    T: Add + Sub<Output = T> + Ord + Clone,
 {
     // self <= other  iff  all self[i] <= other[i]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -109,11 +112,17 @@ where
     }
 }
 
-// sd![...] = StateDiff::new(vec![...])
 #[macro_export]
 macro_rules! sd {
     ($($x:expr),* $(,)?) => {
         StateDiff::new(vec![$($x),*])
+    };
+}
+
+#[macro_export]
+macro_rules! sdb {
+    ($($x:expr),* $(,)?) => {
+        StateDiffBound::new(vec![$($x),*])
     };
 }
 
@@ -173,7 +182,7 @@ mod tests {
     fn test_order_bound() {
         let min = StateDiffBound::new_min(3);
         let max = StateDiffBound::new_max(3);
-        let x = StateDiffBound::new(vec![Finite(10), Finite(-20), Finite(0)]);
+        let x = sdb![Finite(10), Finite(-20), Finite(0)];
         assert!(min <= max);
         assert!(min <= x);
         assert!(x <= max);

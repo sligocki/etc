@@ -54,13 +54,13 @@ impl DiffRule {
     }
 
     pub fn combine(&self, other: &DiffRule) -> DiffRule {
-        let other_min = other.min.sub(&self.delta);
-        let other_max = other.max.sub(&self.delta);
+        let other_min = &other.min - &self.delta;
+        let other_max = &other.max - &self.delta;
 
         DiffRule {
             min: self.min.pointwise_max(&other_min),
             max: self.max.pointwise_min(&other_max),
-            delta: self.delta.add(&other.delta),
+            delta: &self.delta + &other.delta,
         }
     }
 }

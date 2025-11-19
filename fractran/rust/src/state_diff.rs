@@ -1,7 +1,7 @@
 // TODO: Use this in Program to implement Rule/State?
 
 use std::cmp::{self, Ordering};
-use std::ops::AddAssign;
+use std::ops::{Add, AddAssign,Sub};
 
 pub type Int = i64;
 
@@ -16,13 +16,6 @@ impl StateDiff {
         StateDiff { data }
     }
 
-    pub fn add(&self, other: &Self) -> Self {
-        self.map_with(other, |(a, b)| a + b)
-    }
-    pub fn sub(&self, other: &Self) -> Self {
-        self.map_with(other, |(a, b)| a - b)
-    }
-
     pub fn pointwise_max(&self, other: &Self) -> Self {
         self.map_with(other, |(a, b)| cmp::max(a, b).clone())
     }
@@ -30,7 +23,10 @@ impl StateDiff {
         self.map_with(other, |(a, b)| cmp::min(a, b).clone())
     }
 
+    // Apply `func` pointwise to all pairs of elements in self and other.
+    // Used to define most operations (+,-,min,max)
     fn map_with(&self, other: &Self, func: fn((&Int, &Int)) -> Int) -> Self {
+        assert!(self.data.len() == other.data.len());
         let data: Vec<Int> = self.data.iter().zip(other.data.iter()).map(func).collect();
         StateDiff { data }
     }
@@ -41,6 +37,22 @@ impl AddAssign for StateDiff {
         for (val, delta) in self.data.iter_mut().zip(other.data.iter()) {
             *val += delta;
         }
+    }
+}
+
+impl Add for &StateDiff {
+    type Output = StateDiff;
+
+    fn add(self, other: &StateDiff) -> StateDiff {
+        self.map_with(other, |(a, b)| a + b)
+    }
+}
+
+impl Sub for &StateDiff {
+    type Output = StateDiff;
+
+    fn sub(self, other: &StateDiff) -> StateDiff {
+        self.map_with(other, |(a, b)| a - b)
     }
 }
 

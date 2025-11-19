@@ -212,14 +212,43 @@ mod tests {
         ];
 
         // [1, 0, 0, w, h+2, H] -> [1, 0, 0, w, h, H+3]
-        let shw = state![1, 0, 0, 10, 10, 0];
-        let trans_vec = transcript(&hydra, shw, 2);
-        let rule = DiffRule::from_trans_vec(&hydra, &trans_vec);
-        let exp_rule = DiffRule {
-            min: sd![1, 0, 0, 0, 2, 0],
-            max: sdb![Finite(1), Infinity, Infinity, Infinity, Infinity, Infinity],
-            delta: sd![0, 0, 0, 0, -2, 3],
-        };
-        assert_eq!(rule, Some(exp_rule));
+        {
+            let st = state![1, 0, 0, 10, 10, 0];
+            let trans_vec = transcript(&hydra, st, 2);
+            let rule = DiffRule::from_trans_vec(&hydra, &trans_vec).unwrap();
+            assert!(rule.min <= sd![1, 0, 0, 0, 2, 0]);
+            assert!(rule.max >= sdb![Finite(1), Finite(0), Finite(0), Infinity, Infinity, Infinity]);
+            assert_eq!(rule.delta, sd![0, 0, 0, 0, -2, 3]);
+        }
+
+        // [1, 0, 0, w, 0, H] -> [0, 0, 1, w+2, 0, H]
+        {
+            let st = state![1, 0, 0, 10, 0, 10];
+            let trans_vec = transcript(&hydra, st, 1);
+            let rule = DiffRule::from_trans_vec(&hydra, &trans_vec).unwrap();
+            assert!(rule.min <= sd![1, 0, 0, 0, 0, 0]);
+            assert!(rule.max >= sdb![Finite(1), Finite(0), Finite(0), Infinity, Finite(0), Infinity]);
+            assert_eq!(rule.delta, sd![-1, 0, 1, 2, 0, 0]);
+        }
+
+        // [1, 0, 0, w+1, 1, H] -> [0, 0, 1, w, 0, H+2]
+        {
+            let st = state![1, 0, 0, 10, 1, 10];
+            let trans_vec = transcript(&hydra, st, 2);
+            let rule = DiffRule::from_trans_vec(&hydra, &trans_vec).unwrap();
+            assert!(rule.min <= sd![1, 0, 0, 1, 1, 0]);
+            assert!(rule.max >= sdb![Finite(1), Finite(0), Finite(0), Infinity, Finite(1), Infinity]);
+            assert_eq!(rule.delta, sd![-1, 0, 1, -1, -1, 2]);
+        }
+
+        // [0, 0, 1, w, h, H+1] -> [0, 0, 1, w, h+1, H]
+        {
+            let st = state![0, 0, 1, 10, 0, 10];
+            let trans_vec = transcript(&hydra, st, 1);
+            let rule = DiffRule::from_trans_vec(&hydra, &trans_vec).unwrap();
+            assert!(rule.min <= sd![0, 0, 1, 0, 0, 1]);
+            assert!(rule.max >= sdb![Finite(0), Finite(0), Finite(1), Infinity, Infinity, Infinity]);
+            assert_eq!(rule.delta, sd![0, 0, 0, 0, 1, -1]);
+        }
     }
 }

@@ -59,6 +59,15 @@ pub struct DiffRule {
 }
 
 impl DiffRule {
+    // Create a no-op DiffRule that always applies and does nothing.
+    pub fn noop(size: usize) -> DiffRule {
+        DiffRule {
+            min: StateDiff::new(vec![0; size]),
+            max: StateDiff::new(vec![Int::MAX; size]),
+            delta: StateDiff::new(vec![0; size]),
+        }
+    }
+
     // Compute DiffRule corresponding to an single transition.
     // Based on one transition, the delta is just the applicable rule and
     // the min is just the the negation of all the negaive values in rule.
@@ -78,6 +87,17 @@ impl DiffRule {
             max: StateDiff::new(max_vals),
             delta: StateDiff::new(delta),
         }
+    }
+
+    // Compute DiffRule for a sequence of transitions (if possible).
+    // This leads to more complex rules than from_trans().
+    pub fn from_trans_vec(prog: &Program, trans_vec: &Vec<Trans>) -> Option<DiffRule> {
+        let rules = trans_vec.iter().map(|t| DiffRule::from_trans(prog, t));
+        let mut comb_rule = DiffRule::noop(prog.num_registers());
+        for rule in rules {
+            comb_rule = comb_rule.combine(&rule)?;
+        }
+        Some(comb_rule)
     }
 
     // Compute the DiffRule that corresponds to applying self and then other if possible.

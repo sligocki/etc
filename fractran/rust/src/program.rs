@@ -42,6 +42,9 @@ impl Rule {
         self.data.len()
     }
 
+    // Evaluate if it is possible to apply this rule to a state.
+    // If not, returns the first register index that fails (would go negative).
+    // This is useful for inductive deciders to understand which register condition failed.
     pub fn can_apply(&self, state: &State) -> Result<(), usize> {
         for (i, (val, delta)) in state.data.iter().zip(self.data.iter()).enumerate() {
             if val + delta < 0 {

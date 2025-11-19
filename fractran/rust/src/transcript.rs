@@ -68,12 +68,16 @@ impl DiffRule {
         }
     }
 
-    // Compute DiffRule corresponding to an single transition.
+    // Compute DiffRule corresponding to an single transition if possible.
     // Based on one transition, the delta is just the applicable rule and
     // the min is just the the negation of all the negaive values in rule.
     // The max is based off of all the previous rules failing to apply and
     // depends on the specific Trans.reg_fail values.
-    pub fn from_trans(prog: &Program, trans: &Trans) -> DiffRule {
+    // Only fails (returns None) if trans is a halting transition (no rule applies).
+    pub fn from_trans(prog: &Program, trans: &Trans) -> Option<DiffRule> {
+        if trans.reg_fail.len() >= prog.num_rules() {
+            return None;
+        }
         let mut max_vals = vec![Int::MAX; prog.num_registers()];
         for (rule, reg_fail) in prog.rules.iter().zip(trans.reg_fail.iter()) {
             // if rule r += -n failed, then r <= n-1
@@ -82,11 +86,11 @@ impl DiffRule {
         }
         let delta = prog.rules[trans.reg_fail.len()].data.clone();
         let min_vals = delta.iter().map(|n| cmp::max(-n, 0)).collect();
-        DiffRule {
+        Some(DiffRule {
             min: StateDiff::new(min_vals),
             max: StateDiff::new(max_vals),
             delta: StateDiff::new(delta),
-        }
+        })
     }
 
     // Compute DiffRule for a sequence of transitions (if possible).
@@ -95,7 +99,7 @@ impl DiffRule {
         let rules = trans_vec.iter().map(|t| DiffRule::from_trans(prog, t));
         let mut comb_rule = DiffRule::noop(prog.num_registers());
         for rule in rules {
-            comb_rule = comb_rule.combine(&rule)?;
+            comb_rule = comb_rule.combine(&rule?)?;
         }
         Some(comb_rule)
     }
@@ -151,7 +155,7 @@ mod tests {
             delta: sd![1, -1, -1],
         };
         assert_eq!(eval_trans(&prog, &sa), ta);
-        assert_eq!(DiffRule::from_trans(&prog, &ta), ra);
+        assert_eq!(DiffRule::from_trans(&prog, &ta), Some(ra));
 
         let sb = state![1, 2, 0];
         let tb = trans![2];
@@ -161,7 +165,7 @@ mod tests {
             delta: sd![-1, 2, 0],
         };
         assert_eq!(eval_trans(&prog, &sb), tb);
-        assert_eq!(DiffRule::from_trans(&prog, &tb), rb);
+        assert_eq!(DiffRule::from_trans(&prog, &tb), Some(rb));
 
         let sc = state![1, 0, 3];
         let tc = trans![1];
@@ -171,7 +175,7 @@ mod tests {
             delta: sd![-1, 2, 0],
         };
         assert_eq!(eval_trans(&prog, &sc), tc);
-        assert_eq!(DiffRule::from_trans(&prog, &tc), rc);
+        assert_eq!(DiffRule::from_trans(&prog, &tc), Some(rc));
 
         let sd = state![0, 0, 3];
         let td = trans![1, 0];
@@ -181,11 +185,11 @@ mod tests {
             delta: sd![0, 1, -2],
         };
         assert_eq!(eval_trans(&prog, &sd), td);
-        assert_eq!(DiffRule::from_trans(&prog, &td), rd);
+        assert_eq!(DiffRule::from_trans(&prog, &td), Some(rd));
 
         let se = state![0, 0, 1];
         let te = trans![1, 0, 2];
         assert_eq!(eval_trans(&prog, &se), te);
-        // prog halts on se, so no DiffRule
+        assert_eq!(DiffRule::from_trans(&prog, &te), None);
     }
 }

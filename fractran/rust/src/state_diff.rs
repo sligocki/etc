@@ -1,5 +1,6 @@
 // TODO: Use this in Program to implement Rule/State?
 
+use infinitable::{Infinitable, Infinity, NegativeInfinity};
 use std::cmp::{self, Ordering};
 use std::ops::{Add, AddAssign, Sub};
 
@@ -7,13 +8,23 @@ pub type Int = i64;
 
 // Mathematical vector that can be added to other vectors.
 #[derive(Debug, PartialEq, Clone)]
-pub struct StateDiff {
-    data: Vec<Int>,
+pub struct StateDiffBase<T>
+where
+    T: Add + Ord + Clone,
+{
+    data: Vec<T>,
 }
 
-impl StateDiff {
-    pub fn new(data: Vec<Int>) -> Self {
-        StateDiff { data }
+pub type StateDiff = StateDiffBase<Int>;
+// Useful for min/max bounds where default is either +- infinity.
+pub type StateDiffBound = StateDiffBase<Infinitable<Int>>;
+
+impl<T> StateDiffBase<T>
+where
+    T: Add + Ord + Clone,
+{
+    pub fn new(data: Vec<T>) -> Self {
+        Self { data }
     }
 
     pub fn pointwise_max(&self, other: &Self) -> Self {
@@ -25,10 +36,23 @@ impl StateDiff {
 
     // Apply `func` pointwise to all pairs of elements in self and other.
     // Used to define most operations (+,-,min,max)
-    fn map_with(&self, other: &Self, func: fn((&Int, &Int)) -> Int) -> Self {
+    fn map_with(&self, other: &Self, func: fn((&T, &T)) -> T) -> Self {
         assert!(self.data.len() == other.data.len());
-        let data: Vec<Int> = self.data.iter().zip(other.data.iter()).map(func).collect();
-        StateDiff { data }
+        let data: Vec<T> = self.data.iter().zip(other.data.iter()).map(func).collect();
+        Self { data }
+    }
+}
+
+impl StateDiffBound {
+    pub fn new_max(size: usize) -> Self {
+        Self {
+            data: vec![Infinity; size],
+        }
+    }
+    pub fn new_min(size: usize) -> Self {
+        Self {
+            data: vec![NegativeInfinity; size],
+        }
     }
 }
 
@@ -56,7 +80,10 @@ impl Sub for &StateDiff {
     }
 }
 
-impl PartialOrd for StateDiff {
+impl<T> PartialOrd for StateDiffBase<T>
+where
+    T: Add + Ord + Clone,
+{
     // self <= other  iff  all self[i] <= other[i]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let element_ords: Vec<Ordering> = self
@@ -93,6 +120,7 @@ macro_rules! sd {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use infinitable::Finite;
 
     #[test]
     fn test_add_sub() {
@@ -139,10 +167,15 @@ mod tests {
         assert!(a <= d);
         assert!(b <= d);
         assert!(c <= d);
+    }
 
-        let max = sd![Int::MAX, Int::MAX, Int::MAX];
-        assert!(a <= max);
-        assert!(b <= max);
-        assert!(c <= max);
+    #[test]
+    fn test_order_bound() {
+        let min = StateDiffBound::new_min(3);
+        let max = StateDiffBound::new_max(3);
+        let x = StateDiffBound::new(vec![Finite(10), Finite(-20), Finite(0)]);
+        assert!(min <= max);
+        assert!(min <= x);
+        assert!(x <= max);
     }
 }

@@ -3,8 +3,9 @@
 use fractran::parse::load_program;
 use fractran::program::{Int, State};
 use fractran::tandem_repeat::{find_repeats, RepeatInfo};
-use fractran::transcript::{transcript, Trans};
+use fractran::transcript::{transcript, Trans, DiffRule};
 use std::env;
+use std::collections::HashSet;
 
 const OFFSET: u8 = 'A' as u8;
 fn trans_str(trans: &Trans) -> char {
@@ -16,20 +17,20 @@ fn trans_vec_str(span: &[Trans]) -> String {
     span.iter().map(trans_str).collect()
 }
 
-fn compressed_str(trans: &Vec<Trans>, repeats: &Vec<RepeatInfo>) -> String {
+fn compressed_str(trans_seq: &[Trans], repeats: &Vec<RepeatInfo>) -> String {
     let mut ret = String::new();
     let mut n = 0;
     for repeat in repeats.iter() {
         if repeat.start > n {
-            ret.push_str(&trans_vec_str(&trans[n..repeat.start]));
+            ret.push_str(&trans_vec_str(&trans_seq[n..repeat.start]));
             ret.push('\n');
         }
-        let segment = &trans[repeat.start..repeat.start + repeat.period];
+        let segment = &trans_seq[repeat.start..repeat.start + repeat.period];
         ret.push_str(&format!("{}^{}\n", &trans_vec_str(segment), repeat.count));
         n = repeat.start + repeat.period * repeat.count;
     }
-    if n < trans.len() {
-        ret.push_str(&trans_vec_str(&trans[n..]));
+    if n < trans_seq.len() {
+        ret.push_str(&trans_vec_str(&trans_seq[n..]));
     }
     ret
 }
@@ -62,4 +63,13 @@ fn main() {
     //   println!("  start={}  period={}  count={}", repeat.start, repeat.period, repeat.count);
     // }
     println!("{}", compressed_str(&trans_vec, &repeats));
+    println!();
+
+    // Print rules
+    let seqs: HashSet<&[Trans]> = repeats.iter().map(|r| &trans_vec[r.start..r.start+r.period]).collect();
+    for seq in seqs.iter() {
+        println!("Seq: {}", trans_vec_str(seq));
+        let rule = DiffRule::from_trans_vec(&prog, seq).unwrap();
+        println!("Rule: {}", rule);
+    }
 }

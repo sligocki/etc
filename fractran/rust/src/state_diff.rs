@@ -12,7 +12,7 @@ pub struct StateDiffBase<T>
 where
     T: Add + Sub<Output = T> + Ord + Clone,
 {
-    data: Vec<T>,
+    pub data: Vec<T>,
 }
 
 pub type StateDiff = StateDiffBase<Int>;

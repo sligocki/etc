@@ -2,12 +2,13 @@
 
 use crate::program::{Int, Program, State};
 use crate::state_diff::{StateDiff, StateDiffBound};
-use infinitable::{Finite, Infinity};
+use infinitable::{Finite, Infinity, NegativeInfinity, Infinitable};
 use std::cmp;
+use std::fmt;
 
 // A transition is a description of which rule applied at each step and
 // why the previous rules did not apply.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Trans {
     // For each previous rule, which register caused the rule to not apply
     // (because it would go negative).
@@ -96,7 +97,7 @@ impl DiffRule {
 
     // Compute DiffRule for a sequence of transitions (if possible).
     // This leads to more complex rules than from_trans().
-    pub fn from_trans_vec(prog: &Program, trans_vec: &Vec<Trans>) -> Option<DiffRule> {
+    pub fn from_trans_vec(prog: &Program, trans_vec: &[Trans]) -> Option<DiffRule> {
         let rules = trans_vec.iter().map(|t| DiffRule::from_trans(prog, t));
         let mut comb_rule = DiffRule::noop(prog.num_registers());
         for rule in rules {
@@ -126,6 +127,24 @@ impl DiffRule {
         } else {
             None
         }
+    }
+}
+
+fn inf_str(val: &Infinitable<Int>) -> String {
+    match val {
+        Finite(n) => format!("{}", n),
+        Infinity => "∞".to_string(),
+        NegativeInfinity => "∞".to_string(),
+    }
+}
+
+impl fmt::Display for DiffRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DiffRule: [")?;
+        for (low, high) in self.min.data.iter().zip(self.max.data.iter()) {
+            write!(f, "{}-{}, ", low, inf_str(high))?;
+        }
+        write!(f, "]  {:?}", self.delta.data)
     }
 }
 

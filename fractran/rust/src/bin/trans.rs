@@ -22,10 +22,10 @@ fn compressed_str(trans: &Vec<Trans>, repeats: &Vec<RepeatInfo>) -> String {
     for repeat in repeats.iter() {
         if repeat.start > n {
             ret.push_str(&trans_vec_str(&trans[n..repeat.start]));
-            ret.push(' ');
+            ret.push('\n');
         }
         let segment = &trans[repeat.start..repeat.start + repeat.period];
-        ret.push_str(&format!("{}^{} ", &trans_vec_str(segment), repeat.count));
+        ret.push_str(&format!("{}^{}\n", &trans_vec_str(segment), repeat.count));
         n = repeat.start + repeat.period * repeat.count;
     }
     if n < trans.len() {

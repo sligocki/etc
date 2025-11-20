@@ -2,9 +2,6 @@
 
 use std::cmp;
 
-// Basic symbol set of the message
-pub type Symbol = u32;
-
 const MIN_REPEATS: usize = 3;
 const MAX_WINDOW: usize = 100;
 
@@ -16,7 +13,7 @@ pub struct RepeatInfo {
     pub count: usize,
 }
 
-pub fn find_repeats(data: &[Symbol]) -> Vec<RepeatInfo> {
+pub fn find_repeats<T: PartialEq>(data: &[T]) -> Vec<RepeatInfo> {
     let mut repeats = Vec::new();
     let mut start = 0;
     while start < data.len() {
@@ -30,7 +27,7 @@ pub fn find_repeats(data: &[Symbol]) -> Vec<RepeatInfo> {
     repeats
 }
 
-pub fn find_repeat_prefix(data: &[Symbol]) -> Option<RepeatInfo> {
+fn find_repeat_prefix<T: PartialEq>(data: &[T]) -> Option<RepeatInfo> {
     let mut best: Option<RepeatInfo> = None;
     let mut max_coverage = 0;
     let p_max = cmp::min(MAX_WINDOW, data.len() / MIN_REPEATS);
@@ -60,7 +57,7 @@ mod tests {
 
     #[test]
     fn test_simple() {
-        let message: Vec<Symbol> = vec![13; 6];
+        let message = vec![13; 6];
         let result = find_repeats(&message);
         let expected = vec![RepeatInfo {
             start: 0,
@@ -72,7 +69,7 @@ mod tests {
 
     #[test]
     fn test_offset() {
-        let message: Vec<Symbol> = vec![1, 2, 3, 4, 3, 4, 3, 4, 1];
+        let message = vec![1, 2, 3, 4, 3, 4, 3, 4, 1];
         let result = find_repeats(&message);
         let expected = vec![RepeatInfo {
             start: 2,

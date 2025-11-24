@@ -3,9 +3,9 @@
 use fractran::parse::load_program;
 use fractran::program::{Int, State};
 use fractran::tandem_repeat::{find_repeats, RepeatInfo};
-use fractran::transcript::{transcript, Trans, DiffRule};
-use std::env;
+use fractran::transcript::{transcript, DiffRule, Trans};
 use std::collections::HashSet;
+use std::env;
 
 const OFFSET: u8 = 'A' as u8;
 fn trans_str(trans: &Trans) -> char {
@@ -66,7 +66,10 @@ fn main() {
     println!();
 
     // Print rules
-    let seqs: HashSet<&[Trans]> = repeats.iter().map(|r| &trans_vec[r.start..r.start+r.period]).collect();
+    let seqs: HashSet<&[Trans]> = repeats
+        .iter()
+        .map(|r| &trans_vec[r.start..r.start + r.period])
+        .collect();
     for seq in seqs.iter() {
         println!("Seq: {}", trans_vec_str(seq));
         let rule = DiffRule::from_trans_vec(&prog, seq).unwrap();

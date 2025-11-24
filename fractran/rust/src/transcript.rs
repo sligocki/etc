@@ -2,7 +2,7 @@
 
 use crate::program::{Int, Program, State};
 use crate::state_diff::{StateDiff, StateDiffBound};
-use infinitable::{Finite, Infinity, NegativeInfinity, Infinitable};
+use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
 use std::cmp;
 use std::fmt;
 

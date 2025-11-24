@@ -3,7 +3,7 @@ pub type Int = i64;
 // Fractran/pVAS configuration state
 #[derive(Debug, Clone)]
 pub struct State {
-    data: Vec<Int>,
+    pub data: Vec<Int>,
 }
 
 // Fractran/pVAS rule ()

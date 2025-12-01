@@ -1,11 +1,24 @@
 // Simulate program printing out transcript and experimenting with transcript compression.
 
+use std::collections::HashSet;
+
+use clap::Parser;
+
 use fractran::parse::load_program;
 use fractran::program::{Int, State};
 use fractran::tandem_repeat::{find_repeats, RepeatInfo};
 use fractran::transcript::{transcript, DiffRule, Trans};
-use std::collections::HashSet;
-use std::env;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Filename with optional record number (0-indexed, defaults to 0).
+    #[arg(value_name = "FILE[:NUM]")]
+    filename_record: String,
+
+    /// Number of TM steps to run simulation for.
+    num_steps: Int,
+}
 
 const OFFSET: u8 = 'A' as u8;
 fn trans_str(trans: &Trans) -> char {
@@ -36,18 +49,9 @@ fn compressed_str(trans_seq: &[Trans], repeats: &Vec<RepeatInfo>) -> String {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!(
-            "Usage: {} <programs_file>[:<record_num>] <num_steps>",
-            args[0]
-        );
-        std::process::exit(1);
-    }
-    let filename_record = &args[1];
-    let num_steps: Int = args[2].parse().expect("Invalid step count provided");
+    let args = Args::parse();
 
-    let prog = load_program(filename_record).expect("Couldn't load program from file");
+    let prog = load_program(&args.filename_record).expect("Couldn't load program from file");
     let state = State::start(&prog);
 
     println!(
@@ -56,7 +60,7 @@ fn main() {
         prog.num_registers()
     );
 
-    let trans_vec = transcript(&prog, state, num_steps);
+    let trans_vec = transcript(&prog, state, args.num_steps);
     let repeats = find_repeats(&trans_vec);
     // println!("# Repeats: {}", repeats.len());
     // for repeat in repeats.iter() {

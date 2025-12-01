@@ -1,11 +1,20 @@
 // Simulate all programs in a file for some number of steps and keep track of halting times.
 
-use fractran::parse::{load_lines, parse_program};
-use fractran::program::{Int, SimResult, State};
+use std::time::{Duration, Instant};
+
+use clap::Parser;
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
-use std::env;
-use std::time::{Duration, Instant};
+
+use fractran::parse::{load_lines, parse_program};
+use fractran::program::{Int, SimResult, State};
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    filename: String,
+    step_limit: Int,
+}
 
 struct TaskResult {
     sim: SimResult,
@@ -13,11 +22,11 @@ struct TaskResult {
 }
 
 // Helper function to run the simulation and collect results
-fn parse_and_sim(program_str: &str, steps_limit: Int) -> TaskResult {
+fn parse_and_sim(program_str: &str, step_limit: Int) -> TaskResult {
     let start_time = Instant::now();
     let prog = parse_program(program_str);
     let mut state = State::start(&prog);
-    let sim_result = prog.run(&mut state, steps_limit);
+    let sim_result = prog.run(&mut state, step_limit);
 
     if sim_result.halted {
         println!("  Halt: {} steps: {}", sim_result.total_steps, program_str);
@@ -30,24 +39,16 @@ fn parse_and_sim(program_str: &str, steps_limit: Int) -> TaskResult {
 }
 
 fn main() {
-    // 1. Parse Command Line Arguments
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("Usage: {} <programs_file> <step_limit>", args[0]);
-        std::process::exit(1);
-    }
-
-    let filename = &args[1];
-    let steps_limit: Int = args[2].parse().expect("Invalid step count provided");
+    let args = Args::parse();
 
     // 2. Load all program strings
-    let programs = load_lines(filename);
+    let programs = load_lines(&args.filename);
     let num_programs = programs.len();
 
     println!(
         "Simulating {} programs for {} steps using {} threads",
         num_programs,
-        steps_limit,
+        args.step_limit,
         rayon::current_num_threads()
     );
     let wallclock_start_time = Instant::now();
@@ -56,7 +57,7 @@ fn main() {
     let results: Vec<TaskResult> = programs
         .par_iter()
         .progress_count(num_programs as u64)
-        .filter_map(|program_str| Some(parse_and_sim(program_str, steps_limit)))
+        .filter_map(|program_str| Some(parse_and_sim(program_str, args.step_limit)))
         .collect(); // Collect results back into a Vec on the main thread
 
     let wallclock_time_sec = wallclock_start_time.elapsed().as_secs_f64();

@@ -51,7 +51,14 @@ fn main() {
 
         // 1. Generate FAST input file
         let fst_filename = format!("temp_prog_{}.fst", i);
-        let fst_content = generate_fast_source(&prog, &args.strategy, i, args.max_loop_size, args.limit, args.ignore_priority);
+        let fst_content = generate_fast_source(
+            &prog,
+            &args.strategy,
+            i,
+            args.max_loop_size,
+            args.limit,
+            args.ignore_priority,
+        );
 
         if let Err(e) = fs::write(&fst_filename, &fst_content) {
             eprintln!("Failed to write .fst file: {}", e);
@@ -150,8 +157,14 @@ fn analyze_output(process_result: Result<String, String>, ignore_priority: bool)
     }
 }
 
-fn generate_fast_source(prog: &Program, strategy: &str, id: usize,
-        max_loop_size: usize, limit: usize, ignore_priority: bool) -> String {
+fn generate_fast_source(
+    prog: &Program,
+    strategy: &str,
+    id: usize,
+    max_loop_size: usize,
+    limit: usize,
+    ignore_priority: bool,
+) -> String {
     let num_vars = prog.num_registers();
     let mut vars = Vec::new();
     for i in 0..num_vars {
@@ -239,10 +252,16 @@ fn generate_fast_source(prog: &Program, strategy: &str, id: usize,
     ));
 
     if strategy == "backward" {
-        sb.push_str(&format!("  Region bad_pre := pre*(halted, all, {});\n", max_loop_size));
+        sb.push_str(&format!(
+            "  Region bad_pre := pre*(halted, all, {});\n",
+            max_loop_size
+        ));
         sb.push_str("  Region overlap := bad_pre && init;\n");
     } else {
-        sb.push_str(&format!("  Region reachable := post*(init, all, {});\n", max_loop_size));
+        sb.push_str(&format!(
+            "  Region reachable := post*(init, all, {});\n",
+            max_loop_size
+        ));
         sb.push_str("  Region overlap := reachable && halted;\n");
     }
     sb.push_str("  if (isEmpty(overlap)) then\n");

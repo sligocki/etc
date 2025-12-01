@@ -6,7 +6,7 @@ use clap::Parser;
 
 use fractran::parse::load_program;
 use fractran::program::{Int, State};
-use fractran::tandem_repeat::{find_repeats, RepeatInfo};
+use fractran::tandem_repeat::{as_rep_blocks, RepBlock};
 use fractran::transcript::{transcript, DiffRule, Trans};
 
 #[derive(Parser, Debug)]
@@ -30,20 +30,14 @@ fn trans_vec_str(span: &[Trans]) -> String {
     span.iter().map(trans_str).collect()
 }
 
-fn compressed_str(trans_seq: &[Trans], repeats: &Vec<RepeatInfo>) -> String {
+fn compressed_str(rep_blocks: &Vec<RepBlock<Trans>>) -> String {
     let mut ret = String::new();
-    let mut n = 0;
-    for repeat in repeats.iter() {
-        if repeat.start > n {
-            ret.push_str(&trans_vec_str(&trans_seq[n..repeat.start]));
-            ret.push('\n');
+    for rep_block in rep_blocks.iter() {
+        ret.push_str(&trans_vec_str(&rep_block.block));
+        if rep_block.rep != 1 {
+            ret.push_str(&format!("^{}", rep_block.rep));
         }
-        let segment = &trans_seq[repeat.start..repeat.start + repeat.period];
-        ret.push_str(&format!("{}^{}\n", &trans_vec_str(segment), repeat.count));
-        n = repeat.start + repeat.period * repeat.count;
-    }
-    if n < trans_seq.len() {
-        ret.push_str(&trans_vec_str(&trans_seq[n..]));
+        ret.push(' ');
     }
     ret
 }
@@ -61,18 +55,15 @@ fn main() {
     );
 
     let trans_vec = transcript(&prog, state, args.num_steps);
-    let repeats = find_repeats(&trans_vec);
-    // println!("# Repeats: {}", repeats.len());
-    // for repeat in repeats.iter() {
-    //   println!("  start={}  period={}  count={}", repeat.start, repeat.period, repeat.count);
-    // }
-    println!("{}", compressed_str(&trans_vec, &repeats));
+    let rep_blocks = as_rep_blocks(&trans_vec);
+    println!("{}", compressed_str(&rep_blocks));
     println!();
 
     // Print rules
-    let seqs: HashSet<&[Trans]> = repeats
+    let seqs: HashSet<&Vec<Trans>> = rep_blocks
         .iter()
-        .map(|r| &trans_vec[r.start..r.start + r.period])
+        .filter(|r| r.rep != 1)
+        .map(|r| &r.block)
         .collect();
     for seq in seqs.iter() {
         println!("Seq: {}", trans_vec_str(seq));

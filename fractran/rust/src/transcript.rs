@@ -8,7 +8,7 @@ use std::fmt;
 
 // A transition is a description of which rule applied at each step and
 // why the previous rules did not apply.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Trans {
     // For each previous rule, which register caused the rule to not apply
     // (because it would go negative).

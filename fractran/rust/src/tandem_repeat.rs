@@ -1,34 +1,39 @@
 // Library for identifying and compressing "tandem repeats" or sections of a message that repeat back-to-back.
 
 use std::cmp;
-use std::fmt;
+
+use itertools::Itertools;
 
 const MIN_REPEATS: usize = 2;
 const MAX_WINDOW: usize = 100;
 
-// pub trait DisplayVec: Sized {
-//     fn fmt_one(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
-//     fn fmt_vec(xs: &Vec::<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result;
-// }
+pub trait ToStringVec: Sized {
+    fn to_string_one(&self) -> String;
+    fn to_string_vec(xs: &Vec<Self>) -> String;
+}
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct RepBlock<T: PartialEq + Clone> {
+pub struct RepBlock<T: PartialEq + Clone + ToStringVec> {
     pub block: Vec<T>,
     pub rep: usize,
 }
 
-// impl fmt::Display for RepBlock<T> {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "{}", self.block)?;
-//         if self.rep != 1 {
-//             write!(f, "^{}", self.rep)?;
-//         }
-//         Ok(())
-//     }
-// }
+impl<T: PartialEq + Clone + ToStringVec> ToStringVec for RepBlock<T> {
+    fn to_string_one(&self) -> String {
+        let mut ret = T::to_string_vec(&self.block);
+        if self.rep != 1 {
+            ret.push_str(&format!("^{}", self.rep));
+        }
+        ret
+    }
+
+    fn to_string_vec(xs: &Vec<Self>) -> String {
+        xs.iter().map(|x| x.to_string_one()).join(" ")
+    }
+}
 
 // Find repeated blocks and parse into RepBlock format.
-pub fn as_rep_blocks<T: PartialEq + Clone>(data: &[T]) -> Vec<RepBlock<T>> {
+pub fn as_rep_blocks<T: PartialEq + Clone + ToStringVec>(data: &[T]) -> Vec<RepBlock<T>> {
     let repeats = find_repeat_info(data);
 
     let mut ret = Vec::new();

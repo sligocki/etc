@@ -1,10 +1,14 @@
 // Evaluate the "transcript" or rule history for a simulation.
 
-use crate::program::{Int, Program, State};
-use crate::state_diff::{StateDiff, StateDiffBound};
-use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
 use std::cmp;
 use std::fmt;
+
+use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
+use itertools::Itertools;
+
+use crate::program::{Int, Program, State};
+use crate::state_diff::{StateDiff, StateDiffBound};
+use crate::tandem_repeat::ToStringVec;
 
 // A transition is a description of which rule applied at each step and
 // why the previous rules did not apply.
@@ -13,6 +17,19 @@ pub struct Trans {
     // For each previous rule, which register caused the rule to not apply
     // (because it would go negative).
     pub reg_fail: Vec<usize>,
+}
+
+const OFFSET: u8 = 'A' as u8;
+impl ToStringVec for Trans {
+    fn to_string_one(&self) -> String {
+        let rule_num = self.reg_fail.len() as u8;
+        let rule_char = (OFFSET + rule_num) as char;
+        rule_char.to_string()
+    }
+
+    fn to_string_vec(xs: &Vec<Self>) -> String {
+        xs.iter().map(|x| x.to_string_one()).join("")
+    }
 }
 
 // Evaluate details of which rule applies and why prev do not.

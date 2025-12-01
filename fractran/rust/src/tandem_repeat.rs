@@ -1,13 +1,18 @@
 // Library for identifying and compressing "tandem repeats" or sections of a message that repeat back-to-back.
 
 use std::cmp;
-// use std::fmt;
+use std::fmt;
 
 const MIN_REPEATS: usize = 2;
 const MAX_WINDOW: usize = 100;
 
-#[derive(Debug)]
-pub struct RepBlock<T> {
+// pub trait DisplayVec: Sized {
+//     fn fmt_one(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
+//     fn fmt_vec(xs: &Vec::<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result;
+// }
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct RepBlock<T: PartialEq + Clone> {
     pub block: Vec<T>,
     pub rep: usize,
 }

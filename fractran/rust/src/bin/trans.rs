@@ -1,6 +1,7 @@
 // Simulate program printing out transcript and experimenting with transcript compression.
 
 use std::collections::HashSet;
+use std::fmt;
 
 use clap::Parser;
 
@@ -42,6 +43,16 @@ fn compressed_str(rep_blocks: &Vec<RepBlock<Trans>>) -> String {
     ret
 }
 
+#[derive(Debug, PartialEq, Clone)]
+struct TransBlock {
+    block: Vec<Trans>,
+    is_rep: bool,
+}
+
+fn strip_reps(rep_blocks: Vec<RepBlock<Trans>>) -> Vec<TransBlock> {
+    rep_blocks.into_iter().map(|r| TransBlock { block: r.block, is_rep: r.rep > 1 }).collect()
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -54,9 +65,12 @@ fn main() {
         prog.num_registers()
     );
 
+    // Load sequence of transitions ("transcript")
     let trans_vec = transcript(&prog, state, args.num_steps);
+
+    // Find repeated patterns in transcript
     let rep_blocks = as_rep_blocks(&trans_vec);
-    println!("{}", compressed_str(&rep_blocks));
+    println!("Compressed Transcript: {}", compressed_str(&rep_blocks));
     println!();
 
     // Print rules
@@ -70,4 +84,10 @@ fn main() {
         let rule = DiffRule::from_trans_vec(&prog, seq).unwrap();
         println!("Rule: {}", rule);
     }
+
+    // Find higher level repeated patterns in rep_blocks
+    let block_pattern = strip_reps(rep_blocks);
+    let meta_rep_blocks = as_rep_blocks(&block_pattern);
+    // println!("Compressed Transcript: {}", compressed_str(&meta_rep_blocks));
+    // println!();
 }

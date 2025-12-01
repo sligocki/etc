@@ -9,3 +9,4 @@ primal = "0.3"
 rayon = "1.8"
 indicatif = {version = "0.18", features = ["rayon"]}
 infinitable = "1.6"
+clap = { version = "4.4", features = ["derive"] }

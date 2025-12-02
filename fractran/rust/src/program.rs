@@ -1,20 +1,20 @@
 pub type Int = i64;
 
 // Fractran/pVAS configuration state
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct State {
     pub data: Vec<Int>,
 }
 
-// Fractran/pVAS rule ()
-#[derive(Debug, Clone)]
-pub struct Rule {
+// Fractran/pVAS instruction
+#[derive(Debug, Clone, PartialEq)]
+pub struct Instr {
     pub data: Vec<Int>,
 }
 
 #[derive(Debug)]
 pub struct Program {
-    pub rules: Vec<Rule>,
+    pub instrs: Vec<Instr>,
 }
 
 #[derive(Debug)]
@@ -37,9 +37,9 @@ impl State {
     }
 }
 
-impl Rule {
-    pub fn new(data: Vec<Int>) -> Rule {
-        Rule { data }
+impl Instr {
+    pub fn new(data: Vec<Int>) -> Instr {
+        Instr { data }
     }
 
     pub fn num_registers(&self) -> usize {
@@ -65,26 +65,26 @@ impl Rule {
 }
 
 impl Program {
-    pub fn num_rules(&self) -> usize {
-        self.rules.len()
+    pub fn num_instrs(&self) -> usize {
+        self.instrs.len()
     }
     pub fn num_registers(&self) -> usize {
-        self.rules
+        self.instrs
             .first()
-            .expect("Program has rules")
+            .expect("Program has instrs")
             .num_registers()
     }
 
     // Returns true if a rule was applied, false if halted.
     #[inline(always)]
     pub fn step(&self, state: &mut State) -> bool {
-        for rule in self.rules.iter() {
+        for rule in self.instrs.iter() {
             if rule.can_apply(state).is_ok() {
                 rule.apply(state);
                 return true;
             }
         }
-        false // No rules applied -> HALT
+        false // No instrs applied -> HALT
     }
 
     // Returns Some(steps) if halted in steps or None if not halted after num_steps.
@@ -116,7 +116,7 @@ macro_rules! state {
 #[macro_export]
 macro_rules! rule {
     ($($x:expr),* $(,)?) => {
-        Rule::new(vec![$($x),*])
+        Instr::new(vec![$($x),*])
     };
 }
 
@@ -129,9 +129,9 @@ macro_rules! prog {
     // Inside each row, expressions are separated by commas (,).
     // $(;)? allows for an optional trailing semicolon.
     ( $( $( $x:expr ),* );* ) => {
-        Program { rules: vec![
+        Program { instrs: vec![
             $(
-                Rule::new(vec![ $( $x ),* ])
+                Instr::new(vec![ $( $x ),* ])
             ),*
         ] }
     }

@@ -17,9 +17,9 @@ pub struct Trans {
 const OFFSET: u8 = 'A' as u8;
 impl ToStringVec for Trans {
     fn to_string_one(&self) -> String {
-        let rule_num = self.reg_fail.len() as u8;
-        let rule_char = (OFFSET + rule_num) as char;
-        rule_char.to_string()
+        let instr_num = self.reg_fail.len() as u8;
+        let instr_char = (OFFSET + instr_num) as char;
+        instr_char.to_string()
     }
 
     fn to_string_vec(xs: &Vec<Self>) -> String {
@@ -30,8 +30,8 @@ impl ToStringVec for Trans {
 // Evaluate details of which rule applies and why prev do not.
 pub fn eval_trans(prog: &Program, state: &State) -> Trans {
     let mut reg_fail: Vec<usize> = Vec::new();
-    for rule in prog.rules.iter() {
-        match rule.can_apply(state) {
+    for instr in prog.instrs.iter() {
+        match instr.can_apply(state) {
             Err(reg) => {
                 reg_fail.push(reg);
             }
@@ -46,9 +46,9 @@ pub fn eval_trans(prog: &Program, state: &State) -> Trans {
 // Evaluate Trans and also apply applicable rule.
 pub fn step(prog: &Program, state: &mut State) -> Trans {
     let trans = eval_trans(prog, state);
-    let rule_num = trans.reg_fail.len();
-    if rule_num < prog.num_rules() {
-        prog.rules[rule_num].apply(state);
+    let instr_num = trans.reg_fail.len();
+    if instr_num < prog.num_instrs() {
+        prog.instrs[instr_num].apply(state);
     }
     trans
 }

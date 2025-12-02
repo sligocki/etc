@@ -179,7 +179,7 @@ fn generate_fast_source(
     let mut transition_names = Vec::new();
     let mut prio_str = "true".to_string();
 
-    for (r_idx, rule) in prog.rules.iter().enumerate() {
+    for (r_idx, instr) in prog.instrs.iter().enumerate() {
         let t_name = format!("t{}", r_idx);
         transition_names.push(t_name.clone());
 
@@ -189,7 +189,7 @@ fn generate_fast_source(
         // --- GUARD GENERATION ---
         // 1. Resources Check (Must have enough tokens)
         let mut resources_guards = Vec::new();
-        for (v_idx, &delta) in rule.data.iter().enumerate() {
+        for (v_idx, &delta) in instr.data.iter().enumerate() {
             if delta < 0 {
                 let req = -delta; // e.g., requires 2
                 resources_guards.push(format!("x{} >= {}", v_idx, req));
@@ -208,7 +208,7 @@ fn generate_fast_source(
 
         // --- ACTION GENERATION ---
         let mut actions = Vec::new();
-        for (v_idx, &delta) in rule.data.iter().enumerate() {
+        for (v_idx, &delta) in instr.data.iter().enumerate() {
             if delta != 0 {
                 let op = if delta > 0 { "+" } else { "-" };
                 actions.push(format!("x{}' = x{} {} {}", v_idx, v_idx, op, delta.abs()));

@@ -35,7 +35,7 @@ fn main() {
     }
 
     // TRANSITIONS
-    for r in 0..prog.num_rules() {
+    for r in 0..prog.num_instrs() {
         println!("   <transition id=\"t{}\">", r);
         // Tapaal/LoLA use the name to identify the transition
         println!("    <name><text>t{}</text></name>", r);
@@ -46,15 +46,15 @@ fn main() {
         println!("   </transition>");
     }
 
-    // ARCS (Transition rules)
+    // ARCS (Transition instrs)
     let mut arc_num = 0;
-    for (rule_num, rule) in prog.rules.iter().enumerate() {
-        for (place_num, delta) in rule.data.iter().enumerate() {
+    for (instr_num, instr) in prog.instrs.iter().enumerate() {
+        for (place_num, delta) in instr.data.iter().enumerate() {
             if *delta < 0 {
                 // CONSUME: Place -> Transition
                 println!(
                     "   <arc id=\"a{}\" source=\"p{}\" target=\"t{}\">",
-                    arc_num, place_num, rule_num
+                    arc_num, place_num, instr_num
                 );
                 println!("    <inscription><text>{}</text></inscription>", -delta);
                 println!("   </arc>");
@@ -63,7 +63,7 @@ fn main() {
                 // PRODUCE: Transition -> Place
                 println!(
                     "   <arc id=\"a{}\" source=\"t{}\" target=\"p{}\">",
-                    arc_num, rule_num, place_num
+                    arc_num, instr_num, place_num
                 );
                 println!("    <inscription><text>{}</text></inscription>", delta);
                 println!("   </arc>");

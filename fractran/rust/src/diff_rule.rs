@@ -6,7 +6,8 @@ use std::fmt;
 
 use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
 
-use crate::program::{Int, Program};
+use crate::program::{Int, Program, State};
+use crate::rule::{ApplyResult, Rule};
 use crate::state_diff::{StateDiff, StateDiffBound};
 use crate::transcript::Trans;
 
@@ -33,20 +34,20 @@ impl DiffRule {
     // Compute DiffRule corresponding to an single transition if possible.
     // Based on one transition, the delta is just the applicable rule and
     // the min is just the the negation of all the negaive values in rule.
-    // The max is based off of all the previous rules failing to apply and
+    // The max is based off of all the previous instrs failing to apply and
     // depends on the specific Trans.reg_fail values.
     // Only fails (returns None) if trans is a halting transition (no rule applies).
     pub fn from_trans(prog: &Program, trans: &Trans) -> Option<DiffRule> {
-        if trans.reg_fail.len() >= prog.num_rules() {
+        if trans.reg_fail.len() >= prog.num_instrs() {
             return None;
         }
         let mut max_vals = vec![Infinity; prog.num_registers()];
-        for (rule, reg_fail) in prog.rules.iter().zip(trans.reg_fail.iter()) {
+        for (rule, reg_fail) in prog.instrs.iter().zip(trans.reg_fail.iter()) {
             // if rule r += -n failed, then r <= n-1
             let max_val = (-rule.data[*reg_fail]) - 1;
             max_vals[*reg_fail] = cmp::min(max_vals[*reg_fail], Finite(max_val));
         }
-        let delta = prog.rules[trans.reg_fail.len()].data.clone();
+        let delta = prog.instrs[trans.reg_fail.len()].data.clone();
         let min_vals = delta.iter().map(|n| if *n < 0 { -n } else { 0 }).collect();
         Some(DiffRule {
             min: StateDiff::new(min_vals),
@@ -88,9 +89,11 @@ impl DiffRule {
             None
         }
     }
+}
 
+impl Rule for DiffRule {
     // Can a rule be applied at all?
-    pub fn is_applicable(&self, state: &StateDiff) -> bool {
+    fn is_applicable(&self, state: &State) -> bool {
         for ((min, max), val) in self
             .min
             .data
@@ -109,20 +112,30 @@ impl DiffRule {
 
     // Apply this DiffRull as many times as possible to a given state.
     // Returns None if rule applies infinitely.
-    pub fn apply_repeat(&self, state: &StateDiff) -> Option<StateDiff> {
+    fn apply(&self, state: &State) -> ApplyResult {
         if !self.is_applicable(state) {
-            return Some(state.clone());
+            return ApplyResult::None;
         }
         // TODO: consider situation where value grows above max!
-        let num_apps = (self.delta.data.iter())
+        let num_apps_op = (self.delta.data.iter())
             .zip(state.data.iter().zip(self.min.data.iter()))
             .filter(|(&del, _)| del < 0)
             // Applies as long as val >= min, reducing by -del each time.
             // This happens (val - min) / -del times and then one more.
             .map(|(del, (val, min))| (val - min) / -del + 1)
-            .min()?;
+            .min();
 
-        return Some(state + (&self.delta * num_apps));
+        match num_apps_op {
+            None => ApplyResult::Infinite,
+            Some(num_apps) => {
+                let mut result = StateDiff::new(state.data.clone());
+                result += &self.delta * num_apps;
+                ApplyResult::Some {
+                    num_apps,
+                    result: State { data: result.data },
+                }
+            }
+        }
     }
 }
 
@@ -147,7 +160,7 @@ impl fmt::Display for DiffRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{Rule, State};
+    use crate::program::{Instr, State};
     use crate::transcript::{eval_trans, transcript};
     use crate::{prog, sd, sdb, state, trans};
 
@@ -204,14 +217,20 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_repeat() {
+    fn test_apply() {
         // Simple rule with only one decrementing index.
         let rule = DiffRule {
             max: sdb![Infinity, Infinity],
             min: sd![0, 1],
             delta: sd![1, -1],
         };
-        assert_eq!(rule.apply_repeat(&sd![8, 13]), Some(sd![21, 0]));
+        assert_eq!(
+            rule.apply(&state![8, 13]),
+            ApplyResult::Some {
+                num_apps: 13,
+                result: state![21, 0],
+            }
+        );
 
         // Multiple decrementing
         let rule = DiffRule {
@@ -219,7 +238,13 @@ mod tests {
             min: sd![0, 1, 2],
             delta: sd![2, -1, -1],
         };
-        assert_eq!(rule.apply_repeat(&sd![8, 13, 7]), Some(sd![20, 7, 1]));
+        assert_eq!(
+            rule.apply(&state![8, 13, 7]),
+            ApplyResult::Some {
+                num_apps: 6,
+                result: state![20, 7, 1],
+            }
+        );
 
         // Larger decrease
         let rule = DiffRule {
@@ -227,8 +252,20 @@ mod tests {
             min: sd![0, 6, 2],
             delta: sd![1, -3, -2],
         };
-        assert_eq!(rule.apply_repeat(&sd![8, 13, 5]), Some(sd![10, 7, 1]));
-        assert_eq!(rule.apply_repeat(&sd![8, 13, 10]), Some(sd![11, 4, 4]));
+        assert_eq!(
+            rule.apply(&state![8, 13, 5]),
+            ApplyResult::Some {
+                num_apps: 2,
+                result: state![10, 7, 1],
+            }
+        );
+        assert_eq!(
+            rule.apply(&state![8, 13, 10]),
+            ApplyResult::Some {
+                num_apps: 3,
+                result: state![11, 4, 4],
+            }
+        );
 
         // Infinite rule
         let rule = DiffRule {
@@ -236,7 +273,7 @@ mod tests {
             min: sd![0, 1],
             delta: sd![1, 1],
         };
-        assert_eq!(rule.apply_repeat(&sd![8, 13]), None);
+        assert_eq!(rule.apply(&state![8, 13]), ApplyResult::Infinite);
 
         // Rule doesn't apply at all
         let rule = DiffRule {
@@ -244,23 +281,35 @@ mod tests {
             min: sd![0, 2],
             delta: sd![1, -1],
         };
-        assert_eq!(rule.apply_repeat(&sd![8, 1]), Some(sd![8, 1]));
+        assert_eq!(rule.apply(&state![8, 1]), ApplyResult::None);
 
         // TODO: Max-out rule
-        let rule = DiffRule {
+        let _rule = DiffRule {
             max: sdb![Infinity, Finite(138)],
             min: sd![0, 1],
             delta: sd![0, 1],
         };
-        // assert_eq!(rule.apply_repeat(&sd![8, 13]), Some(sd![8, 139]));
+        // assert_eq!(
+        //     rule.apply(&state![8, 13]),
+        //     ApplyResult::Some {
+        //         num_apps: 126,
+        //         result: state![8, 139],
+        //     }
+        // );
 
         // TODO: Max-out rule with subtract
-        let rule = DiffRule {
+        let _rule = DiffRule {
             max: sdb![Finite(17), Infinity],
             min: sd![0, 1],
             delta: sd![1, -1],
         };
-        // assert_eq!(rule.apply_repeat(&sd![8, 13]), Some(sd![18, 3]));
+        // assert_eq!(
+        //     rule.apply(&state![8, 13]),
+        //     ApplyResult::Some {
+        //         num_apps: 10,
+        //         result: state![18, 3],
+        //     }
+        // );
     }
 
     #[test]

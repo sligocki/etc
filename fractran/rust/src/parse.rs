@@ -1,4 +1,4 @@
-use crate::program::{Int, Program, Rule};
+use crate::program::{Int, Program, Instr};
 use primal::Primes;
 use prime_factorization::Factorization;
 use std::collections::HashMap;
@@ -12,14 +12,14 @@ pub fn parse_program(program_str: &str) -> Program {
     let parts: Vec<&str> = clean_str.split(',').collect();
 
     // 2. Parse fractions and find max prime
-    let mut rules_fractions: Vec<(u128, u128)> = Vec::new();
+    let mut instrs_fractions: Vec<(u128, u128)> = Vec::new();
     let mut max_prime_found: u128 = 2;
 
     for part in parts {
         let frac: Vec<&str> = part.split('/').collect();
         let num: u128 = frac[0].parse().expect("Invalid numerator");
         let den: u128 = frac[1].parse().expect("Invalid denominator");
-        rules_fractions.push((num, den));
+        instrs_fractions.push((num, den));
 
         // Check factors to find the largest prime needed for dimensions
         // We iterate the factors to find the max
@@ -54,15 +54,15 @@ pub fn parse_program(program_str: &str) -> Program {
     }
 
     // 4. Build Matrix
-    let mut rules: Vec<Rule> = Vec::new();
+    let mut instrs: Vec<Instr> = Vec::new();
 
-    for (num, den) in rules_fractions.iter() {
-        let mut rule = vec![0 as Int; dims];
+    for (num, den) in instrs_fractions.iter() {
+        let mut instr = vec![0 as Int; dims];
         // Handle Numerator (Additions)
         let num_factors = Factorization::run(*num);
         for p in num_factors.factors {
             if let Some(&col) = prime_map.get(&p) {
-                rule[col] += 1;
+                instr[col] += 1;
             }
         }
 
@@ -70,13 +70,13 @@ pub fn parse_program(program_str: &str) -> Program {
         let den_factors = Factorization::run(*den);
         for p in den_factors.factors {
             if let Some(&col) = prime_map.get(&p) {
-                rule[col] -= 1;
+                instr[col] -= 1;
             }
         }
-        rules.push(Rule::new(rule));
+        instrs.push(Instr::new(instr));
     }
 
-    Program { rules }
+    Program { instrs }
 }
 
 // Load all program strings from a file (without parsing).

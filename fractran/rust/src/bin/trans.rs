@@ -59,8 +59,8 @@ fn main() {
     let state = State::start(&prog);
 
     println!(
-        "Simulating program with {} rules and {} registers",
-        prog.num_rules(),
+        "Simulating program with {} instrs and {} registers",
+        prog.num_instrs(),
         prog.num_registers()
     );
 

@@ -64,6 +64,12 @@ impl StateDiffBound {
     }
 }
 
+impl AddAssign for StateDiff {
+    fn add_assign(&mut self, other: StateDiff) {
+        self.add_assign(&other);
+    }
+}
+
 impl AddAssign<&StateDiff> for StateDiff {
     fn add_assign(&mut self, other: &StateDiff) {
         for (val, delta) in self.data.iter_mut().zip(other.data.iter()) {

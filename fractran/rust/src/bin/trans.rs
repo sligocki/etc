@@ -5,10 +5,11 @@ use std::collections::HashSet;
 use clap::Parser;
 use itertools::Itertools;
 
+use fractran::diff_rule::DiffRule;
 use fractran::parse::load_program;
 use fractran::program::{Int, State};
 use fractran::tandem_repeat::{as_rep_blocks, RepBlock, ToStringVec};
-use fractran::transcript::{transcript, DiffRule, Trans};
+use fractran::transcript::{transcript, Trans};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

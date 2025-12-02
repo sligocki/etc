@@ -2,7 +2,7 @@
 
 use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
 use std::cmp::{self, Ordering};
-use std::ops::{Add, AddAssign, Sub};
+use std::ops::{Add, AddAssign, Mul, Sub};
 
 pub type Int = i64;
 
@@ -80,6 +80,14 @@ impl Add for &StateDiff {
     }
 }
 
+impl Add<StateDiff> for &StateDiff {
+    type Output = StateDiff;
+
+    fn add(self, other: StateDiff) -> StateDiff {
+        self.add(&other)
+    }
+}
+
 impl<T> Sub for &StateDiffBase<T>
 where
     T: Add + Sub<Output = T> + Ord + Clone,
@@ -88,6 +96,16 @@ where
 
     fn sub(self, other: Self) -> Self::Output {
         self.map_with(other, |(a, b)| a.clone() - b.clone())
+    }
+}
+
+impl Mul<Int> for &StateDiff {
+    type Output = StateDiff;
+
+    fn mul(self, other: Int) -> StateDiff {
+        StateDiff {
+            data: self.data.iter().map(|a| a * other).collect(),
+        }
     }
 }
 

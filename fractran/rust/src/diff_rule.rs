@@ -88,6 +88,42 @@ impl DiffRule {
             None
         }
     }
+
+    // Can a rule be applied at all?
+    pub fn is_applicable(&self, state: &StateDiff) -> bool {
+        for ((min, max), val) in self
+            .min
+            .data
+            .iter()
+            .zip(self.max.data.iter())
+            .zip(state.data.iter())
+        {
+            if !(min <= val && Finite(*val) <= *max) {
+                // Failure, val is not in the correct range
+                return false;
+            }
+        }
+        // All values are in the correct range
+        return true;
+    }
+
+    // Apply this DiffRull as many times as possible to a given state.
+    // Returns None if rule applies infinitely.
+    pub fn apply_repeat(&self, state: &StateDiff) -> Option<StateDiff> {
+        if !self.is_applicable(state) {
+            return Some(state.clone());
+        }
+        // TODO: consider situation where value grows above max!
+        let num_apps = (self.delta.data.iter())
+            .zip(state.data.iter().zip(self.min.data.iter()))
+            .filter(|(&del, _)| del < 0)
+            // Applies as long as val >= min, reducing by -del each time.
+            // This happens (val - min) / -del times and then one more.
+            .map(|(del, (val, min))| (val - min) / -del + 1)
+            .min()?;
+
+        return Some(state + (&self.delta * num_apps));
+    }
 }
 
 fn inf_str(val: &Infinitable<Int>) -> String {
@@ -168,7 +204,67 @@ mod tests {
     }
 
     #[test]
-    fn test_transcript() {
+    fn test_apply_repeat() {
+        // Simple rule with only one decrementing index.
+        let rule = DiffRule {
+            max: sdb![Infinity, Infinity],
+            min: sd![0, 1],
+            delta: sd![1, -1],
+        };
+        assert_eq!(rule.apply_repeat(&sd![8, 13]), Some(sd![21, 0]));
+
+        // Multiple decrementing
+        let rule = DiffRule {
+            max: sdb![Infinity, Infinity, Infinity],
+            min: sd![0, 1, 2],
+            delta: sd![2, -1, -1],
+        };
+        assert_eq!(rule.apply_repeat(&sd![8, 13, 7]), Some(sd![20, 7, 1]));
+
+        // Larger decrease
+        let rule = DiffRule {
+            max: sdb![Infinity, Infinity, Infinity],
+            min: sd![0, 6, 2],
+            delta: sd![1, -3, -2],
+        };
+        assert_eq!(rule.apply_repeat(&sd![8, 13, 5]), Some(sd![10, 7, 1]));
+        assert_eq!(rule.apply_repeat(&sd![8, 13, 10]), Some(sd![11, 4, 4]));
+
+        // Infinite rule
+        let rule = DiffRule {
+            max: sdb![Infinity, Infinity],
+            min: sd![0, 1],
+            delta: sd![1, 1],
+        };
+        assert_eq!(rule.apply_repeat(&sd![8, 13]), None);
+
+        // Rule doesn't apply at all
+        let rule = DiffRule {
+            max: sdb![Infinity, Infinity],
+            min: sd![0, 2],
+            delta: sd![1, -1],
+        };
+        assert_eq!(rule.apply_repeat(&sd![8, 1]), Some(sd![8, 1]));
+
+        // TODO: Max-out rule
+        let rule = DiffRule {
+            max: sdb![Infinity, Finite(138)],
+            min: sd![0, 1],
+            delta: sd![0, 1],
+        };
+        // assert_eq!(rule.apply_repeat(&sd![8, 13]), Some(sd![8, 139]));
+
+        // TODO: Max-out rule with subtract
+        let rule = DiffRule {
+            max: sdb![Finite(17), Infinity],
+            min: sd![0, 1],
+            delta: sd![1, -1],
+        };
+        // assert_eq!(rule.apply_repeat(&sd![8, 13]), Some(sd![18, 3]));
+    }
+
+    #[test]
+    fn test_hydra() {
         // Hydra simulator: [507/22, 26/33, 245/2, 5/21, 1/3, 11/13, 22/5]
         // S(h, w) = [1, 0, 0, w, h-3, 0]
         let hydra = prog![

@@ -1,3 +1,4 @@
+pub mod constraints;
 pub mod diff_rule;
 pub mod parse;
 pub mod program;

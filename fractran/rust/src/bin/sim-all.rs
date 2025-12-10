@@ -1,22 +1,18 @@
 // Simulate all programs in a file for some number of steps and keep track of halting times.
 
+use std::fs;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
 use indicatif::ParallelProgressIterator;
+use itertools::Itertools;
 use rayon::prelude::*;
 
 use fractran::parse::{load_lines, parse_program};
 use fractran::program::{Int, SimResult, State};
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    filename: String,
-    step_limit: Int,
-}
-
 struct TaskResult {
+    program_str: String,
     sim: SimResult,
     duration: Duration,
 }
@@ -28,21 +24,26 @@ fn parse_and_sim(program_str: &str, step_limit: Int) -> TaskResult {
     let mut state = State::start(&prog);
     let sim_result = prog.run(&mut state, step_limit);
 
-    if sim_result.halted {
-        println!("  Halt: {} steps: {}", sim_result.total_steps, program_str);
-    }
-
     TaskResult {
+        program_str: program_str.to_string(),
         sim: sim_result,
         duration: start_time.elapsed(),
     }
 }
 
-fn main() {
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    infile: String,
+    step_limit: Int,
+    outfile: String,
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     // 2. Load all program strings
-    let programs = load_lines(&args.filename);
+    let programs = load_lines(&args.infile);
     let num_programs = programs.len();
 
     println!(
@@ -62,7 +63,15 @@ fn main() {
 
     let wallclock_time_sec = wallclock_start_time.elapsed().as_secs_f64();
 
-    // 4. Summarize results
+    // 4. Write halting programs to outfile
+    let data = results
+        .iter()
+        .filter(|r| r.sim.halted)
+        .map(|r| format!("{}\tHalt\t{}\n", r.program_str, r.sim.total_steps))
+        .join("");
+    fs::write(&args.outfile, data)?;
+
+    // 5. Summarize results
     let halted_count = results.iter().filter(|r| r.sim.halted).count();
     let frac_halted = halted_count as f64 / num_programs as f64;
     let max_halt_steps = results
@@ -103,4 +112,6 @@ fn main() {
     println!("  Total: {:.2} core-sec", total_thread_runtime_sec);
     println!("  Mean:  {:.2} core-sec / program", mean_runtime_sec);
     println!("  Max:   {:.2} core-sec", max_runtime_sec);
+
+    Ok(())
 }

@@ -33,9 +33,15 @@ impl<T: PartialEq + Clone + ToStringVec> ToStringVec for RepBlock<T> {
 }
 
 // Find repeated blocks and parse into RepBlock format.
-pub fn as_rep_blocks<T: PartialEq + Clone + ToStringVec>(data: &[T]) -> Vec<RepBlock<T>> {
+pub fn find_rep_blocks<T: PartialEq + Clone + ToStringVec>(data: &[T]) -> Vec<RepBlock<T>> {
     let repeats = find_repeat_info(data);
+    as_rep_blocks(data, repeats)
+}
 
+pub fn as_rep_blocks<T: PartialEq + Clone + ToStringVec>(
+    data: &[T],
+    repeats: Vec<RepeatInfo>,
+) -> Vec<RepBlock<T>> {
     let mut ret = Vec::new();
     let mut n = 0;
     for repeat in repeats.iter() {
@@ -61,11 +67,17 @@ pub fn as_rep_blocks<T: PartialEq + Clone + ToStringVec>(data: &[T]) -> Vec<RepB
 }
 
 // Encodes a repeat such that data[i] = data[i + n * period] for start ≤ i < start + period and 0 ≤ n < count.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct RepeatInfo {
     pub start: usize,
     pub period: usize,
     pub count: usize,
+}
+
+impl RepeatInfo {
+    pub fn size(&self) -> usize {
+        self.period * self.count
+    }
 }
 
 pub fn find_repeat_info<T: PartialEq>(data: &[T]) -> Vec<RepeatInfo> {
@@ -104,6 +116,34 @@ fn find_repeat_info_prefix<T: PartialEq>(data: &[T]) -> Option<RepeatInfo> {
         }
     }
     best
+}
+
+/// Summary statistics about repeats from a Vec<RepeatInfo>
+#[derive(Debug, PartialEq, Clone)]
+pub struct RepBlockStats {
+    /// Number of repeated blocks (with rep >= 2)
+    pub num_blocks: usize,
+    /// Maximum tandom repeat of across all blocks
+    pub max_rep: usize,
+    /// Fraction of message that is part of a block (with rep >= 2)
+    pub frac_in_reps: f32,
+    /// Fraction of message that is part of largest block
+    pub frac_in_max_block: f32,
+}
+
+pub fn rep_stats(rep_info: &Vec<RepeatInfo>, data_size: usize) -> RepBlockStats {
+    let size_in_reps: usize = rep_info.iter().map(|x| x.size()).sum();
+
+    let max_block = rep_info.iter().max_by_key(|x| x.count);
+    let max_rep = max_block.map_or(0, |x| x.count);
+    let size_in_max_block = max_block.map_or(0, |x| x.size());
+
+    RepBlockStats {
+        num_blocks: rep_info.len(),
+        max_rep,
+        frac_in_reps: (size_in_reps as f32) / (data_size as f32),
+        frac_in_max_block: (size_in_max_block as f32) / (data_size as f32),
+    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 use itertools::Itertools;
 
 use crate::program::{Int, Program, State};
-use crate::tandem_repeat::ToStringVec;
+use crate::tandem_repeat::{RepBlock, ToStringVec};
 
 // A transition is a description of which rule applied at each step and
 // why the previous rules did not apply.
@@ -60,6 +60,38 @@ pub fn transcript(prog: &Program, mut state: State, num_steps: Int) -> Vec<Trans
         ret.push(step(prog, &mut state))
     }
     ret
+}
+
+/// Block of transitions stripped of explicit repeat count (only whether it is repeated or not).
+#[derive(Debug, PartialEq, Clone)]
+pub struct StrippedBlock {
+    pub block: Vec<Trans>,
+    pub is_rep: bool,
+}
+
+impl ToStringVec for StrippedBlock {
+    fn to_string_one(&self) -> String {
+        let mut ret = Trans::to_string_vec(&self.block);
+        if self.is_rep {
+            ret.push_str("+");
+        }
+        ret
+    }
+
+    fn to_string_vec(xs: &Vec<Self>) -> String {
+        format!("({})", xs.iter().map(|x| x.to_string_one()).join(" "))
+    }
+}
+
+/// Strip repeat counts from a RepBlock
+pub fn strip_reps(rep_blocks: Vec<RepBlock<Trans>>) -> Vec<StrippedBlock> {
+    rep_blocks
+        .into_iter()
+        .map(|r| StrippedBlock {
+            block: r.block,
+            is_rep: r.rep > 1,
+        })
+        .collect()
 }
 
 #[macro_export]

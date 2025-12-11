@@ -103,8 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     fn out_format(result: &TaskResult) -> String {
         format!(
-            "{}\tL0:{:?}\tL1:{:?}\n",
-            result.program_str, result.l0_stats, result.l1_stats
+            "{}\t{}\t{}\t{}\t{}\n",
+            result.l1_stats.num_blocks, result.l1_stats.max_rep, result.l1_stats.frac_in_reps, result.l1_stats.frac_in_max_block, result.program_str
         )
     }
 

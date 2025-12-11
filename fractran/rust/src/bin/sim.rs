@@ -43,4 +43,6 @@ fn main() {
             start.elapsed().as_secs_f64()
         );
     }
+
+    println!("Halted at step: {}", num_steps)
 }

@@ -44,8 +44,8 @@ fn count(size: usize, arity: usize) -> BigInt {
         for x in 1..=n {
             // |h| = x, sum |g_i| = y
             let y = n - x;
-            // Allow m=0: C(h)
-            for m in 0..=y {
+            // Disallow m=0: C(h)
+            for m in 1..=y {
                 // println!("      C(h,gs) {} {} {}", x, y, m);
                 total += count(x, m) * count_many(y, arity, m);
                 // println!("      C(h,gs) {}", total);

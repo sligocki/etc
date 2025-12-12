@@ -79,7 +79,7 @@ impl ShiftSim {
             }
         }
 
-        // Second fall back to doing a basic rule
+        // If no shift rules apply, fall back to doing a basic rule
         if self.prog.step(&mut state) {
             // TODO: self.base_steps += 1;
         } else {
@@ -89,8 +89,11 @@ impl ShiftSim {
     }
 
     pub fn run(&mut self, mut state: State, num_steps: usize) -> State {
-        while self.status == SimStatus::Running && self.sim_steps < num_steps {
+        for _ in 0..num_steps {
             state = self.step(state);
+            if self.status != SimStatus::Running {
+                break;
+            }
         }
         state
     }

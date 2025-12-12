@@ -18,7 +18,7 @@ struct Args {
     #[arg(default_value_t = 1_000)]
     transcript_steps: usize,
 
-    #[arg(default_value_t = 1_000)]
+    #[arg(default_value_t = 1_000_000)]
     print_steps: usize,
 }
 

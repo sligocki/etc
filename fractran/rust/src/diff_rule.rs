@@ -5,6 +5,7 @@ use std::cmp;
 use std::fmt;
 
 use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
+use itertools::izip;
 
 use crate::program::{BigInt, Program, SmallInt, State};
 use crate::rule::{ApplyResult, Rule};
@@ -128,18 +129,34 @@ impl Rule for DiffRule {
         if !self.is_applicable(state) {
             return ApplyResult::None;
         }
-        // TODO: consider situation where value grows above max!
-        fn num_apps_reg(mut val: BigInt, min: SmallInt, del: SmallInt) -> BigInt {
-            // Applies as long as val >= min, reducing by -del each time.
-            // This happens (val - min) / -del times and then one more.
-            val = (val - min) / -del + 1;
-            val
+        // Return number of times del can be applied to val, while staying withing min to max.
+        // Returns None, if there is no limit.
+        fn num_apps_reg(
+            val: BigInt,
+            min: SmallInt,
+            max: Infinitable<SmallInt>,
+            del: SmallInt,
+        ) -> Option<BigInt> {
+            if del < 0 {
+                // Applies as long as val >= min, reducing by -del each time.
+                // This happens (val - min) / -del times and then one more.
+                Some((val - min) / -del + 1)
+            } else if del > 0
+                && let Finite(max_f) = max
+            {
+                Some((max_f - val) / del + 1)
+            } else {
+                None
+            }
         }
-        let num_apps_op = (self.delta.data.iter())
-            .zip(state.data.iter().zip(self.min.data.iter()))
-            .filter(|&(&del, _)| del < 0)
-            .map(|(del, (val, min))| num_apps_reg(val.clone(), *min, *del))
-            .min();
+        let num_apps_op = izip!(
+            &state.data,
+            &self.min.data,
+            &self.max.data,
+            &self.delta.data
+        )
+        .filter_map(|(val, min, max, del)| num_apps_reg(val.clone(), *min, *max, *del))
+        .min();
 
         match num_apps_op {
             None => ApplyResult::Infinite,
@@ -313,35 +330,35 @@ mod tests {
         };
         assert_eq!(rule.apply(&state![8, 1]), ApplyResult::None);
 
-        // TODO: Max-out rule
-        let _rule = DiffRule {
+        let rule = DiffRule {
             max: sdb![Infinity, Finite(138)],
             min: sd![0, 1],
             delta: sd![0, 1],
             num_steps: 1,
         };
-        // assert_eq!(
-        //     rule.apply(&state![8, 13]),
-        //     ApplyResult::Some {
-        //         num_apps: 126.into(),
-        //         result: state![8, 139],
-        //     }
-        // );
+        assert_eq!(
+            rule.apply(&state![8, 13]),
+            ApplyResult::Some {
+                result: state![8, 139],
+                num_apps: 126.into(),
+                base_steps: 126.into(),
+            }
+        );
 
-        // TODO: Max-out rule with subtract
-        let _rule = DiffRule {
+        let rule = DiffRule {
             max: sdb![Finite(17), Infinity],
             min: sd![0, 1],
             delta: sd![1, -1],
             num_steps: 1,
         };
-        // assert_eq!(
-        //     rule.apply(&state![8, 13]),
-        //     ApplyResult::Some {
-        //         num_apps: 10.into(),
-        //         result: state![18, 3],
-        //     }
-        // );
+        assert_eq!(
+            rule.apply(&state![8, 13]),
+            ApplyResult::Some {
+                result: state![18, 3],
+                num_apps: 10.into(),
+                base_steps: 10.into(),
+            }
+        );
     }
 
     #[test]

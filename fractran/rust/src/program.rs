@@ -75,7 +75,7 @@ impl Program {
             .num_registers()
     }
 
-    // Returns true if a rule was applied, false if halted.
+    // Returns true if a instruction was applied, false if halted.
     #[inline(always)]
     pub fn step(&self, state: &mut State) -> bool {
         for rule in self.instrs.iter() {

@@ -104,7 +104,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fn out_format(result: &TaskResult) -> String {
         format!(
             "{}\t{}\t{}\t{}\t{}\n",
-            result.l1_stats.num_blocks, result.l1_stats.max_rep, result.l1_stats.frac_in_reps, result.l1_stats.frac_in_max_block, result.program_str
+            result.l1_stats.num_blocks,
+            result.l1_stats.max_rep,
+            result.l1_stats.frac_in_reps,
+            result.l1_stats.frac_in_max_block,
+            result.program_str
         )
     }
 

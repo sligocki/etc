@@ -68,11 +68,12 @@ impl ShiftSim {
                     return state;
                 }
                 ApplyResult::Some {
-                    num_apps: _,
                     result,
+                    num_apps: _,
+                    base_steps,
                 } => {
                     self.num_shift_steps += 1;
-                    // TODO: Calculate number of base steps.
+                    self.base_steps += base_steps;
                     return result;
                 }
                 ApplyResult::None => {}
@@ -81,7 +82,7 @@ impl ShiftSim {
 
         // If no shift rules apply, fall back to doing a basic rule
         if self.prog.step(&mut state) {
-            // TODO: self.base_steps += 1;
+            self.base_steps += 1;
         } else {
             self.status = SimStatus::Halted;
         }

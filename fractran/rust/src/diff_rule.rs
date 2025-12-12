@@ -19,6 +19,7 @@ pub struct DiffRule {
     pub min: StateDiff,
     pub max: StateDiffBound,
     pub delta: StateDiff,
+    pub num_steps: SmallInt,
 }
 
 impl DiffRule {
@@ -28,6 +29,7 @@ impl DiffRule {
             min: StateDiff::new(vec![0; size]),
             max: StateDiffBound::new(vec![Infinity; size]),
             delta: StateDiff::new(vec![0; size]),
+            num_steps: 0,
         }
     }
 
@@ -57,6 +59,7 @@ impl DiffRule {
             min: StateDiff::new(min_vals),
             max: StateDiffBound::new(max_vals),
             delta: StateDiff::new(delta),
+            num_steps: 1,
         })
     }
 
@@ -88,6 +91,7 @@ impl DiffRule {
                 min,
                 max,
                 delta: &self.delta + &other.delta,
+                num_steps: self.num_steps + other.num_steps,
             })
         } else {
             None
@@ -143,8 +147,9 @@ impl Rule for DiffRule {
                 let mut result = StateDiffBig::new(state.data.clone());
                 result += &self.delta * &num_apps;
                 ApplyResult::Some {
-                    num_apps,
                     result: State { data: result.data },
+                    num_apps: num_apps.clone(),
+                    base_steps: self.num_steps * num_apps,
                 }
             }
         }
@@ -188,6 +193,7 @@ mod tests {
             max: sdb![Infinity, Infinity, Infinity],
             min: sd![0, 1, 1],
             delta: sd![1, -1, -1],
+            num_steps: 1,
         };
         assert_eq!(eval_trans(&prog, &sa), ta);
         assert_eq!(DiffRule::from_trans(&prog, &ta), Some(ra));
@@ -198,6 +204,7 @@ mod tests {
             max: sdb![Infinity, Infinity, Finite(0)],
             min: sd![1, 0, 0],
             delta: sd![-1, 2, 0],
+            num_steps: 1,
         };
         assert_eq!(eval_trans(&prog, &sb), tb);
         assert_eq!(DiffRule::from_trans(&prog, &tb), Some(rb));
@@ -208,6 +215,7 @@ mod tests {
             max: sdb![Infinity, Finite(0), Infinity],
             min: sd![1, 0, 0],
             delta: sd![-1, 2, 0],
+            num_steps: 1,
         };
         assert_eq!(eval_trans(&prog, &sc), tc);
         assert_eq!(DiffRule::from_trans(&prog, &tc), Some(rc));
@@ -218,6 +226,7 @@ mod tests {
             max: sdb![Finite(0), Finite(0), Infinity],
             min: sd![0, 0, 2],
             delta: sd![0, 1, -2],
+            num_steps: 1,
         };
         assert_eq!(eval_trans(&prog, &sd), td);
         assert_eq!(DiffRule::from_trans(&prog, &td), Some(rd));
@@ -235,12 +244,14 @@ mod tests {
             max: sdb![Infinity, Infinity],
             min: sd![0, 1],
             delta: sd![1, -1],
+            num_steps: 1,
         };
         assert_eq!(
             rule.apply(&state![8, 13]),
             ApplyResult::Some {
-                num_apps: 13.into(),
                 result: state![21, 0],
+                num_apps: 13.into(),
+                base_steps: 13.into(),
             }
         );
 
@@ -249,12 +260,14 @@ mod tests {
             max: sdb![Infinity, Infinity, Infinity],
             min: sd![0, 1, 2],
             delta: sd![2, -1, -1],
+            num_steps: 1,
         };
         assert_eq!(
             rule.apply(&state![8, 13, 7]),
             ApplyResult::Some {
-                num_apps: 6.into(),
                 result: state![20, 7, 1],
+                num_apps: 6.into(),
+                base_steps: 6.into(),
             }
         );
 
@@ -263,19 +276,22 @@ mod tests {
             max: sdb![Infinity, Infinity, Infinity],
             min: sd![0, 6, 2],
             delta: sd![1, -3, -2],
+            num_steps: 1,
         };
         assert_eq!(
             rule.apply(&state![8, 13, 5]),
             ApplyResult::Some {
-                num_apps: 2.into(),
                 result: state![10, 7, 1],
+                num_apps: 2.into(),
+                base_steps: 2.into(),
             }
         );
         assert_eq!(
             rule.apply(&state![8, 13, 10]),
             ApplyResult::Some {
-                num_apps: 3.into(),
                 result: state![11, 4, 4],
+                num_apps: 3.into(),
+                base_steps: 3.into(),
             }
         );
 
@@ -284,6 +300,7 @@ mod tests {
             max: sdb![Infinity, Infinity],
             min: sd![0, 1],
             delta: sd![1, 1],
+            num_steps: 1,
         };
         assert_eq!(rule.apply(&state![8, 13]), ApplyResult::Infinite);
 
@@ -292,6 +309,7 @@ mod tests {
             max: sdb![Infinity, Infinity],
             min: sd![0, 2],
             delta: sd![1, -1],
+            num_steps: 1,
         };
         assert_eq!(rule.apply(&state![8, 1]), ApplyResult::None);
 
@@ -300,6 +318,7 @@ mod tests {
             max: sdb![Infinity, Finite(138)],
             min: sd![0, 1],
             delta: sd![0, 1],
+            num_steps: 1,
         };
         // assert_eq!(
         //     rule.apply(&state![8, 13]),
@@ -314,6 +333,7 @@ mod tests {
             max: sdb![Finite(17), Infinity],
             min: sd![0, 1],
             delta: sd![1, -1],
+            num_steps: 1,
         };
         // assert_eq!(
         //     rule.apply(&state![8, 13]),

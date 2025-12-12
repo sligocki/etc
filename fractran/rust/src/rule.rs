@@ -7,7 +7,11 @@ pub enum ApplyResult {
     // Rule does not apply at all.
     None,
     // Rule applies a finite number of times.
-    Some { num_apps: BigInt, result: State },
+    Some {
+        result: State,
+        num_apps: BigInt,
+        base_steps: BigInt,
+    },
     // Rule applies infinitely (proof of non-halting).
     Infinite,
 }

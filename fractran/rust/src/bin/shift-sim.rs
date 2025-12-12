@@ -6,7 +6,7 @@ use clap::Parser;
 
 use fractran::parse::load_program;
 use fractran::program::State;
-use fractran::shift_sim::{find_shift_rules, ShiftSim, SimStatus};
+use fractran::shift_sim::{ShiftSim, SimStatus, find_shift_rules};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -43,5 +43,8 @@ fn main() {
         );
     }
 
-    println!("Status: {:?}  sim step: {}", sim.status, sim.sim_steps);
+    println!("Status: {:?}", sim.status);
+    println!("Sim Steps: {}", sim.sim_steps);
+    println!("Num Rule Steps: {}", sim.num_shift_steps);
+    println!("Base Steps: {}", sim.base_steps);
 }

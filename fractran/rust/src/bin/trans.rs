@@ -7,8 +7,8 @@ use clap::Parser;
 use fractran::diff_rule::DiffRule;
 use fractran::parse::load_program;
 use fractran::program::State;
-use fractran::tandem_repeat::{find_rep_blocks, RepBlock, ToStringVec};
-use fractran::transcript::{strip_reps, transcript, Trans};
+use fractran::tandem_repeat::{RepBlock, ToStringVec, find_rep_blocks};
+use fractran::transcript::{Trans, strip_reps, transcript};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

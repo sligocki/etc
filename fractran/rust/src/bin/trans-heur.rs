@@ -31,7 +31,7 @@ use rayon::prelude::*;
 
 use fractran::parse::{load_lines, parse_program};
 use fractran::program::State;
-use fractran::tandem_repeat::{as_rep_blocks, find_repeat_info, rep_stats, RepBlockStats};
+use fractran::tandem_repeat::{RepBlockStats, as_rep_blocks, find_repeat_info, rep_stats};
 use fractran::transcript::{strip_reps, transcript};
 
 struct TaskResult {

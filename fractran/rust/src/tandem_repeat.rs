@@ -4,7 +4,7 @@ use std::cmp;
 
 use itertools::Itertools;
 
-const MIN_REPEATS: usize = 2;
+const MIN_REPEATS: usize = 3;
 const MAX_WINDOW: usize = 100;
 
 pub trait ToStringVec: Sized {

@@ -44,20 +44,28 @@ pub fn eval_trans(prog: &Program, state: &State) -> Trans {
 }
 
 // Evaluate Trans and also apply applicable rule.
-pub fn step(prog: &Program, state: &mut State) -> Trans {
+pub fn step(prog: &Program, state: &mut State) -> Option<Trans> {
     let trans = eval_trans(prog, state);
     let instr_num = trans.reg_fail.len();
     if instr_num < prog.num_instrs() {
         prog.instrs[instr_num].apply(state);
+        Some(trans)
+    } else {
+        // Halted
+        None
     }
-    trans
 }
 
 // Simulate for num_steps keeping track of Trans at each step.
 pub fn transcript(prog: &Program, mut state: State, num_steps: usize) -> Vec<Trans> {
     let mut ret: Vec<Trans> = Vec::new();
     for _ in 0..num_steps {
-        ret.push(step(prog, &mut state))
+        if let Some(trans) = step(prog, &mut state) {
+            ret.push(trans)
+        } else {
+            // Halted
+            break;
+        }
     }
     ret
 }
@@ -99,4 +107,46 @@ macro_rules! trans {
     ($($x:expr),* $(,)?) => {
         Trans { reg_fail: vec![$($x),*] }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::{Instr, Program, State};
+    use crate::{prog, state};
+
+    #[test]
+    fn test_small() {
+        // Size 8 champion
+        let prog = prog![-1,  4;
+                          0, -1];
+        let start_state = state![1, 0];
+        let trans_vec = transcript(&prog, start_state, 10);
+        // Halts in 5 steps
+        assert_eq!(trans_vec.len(), 5);
+        // List of rules used
+        let rules: Vec<usize> = trans_vec.iter().map(|x| x.reg_fail.len()).collect();
+        assert_eq!(rules, vec![0, 1, 1, 1, 1]);
+        // Exact vector of Trans
+        assert_eq!(
+            trans_vec,
+            vec![trans![], trans![0], trans![0], trans![0], trans![0],]
+        );
+    }
+
+    #[test]
+    fn test_medium() {
+        // Size 14 champion
+        let prog = prog![-1,  5,  0;
+                          0, -1,  3;
+                          0,  0, -1];
+        let start_state = state![1, 0, 0];
+        let trans_vec = transcript(&prog, start_state, 100);
+        // Halts in 5 steps
+        assert_eq!(trans_vec.len(), 21);
+        // List of rules used
+        let rules: Vec<usize> = trans_vec.iter().map(|x| x.reg_fail.len()).collect();
+        let expected_rules = [&vec![0][..], &vec![1; 5][..], &vec![2; 15][..]].concat();
+        assert_eq!(rules, expected_rules);
+    }
 }

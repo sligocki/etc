@@ -9,7 +9,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 
 use fractran::parse::{load_lines, parse_program};
-use fractran::program::{Int, SimResult, State};
+use fractran::program::{SimResult, State};
 
 struct TaskResult {
     program_str: String,
@@ -18,7 +18,7 @@ struct TaskResult {
 }
 
 // Helper function to run the simulation and collect results
-fn parse_and_sim(program_str: &str, step_limit: Int) -> TaskResult {
+fn parse_and_sim(program_str: &str, step_limit: usize) -> TaskResult {
     let start_time = Instant::now();
     let prog = parse_program(program_str);
     let mut state = State::start(&prog);
@@ -35,7 +35,7 @@ fn parse_and_sim(program_str: &str, step_limit: Int) -> TaskResult {
 #[command(version, about, long_about = None)]
 struct Args {
     infile: String,
-    step_limit: Int,
+    step_limit: usize,
     outfile: String,
 }
 
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|r| if r.sim.halted { r.sim.total_steps } else { 0 })
         .max()
         .unwrap();
-    let total_steps_simulated: Int = results.iter().map(|r| r.sim.total_steps).sum();
+    let total_steps_simulated: usize = results.iter().map(|r| r.sim.total_steps).sum();
 
     let wallclock_rate = total_steps_simulated as f64 / wallclock_time_sec;
 

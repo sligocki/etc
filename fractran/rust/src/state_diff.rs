@@ -4,7 +4,7 @@ use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
 use std::cmp::{self, Ordering};
 use std::ops::{Add, AddAssign, Mul, Sub};
 
-pub type Int = i64;
+use crate::program::{BigInt, SmallInt};
 
 // Mathematical vector that can be added to other vectors.
 #[derive(Debug, PartialEq, Clone)]
@@ -15,9 +15,18 @@ where
     pub data: Vec<T>,
 }
 
-pub type StateDiff = StateDiffBase<Int>;
+pub type StateDiff = StateDiffBase<SmallInt>;
+pub type StateDiffBig = StateDiffBase<BigInt>;
 // Useful for min/max bounds where default is either +- infinity.
-pub type StateDiffBound = StateDiffBase<Infinitable<Int>>;
+pub type StateDiffBound = StateDiffBase<Infinitable<SmallInt>>;
+
+impl From<&StateDiff> for StateDiffBig {
+    fn from(sd: &StateDiff) -> StateDiffBig {
+        StateDiffBig {
+            data: sd.data.iter().map(|x| (*x).into()).collect(),
+        }
+    }
+}
 
 impl From<&StateDiff> for StateDiffBound {
     fn from(sd: &StateDiff) -> StateDiffBound {
@@ -78,11 +87,19 @@ impl AddAssign<&StateDiff> for StateDiff {
     }
 }
 
+impl AddAssign for StateDiffBig {
+    fn add_assign(&mut self, other: StateDiffBig) {
+        for (val, delta) in self.data.iter_mut().zip(other.data.iter()) {
+            *val += delta;
+        }
+    }
+}
+
 impl Add for &StateDiff {
     type Output = StateDiff;
 
     fn add(self, other: &StateDiff) -> StateDiff {
-        self.map_with(other, |(a, b)| a + b)
+        self.map_with(other, |(a, b)| (a + b).into())
     }
 }
 
@@ -105,12 +122,22 @@ where
     }
 }
 
-impl Mul<Int> for &StateDiff {
+impl Mul<SmallInt> for &StateDiff {
     type Output = StateDiff;
 
-    fn mul(self, other: Int) -> StateDiff {
+    fn mul(self, other: SmallInt) -> StateDiff {
         StateDiff {
             data: self.data.iter().map(|a| a * other).collect(),
+        }
+    }
+}
+
+impl Mul<&BigInt> for &StateDiff {
+    type Output = StateDiffBig;
+
+    fn mul(self, other: &BigInt) -> StateDiffBig {
+        StateDiffBig {
+            data: self.data.iter().map(|a| (a * other).into()).collect(),
         }
     }
 }

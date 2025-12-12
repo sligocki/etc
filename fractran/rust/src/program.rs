@@ -1,15 +1,19 @@
-pub type Int = i64;
+use rug;
+
+// Small int and big int
+pub type SmallInt = i32;
+pub type BigInt = rug::Integer;
 
 // Fractran/pVAS configuration state
 #[derive(Debug, Clone, PartialEq)]
 pub struct State {
-    pub data: Vec<Int>,
+    pub data: Vec<BigInt>,
 }
 
 // Fractran/pVAS instruction
 #[derive(Debug, Clone, PartialEq)]
 pub struct Instr {
-    pub data: Vec<Int>,
+    pub data: Vec<SmallInt>,
 }
 
 #[derive(Debug)]
@@ -20,25 +24,25 @@ pub struct Program {
 #[derive(Debug)]
 pub struct SimResult {
     pub halted: bool,
-    pub total_steps: Int,
+    pub total_steps: usize,
 }
 
 impl State {
-    pub fn new(data: Vec<Int>) -> State {
+    pub fn new(data: Vec<BigInt>) -> State {
         State { data }
     }
 
     // Initial state (scaled to number of registers of program).
     pub fn start(prog: &Program) -> State {
         let num_regs = prog.num_registers();
-        let mut state = vec![0 as Int; num_regs];
-        state[0] = 1;
+        let mut state = vec![0.into(); num_regs];
+        state[0] = 1.into();
         State { data: state }
     }
 }
 
 impl Instr {
-    pub fn new(data: Vec<Int>) -> Instr {
+    pub fn new(data: Vec<SmallInt>) -> Instr {
         Instr { data }
     }
 
@@ -51,7 +55,7 @@ impl Instr {
     // This is useful for inductive deciders to understand which register condition failed.
     pub fn can_apply(&self, state: &State) -> Result<(), usize> {
         for (i, (val, delta)) in state.data.iter().zip(self.data.iter()).enumerate() {
-            if val + delta < 0 {
+            if *val < -delta {
                 return Err(i);
             }
         }
@@ -87,9 +91,8 @@ impl Program {
         false // No instrs applied -> HALT
     }
 
-    // Returns Some(steps) if halted in steps or None if not halted after num_steps.
     #[inline(always)]
-    pub fn run(&self, state: &mut State, num_steps: Int) -> SimResult {
+    pub fn run(&self, state: &mut State, num_steps: usize) -> SimResult {
         for step_num in 0..num_steps {
             if !self.step(state) {
                 return SimResult {
@@ -109,7 +112,7 @@ impl Program {
 #[macro_export]
 macro_rules! state {
     ($($x:expr),* $(,)?) => {
-        State::new(vec![$($x),*])
+        State::new(vec![$($x.into()),*])
     };
 }
 

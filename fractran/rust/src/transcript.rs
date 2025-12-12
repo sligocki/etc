@@ -2,7 +2,7 @@
 
 use itertools::Itertools;
 
-use crate::program::{Int, Program, State};
+use crate::program::{Program, State};
 use crate::tandem_repeat::{RepBlock, ToStringVec};
 
 // A transition is a description of which rule applied at each step and
@@ -54,7 +54,7 @@ pub fn step(prog: &Program, state: &mut State) -> Trans {
 }
 
 // Simulate for num_steps keeping track of Trans at each step.
-pub fn transcript(prog: &Program, mut state: State, num_steps: Int) -> Vec<Trans> {
+pub fn transcript(prog: &Program, mut state: State, num_steps: usize) -> Vec<Trans> {
     let mut ret: Vec<Trans> = Vec::new();
     for _ in 0..num_steps {
         ret.push(step(prog, &mut state))

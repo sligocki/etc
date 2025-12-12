@@ -5,7 +5,7 @@ use std::time::Instant;
 use clap::Parser;
 
 use fractran::parse::load_program;
-use fractran::program::{Int, State};
+use fractran::program::State;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -15,7 +15,7 @@ struct Args {
     filename_record: String,
 
     #[arg(default_value_t = 100_000_000)]
-    print_steps: Int,
+    print_steps: usize,
 }
 
 fn main() {
@@ -23,7 +23,7 @@ fn main() {
 
     let prog = load_program(&args.filename_record).expect("Couldn't load program from file");
     let mut state = State::start(&prog);
-    let mut num_steps: Int = 0;
+    let mut num_steps: usize = 0;
     let mut halted = false;
 
     println!(
@@ -44,5 +44,5 @@ fn main() {
         );
     }
 
-    println!("Halted at step: {}", num_steps)
+    println!("Halted at step: {}", num_steps);
 }

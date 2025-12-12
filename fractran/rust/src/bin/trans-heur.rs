@@ -30,7 +30,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 
 use fractran::parse::{load_lines, parse_program};
-use fractran::program::{Int, State};
+use fractran::program::State;
 use fractran::tandem_repeat::{as_rep_blocks, find_repeat_info, rep_stats, RepBlockStats};
 use fractran::transcript::{strip_reps, transcript};
 
@@ -44,7 +44,7 @@ struct TaskResult {
 }
 
 // Helper function to run the simulation and collect results
-fn process_task(program_str: &str, num_steps: Int) -> TaskResult {
+fn process_task(program_str: &str, num_steps: usize) -> TaskResult {
     let start_time = Instant::now();
     let prog = parse_program(program_str);
     let state = State::start(&prog);
@@ -74,7 +74,7 @@ fn process_task(program_str: &str, num_steps: Int) -> TaskResult {
 #[command(version, about, long_about = None)]
 struct Args {
     infile: String,
-    num_steps: Int,
+    num_steps: usize,
     outfile: String,
 }
 

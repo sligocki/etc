@@ -1,4 +1,4 @@
-use crate::program::{Instr, Int, Program};
+use crate::program::{Instr, Program};
 use primal::Primes;
 use prime_factorization::Factorization;
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ pub fn parse_program(program_str: &str) -> Program {
     let mut instrs: Vec<Instr> = Vec::new();
 
     for (num, den) in instrs_fractions.iter() {
-        let mut instr = vec![0 as Int; dims];
+        let mut instr = vec![0; dims];
         // Handle Numerator (Additions)
         let num_factors = Factorization::run(*num);
         for p in num_factors.factors {

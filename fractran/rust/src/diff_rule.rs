@@ -6,9 +6,9 @@ use std::fmt;
 
 use infinitable::{Finite, Infinitable, Infinity, NegativeInfinity};
 
-use crate::program::{Int, Program, State};
+use crate::program::{BigInt, Program, SmallInt, State};
 use crate::rule::{ApplyResult, Rule};
-use crate::state_diff::{StateDiff, StateDiffBound};
+use crate::state_diff::{StateDiff, StateDiffBig, StateDiffBound};
 use crate::transcript::Trans;
 
 // Inductive Diff Rule based on a Trans.
@@ -41,14 +41,18 @@ impl DiffRule {
         if trans.reg_fail.len() >= prog.num_instrs() {
             return None;
         }
-        let mut max_vals = vec![Infinity; prog.num_registers()];
+        let mut max_vals: Vec<Infinitable<SmallInt>> = vec![Infinity; prog.num_registers()];
         for (rule, reg_fail) in prog.instrs.iter().zip(trans.reg_fail.iter()) {
             // if rule r += -n failed, then r <= n-1
             let max_val = (-rule.data[*reg_fail]) - 1;
-            max_vals[*reg_fail] = cmp::min(max_vals[*reg_fail], Finite(max_val));
+            max_vals[*reg_fail] = cmp::min(max_vals[*reg_fail].clone(), Finite(max_val.into()));
         }
-        let delta = prog.instrs[trans.reg_fail.len()].data.clone();
-        let min_vals = delta.iter().map(|n| if *n < 0 { -n } else { 0 }).collect();
+        let delta: Vec<SmallInt> = prog.instrs[trans.reg_fail.len()]
+            .data
+            .iter()
+            .map(|x| (*x).into())
+            .collect();
+        let min_vals: Vec<SmallInt> = delta.iter().map(|n| if *n < 0 { -n } else { 0 }).collect();
         Some(DiffRule {
             min: StateDiff::new(min_vals),
             max: StateDiffBound::new(max_vals),
@@ -101,8 +105,12 @@ impl Rule for DiffRule {
             .zip(self.max.data.iter())
             .zip(state.data.iter())
         {
-            if !(min <= val && Finite(*val) <= *max) {
-                // Failure, val is not in the correct range
+            if val < min {
+                return false;
+            }
+            if let Finite(max_f) = max
+                && val > max_f
+            {
                 return false;
             }
         }
@@ -117,19 +125,23 @@ impl Rule for DiffRule {
             return ApplyResult::None;
         }
         // TODO: consider situation where value grows above max!
-        let num_apps_op = (self.delta.data.iter())
-            .zip(state.data.iter().zip(self.min.data.iter()))
-            .filter(|(&del, _)| del < 0)
+        fn num_apps_reg(mut val: BigInt, min: SmallInt, del: SmallInt) -> BigInt {
             // Applies as long as val >= min, reducing by -del each time.
             // This happens (val - min) / -del times and then one more.
-            .map(|(del, (val, min))| (val - min) / -del + 1)
+            val = (val - min) / -del + 1;
+            val
+        }
+        let num_apps_op = (self.delta.data.iter())
+            .zip(state.data.iter().zip(self.min.data.iter()))
+            .filter(|&(&del, _)| del < 0)
+            .map(|(del, (val, min))| num_apps_reg(val.clone(), *min, *del))
             .min();
 
         match num_apps_op {
             None => ApplyResult::Infinite,
             Some(num_apps) => {
-                let mut result = StateDiff::new(state.data.clone());
-                result += &self.delta * num_apps;
+                let mut result = StateDiffBig::new(state.data.clone());
+                result += &self.delta * &num_apps;
                 ApplyResult::Some {
                     num_apps,
                     result: State { data: result.data },
@@ -139,7 +151,7 @@ impl Rule for DiffRule {
     }
 }
 
-fn inf_str(val: &Infinitable<Int>) -> String {
+fn inf_str(val: &Infinitable<SmallInt>) -> String {
     match val {
         Finite(n) => format!("{}", n),
         Infinity => "∞".to_string(),
@@ -227,7 +239,7 @@ mod tests {
         assert_eq!(
             rule.apply(&state![8, 13]),
             ApplyResult::Some {
-                num_apps: 13,
+                num_apps: 13.into(),
                 result: state![21, 0],
             }
         );
@@ -241,7 +253,7 @@ mod tests {
         assert_eq!(
             rule.apply(&state![8, 13, 7]),
             ApplyResult::Some {
-                num_apps: 6,
+                num_apps: 6.into(),
                 result: state![20, 7, 1],
             }
         );
@@ -255,14 +267,14 @@ mod tests {
         assert_eq!(
             rule.apply(&state![8, 13, 5]),
             ApplyResult::Some {
-                num_apps: 2,
+                num_apps: 2.into(),
                 result: state![10, 7, 1],
             }
         );
         assert_eq!(
             rule.apply(&state![8, 13, 10]),
             ApplyResult::Some {
-                num_apps: 3,
+                num_apps: 3.into(),
                 result: state![11, 4, 4],
             }
         );
@@ -292,7 +304,7 @@ mod tests {
         // assert_eq!(
         //     rule.apply(&state![8, 13]),
         //     ApplyResult::Some {
-        //         num_apps: 126,
+        //         num_apps: 126.into(),
         //         result: state![8, 139],
         //     }
         // );
@@ -306,7 +318,7 @@ mod tests {
         // assert_eq!(
         //     rule.apply(&state![8, 13]),
         //     ApplyResult::Some {
-        //         num_apps: 10,
+        //         num_apps: 10.into(),
         //         result: state![18, 3],
         //     }
         // );

@@ -6,7 +6,7 @@ use clap::Parser;
 
 use fractran::diff_rule::DiffRule;
 use fractran::parse::load_program;
-use fractran::program::{Int, State};
+use fractran::program::State;
 use fractran::tandem_repeat::{find_rep_blocks, RepBlock, ToStringVec};
 use fractran::transcript::{strip_reps, transcript, Trans};
 
@@ -18,7 +18,7 @@ struct Args {
     filename_record: String,
 
     /// Number of TM steps to run simulation for.
-    num_steps: Int,
+    num_steps: usize,
 }
 
 fn main() {

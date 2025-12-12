@@ -1,15 +1,13 @@
 /// Accelerated simulation by detecting and applying "shift rules".
-
 use std::collections::HashSet;
 
 use crate::diff_rule::DiffRule;
-use crate::program::{Int, Program, State};
+use crate::program::{BigInt, Program, State};
 use crate::rule::{ApplyResult, Rule};
 use crate::tandem_repeat::find_rep_blocks;
-use crate::transcript::{transcript, Trans};
+use crate::transcript::{Trans, transcript};
 
-
-fn find_shift_rules(prog: &Program, state: State, transcript_steps: Int) -> Vec<DiffRule> {
+pub fn find_shift_rules(prog: &Program, state: State, transcript_steps: usize) -> Vec<DiffRule> {
     let trans_vec = transcript(prog, state.clone(), transcript_steps);
     let rep_blocks = find_rep_blocks(&trans_vec);
     // Trans sequences that tandem repeat.
@@ -32,30 +30,30 @@ pub enum SimStatus {
 }
 
 #[derive(Debug)]
-struct ShiftSim {
-    prog: Program,
-    shift_rules: Vec<DiffRule>,
+pub struct ShiftSim {
+    pub prog: Program,
+    pub shift_rules: Vec<DiffRule>,
 
-    status: SimStatus,
-    base_steps: Int,
-    sim_steps: Int,
-    num_shift_steps: Int,
+    pub status: SimStatus,
+    pub base_steps: BigInt,
+    pub sim_steps: usize,
+    pub num_shift_steps: usize,
 }
 
 impl ShiftSim {
-    fn new(prog: Program, shift_rules: Vec<DiffRule>) -> ShiftSim {
+    pub fn new(prog: Program, shift_rules: Vec<DiffRule>) -> ShiftSim {
         ShiftSim {
             prog,
             shift_rules,
             status: SimStatus::Running,
-            base_steps: 0,
+            base_steps: 0.into(),
             sim_steps: 0,
             num_shift_steps: 0,
         }
     }
 
     // Returns true if a step was applied, false if halted.
-    fn step(&mut self, mut state: State) -> State {
+    pub fn step(&mut self, mut state: State) -> State {
         if self.status != SimStatus::Running {
             return state;
         }
@@ -69,7 +67,10 @@ impl ShiftSim {
                     self.status = SimStatus::Infinite;
                     return state;
                 }
-                ApplyResult::Some { num_apps: _, result } => {
+                ApplyResult::Some {
+                    num_apps: _,
+                    result,
+                } => {
                     self.num_shift_steps += 1;
                     // TODO: Calculate number of base steps.
                     return result;
@@ -87,45 +88,10 @@ impl ShiftSim {
         state
     }
 
-    pub fn run(&mut self, mut state: State, num_steps: Int) -> State {
+    pub fn run(&mut self, mut state: State, num_steps: usize) -> State {
         while self.status == SimStatus::Running && self.sim_steps < num_steps {
             state = self.step(state);
         }
         state
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ShiftSimResult {
-    pub sim_status: SimStatus,
-    // Number of base Fractran steps
-    pub base_steps: Int,
-    // Number of "simulator steps" where applying a shift rule counts as 1 sim_step.
-    pub sim_steps: Int,
-    // Number of shift rules added
-    pub num_shift_rules: usize,
-    // Number of times shift rules were used
-    pub num_shift_steps: Int,
-}
-
-// Do accelerated simulation via a two part process:
-//      1) Load transcript and find tandem repeats (shift rules).
-//      2) Add those rules to simulator and accelerate applying them.
-pub fn shift_sim(
-    prog: Program,
-    state: State,
-    transcript_steps: Int,
-    sim_steps: Int,
-) -> ShiftSimResult {
-    let shift_rules = find_shift_rules(&prog, state.clone(), transcript_steps);
-    let mut sim = ShiftSim::new(prog, shift_rules);
-    sim.run(state, sim_steps);
-
-    ShiftSimResult {
-        sim_status: sim.status,
-        base_steps: sim.base_steps,
-        sim_steps: sim.sim_steps,
-        num_shift_rules: sim.shift_rules.len(),
-        num_shift_steps: sim.num_shift_steps,
     }
 }

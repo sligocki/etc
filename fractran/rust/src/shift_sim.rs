@@ -99,3 +99,5 @@ impl ShiftSim {
         state
     }
 }
+
+// TODO: Add tests

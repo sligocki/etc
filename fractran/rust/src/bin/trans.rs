@@ -18,6 +18,7 @@ struct Args {
     filename_record: String,
 
     /// Number of TM steps to run simulation for.
+    #[arg(default_value_t = 1_000_000)]
     num_steps: usize,
 }
 

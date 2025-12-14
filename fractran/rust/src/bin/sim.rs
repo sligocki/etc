@@ -39,7 +39,7 @@ fn main() {
         println!(
             "Step: {}  {:?}  ({:.2}s)",
             num_steps,
-            state,
+            state.data,
             start.elapsed().as_secs_f64()
         );
     }

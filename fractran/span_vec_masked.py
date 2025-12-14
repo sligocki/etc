@@ -14,6 +14,8 @@ from show import print_program
 class DecideResult:
   infinite: bool
   weights: list[list[int]]
+  gate_rule: int|None = None
+  violator_rule: int|None = None
 
 
 def req_of(rule: Rule) -> list[int]:
@@ -116,7 +118,7 @@ def decide(prog: Program, start_state: State) -> DecideResult:
                 m = s.model()
                 S1 = [m[v].as_long() for v in S1]
                 S2 = [m[v].as_long() for v in S2]
-                return DecideResult(True, [S1, S2])
+                return DecideResult(True, [S1, S2], p_idx, v_idx)
 
     return DecideResult(False, [])
 
@@ -135,7 +137,7 @@ def main() -> None:
 
   result = decide(prog, start)
   if result.infinite:
-      print("Success:", result.weights)
+      print("Success:", result.gate_rule, result.violator_rule, result.weights)
   else:
       print("Failure")
 

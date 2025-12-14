@@ -35,11 +35,12 @@ def decide(prog: Program, start_state: State) -> DecideResult:
 
     # 1. Identify 'Safe' Variables
     # A variable is safe if it ALONE guarantees a rule triggers (req has only 1 non-zero entry).
+    # We also require that it only appears once in that denominator (25/3 is good, but 25/9 is not).
     safe_indices = set()
     for req in requirements:
-        active_vars = [i for i, x in enumerate(req) if x > 0]
-        if len(active_vars) == 1:
-            safe_indices.add(active_vars[0])
+        active_vars = [(i,x) for i, x in enumerate(req) if x > 0]
+        if len(active_vars) == 1 and active_vars[0][1] == 1:
+            safe_indices.add(active_vars[0][0])
 
     # Z3 Setup
     s = z3.Solver()

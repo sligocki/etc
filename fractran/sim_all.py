@@ -4,7 +4,6 @@
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 import time
 
 from base import State, Program

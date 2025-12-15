@@ -17,9 +17,14 @@ pub fn find_shift_rules(prog: &Program, state: State, transcript_steps: usize) -
         .map(|r| &r.block)
         .collect();
 
-    seqs.iter()
+    let mut rules: Vec<DiffRule> = seqs
+        .iter()
         .map(|seq| DiffRule::from_trans_vec(&prog, seq).expect("Illegal tandem repeat"))
-        .collect()
+        .collect();
+    // Sort so that longer rules take priority over shorter rules. This guarantees that the longest rules can be applied.
+    // Ex: If there is a rule for A, but also AAB, we want to give AAB priority or it will never be applied.
+    rules.sort_by_key(|r| -r.num_steps);
+    rules
 }
 
 #[derive(Debug, PartialEq, Clone)]

@@ -21,6 +21,10 @@ class DecideResult:
 def req_of(rule: Rule) -> list[int]:
     return [max(0, -x) for x in rule.array]
 
+def dot(xs, ys):
+    assert len(xs) == len(ys), (xs, ys)
+    return z3.Sum([v * c for v, c in zip(xs, ys)])
+
 def decide(prog: Program, start_state: State) -> DecideResult:
     """
     Proves non-halting for a Fractran program given in vector form.
@@ -45,42 +49,20 @@ def decide(prog: Program, start_state: State) -> DecideResult:
     # Z3 Setup
     s = z3.Solver()
 
-    # Helper: Dot product for Z3 variables and integer list
-    def dot(z3_vars, int_vec):
-        return z3.Sum([v * c for v, c in zip(z3_vars, int_vec)])
-
-    # --- STRATEGY 1: Simple Linear Invariant ---
-    # Find W where W . Delta >= 0 for all rules.
-    W = [z3.Int(f"W_{i}") for i in range(num_vars)]
-
-    # C1: Start state > 0
-    s.add(dot(W, start_state.array) > 0)
-
-    # C2: Non-decreasing for all rules
-    for i in range(num_rules):
-        s.add(dot(W, prog.rules[i].array) >= 0)
-
-    # C3: Halting Logic (Only safe vars can be positive)
-    for i in range(num_vars):
-        if i not in safe_indices:
-            s.add(W[i] <= 0)
-
-    if s.check() == z3.sat:
-        return DecideResult(True, [[s.model()[w].as_long() for w in W]])
-
-    # --- STRATEGY 2: Priority-Gated Invariant ---
     # Find S1 (Floor) and S2 (Ceiling) where S2 drops ONLY on 'Violator', protected by 'Protector'.
-
     for v_idx in range(num_rules):       # Violator Rule Index
         for p_idx in range(v_idx):       # Protector Rule Index (Must have higher priority)
 
-            # Check Compatibility: P must require a variable that V does not.
+            # Check Compatibility: P must require exactly one variable that V does not.
             # This missing variable is the "Gate" (it must be 0 for V to run).
+            # (Note: if P requires 2+ variables that V does not, we don't know which one failed!)
             gate_vars = [k for k in range(num_vars) if requirements[p_idx][k] > 0 and requirements[v_idx][k] == 0]
-            if not gate_vars:
+            if len(gate_vars) != 1:
                 continue # P cannot protect V
-
-            gate_var = gate_vars[0] # Use the first valid gate variable
+            gate_var, = gate_vars
+            # We currently only support gate variables where we know that they are 0 if they get past the protector.
+            if requirements[p_idx][gate_var] != 1:
+                continue
 
             s.reset()
             S1 = [z3.Int(f"S1_{i}") for i in range(num_vars)]

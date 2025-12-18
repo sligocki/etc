@@ -1,5 +1,6 @@
 // pub mod constraints;
 pub mod diff_rule;
+pub mod int_range;
 pub mod parse;
 pub mod program;
 pub mod rule;

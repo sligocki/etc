@@ -369,5 +369,15 @@ mod tests {
         let b = vec_set!["9+", "0", "0", "3"];
         let c = vec_set!["9+", "0+", "2", "0"];
         assert_eq!(a.successors(&instrs), Some(vec![b, c]));
+
+        // [9+ 0+ 2 0]:
+        //      [9+ 0 2 0] -> [8+ 0 2 3]
+        //      [9+ 1 2 0] -> [8+ 0 4 0]
+        //      [9+ 2+ 2 0] -> [10+ 0+ 1 0]
+        let a = vec_set!["9+", "0+", "2", "0"];
+        let b = vec_set!["8+", "0", "2", "3"];
+        let c = vec_set!["8+", "0", "4", "0"];
+        let d = vec_set!["10+", "0+", "1", "0"];
+        assert_eq!(a.successors(&instrs), Some(vec![b, c, d]));
     }
 }

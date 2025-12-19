@@ -4,6 +4,8 @@
 //
 // These could be used as preconditions for rules or building up CTL sets, etc.
 
+use std::str::FromStr;
+
 use crate::program::{Instr, SmallInt};
 
 // Represents a subset of the natural numbers (0, 1, 2, ...)
@@ -78,6 +80,23 @@ impl NatSet {
     }
 }
 
+impl FromStr for NatSet {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if let Some(n_str) = s.strip_suffix('+') {
+            // "8+" -> Min(8)
+            let n = n_str.parse::<SmallInt>().map_err(|e| e.to_string())?;
+            Ok(NatSet::Min(n))
+        } else {
+            // "13" -> Fixed(13)
+            let n = s.parse::<SmallInt>().map_err(|e| e.to_string())?;
+            Ok(NatSet::Fixed(n))
+        }
+    }
+}
+
 // Represents a subset of vectors N^k by the cartesian product of NatSets.
 #[derive(Debug, PartialEq, Clone)]
 pub struct VecSet(Vec<NatSet>);
@@ -107,7 +126,7 @@ impl VecSet {
     // Attempt to apply an instruction (`vs`). Returns "success" and "failure" results.
     //      Success: New VecSet of all valid states after applying `vs`.
     //      Failure: VecSets that union to cover all cases where `vs` cannot apply.
-    fn split_apply(&self, instr: &Instr) -> SplitApplyResult {
+    fn split_apply(self, instr: &Instr) -> SplitApplyResult {
         let split_add_res: Vec<SplitAddResult> = self
             .0
             .iter()
@@ -117,28 +136,36 @@ impl VecSet {
         // Collect the combination of all successfull NatSets.
         // Or if any are None, this will be None.
         let success: Option<Vec<NatSet>> = split_add_res.iter().map(|r| r.success).collect();
-        let mut failure = Vec::new();
-        for (reg_num, res) in split_add_res.iter().enumerate() {
-            for nat_set in res.failure.iter() {
-                failure.push(self.update(reg_num, *nat_set))
+        match success {
+            None => SplitApplyResult {
+                success: None,
+                failure: vec![self],
+            },
+            Some(success) => {
+                let mut failure = Vec::new();
+                for (reg_num, res) in split_add_res.iter().enumerate() {
+                    for nat_set in res.failure.iter() {
+                        failure.push(self.update(reg_num, *nat_set))
+                    }
+                }
+                SplitApplyResult {
+                    success: Some(VecSet(success)),
+                    failure,
+                }
             }
-        }
-        SplitApplyResult {
-            success: success.and_then(|x| Some(VecSet(x))),
-            failure,
         }
     }
 
     // Return collection of all successor configs after taking one step using `prog`.
     // If any config in VecSet halts, return None.
-    pub fn successors(&self, instrs: &[Instr]) -> Option<Vec<VecSet>> {
+    pub fn successors(self, instrs: &[Instr]) -> Option<Vec<VecSet>> {
         match instrs {
             // If we are trying to apply no instructions that means all configs in `self` will halt.
             [] => None,
             [instr, rest @ ..] => {
                 let res = self.split_apply(instr);
                 // Recursive call on all failures. If this instr did not apply, try following ones.
-                let after = (res.failure.iter())
+                let after = (res.failure.into_iter())
                     .map(|vs| vs.successors(rest))
                     // This collapses Iterator<Option<Vec<VecSet>>> into Option<Vec<Vec<VecSet>>>
                     // which is None if any of the successors were None.
@@ -152,6 +179,18 @@ impl VecSet {
             }
         }
     }
+}
+
+// Light syntax for writing VecSets
+// vec_set!["1", "2+"] = VecSet(vec![NatSet::Fixed(1), NatSet::Min(2)])
+#[macro_export]
+macro_rules! vec_set {
+    ($($val:expr),* $(,)?) => {{
+        use std::str::FromStr;
+        $crate::vec_set::VecSet(vec![
+            $( $crate::vec_set::NatSet::from_str($val).expect("Invalid NatSet format") ),*
+        ])
+    }};
 }
 
 #[cfg(test)]
@@ -258,64 +297,46 @@ mod tests {
 
     #[test]
     fn test_split_apply() {
-        let v = VecSet(vec![NatSet::Fixed(13), NatSet::Min(8), NatSet::Min(31)]);
+        let v = vec_set!["13", "8+", "31+"];
         assert_eq!(
-            v.split_apply(&rule![100, 200, 300]),
+            v.clone().split_apply(&rule![100, 200, 300]),
             SplitApplyResult {
-                success: Some(VecSet(vec![
-                    NatSet::Fixed(113),
-                    NatSet::Min(208),
-                    NatSet::Min(331)
-                ])),
+                success: Some(vec_set!["113", "208+", "331+"]),
                 failure: vec![],
             }
         );
         assert_eq!(
-            v.split_apply(&rule![-1, -1, -1]),
+            v.clone().split_apply(&rule![-1, -1, -1]),
             SplitApplyResult {
-                success: Some(VecSet(vec![
-                    NatSet::Fixed(12),
-                    NatSet::Min(7),
-                    NatSet::Min(30)
-                ])),
+                success: Some(vec_set!["12", "7+", "30+"]),
                 failure: vec![],
             }
         );
         assert_eq!(
-            v.split_apply(&rule![-20, 0, 0]),
+            v.clone().split_apply(&rule![-20, 0, 0]),
             SplitApplyResult {
                 success: None,
                 failure: vec![v.clone()],
             }
         );
         assert_eq!(
-            v.split_apply(&rule![0, -10, 0]),
+            v.clone().split_apply(&rule![0, -10, 0]),
             SplitApplyResult {
-                success: Some(VecSet(vec![
-                    NatSet::Fixed(13),
-                    NatSet::Min(0),
-                    NatSet::Min(31)
-                ])),
-                failure: vec![
-                    VecSet(vec![NatSet::Fixed(13), NatSet::Fixed(8), NatSet::Min(31)]),
-                    VecSet(vec![NatSet::Fixed(13), NatSet::Fixed(9), NatSet::Min(31)]),
-                ],
+                success: Some(vec_set!["13", "0+", "31+"]),
+                failure: vec![vec_set!["13", "8", "31+"], vec_set!["13", "9", "31+"],],
             }
         );
         assert_eq!(
-            v.split_apply(&rule![1, -10, -34]),
+            v.clone().split_apply(&rule![1, -10, -34]),
             SplitApplyResult {
-                success: Some(VecSet(vec![
-                    NatSet::Fixed(14),
-                    NatSet::Min(0),
-                    NatSet::Min(0)
-                ])),
+                success: Some(vec_set!["14", "0+", "0+"]),
                 failure: vec![
-                    VecSet(vec![NatSet::Fixed(13), NatSet::Fixed(8), NatSet::Min(31)]),
-                    VecSet(vec![NatSet::Fixed(13), NatSet::Fixed(9), NatSet::Min(31)]),
-                    VecSet(vec![NatSet::Fixed(13), NatSet::Min(8), NatSet::Fixed(31)]),
-                    VecSet(vec![NatSet::Fixed(13), NatSet::Min(8), NatSet::Fixed(32)]),
-                    VecSet(vec![NatSet::Fixed(13), NatSet::Min(8), NatSet::Fixed(33)]),
+                    vec_set!["13", "8", "31+"],
+                    vec_set!["13", "9", "31+"],
+                    // TODO: Remove overlaps here? Switch the 8+ below to 10+?
+                    vec_set!["13", "8+", "31"],
+                    vec_set!["13", "8+", "32"],
+                    vec_set!["13", "8+", "33"],
                 ],
             }
         );
@@ -335,48 +356,18 @@ mod tests {
         let instrs = &p.instrs;
 
         // [0 46+ 0 0] -> [1 45+ 0 0] -> [0 44+ 2 0]
-        let a = VecSet(vec![
-            NatSet::Fixed(0),
-            NatSet::Min(46),
-            NatSet::Fixed(0),
-            NatSet::Fixed(0),
-        ]);
-        let b = VecSet(vec![
-            NatSet::Fixed(1),
-            NatSet::Min(45),
-            NatSet::Fixed(0),
-            NatSet::Fixed(0),
-        ]);
-        let c = VecSet(vec![
-            NatSet::Fixed(0),
-            NatSet::Min(44),
-            NatSet::Fixed(2),
-            NatSet::Fixed(0),
-        ]);
+        let a = vec_set!["0", "46+", "0", "0"];
+        let b = vec_set!["1", "45+", "0", "0"];
+        let c = vec_set!["0", "44+", "2", "0"];
         assert_eq!(a.successors(&instrs), Some(vec![b.clone()]));
         assert_eq!(b.successors(&instrs), Some(vec![c]));
 
         // [10+ 0+ 0 0]:
         //      [10+ 0 0 0] -> [9+ 0 0 3]
         //      [10+ 1+ 0 0] -> [9+ 0+ 2 0]
-        let a = VecSet(vec![
-            NatSet::Min(10),
-            NatSet::Min(0),
-            NatSet::Fixed(0),
-            NatSet::Fixed(0),
-        ]);
-        let b = VecSet(vec![
-            NatSet::Min(9),
-            NatSet::Fixed(0),
-            NatSet::Fixed(0),
-            NatSet::Fixed(3),
-        ]);
-        let c = VecSet(vec![
-            NatSet::Min(9),
-            NatSet::Min(0),
-            NatSet::Fixed(2),
-            NatSet::Fixed(0),
-        ]);
+        let a = vec_set!["10+", "0+", "0", "0"];
+        let b = vec_set!["9+", "0", "0", "3"];
+        let c = vec_set!["9+", "0+", "2", "0"];
         assert_eq!(a.successors(&instrs), Some(vec![b, c]));
     }
 }

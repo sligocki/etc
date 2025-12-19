@@ -15,18 +15,13 @@ pub enum NatSet {
     Min(SmallInt),
 }
 
-impl NatSet {
-    // Is this range a valid subset of the natural numbers (>= 0)?
-    fn is_valid(self) -> bool {
-        match self {
-            NatSet::Fixed(n) => n >= 0,
-            NatSet::Min(n) => n >= 0,
-        }
-    }
-    fn validate(self) -> Option<NatSet> {
-        if self.is_valid() { Some(self) } else { None }
-    }
+#[derive(Debug, PartialEq, Clone)]
+pub struct SplitAddResult {
+    success: Option<NatSet>,
+    failure: Vec<NatSet>,
+}
 
+impl NatSet {
     // Is self a subset of other?
     pub fn is_subset(self, other: NatSet) -> bool {
         match (self, other) {
@@ -41,23 +36,59 @@ impl NatSet {
         }
     }
 
-    // X.add(v) = {x+v : x in X}
-    fn add(self, v: SmallInt) -> NatSet {
+    // Try adding v (posibly negative) to NatSet X. Returns "success" and "failure" results.
+    //      Success: Valid result of addition: {x+v | x in X and x+v >= 0}
+    //      Failure: Values from original set that cannot be added to: {x in X | x+v < 0}
+    pub fn split_add(self, v: SmallInt) -> SplitAddResult {
         match self {
-            NatSet::Fixed(n) => NatSet::Fixed(n + v),
-            NatSet::Min(n) => NatSet::Min(n + v),
+            NatSet::Fixed(n) => {
+                let sum = n + v;
+                if sum >= 0 {
+                    // Total success: {n} + v -> {n+v}
+                    SplitAddResult {
+                        success: Some(NatSet::Fixed(sum)),
+                        failure: vec![],
+                    }
+                } else {
+                    // Total failure: {n} + v contains no positive values
+                    SplitAddResult {
+                        success: None,
+                        failure: vec![self],
+                    }
+                }
+            }
+            NatSet::Min(n) => {
+                let sum = n + v;
+                if sum >= 0 {
+                    // Total success: [n, inf) + v -> [n+v, inf)
+                    SplitAddResult {
+                        success: Some(NatSet::Min(sum)),
+                        failure: vec![],
+                    }
+                } else {
+                    // Mixture of success and failure: [n, inf) = [n, -v) | [-v, inf)
+                    //      Success: [-v, inf) + v -> [0, inf)
+                    //      Failure: [n, -v) + v contains no positive values
+                    SplitAddResult {
+                        success: Some(NatSet::Min(0)),
+                        // Represent [n, v) as {n} | {n+1} | ... | {v-1}
+                        failure: (n..-v).map(|x| NatSet::Fixed(x)).collect(),
+                    }
+                }
+            }
         }
-    }
-
-    // X.add(v), but return None if result leads to invalid set (set containing negative integers).
-    pub fn checked_add(self, v: SmallInt) -> Option<NatSet> {
-        self.add(v).validate()
     }
 }
 
 // Represents a subset of vectors N^k by the cartesian product of NatSets.
 #[derive(Debug, PartialEq, Clone)]
 pub struct VecSet(Vec<NatSet>);
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct SplitApplyResult {
+    success: Option<VecSet>,
+    failure: Vec<VecSet>,
+}
 
 impl VecSet {
     // Is self a subset of other?
@@ -69,14 +100,35 @@ impl VecSet {
             .all(|(a, b)| a.is_subset(*b))
     }
 
-    pub fn checked_add(&self, vs: Vec<SmallInt>) -> Option<VecSet> {
-        let vals: Option<Vec<NatSet>> = self
+    fn update(&self, index: usize, val: NatSet) -> VecSet {
+        let mut new = self.clone();
+        new.0[index] = val;
+        new
+    }
+
+    // Attempt to apply an instruction (`vs`). Returns "success" and "failure" results.
+    //      Success: New VecSet of all valid states after applying `vs`.
+    //      Failure: VecSets that union to cover all cases where `vs` cannot apply.
+    pub fn split_apply(&self, vs: &Vec<SmallInt>) -> SplitApplyResult {
+        let split_add_res: Vec<SplitAddResult> = self
             .0
             .iter()
             .zip(vs.iter())
-            .map(|(x, v)| x.checked_add(*v))
+            .map(|(x, v)| x.split_add(*v))
             .collect();
-        Some(VecSet(vals?))
+        // Collect the combination of all successfull NatSets.
+        // Or if any are None, this will be None.
+        let success: Option<Vec<NatSet>> = split_add_res.iter().map(|r| r.success).collect();
+        let mut failure = Vec::new();
+        for (reg_num, res) in split_add_res.iter().enumerate() {
+            for nat_set in res.failure.iter() {
+                failure.push(self.update(reg_num, *nat_set))
+            }
+        }
+        SplitApplyResult {
+            success: success.and_then(|x| Some(VecSet(x))),
+            failure,
+        }
     }
 }
 
@@ -117,29 +169,119 @@ mod tests {
     }
 
     #[test]
-    fn test_checked_add() {
+    fn test_split_add() {
         let f13 = NatSet::Fixed(13);
-        assert_eq!(f13.checked_add(8), Some(NatSet::Fixed(21)));
-        assert_eq!(f13.checked_add(-8), Some(NatSet::Fixed(5)));
-        assert_eq!(f13.checked_add(-13), Some(NatSet::Fixed(0)));
-        assert_eq!(f13.checked_add(-14), None);
+        assert_eq!(
+            f13.split_add(8),
+            SplitAddResult {
+                success: Some(NatSet::Fixed(21)),
+                failure: vec![],
+            }
+        );
+        assert_eq!(
+            f13.split_add(-8),
+            SplitAddResult {
+                success: Some(NatSet::Fixed(5)),
+                failure: vec![],
+            }
+        );
+        assert_eq!(
+            f13.split_add(-13),
+            SplitAddResult {
+                success: Some(NatSet::Fixed(0)),
+                failure: vec![],
+            }
+        );
+        assert_eq!(
+            f13.split_add(-14),
+            SplitAddResult {
+                success: None,
+                failure: vec![f13],
+            }
+        );
 
         let m8 = NatSet::Min(8);
-        assert_eq!(m8.checked_add(100), Some(NatSet::Min(108)));
-        assert_eq!(m8.checked_add(-2), Some(NatSet::Min(6)));
-        assert_eq!(m8.checked_add(-8), Some(NatSet::Min(0)));
-        assert_eq!(m8.checked_add(-13), None);
+        assert_eq!(
+            m8.split_add(100),
+            SplitAddResult {
+                success: Some(NatSet::Min(108)),
+                failure: vec![],
+            }
+        );
+        assert_eq!(
+            m8.split_add(-8),
+            SplitAddResult {
+                success: Some(NatSet::Min(0)),
+                failure: vec![],
+            }
+        );
+        assert_eq!(
+            m8.split_add(-13),
+            SplitAddResult {
+                // [13, inf) - 13 -> [0, inf)
+                success: Some(NatSet::Min(0)),
+                // [8, 13) cannot subtract 13
+                failure: vec![
+                    NatSet::Fixed(8),
+                    NatSet::Fixed(9),
+                    NatSet::Fixed(10),
+                    NatSet::Fixed(11),
+                    NatSet::Fixed(12),
+                ],
+            }
+        );
+    }
 
-        let v = VecSet(vec![f13, m8]);
+    #[test]
+    fn test_split_apply() {
+        let v = VecSet(vec![
+            NatSet::Fixed(13),
+            NatSet::Min(8),
+            NatSet::Min(31),
+        ]);
         assert_eq!(
-            v.checked_add(vec![100, 200]),
-            Some(VecSet(vec![NatSet::Fixed(113), NatSet::Min(208)]))
+            v.split_apply(&vec![100, 200, 300]),
+            SplitApplyResult {
+                success: Some(VecSet(vec![NatSet::Fixed(113), NatSet::Min(208), NatSet::Min(331)])),
+                failure: vec![],
+            }
         );
         assert_eq!(
-            v.checked_add(vec![-1, -1]),
-            Some(VecSet(vec![NatSet::Fixed(12), NatSet::Min(7)]))
+            v.split_apply(&vec![-1, -1, -1]),
+            SplitApplyResult {
+                success: Some(VecSet(vec![NatSet::Fixed(12), NatSet::Min(7), NatSet::Min(30)])),
+                failure: vec![],
+            }
         );
-        assert_eq!(v.checked_add(vec![-1, -10]), None);
-        assert_eq!(v.checked_add(vec![-20, 0]), None);
+        assert_eq!(
+            v.split_apply(&vec![-20, 0, 0]),
+            SplitApplyResult {
+                success: None,
+                failure: vec![v.clone()],
+            }
+        );
+        assert_eq!(
+            v.split_apply(&vec![0, -10, 0]),
+            SplitApplyResult {
+                success: Some(VecSet(vec![NatSet::Fixed(13), NatSet::Min(0), NatSet::Min(31)])),
+                failure: vec![
+                    VecSet(vec![NatSet::Fixed(13), NatSet::Fixed(8), NatSet::Min(31)]),
+                    VecSet(vec![NatSet::Fixed(13), NatSet::Fixed(9), NatSet::Min(31)]),
+                ],
+            }
+        );
+        assert_eq!(
+            v.split_apply(&vec![1, -10, -34]),
+            SplitApplyResult {
+                success: Some(VecSet(vec![NatSet::Fixed(14), NatSet::Min(0), NatSet::Min(0)])),
+                failure: vec![
+                    VecSet(vec![NatSet::Fixed(13), NatSet::Fixed(8), NatSet::Min(31)]),
+                    VecSet(vec![NatSet::Fixed(13), NatSet::Fixed(9), NatSet::Min(31)]),
+                    VecSet(vec![NatSet::Fixed(13), NatSet::Min(8), NatSet::Fixed(31)]),
+                    VecSet(vec![NatSet::Fixed(13), NatSet::Min(8), NatSet::Fixed(32)]),
+                    VecSet(vec![NatSet::Fixed(13), NatSet::Min(8), NatSet::Fixed(33)]),
+                ],
+            }
+        );
     }
 }

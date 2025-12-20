@@ -156,7 +156,7 @@ impl VecSet {
         }
     }
 
-    // Return collection of all successor configs after taking one step using `prog`.
+    // Return collection of all successor configs after taking one step using `instrs`.
     // If any config in VecSet halts, return None.
     pub fn successors(&self, instrs: &[Instr]) -> Option<Vec<VecSet>> {
         match instrs {
@@ -178,6 +178,68 @@ impl VecSet {
                 Some(next)
             }
         }
+    }
+}
+
+// Represents a subset of vectors N^k by a finite union of VecSets.
+#[derive(Debug, PartialEq, Clone)]
+pub struct UnionVecSet(Vec<VecSet>);
+
+impl UnionVecSet {
+    // Is `sub` a subset of `self`?
+    fn contains_one(&self, sub: &VecSet) -> bool {
+        // We check sub against each VecSet in self. If it is in any
+        // of them, it is in the union.
+        // NOTE: This will not consider [12, inf) subset of {12} | [13, inf) ...
+        self.0.iter().any(|vs| sub.is_subset(vs))
+    }
+
+    // Is `sub` a subset of `self`?
+    pub fn contains(&self, sub: &UnionVecSet) -> bool {
+        // All VecSet in sub must be in self.
+        sub.0.iter().all(|vs| self.contains_one(vs))
+    }
+
+    // Is `sub` contained in any VecSet in `self` (aside from the one at `except_index`)
+    fn is_redundant_except(&self, except_index: usize, sub: &VecSet) -> bool {
+        self.0
+            .iter()
+            .enumerate()
+            .any(|(i, vs)| i != except_index && sub.is_subset(vs))
+    }
+
+    // Remove any VecSet from self that is contained in a later VecSet
+    // and reverse the order while doing.
+    // Thus this can just be called twice to do a complete remove_redundant()
+    pub fn remove_redandant_half(self) -> UnionVecSet {
+        let mut result = UnionVecSet(Vec::with_capacity(self.0.len()));
+        for vs in self.0.into_iter().rev() {
+            if !result.contains_one(&vs) {
+                result.0.push(vs);
+            }
+        }
+        result
+    }
+
+    // Remove any VecSet from this union that are totally redundant (contained within another).
+    pub fn remove_redandant(self) -> UnionVecSet {
+        let inter = self.remove_redandant_half();
+        inter.remove_redandant_half()
+    }
+
+    // Return union of self and other with redundancy removed.
+    pub fn union(&self, other: &UnionVecSet) -> UnionVecSet {
+        let mut res = self.clone();
+        res.0.extend(other.0.clone());
+        res.remove_redandant()
+    }
+
+    // Return collection of all successor configs after taking one step using `instrs`.
+    // If any config in VecSet halts, return None.
+    pub fn successors(&self, instrs: &[Instr]) -> Option<UnionVecSet> {
+        let vec_vec: Option<Vec<Vec<VecSet>>> =
+            self.0.iter().map(|vs| vs.successors(instrs)).collect();
+        Some(UnionVecSet(vec_vec?.into_iter().flatten().collect()))
     }
 }
 
@@ -379,5 +441,22 @@ mod tests {
         let c = vec_set!["8+", "0", "4", "0"];
         let d = vec_set!["10+", "0+", "1", "0"];
         assert_eq!(a.successors(&instrs), Some(vec![b, c, d]));
+    }
+
+    #[test]
+    fn test_remove_redundant() {
+        let u = UnionVecSet(vec![
+            vec_set!["13", "8+", "31+"],
+            vec_set!["1", "2", "3"],
+            vec_set!["13", "9", "32+"],
+            vec_set!["12+", "9", "32+"],
+            vec_set!["1", "2", "3"],
+        ]);
+        let v = UnionVecSet(vec![
+            vec_set!["13", "8+", "31+"],
+            vec_set!["12+", "9", "32+"],
+            vec_set!["1", "2", "3"],
+        ]);
+        assert_eq!(u.remove_redandant(), v);
     }
 }

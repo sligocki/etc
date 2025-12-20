@@ -126,7 +126,7 @@ impl VecSet {
     // Attempt to apply an instruction (`vs`). Returns "success" and "failure" results.
     //      Success: New VecSet of all valid states after applying `vs`.
     //      Failure: VecSets that union to cover all cases where `vs` cannot apply.
-    fn split_apply(self, instr: &Instr) -> SplitApplyResult {
+    fn split_apply(&self, instr: &Instr) -> SplitApplyResult {
         let split_add_res: Vec<SplitAddResult> = self
             .0
             .iter()
@@ -139,7 +139,7 @@ impl VecSet {
         match success {
             None => SplitApplyResult {
                 success: None,
-                failure: vec![self],
+                failure: vec![self.clone()],
             },
             Some(success) => {
                 let mut failure = Vec::new();
@@ -158,7 +158,7 @@ impl VecSet {
 
     // Return collection of all successor configs after taking one step using `prog`.
     // If any config in VecSet halts, return None.
-    pub fn successors(self, instrs: &[Instr]) -> Option<Vec<VecSet>> {
+    pub fn successors(&self, instrs: &[Instr]) -> Option<Vec<VecSet>> {
         match instrs {
             // If we are trying to apply no instructions that means all configs in `self` will halt.
             [] => None,

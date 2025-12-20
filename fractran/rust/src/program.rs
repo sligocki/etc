@@ -112,14 +112,14 @@ impl Program {
 #[macro_export]
 macro_rules! state {
     ($($x:expr),* $(,)?) => {
-        State::new(vec![$($x.into()),*])
+        crate::program::State::new(vec![$($x.into()),*])
     };
 }
 
 #[macro_export]
 macro_rules! rule {
     ($($x:expr),* $(,)?) => {
-        Instr::new(vec![$($x),*])
+        crate::program::Instr::new(vec![$($x),*])
     };
 }
 
@@ -132,9 +132,9 @@ macro_rules! prog {
     // Inside each row, expressions are separated by commas (,).
     // $(;)? allows for an optional trailing semicolon.
     ( $( $( $x:expr ),* );* ) => {
-        Program { instrs: vec![
+        crate::program::Program { instrs: vec![
             $(
-                Instr::new(vec![ $( $x ),* ])
+                crate::program::Instr::new(vec![ $( $x ),* ])
             ),*
         ] }
     }

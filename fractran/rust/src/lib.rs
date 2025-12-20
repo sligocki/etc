@@ -1,4 +1,5 @@
 // pub mod constraints;
+pub mod closed_vec_set;
 pub mod diff_rule;
 pub mod parse;
 pub mod program;

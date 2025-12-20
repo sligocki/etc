@@ -194,7 +194,6 @@ impl fmt::Display for DiffRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{Instr, State};
     use crate::transcript::{eval_trans, transcript};
     use crate::{prog, sd, sdb, state, trans};
 

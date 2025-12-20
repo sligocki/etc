@@ -105,14 +105,13 @@ pub fn strip_reps(rep_blocks: Vec<RepBlock<Trans>>) -> Vec<StrippedBlock> {
 #[macro_export]
 macro_rules! trans {
     ($($x:expr),* $(,)?) => {
-        Trans { reg_fail: vec![$($x),*] }
+        crate::transcript::Trans { reg_fail: vec![$($x),*] }
     };
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{Instr, Program, State};
     use crate::{prog, state};
 
     #[test]

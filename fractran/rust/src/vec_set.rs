@@ -108,6 +108,10 @@ struct SplitApplyResult {
 }
 
 impl VecSet {
+    pub fn new(x: Vec<NatSet>) -> VecSet {
+        VecSet(x)
+    }
+
     // Is self a subset of other?
     pub fn is_subset(&self, other: &VecSet) -> bool {
         assert_eq!(self.0.len(), other.0.len());
@@ -186,6 +190,13 @@ impl VecSet {
 pub struct UnionVecSet(Vec<VecSet>);
 
 impl UnionVecSet {
+    pub fn new(x: Vec<VecSet>) -> UnionVecSet {
+        UnionVecSet(x)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     // Is `sub` a subset of `self`?
     fn contains_one(&self, sub: &VecSet) -> bool {
         // We check sub against each VecSet in self. If it is in any
@@ -200,18 +211,20 @@ impl UnionVecSet {
         sub.0.iter().all(|vs| self.contains_one(vs))
     }
 
-    // Is `sub` contained in any VecSet in `self` (aside from the one at `except_index`)
-    fn is_redundant_except(&self, except_index: usize, sub: &VecSet) -> bool {
-        self.0
-            .iter()
-            .enumerate()
-            .any(|(i, vs)| i != except_index && sub.is_subset(vs))
+    // Remove any VecSet from self that is contained in cover.
+    pub fn minus_covered(self, cover: &UnionVecSet) -> UnionVecSet {
+        UnionVecSet(
+            self.0
+                .into_iter()
+                .filter(|vs| !cover.contains_one(vs))
+                .collect(),
+        )
     }
 
     // Remove any VecSet from self that is contained in a later VecSet
     // and reverse the order while doing.
     // Thus this can just be called twice to do a complete remove_redundant()
-    pub fn remove_redandant_half(self) -> UnionVecSet {
+    fn remove_redandant_half(self) -> UnionVecSet {
         let mut result = UnionVecSet(Vec::with_capacity(self.0.len()));
         for vs in self.0.into_iter().rev() {
             if !result.contains_one(&vs) {
@@ -228,10 +241,9 @@ impl UnionVecSet {
     }
 
     // Return union of self and other with redundancy removed.
-    pub fn union(&self, other: &UnionVecSet) -> UnionVecSet {
-        let mut res = self.clone();
-        res.0.extend(other.0.clone());
-        res.remove_redandant()
+    pub fn union(mut self, other: UnionVecSet) -> UnionVecSet {
+        self.0.extend(other.0);
+        self.remove_redandant()
     }
 
     // Return collection of all successor configs after taking one step using `instrs`.
@@ -249,7 +261,7 @@ impl UnionVecSet {
 macro_rules! vec_set {
     ($($val:expr),* $(,)?) => {{
         use std::str::FromStr;
-        $crate::vec_set::VecSet(vec![
+        $crate::vec_set::VecSet::new(vec![
             $( $crate::vec_set::NatSet::from_str($val).expect("Invalid NatSet format") ),*
         ])
     }};
@@ -258,7 +270,6 @@ macro_rules! vec_set {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::Program;
     use crate::{prog, rule};
 
     #[test]

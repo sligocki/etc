@@ -105,7 +105,7 @@ pub fn strip_reps(rep_blocks: Vec<RepBlock<Trans>>) -> Vec<StrippedBlock> {
 #[macro_export]
 macro_rules! trans {
     ($($x:expr),* $(,)?) => {
-        crate::transcript::Trans { reg_fail: vec![$($x),*] }
+        $crate::transcript::Trans { reg_fail: vec![$($x),*] }
     };
 }
 

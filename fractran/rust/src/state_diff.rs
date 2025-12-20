@@ -174,14 +174,14 @@ where
 #[macro_export]
 macro_rules! sd {
     ($($x:expr),* $(,)?) => {
-        StateDiff::new(vec![$($x),*])
+        $crate::state_diff::StateDiff::new(vec![$($x),*])
     };
 }
 
 #[macro_export]
 macro_rules! sdb {
     ($($x:expr),* $(,)?) => {
-        StateDiffBound::new(vec![$($x),*])
+        $crate::state_diff::StateDiffBound::new(vec![$($x),*])
     };
 }
 

@@ -4,6 +4,7 @@
 //
 // These could be used as preconditions for rules or building up CTL sets, etc.
 
+use std::fmt;
 use std::str::FromStr;
 
 use crate::program::{Instr, SmallInt};
@@ -97,6 +98,15 @@ impl FromStr for NatSet {
     }
 }
 
+impl fmt::Display for NatSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NatSet::Fixed(n) => write!(f, "{}", n),
+            NatSet::Min(n) => write!(f, "{}+", n),
+        }
+    }
+}
+
 // Represents a subset of vectors N^k by the cartesian product of NatSets.
 #[derive(Debug, PartialEq, Clone)]
 pub struct VecSet(Vec<NatSet>);
@@ -185,6 +195,16 @@ impl VecSet {
     }
 }
 
+impl fmt::Display for VecSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[")?;
+        for ns in self.0.iter() {
+            write!(f, "{}, ", ns)?;
+        }
+        write!(f, "]")
+    }
+}
+
 // Represents a subset of vectors N^k by a finite union of VecSets.
 #[derive(Debug, PartialEq, Clone)]
 pub struct UnionVecSet(Vec<VecSet>);
@@ -195,6 +215,9 @@ impl UnionVecSet {
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 
     // Is `sub` a subset of `self`?
@@ -252,6 +275,16 @@ impl UnionVecSet {
         let vec_vec: Option<Vec<Vec<VecSet>>> =
             self.0.iter().map(|vs| vs.successors(instrs)).collect();
         Some(UnionVecSet(vec_vec?.into_iter().flatten().collect()))
+    }
+}
+
+impl fmt::Display for UnionVecSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "UnionVecSet[\n")?;
+        for vs in self.0.iter() {
+            write!(f, "  {}\n", vs)?;
+        }
+        write!(f, "]")
     }
 }
 

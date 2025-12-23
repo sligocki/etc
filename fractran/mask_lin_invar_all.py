@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 
 from base import State, Program
-from span_vec_masked import decide, DecideResult
+from mask_lin_invar import decide, DecideResult
 from parse import enum_programs
 
 class OutputWriter:

@@ -12,10 +12,13 @@ from show import print_program
 
 @dataclass(frozen=True)
 class DecideResult:
-  infinite: bool
-  weights: list[list[int]]
-  gate_rule: int|None = None
-  violator_rule: int|None = None
+    infinite: bool
+    weights: list[list[int]]
+    num_rules: int
+    protector_rule: int
+    violator_rule: int
+    gate_register: int
+FAILED_RESULT = DecideResult(False, [], -1, -1, -1, -1)
 
 
 def min_vals(rule: Rule) -> list[int]:
@@ -26,14 +29,8 @@ def dot(xs, ys):
     assert len(xs) == len(ys), (xs, ys)
     return z3.Sum([v * c for v, c in zip(xs, ys)])
 
-def decide(prog: Program, start_state: State) -> DecideResult:
-    """
-    Proves non-halting for a Fractran program given in vector form.
-
-    Args:
-        transitions: List of vectors representing the change in state (Delta).
-        start_index: The index of the variable representing the start state (usually 'a'=0).
-    """
+def decide_full(prog: Program, start_state: State) -> DecideResult:
+    """Decide using full program (no prefixes)"""
     num_rules = prog.num_rules()
     num_vars = prog.num_registers()
     requirements = [min_vals(trans) for trans in prog.rules]
@@ -132,28 +129,38 @@ def decide(prog: Program, start_state: State) -> DecideResult:
                 m = s.model()
                 S1 = [m[v].as_long() for v in S1]
                 S2 = [m[v].as_long() for v in S2]
-                return DecideResult(True, [S1, S2], p_idx, v_idx)
+                return DecideResult(True, [S1, S2], num_rules, p_idx, v_idx, gate_var)
 
-    return DecideResult(False, [])
+    return FAILED_RESULT
 
+def decide_pre(prog: Program, start_state: State) -> DecideResult:
+    """Try MVI on all "prefixes" of this program."""
+    for n in range(2, prog.num_rules() + 1):
+        # We consider all prefixes of the program. If any prefix is infinite,
+        # the rest of the rules don't matter.
+        pre_prog = Program(prog.rules[:n])
+        res = decide_full(pre_prog, start_state)
+        if res.infinite:
+            return res
+    return FAILED_RESULT
 
 def main() -> None:
-  parser = argparse.ArgumentParser()
-  parser.add_argument("program")
-  parser.add_argument("--start", type=int, default=2)
-  args = parser.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("program")
+    parser.add_argument("--start", type=int, default=2)
+    args = parser.parse_args()
 
-  prog = load_program(args.program)
-  start = State.from_int(args.start, prog.num_registers())
+    prog = load_program(args.program)
+    start = State.from_int(args.start, prog.num_registers())
 
-  print_program(prog)
-  print()
+    print_program(prog)
+    print()
 
-  result = decide(prog, start)
-  if result.infinite:
-      print("Success:", result.gate_rule, result.violator_rule, result.weights)
-  else:
-      print("Failure")
+    result = decide_pre(prog, start)
+    if result.infinite:
+        print("Success:", result.num_rules, result.protector_rule, result.violator_rule, result.gate_register, result.weights)
+    else:
+        print("Failure")
 
 if __name__ == "__main__":
-  main()
+    main()

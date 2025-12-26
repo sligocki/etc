@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 
 from base import State, Program
-from mask_lin_invar import decide, DecideResult
+from mask_lin_invar import decide_pre, DecideResult
 from parse import enum_programs
 
 class OutputWriter:
@@ -23,7 +23,7 @@ class OutputWriter:
     else:
       status = "UNKNOWN"
     self.num_total += 1
-    self.outfile.write(f"{prog.fractions_str()}\t{status}\t{result.gate_rule}\t{result.violator_rule}\t{result.weights}\n")
+    self.outfile.write(f"{prog.fractions_str()}\t{status}\t{result.num_rules},{result.protector_rule},{result.violator_rule},{result.gate_register}\t{result.weights}\n")
 
 
 def main() -> None:
@@ -38,7 +38,7 @@ def main() -> None:
     print_time = time.time() + args.print_sec
     for prog in enum_programs(args.infile):
       start = State.from_int(2, prog.num_registers())
-      result = decide(prog, start)
+      result = decide_pre(prog, start)
       writer.write(prog, result)
       if time.time() >= print_time:
         print(f"...  Total: {writer.num_total:_d}  Inf: {writer.num_inf:_d} ({writer.num_inf/writer.num_total:.0%})  ({time.process_time():_f}s)")

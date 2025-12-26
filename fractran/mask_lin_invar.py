@@ -51,16 +51,28 @@ def decide(prog: Program, start_state: State) -> DecideResult:
     for v_idx in range(num_rules):       # Violator Rule Index
         for p_idx in range(v_idx):       # Protector Rule Index (Must have higher priority)
 
-            # Check Compatibility: P must require exactly one variable that V does not.
-            # This missing variable is the "Gate" (it must be 0 for V to run).
-            # (Note: if P requires 2+ variables that V does not, we don't know which one failed!)
-            gate_vars = [k for k in range(num_vars) if requirements[p_idx][k] > 0 and requirements[v_idx][k] == 0]
-            if len(gate_vars) != 1:
-                continue # P cannot protect V
-            gate_var, = gate_vars
-            # We currently only support gate variables where we know that they are 0 if they get past the protector.
-            if requirements[p_idx][gate_var] != 1:
+            # Check Compatibility between protector and violator rules.
+            #   Every requirement for P (except for one requirement on a "gate register" being >= 1)
+            #   must also be requirements for V.
+            #   Furthermore, P must come before V.
+            # Thus, we will know that any time V applies the gate register = 0 b/c
+            # otherwise P (or an earlier rule) would have applied.
+
+            # Find set of requirements for P that do not have exactly the same requirement for V.
+            req_diffs = [k for k in range(num_vars)
+                         if requirements[p_idx][k] > requirements[v_idx][k]]
+            if len(req_diffs) != 1:
+                # There exist multiple registers whose requirements differ, we can't be sure exactly
+                # which difference caused V to fire and P not to, so move on.
                 continue
+            (gate_var,) = req_diffs
+            if not (requirements[p_idx][gate_var] == 1 and requirements[v_idx][gate_var] == 0):
+                # We currently only support the situation where P requires exactly 1 gate_var
+                # (and V 0) so that we can ensure that if P did not apply and V did, that gate_var = 0.
+                # TODO: This can probably be softened a bit to allow requirements[p_idx][gate_var] to
+                # have any positive value by modifying the "buffer" logic below.
+                continue
+            # If we made it to this point, then we have found a valid pair of protector and violator rules.
 
             s = z3.Solver()
             S1 = [z3.Int(f"S1_{i}") for i in range(num_vars)]

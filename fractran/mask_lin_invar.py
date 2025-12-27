@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+# Masked Linear Invariant (MLI)
 
 import argparse
+from collections import defaultdict
 from dataclasses import dataclass
 
 import z3
@@ -29,10 +31,26 @@ def dot(xs, ys):
     assert len(xs) == len(ys), (xs, ys)
     return z3.Sum([v * c for v, c in zip(xs, ys)])
 
-def decide_specific(prog: Program, start_state: State, safe_indices, p_idx: int, v_idx: int, gate_var: int) -> DecideResult:
+def decide_specific(prog: Program, start_state: State, safe_regs: dict[int, int], p_idx: int, v_idx: int, gate_var: int) -> DecideResult:
     num_rules = prog.num_rules()
     num_vars = prog.num_registers()
     requirements = [min_vals(trans) for trans in prog.rules]
+
+    # We currently only allow safe registers that have requirement = 1.
+    # TODO: Support requirement > 1, but this is not trivial. I think it requires
+    # more complex restrictions on the start_state valuations.
+    safe_regs = {r for r in safe_regs if safe_regs[r] == 1}
+
+    # Max/min values of the gate register upon activating the violator rule.
+    gate_max = requirements[p_idx][gate_var] - 1
+    gate_min = requirements[v_idx][gate_var]
+
+    if not (gate_min == 0 == gate_max):
+        # We currently only support the situation where P requires exactly 1 gate_var
+        # (and V 0) so that we can ensure that if P did not apply and V did, that gate_var = 0.
+        # TODO: This can probably be softened a bit to allow requirements[p_idx][gate_var] to
+        # have any positive value by modifying the "buffer" logic below.
+        return FAILED_RESULT
 
     s = z3.Solver()
     S1 = [z3.Int(f"S1_{i}") for i in range(num_vars)]
@@ -61,7 +79,7 @@ def decide_specific(prog: Program, start_state: State, safe_indices, p_idx: int,
     # We guarantee this by requiring all weights to be <= 0 for unsafe registers
     # which means that if S2 > 0, at least one safe register must be positive.
     for i in range(num_vars):
-        if i not in safe_indices:
+        if i not in safe_regs:
             s.add(S2[i] <= 0)
 
     # Constraints for when violator rule applies.
@@ -102,19 +120,24 @@ def decide_full(prog: Program, start_state: State) -> DecideResult:
     num_vars = prog.num_registers()
     requirements = [min_vals(trans) for trans in prog.rules]
 
-    # 1. Identify 'Safe' Variables
-    # A variable is safe if it ALONE guarantees a rule triggers (req has only 1 non-zero entry).
+    # Identify "safe" registers
+    # A register is safe if it ALONE guarantees a rule triggers (req has only 1 non-zero entry).
     # We also require that it only appears once in that denominator (25/3 is good, but 25/9 is not).
-    safe_indices = set()
+    # TODO: Support safe registers with active_vars[0][1] > 1
+    safe_vals = defaultdict(list)
     for req in requirements:
-        active_vars = [(i,x) for i, x in enumerate(req) if x > 0]
-        if len(active_vars) == 1 and active_vars[0][1] == 1:
-            safe_indices.add(active_vars[0][0])
+        active_regs = [(i,x) for i, x in enumerate(req) if x > 0]
+        if len(active_regs) == 1:
+            (reg_num, req) = active_regs[0]
+            safe_vals[reg_num].append(req)
+    # Map from register to min_value such that if that register has a value >= min_value,
+    # then it is guaranteed at least one rule will apply.
+    safe_regs = {n: min(vals) for (n, vals) in safe_vals.items()}
+
 
     # Find S1 (Floor) and S2 (Ceiling) where S2 drops ONLY on 'Violator', protected by 'Protector'.
     for v_idx in range(num_rules):       # Violator Rule Index
         for p_idx in range(v_idx):       # Protector Rule Index (Must have higher priority)
-
             # Check Compatibility between protector and violator rules.
             #   Every requirement for P (except for one requirement on a "gate register" being >= 1)
             #   must also be requirements for V.
@@ -130,22 +153,16 @@ def decide_full(prog: Program, start_state: State) -> DecideResult:
                 # which difference caused V to fire and P not to, so move on.
                 continue
             (gate_var,) = req_diffs
-            if not (requirements[p_idx][gate_var] == 1 and requirements[v_idx][gate_var] == 0):
-                # We currently only support the situation where P requires exactly 1 gate_var
-                # (and V 0) so that we can ensure that if P did not apply and V did, that gate_var = 0.
-                # TODO: This can probably be softened a bit to allow requirements[p_idx][gate_var] to
-                # have any positive value by modifying the "buffer" logic below.
-                continue
             # If we made it to this point, then we have found a valid pair of protector and violator rules.
 
-            res = decide_specific(prog, start_state, safe_indices, p_idx, v_idx, gate_var)
+            res = decide_specific(prog, start_state, safe_regs, p_idx, v_idx, gate_var)
             if res.infinite:
                 return res
 
     return FAILED_RESULT
 
 def decide_pre(prog: Program, start_state: State) -> DecideResult:
-    """Try MVI on all "prefixes" of this program."""
+    """Try MLI on all "prefixes" of this program."""
     for n in range(2, prog.num_rules() + 1):
         # We consider all prefixes of the program. If any prefix is infinite,
         # the rest of the rules don't matter.
@@ -155,19 +172,28 @@ def decide_pre(prog: Program, start_state: State) -> DecideResult:
             return res
     return FAILED_RESULT
 
+def init_sim(prog: Program, init_steps: int) -> State:
+    state = State.from_int(2, prog.num_registers())
+    for _ in range(init_steps):
+        state, _ = prog.step(state)
+    return state
+
+def decide(prog: Program, init_steps: int) -> DecideResult:
+    state = init_sim(prog, init_steps)
+    return decide_pre(prog, state)
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("program")
-    parser.add_argument("--start", type=int, default=2)
+    parser.add_argument("--init-steps", type=int, default=100)
     args = parser.parse_args()
 
     prog = load_program(args.program)
-    start = State.from_int(args.start, prog.num_registers())
 
     print_program(prog)
     print()
 
-    result = decide_pre(prog, start)
+    result = decide(prog, args.init_steps)
     if result.infinite:
         print("Success:", result.num_rules, result.protector_rule, result.violator_rule, result.gate_register, result.weights)
     else:

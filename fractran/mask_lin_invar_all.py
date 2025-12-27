@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 
 from base import State, Program
-from mask_lin_invar import decide_pre, DecideResult
+from mask_lin_invar import decide, DecideResult
 from parse import enum_programs
 
 class OutputWriter:
@@ -18,18 +18,18 @@ class OutputWriter:
 
   def write(self, prog: Program, result: DecideResult) -> None:
     if result.infinite:
-      status = "INF"
+      self.outfile.write(f"{prog.fractions_str()}\tINF\t{result.num_rules},{result.protector_rule},{result.violator_rule},{result.gate_register}\t{result.weights}\n")
       self.num_inf += 1
     else:
-      status = "UNKNOWN"
+      self.outfile.write(f"{prog.fractions_str()}\tUNKNOWN\n")
     self.num_total += 1
-    self.outfile.write(f"{prog.fractions_str()}\t{status}\t{result.num_rules},{result.protector_rule},{result.violator_rule},{result.gate_register}\t{result.weights}\n")
 
 
 def main() -> None:
   parser = argparse.ArgumentParser()
   parser.add_argument("infile", type=Path)
   parser.add_argument("outfile", type=Path)
+  parser.add_argument("--init-steps", type=int, default=100)
   parser.add_argument("--print-sec", type=float, default="60")
   args = parser.parse_args()
 
@@ -37,8 +37,7 @@ def main() -> None:
     writer = OutputWriter(outfile)
     print_time = time.time() + args.print_sec
     for prog in enum_programs(args.infile):
-      start = State.from_int(2, prog.num_registers())
-      result = decide_pre(prog, start)
+      result = decide(prog, args.init_steps)
       writer.write(prog, result)
       if time.time() >= print_time:
         print(f"...  Total: {writer.num_total:_d}  Inf: {writer.num_inf:_d} ({writer.num_inf/writer.num_total:.0%})  ({time.process_time():_f}s)")

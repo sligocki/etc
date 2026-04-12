@@ -187,9 +187,8 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, skip_trivial: bool)
     // R(g, h): g ∈ GRF_{arity-1}, h ∈ GRF_{arity+1}
     if arity >= 1 {
         for gsize in 1..n {
-            total += count_grf(gsize, arity - 1, allow_min, skip_trivial).saturating_mul(
-                count_grf(n - gsize, arity + 1, allow_min, skip_trivial),
-            );
+            total += count_grf(gsize, arity - 1, allow_min, skip_trivial)
+                .saturating_mul(count_grf(n - gsize, arity + 1, allow_min, skip_trivial));
         }
     }
 

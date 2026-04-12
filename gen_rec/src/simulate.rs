@@ -250,8 +250,9 @@ mod tests {
         let h = Grf::Proj(2, 2);
         let r = Grf::Rec(Box::new(g), Box::new(h));
         let (val, steps) = simulate(&r, &[3], 1_000_000);
-        assert_eq!(val.into_value(), Some(0.into())); // P(2,2)(i, 0) = 0 for all i (acc never changes from 0)
-                                  // steps: 1 (Rec) + 1 (Z0) + 3 (P(2,2) called 3 times) = 5
+        // P(2,2)(i, 0) = 0 for all i (acc never changes from 0)
+        assert_eq!(val.into_value(), Some(0.into()));
+        // steps: 1 (Rec) + 1 (Z0) + 3 (P(2,2) called 3 times) = 5
         assert_eq!(steps, 5);
     }
 

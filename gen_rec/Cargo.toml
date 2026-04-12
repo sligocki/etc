@@ -7,3 +7,4 @@ edition = "2021"
 clap = { version = "4.4", features = ["derive"] }
 memoize = "0.5.1"
 rug = "1.28.0"
+rayon = "1.10"

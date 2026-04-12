@@ -4,7 +4,7 @@
 /// are generated one at a time without materialising any Vec<Grf>, keeping peak
 /// memory at ~20 MB regardless of size.  Simulation is parallelised with Rayon.
 use clap::Parser;
-use gen_rec::enumerate::{count_grf_fast, stream_grf};
+use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::simulate::simulate;
 use rayon::prelude::*;
@@ -156,7 +156,7 @@ fn estimate_time(
     skip_trivial: bool,
     secs_per_fn: f64,
 ) -> Option<f64> {
-    let count = count_grf_fast(future_size, 0, allow_min, skip_trivial);
+    let count = count_grf(future_size, 0, allow_min, skip_trivial);
     if count == 0 || secs_per_fn <= 0.0 {
         return None;
     }
@@ -350,7 +350,7 @@ fn main() {
                     .filter_map(|ds| {
                         let future = size + ds;
                         let est = estimate_time(future, args.allow_min, args.skip_trivial, rate)?;
-                        let count = count_grf_fast(future, 0, args.allow_min, args.skip_trivial);
+                        let count = count_grf(future, 0, args.allow_min, args.skip_trivial);
                         Some(format!(
                             "n={}: ~{} ({} fns)",
                             future,

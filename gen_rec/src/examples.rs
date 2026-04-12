@@ -136,4 +136,37 @@ mod tests {
             Some(26_357_430)
         );
     }
+
+    #[test]
+    fn test_champions() {
+        // 13: K[6]
+        let c13 = constant(6, 0);
+        assert_eq!(c13.size(), 13);
+        assert_eq!(eval(&c13, &[]), Some(6));
+
+        // 14: C(RepDiag[S], K[2])
+        let c14 = Grf::comp(rep_diag(Grf::Succ), vec![constant(2, 0)]);
+        assert_eq!(c14.size(), 14);
+        assert_eq!(eval(&c14, &[]), Some(7));
+
+        // 16: C(RepDiag[Plus[2]], K[2])
+        let c16 = Grf::comp(rep_diag(plus_n(2)), vec![constant(2, 0)]);
+        assert_eq!(c16.size(), 16);
+        assert_eq!(eval(&c16, &[]), Some(10));
+
+        // 17: C(Tri, K[4])
+        let c17 = Grf::comp(triangular(), vec![constant(4, 0)]);
+        assert_eq!(c17.size(), 17);
+        assert_eq!(eval(&c17, &[]), Some(10));
+
+        // 18: C(RepDiag[Tri], K[1])
+        let c18 = Grf::comp(rep_diag(triangular()), vec![constant(1, 0)]);
+        assert_eq!(c18.size(), 18);
+        assert_eq!(eval(&c18, &[]), Some(21));
+
+        // 20: C(RepDiag[Tri], K[2])
+        let c20 = Grf::comp(rep_diag(triangular()), vec![constant(2, 0)]);
+        assert_eq!(c20.size(), 20);
+        assert_eq!(eval(&c20, &[]), Some(1540));
+    }
 }

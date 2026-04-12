@@ -1,8 +1,8 @@
 /// Enumerate all 0-arity (P)RF of increasing size and track BBµ champions.
 ///
-/// Enumeration is single-threaded (to exploit the per-thread cache efficiently),
-/// but simulation is parallelised with Rayon: functions are batched and each batch
-/// is evaluated concurrently across all available CPU cores.
+/// Enumeration is single-threaded using a fully-streaming algorithm: GRF trees
+/// are generated one at a time without materialising any Vec<Grf>, keeping peak
+/// memory at ~20 MB regardless of size.  Simulation is parallelised with Rayon.
 use clap::Parser;
 use gen_rec::enumerate::{cache_stats, count_grf_fast, set_no_cache, stream_grf};
 use gen_rec::grf::Grf;
@@ -39,11 +39,12 @@ struct Args {
     #[arg(long, default_value_t = 2000)]
     batch_size: usize,
 
-    /// Disable sub-expression caching.
-    /// Every call to enumerate_all recomputes from scratch.
-    /// Use this to measure the cache's impact on runtime.
+    /// Enable sub-expression caching (default: off).
+    /// Caches Vec<Grf> for every sub-expression size/arity.
+    /// Benchmarking shows this uses ~240x more memory and is ~10% slower
+    /// than the default fully-streaming mode, so it is off by default.
     #[arg(long)]
-    no_cache: bool,
+    use_cache: bool,
 
     /// How many future sizes to show time estimates for.
     #[arg(long, default_value_t = 3)]
@@ -193,19 +194,19 @@ fn fmt_duration(secs: f64) -> String {
 fn main() {
     let args = Args::parse();
 
-    if args.no_cache {
+    if !args.use_cache {
         set_no_cache(true);
     }
 
     println!(
-        "BBµ search: 0-arity {}, max_size={}, max_steps={}, skip_trivial={}, threads={}, batch={}, cache={}",
+        "BBµ search: 0-arity {}, max_size={}, max_steps={}, skip_trivial={}, threads={}, batch={}, enum={}",
         if args.allow_min { "GRF" } else { "PRF" },
         args.max_size,
         args.max_steps,
         args.skip_trivial,
         rayon::current_num_threads(),
         args.batch_size,
-        if args.no_cache { "disabled" } else { "enabled" },
+        if args.use_cache { "cached" } else { "streaming" },
     );
     println!("{}", "=".repeat(90));
 

@@ -189,9 +189,11 @@ pub fn for_each_grf<F: FnMut(&Grf)>(
 
 /// Like `for_each_grf` but does **not** cache the top-level results for `size`.
 ///
-/// Sub-expressions (sizes < `size`) are still cached as usual.  Use this for
-/// the largest size in a search to avoid materialising tens of millions of
-/// tree-structured values in memory simultaneously.
+/// When the thread-local `NO_CACHE` flag is set, uses a fully-streaming
+/// implementation that never materialises any `Vec<Grf>` — not even for
+/// sub-expressions.  Memory use is then O(n) instead of O(count(n)).
+///
+/// Otherwise sub-expressions are still cached as usual.
 pub fn stream_grf<F: FnMut(&Grf)>(
     size: usize,
     arity: usize,
@@ -199,7 +201,11 @@ pub fn stream_grf<F: FnMut(&Grf)>(
     skip_trivial: bool,
     callback: &mut F,
 ) {
-    for_each_grf_impl(size, arity, allow_min, skip_trivial, callback);
+    if NO_CACHE.with(|f| f.get()) {
+        for_each_grf_stream(size, arity, allow_min, skip_trivial, callback);
+    } else {
+        for_each_grf_impl(size, arity, allow_min, skip_trivial, callback);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +341,123 @@ fn for_each_many_rec<F>(
             );
             current.pop();
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Truly streaming enumeration — never materialises any Vec<Grf>
+// ---------------------------------------------------------------------------
+
+/// Fully streaming enumeration.  Unlike `for_each_grf_impl`, this never calls
+/// `enumerate_all` and never builds any `Vec<Grf>`.  At any point in time only
+/// O(size) GRF nodes are live (the path currently being explored).
+///
+/// Uses `&mut dyn FnMut` for the callback so nested closures can each capture
+/// and call through the same callback reference (generic `F` would prevent this
+/// because two closures cannot both hold an `&mut F` simultaneously).
+fn for_each_grf_stream(
+    size: usize,
+    arity: usize,
+    allow_min: bool,
+    skip_trivial: bool,
+    callback: &mut dyn FnMut(&Grf),
+) {
+    if size == 0 {
+        return;
+    }
+    if size == 1 {
+        callback(&Grf::Zero(arity));
+        if arity == 1 {
+            callback(&Grf::Succ);
+        }
+        for i in 1..=arity {
+            callback(&Grf::Proj(arity, i));
+        }
+        return;
+    }
+    let n = size - 1;
+
+    // --- M(f) ---
+    if allow_min {
+        for_each_grf_stream(n, arity + 1, allow_min, skip_trivial, &mut |f: &Grf| {
+            callback(&Grf::Min(Box::new(f.clone())));
+        });
+    }
+
+    // --- R(g, h) ---
+    // Stream g's; for each g, stream h's.  The inner closure captures `callback`
+    // by reborrow — this compiles because callback is `&mut dyn FnMut`, not
+    // a generic type parameter.
+    if arity >= 1 {
+        for gsize in 1..n {
+            let hsize = n - gsize;
+            for_each_grf_stream(gsize, arity - 1, allow_min, skip_trivial, &mut |g: &Grf| {
+                let g_box = Box::new(g.clone());
+                for_each_grf_stream(hsize, arity + 1, allow_min, skip_trivial, &mut |h: &Grf| {
+                    callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                });
+            });
+        }
+    }
+
+    // --- C(h, g1..gm) ---
+    for hsize in 1..=n {
+        let gs_total = n - hsize;
+        for m in 1..=gs_total {
+            for_each_grf_stream(hsize, m, allow_min, skip_trivial, &mut |h: &Grf| {
+                if skip_trivial && matches!(h, Grf::Zero(_) | Grf::Proj(_, _)) {
+                    return;
+                }
+                let h_box = Box::new(h.clone());
+                let mut tuple_buf = Vec::with_capacity(m);
+                for_each_many_stream(
+                    gs_total,
+                    m,
+                    arity,
+                    allow_min,
+                    skip_trivial,
+                    &mut tuple_buf,
+                    &mut |gs: &[Grf]| {
+                        callback(&Grf::Comp(h_box.clone(), gs.to_vec(), arity));
+                    },
+                );
+            });
+        }
+    }
+}
+
+/// Streaming version of `for_each_many_rec` — generates all ordered m-tuples
+/// of `arity`-GRFs with total size `remaining_size`, one at a time.
+fn for_each_many_stream(
+    remaining_size: usize,
+    remaining_count: usize,
+    arity: usize,
+    allow_min: bool,
+    skip_trivial: bool,
+    current: &mut Vec<Grf>,
+    callback: &mut dyn FnMut(&[Grf]),
+) {
+    if remaining_count == 0 {
+        if remaining_size == 0 {
+            callback(current);
+        }
+        return;
+    }
+    let max_first = remaining_size.saturating_sub(remaining_count - 1);
+    for x in 1..=max_first {
+        for_each_grf_stream(x, arity, allow_min, skip_trivial, &mut |g: &Grf| {
+            current.push(g.clone());
+            for_each_many_stream(
+                remaining_size - x,
+                remaining_count - 1,
+                arity,
+                allow_min,
+                skip_trivial,
+                current,
+                callback,
+            );
+            current.pop();
+        });
     }
 }
 
@@ -586,5 +709,40 @@ mod tests {
         let (entries, total) = cache_stats();
         assert!(entries > 0, "cache should be non-empty after enumeration");
         assert!(total > 0, "cache total count should be positive");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fully streaming path (--no-cache / set_no_cache) matches cached path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_fully_streaming_matches_cached() {
+        for size in 1..=7 {
+            for arity in 0..=2 {
+                for allow_min in [false, true] {
+                    for skip_trivial in [false, true] {
+                        // Cached reference.
+                        let cached: Vec<Grf> = enumerate_all(size, arity, allow_min, skip_trivial)
+                            .iter()
+                            .cloned()
+                            .collect();
+
+                        // Streaming path via set_no_cache.
+                        set_no_cache(true);
+                        let mut streamed: Vec<Grf> = Vec::new();
+                        stream_grf(size, arity, allow_min, skip_trivial, &mut |g| {
+                            streamed.push(g.clone());
+                        });
+                        set_no_cache(false);
+
+                        assert_eq!(
+                            cached, streamed,
+                            "streaming mismatch: size={size}, arity={arity}, \
+                             allow_min={allow_min}, skip_trivial={skip_trivial}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

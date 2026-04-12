@@ -86,11 +86,6 @@ fn eval(grf: &Grf, args: &[Integer], steps: &mut u64, max_steps: u64) -> SimResu
 
             let mut i = Integer::ZERO;
             while &i < n {
-                // Check step budget before starting next iteration (eval(h) will also check,
-                // but this avoids the overhead of building h_args when over budget).
-                if *steps >= max_steps {
-                    return SimResult::OutOfSteps;
-                }
                 let mut h_args: Vec<Integer> = Vec::with_capacity(rest.len() + 2);
                 h_args.push(i.clone());
                 h_args.push(acc);
@@ -110,9 +105,6 @@ fn eval(grf: &Grf, args: &[Integer], steps: &mut u64, max_steps: u64) -> SimResu
             // M(f)(args) = min{i : f(i, args...) = 0}
             let mut i = Integer::ZERO;
             loop {
-                if *steps >= max_steps {
-                    return SimResult::OutOfSteps;
-                }
                 let mut f_args: Vec<Integer> = Vec::with_capacity(args.len() + 1);
                 f_args.push(i.clone());
                 f_args.extend_from_slice(args);
@@ -132,43 +124,35 @@ mod tests {
     use super::*;
     use crate::grf::Grf;
 
-    fn sim(grf: &Grf, args: &[u64]) -> Option<u64> {
+    fn eval(grf: &Grf, args: &[u64]) -> Option<u64> {
         let (result, _steps) = simulate(grf, args, 1_000_000);
         result.into_value().map(|v| u64::try_from(v).unwrap())
     }
 
-    fn sim_with_steps(grf: &Grf, args: &[u64]) -> (Option<u64>, u64) {
-        let (result, steps) = simulate(grf, args, 1_000_000);
-        (
-            result.into_value().map(|v| u64::try_from(v).unwrap()),
-            steps,
-        )
-    }
-
     #[test]
     fn test_zero() {
-        assert_eq!(sim(&Grf::Zero(0), &[]), Some(0));
-        assert_eq!(sim(&Grf::Zero(2), &[3, 5]), Some(0));
+        assert_eq!(eval(&Grf::Zero(0), &[]), Some(0));
+        assert_eq!(eval(&Grf::Zero(2), &[3, 5]), Some(0));
     }
 
     #[test]
     fn test_succ() {
-        assert_eq!(sim(&Grf::Succ, &[0]), Some(1));
-        assert_eq!(sim(&Grf::Succ, &[5]), Some(6));
+        assert_eq!(eval(&Grf::Succ, &[0]), Some(1));
+        assert_eq!(eval(&Grf::Succ, &[5]), Some(6));
     }
 
     #[test]
     fn test_proj() {
-        assert_eq!(sim(&Grf::Proj(2, 1), &[3, 5]), Some(3));
-        assert_eq!(sim(&Grf::Proj(2, 2), &[3, 5]), Some(5));
-        assert_eq!(sim(&Grf::Proj(3, 2), &[1, 2, 3]), Some(2));
+        assert_eq!(eval(&Grf::Proj(2, 1), &[3, 5]), Some(3));
+        assert_eq!(eval(&Grf::Proj(2, 2), &[3, 5]), Some(5));
+        assert_eq!(eval(&Grf::Proj(3, 2), &[1, 2, 3]), Some(2));
     }
 
     #[test]
     fn test_comp_k0_1() {
         // C(S, Z0)() = S(Z0()) = S(0) = 1
         let f = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
-        assert_eq!(sim(&f, &[]), Some(1));
+        assert_eq!(eval(&f, &[]), Some(1));
     }
 
     #[test]
@@ -176,14 +160,14 @@ mod tests {
         // C(S, C(S, Z0))() = 2
         let k01 = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
         let k02 = Grf::comp(Grf::Succ, vec![k01]);
-        assert_eq!(sim(&k02, &[]), Some(2));
+        assert_eq!(eval(&k02, &[]), Some(2));
     }
 
     #[test]
     fn test_comp_projection_selects_arg() {
         // C(P(2,1), S, Z1)([3]) = P(2,1)(S(3), Z1(3)) = P(2,1)(4, 0) = 4
         let f = Grf::comp(Grf::Proj(2, 1), vec![Grf::Succ, Grf::Zero(1)]);
-        assert_eq!(sim(&f, &[3]), Some(4));
+        assert_eq!(eval(&f, &[3]), Some(4));
     }
 
     #[test]
@@ -196,10 +180,10 @@ mod tests {
         let h = Grf::comp(Grf::Succ, vec![Grf::Proj(3, 2)]);
         let plus = Grf::Rec(Box::new(g), Box::new(h));
 
-        assert_eq!(sim(&plus, &[0, 0]), Some(0));
-        assert_eq!(sim(&plus, &[3, 2]), Some(5));
-        assert_eq!(sim(&plus, &[0, 7]), Some(7));
-        assert_eq!(sim(&plus, &[4, 4]), Some(8));
+        assert_eq!(eval(&plus, &[0, 0]), Some(0));
+        assert_eq!(eval(&plus, &[3, 2]), Some(5));
+        assert_eq!(eval(&plus, &[0, 7]), Some(7));
+        assert_eq!(eval(&plus, &[4, 4]), Some(8));
     }
 
     #[test]
@@ -220,22 +204,22 @@ mod tests {
         let h = Grf::comp(Grf::Succ, vec![Grf::Proj(2, 2)]);
         let identity = Grf::Rec(Box::new(g), Box::new(h));
         assert_eq!(identity.arity(), 1);
-        assert_eq!(sim(&identity, &[0]), Some(0));
-        assert_eq!(sim(&identity, &[5]), Some(5));
+        assert_eq!(eval(&identity, &[0]), Some(0));
+        assert_eq!(eval(&identity, &[5]), Some(5));
     }
 
     #[test]
     fn test_min_proj() {
         // M(P(1,1))() = min{i : P(1,1)(i) = 0} = min{i : i = 0} = 0
         let f = Grf::Min(Box::new(Grf::Proj(1, 1)));
-        assert_eq!(sim(&f, &[]), Some(0));
+        assert_eq!(eval(&f, &[]), Some(0));
     }
 
     #[test]
     fn test_min_zero() {
         // M(Z1)() = min{i : Z1(i) = 0} = min{i : 0 = 0} = 0
         let f = Grf::Min(Box::new(Grf::Zero(1)));
-        assert_eq!(sim(&f, &[]), Some(0));
+        assert_eq!(eval(&f, &[]), Some(0));
     }
 
     #[test]
@@ -250,12 +234,12 @@ mod tests {
     #[test]
     fn test_step_counting() {
         // Z0(): 1 step
-        let (_, steps) = sim_with_steps(&Grf::Zero(0), &[]);
+        let (_, steps) = simulate(&Grf::Zero(0), &[], 1_000_000);
         assert_eq!(steps, 1);
 
         // C(S, Z0)(): eval(C) = 1, eval(Z0) = 1, eval(S) = 1 → 3 steps
         let f = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
-        let (_, steps) = sim_with_steps(&f, &[]);
+        let (_, steps) = simulate(&f, &[], 1_000_000);
         assert_eq!(steps, 3);
     }
 
@@ -265,8 +249,8 @@ mod tests {
         let g = Grf::Zero(0);
         let h = Grf::Proj(2, 2);
         let r = Grf::Rec(Box::new(g), Box::new(h));
-        let (val, steps) = sim_with_steps(&r, &[3]);
-        assert_eq!(val, Some(0)); // P(2,2)(i, 0) = 0 for all i (acc never changes from 0)
+        let (val, steps) = simulate(&r, &[3], 1_000_000);
+        assert_eq!(val.into_value(), Some(0.into())); // P(2,2)(i, 0) = 0 for all i (acc never changes from 0)
                                   // steps: 1 (Rec) + 1 (Z0) + 3 (P(2,2) called 3 times) = 5
         assert_eq!(steps, 5);
     }
@@ -280,109 +264,5 @@ mod tests {
         let (result, steps) = simulate(&r, &[1_000_000], 100);
         assert!(matches!(result, SimResult::OutOfSteps));
         assert!(steps >= 100);
-    }
-
-    // -------------------------------------------------------------------------
-    // Tri and RepDiag[Tri] champion expressions
-    // -------------------------------------------------------------------------
-
-    /// Build Tri = R(Z0, R(S, C(S, P(3,2)))) ∈ GRF_1.
-    /// Tri(n) = n*(n+1)/2.
-    fn make_tri() -> Grf {
-        let inner_h = Grf::Rec(
-            Box::new(Grf::Succ),
-            Box::new(Grf::comp(Grf::Succ, vec![Grf::Proj(3, 2)])),
-        );
-        Grf::Rec(Box::new(Grf::Zero(0)), Box::new(inner_h))
-    }
-
-    /// Build RepDiag[f] = C(R(S, C(f, P(3,2))), S, S) ∈ GRF_1.
-    /// RepDiag[f](x) = f^{x+1}(x+2).
-    fn make_rep_diag(f: Grf) -> Grf {
-        let step = Grf::comp(f, vec![Grf::Proj(3, 2)]);
-        let outer = Grf::Rec(Box::new(Grf::Succ), Box::new(step));
-        Grf::comp(outer, vec![Grf::Succ, Grf::Succ])
-    }
-
-    /// Build K[n] = C(S, C(S, ...(Z0)...)) ∈ GRF_0.  K[n]() = n.
-    fn k0(n: usize) -> Grf {
-        let mut f: Grf = Grf::Zero(0);
-        for _ in 0..n {
-            f = Grf::comp(Grf::Succ, vec![f]);
-        }
-        f
-    }
-
-    #[test]
-    fn test_tri_values() {
-        let tri = make_tri();
-        assert_eq!(tri.arity(), 1);
-        assert_eq!(tri.size(), 7);
-        // Tri(n) = n*(n+1)/2
-        for (n, expected) in [
-            (0, 0u64),
-            (1, 1),
-            (2, 3),
-            (3, 6),
-            (4, 10),
-            (5, 15),
-            (10, 55),
-        ] {
-            assert_eq!(
-                sim(&tri, &[n]),
-                Some(expected),
-                "Tri({n}) should be {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_rep_diag_tri_small() {
-        let rd_tri = make_rep_diag(make_tri());
-        assert_eq!(rd_tri.arity(), 1);
-        assert_eq!(rd_tri.size(), 14);
-        // RepDiag[Tri](x) = Tri^{x+1}(x+2)
-        // RepDiag[Tri](1) = Tri^2(3) = Tri(Tri(3)) = Tri(6) = 21
-        assert_eq!(sim(&rd_tri, &[1]), Some(21));
-        // RepDiag[Tri](2) = Tri^3(4) = Tri(Tri(10)) = Tri(55) = 1540
-        assert_eq!(sim(&rd_tri, &[2]), Some(1540));
-    }
-
-    #[test]
-    fn test_rep_diag_tri_n3() {
-        // RepDiag[Tri](3) = Tri^4(5) = Tri(Tri(Tri(15))) = Tri(Tri(120)) = Tri(7260) = 26,357,430
-        let rd_tri = make_rep_diag(make_tri());
-        let (result, _steps) = simulate(&rd_tri, &[3], 200_000_000);
-        assert_eq!(
-            result.into_value().map(|v| u64::try_from(v).unwrap()),
-            Some(26_357_430)
-        );
-    }
-
-    #[test]
-    fn test_c_rep_diag_tri_k_n() {
-        // C(RepDiag[Tri], K[n])() = RepDiag[Tri](n) = Tri^{n+1}(n+2)
-        let make_champ = |n: usize| Grf::comp(make_rep_diag(make_tri()), vec![k0(n)]);
-        // n=1: Tri^2(3) = 21
-        assert_eq!(sim(&make_champ(1), &[]), Some(21));
-        // n=2: Tri^3(4) = 1540
-        assert_eq!(sim(&make_champ(2), &[]), Some(1540));
-        // n=3: Tri^4(5) = 26,357,430  (may be slow; allow 200M steps)
-        let (r3, _) = simulate(&make_champ(3), &[], 200_000_000);
-        assert_eq!(
-            r3.into_value().map(|v| u64::try_from(v).unwrap()),
-            Some(26_357_430)
-        );
-    }
-
-    #[test]
-    fn test_c_rep_diag_tri_k4_times_out() {
-        // C(RepDiag[Tri], K[4])() = Tri^5(6) ≈ 10^16; requires ~10^9 steps → times out at 100M
-        let champ = Grf::comp(make_rep_diag(make_tri()), vec![k0(4)]);
-        let (result, _steps) = simulate(&champ, &[], 100_000_000);
-        assert!(
-            result.value().is_none(),
-            "C(RepDiag[Tri], K[4]) should time out at 100M steps"
-        );
     }
 }

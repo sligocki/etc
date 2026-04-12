@@ -42,8 +42,9 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, skip_trivial: bool)
     // R(g, h): g ∈ GRF_{arity-1}, h ∈ GRF_{arity+1}
     if arity >= 1 {
         for gsize in 1..n {
-            total += count_grf_fast(gsize, arity - 1, allow_min, skip_trivial)
-                .saturating_mul(count_grf_fast(n - gsize, arity + 1, allow_min, skip_trivial));
+            total += count_grf_fast(gsize, arity - 1, allow_min, skip_trivial).saturating_mul(
+                count_grf_fast(n - gsize, arity + 1, allow_min, skip_trivial),
+            );
         }
     }
 
@@ -60,8 +61,13 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, skip_trivial: bool)
             if h_count == 0 {
                 continue;
             }
-            total += h_count
-                .saturating_mul(count_many_fast(gs_total, m, arity, allow_min, skip_trivial));
+            total += h_count.saturating_mul(count_many_fast(
+                gs_total,
+                m,
+                arity,
+                allow_min,
+                skip_trivial,
+            ));
         }
     }
     total
@@ -232,7 +238,9 @@ mod tests {
     /// Collect all GRFs of given size/arity into a Vec via streaming.
     fn collect(size: usize, arity: usize, allow_min: bool, skip_trivial: bool) -> Vec<Grf> {
         let mut out = Vec::new();
-        stream_grf(size, arity, allow_min, skip_trivial, &mut |g| out.push(g.clone()));
+        stream_grf(size, arity, allow_min, skip_trivial, &mut |g| {
+            out.push(g.clone())
+        });
         out
     }
 
@@ -300,7 +308,10 @@ mod tests {
         assert_eq!(all.len(), 3);
         verify_all(3, 0, false, false);
         let champion = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
-        assert!(all.iter().any(|g| *g == champion), "C(S,Z0) should be in size-3 PRF_0");
+        assert!(
+            all.iter().any(|g| *g == champion),
+            "C(S,Z0) should be in size-3 PRF_0"
+        );
     }
 
     #[test]
@@ -346,7 +357,10 @@ mod tests {
             for arity in 0..=2 {
                 let full = count_grf_fast(size, arity, false, false);
                 let trim = count_grf_fast(size, arity, false, true);
-                assert!(trim <= full, "skip_trivial produced more GRFs at size={size} arity={arity}");
+                assert!(
+                    trim <= full,
+                    "skip_trivial produced more GRFs at size={size} arity={arity}"
+                );
             }
         }
     }

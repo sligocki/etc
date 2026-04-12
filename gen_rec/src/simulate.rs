@@ -132,14 +132,17 @@ mod tests {
     use super::*;
     use crate::grf::Grf;
 
-fn sim(grf: &Grf, args: &[u64]) -> Option<u64> {
+    fn sim(grf: &Grf, args: &[u64]) -> Option<u64> {
         let (result, _steps) = simulate(grf, args, 1_000_000);
         result.into_value().map(|v| u64::try_from(v).unwrap())
     }
 
     fn sim_with_steps(grf: &Grf, args: &[u64]) -> (Option<u64>, u64) {
         let (result, steps) = simulate(grf, args, 1_000_000);
-        (result.into_value().map(|v| u64::try_from(v).unwrap()), steps)
+        (
+            result.into_value().map(|v| u64::try_from(v).unwrap()),
+            steps,
+        )
     }
 
     #[test]
@@ -264,7 +267,7 @@ fn sim(grf: &Grf, args: &[u64]) -> Option<u64> {
         let r = Grf::Rec(Box::new(g), Box::new(h));
         let (val, steps) = sim_with_steps(&r, &[3]);
         assert_eq!(val, Some(0)); // P(2,2)(i, 0) = 0 for all i (acc never changes from 0)
-        // steps: 1 (Rec) + 1 (Z0) + 3 (P(2,2) called 3 times) = 5
+                                  // steps: 1 (Rec) + 1 (Z0) + 3 (P(2,2) called 3 times) = 5
         assert_eq!(steps, 5);
     }
 
@@ -316,7 +319,15 @@ fn sim(grf: &Grf, args: &[u64]) -> Option<u64> {
         assert_eq!(tri.arity(), 1);
         assert_eq!(tri.size(), 7);
         // Tri(n) = n*(n+1)/2
-        for (n, expected) in [(0, 0u64), (1, 1), (2, 3), (3, 6), (4, 10), (5, 15), (10, 55)] {
+        for (n, expected) in [
+            (0, 0u64),
+            (1, 1),
+            (2, 3),
+            (3, 6),
+            (4, 10),
+            (5, 15),
+            (10, 55),
+        ] {
             assert_eq!(
                 sim(&tri, &[n]),
                 Some(expected),
@@ -342,22 +353,26 @@ fn sim(grf: &Grf, args: &[u64]) -> Option<u64> {
         // RepDiag[Tri](3) = Tri^4(5) = Tri(Tri(Tri(15))) = Tri(Tri(120)) = Tri(7260) = 26,357,430
         let rd_tri = make_rep_diag(make_tri());
         let (result, _steps) = simulate(&rd_tri, &[3], 200_000_000);
-        assert_eq!(result.into_value().map(|v| u64::try_from(v).unwrap()), Some(26_357_430));
+        assert_eq!(
+            result.into_value().map(|v| u64::try_from(v).unwrap()),
+            Some(26_357_430)
+        );
     }
 
     #[test]
     fn test_c_rep_diag_tri_k_n() {
         // C(RepDiag[Tri], K[n])() = RepDiag[Tri](n) = Tri^{n+1}(n+2)
-        let make_champ = |n: usize| {
-            Grf::comp(make_rep_diag(make_tri()), vec![k0(n)])
-        };
+        let make_champ = |n: usize| Grf::comp(make_rep_diag(make_tri()), vec![k0(n)]);
         // n=1: Tri^2(3) = 21
         assert_eq!(sim(&make_champ(1), &[]), Some(21));
         // n=2: Tri^3(4) = 1540
         assert_eq!(sim(&make_champ(2), &[]), Some(1540));
         // n=3: Tri^4(5) = 26,357,430  (may be slow; allow 200M steps)
         let (r3, _) = simulate(&make_champ(3), &[], 200_000_000);
-        assert_eq!(r3.into_value().map(|v| u64::try_from(v).unwrap()), Some(26_357_430));
+        assert_eq!(
+            r3.into_value().map(|v| u64::try_from(v).unwrap()),
+            Some(26_357_430)
+        );
     }
 
     #[test]

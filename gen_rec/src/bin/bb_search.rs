@@ -98,8 +98,9 @@ fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
         match value {
             None => timed_out += 1,
             Some(v) => {
-                let cmp =
-                    best_val.as_ref().map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
+                let cmp = best_val
+                    .as_ref()
+                    .map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
                 match cmp {
                     std::cmp::Ordering::Greater => {
                         best_val = Some(v);
@@ -111,7 +112,13 @@ fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
             }
         }
     }
-    BatchResult { best_value: best_val, best_exprs, timed_out, total_steps, max_steps_single }
+    BatchResult {
+        best_value: best_val,
+        best_exprs,
+        timed_out,
+        total_steps,
+        max_steps_single,
+    }
 }
 
 /// Merge a BatchResult into per-size accumulators.
@@ -129,8 +136,9 @@ fn merge_batch(
         *size_max_steps = br.max_steps_single;
     }
     if let Some(v) = br.best_value {
-        let cmp =
-            size_best_val.as_ref().map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
+        let cmp = size_best_val
+            .as_ref()
+            .map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
         match cmp {
             std::cmp::Ordering::Greater => {
                 *size_best_val = Some(v);
@@ -231,20 +239,26 @@ fn main() {
             batch.clear();
         };
 
-        stream_grf(size, 0, args.allow_min, args.skip_trivial, &mut |grf: &Grf| {
-            total += 1;
-            batch.push(grf.clone());
-            if batch.len() >= args.batch_size {
-                flush(
-                    &mut batch,
-                    &mut size_best_val,
-                    &mut size_best_exprs,
-                    &mut size_timed_out,
-                    &mut size_total_steps,
-                    &mut size_max_steps,
-                );
-            }
-        });
+        stream_grf(
+            size,
+            0,
+            args.allow_min,
+            args.skip_trivial,
+            &mut |grf: &Grf| {
+                total += 1;
+                batch.push(grf.clone());
+                if batch.len() >= args.batch_size {
+                    flush(
+                        &mut batch,
+                        &mut size_best_val,
+                        &mut size_best_exprs,
+                        &mut size_timed_out,
+                        &mut size_total_steps,
+                        &mut size_max_steps,
+                    );
+                }
+            },
+        );
         flush(
             &mut batch,
             &mut size_best_val,
@@ -290,7 +304,11 @@ fn main() {
             Some(v) => fmt_integer(v),
             None => "-".to_string(),
         };
-        let champion_mark = if new_champion { " *** NEW CHAMPION ***" } else { "" };
+        let champion_mark = if new_champion {
+            " *** NEW CHAMPION ***"
+        } else {
+            ""
+        };
 
         println!(
             "n={:3}: {:9} fns, {:6} timeout, best={:>24}  [{:.2}s sim={:.2}s enum={:.2}s, {}steps]{}",
@@ -310,7 +328,10 @@ fn main() {
                 println!("       via {}", expr);
             }
             if size_best_exprs.len() > MAX_VIA {
-                println!("       ... (+{} more tied expressions)", size_best_exprs.len() - MAX_VIA);
+                println!(
+                    "       ... (+{} more tied expressions)",
+                    size_best_exprs.len() - MAX_VIA
+                );
             }
         } else if !new_champion && size_best_exprs.len() > 1 {
             println!("       ({} ties at this size)", size_best_exprs.len());
@@ -328,11 +349,14 @@ fn main() {
                 let estimates: Vec<String> = (1..=args.lookahead)
                     .filter_map(|ds| {
                         let future = size + ds;
-                        let est =
-                            estimate_time(future, args.allow_min, args.skip_trivial, rate)?;
-                        let count =
-                            count_grf_fast(future, 0, args.allow_min, args.skip_trivial);
-                        Some(format!("n={}: ~{} ({} fns)", future, fmt_duration(est), count))
+                        let est = estimate_time(future, args.allow_min, args.skip_trivial, rate)?;
+                        let count = count_grf_fast(future, 0, args.allow_min, args.skip_trivial);
+                        Some(format!(
+                            "n={}: ~{} ({} fns)",
+                            future,
+                            fmt_duration(est),
+                            count
+                        ))
                     })
                     .collect();
                 if !estimates.is_empty() {

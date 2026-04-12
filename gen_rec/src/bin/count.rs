@@ -97,7 +97,13 @@ fn main() {
 
     for size in 1..=args.max_size {
         let total = count(size, args.arity);
-        println!("T({:2}, {}): {:4.0} bits  {}", size, args.arity, log2(&total), total);
+        println!(
+            "T({:2}, {}): {:4.0} bits  {}",
+            size,
+            args.arity,
+            log2(&total),
+            total
+        );
     }
 }
 

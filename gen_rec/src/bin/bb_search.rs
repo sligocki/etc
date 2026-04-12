@@ -4,9 +4,9 @@
 /// are generated one at a time without materialising any Vec<Grf>, keeping peak
 /// memory at ~20 MB regardless of size.  Simulation is parallelised with Rayon.
 use clap::Parser;
-use gen_rec::enumerate::{cache_stats, count_grf_fast, set_no_cache, stream_grf};
+use gen_rec::enumerate::{count_grf_fast, stream_grf};
 use gen_rec::grf::Grf;
-use gen_rec::simulate::{simulate, SimResult};
+use gen_rec::simulate::simulate;
 use rayon::prelude::*;
 use rug::Integer;
 use std::cell::Cell;
@@ -39,29 +39,15 @@ struct Args {
     #[arg(long, default_value_t = 2000)]
     batch_size: usize,
 
-    /// Enable sub-expression caching (default: off).
-    /// Caches Vec<Grf> for every sub-expression size/arity.
-    /// Benchmarking shows this uses ~240x more memory and is ~10% slower
-    /// than the default fully-streaming mode, so it is off by default.
-    #[arg(long)]
-    use_cache: bool,
-
     /// How many future sizes to show time estimates for.
     #[arg(long, default_value_t = 3)]
     lookahead: usize,
 }
 
-/// Per-function simulation outcome.
-struct FuncResult {
-    value: Option<Integer>, // None means OutOfSteps
-    steps: u64,
-    display: String, // printed only if new champion
-}
-
 /// Aggregate result for one batch.
 struct BatchResult {
     best_value: Option<Integer>,
-    best_exprs: Vec<String>, // ALL expressions tied at best_value (within batch)
+    best_exprs: Vec<String>,
     timed_out: usize,
     total_steps: u64,
     max_steps_single: u64,
@@ -73,7 +59,7 @@ struct SizeResult {
     total: usize,
     timed_out: usize,
     best_value: Option<Integer>,
-    best_exprs: Vec<String>, // all ties at this size
+    best_exprs: Vec<String>,
     total_steps: u64,
     max_steps_single: u64,
 }
@@ -88,50 +74,38 @@ fn fmt_integer(v: &Integer) -> String {
     }
 }
 
-/// Process one batch of GRF clones in parallel.
+/// Simulate a batch of GRFs in parallel and return aggregate results.
 fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
-    let outcomes: Vec<FuncResult> = batch
-        .par_iter()
-        .map(|grf| {
-            let (result, steps) = simulate(grf, &[], max_steps);
-            match result {
-                SimResult::Value(v) => FuncResult {
-                    value: Some(v),
-                    steps,
-                    display: grf.to_string(),
-                },
-                SimResult::OutOfSteps => FuncResult {
-                    value: None,
-                    steps,
-                    display: grf.to_string(),
-                },
-            }
-        })
-        .collect();
-
     let mut best_val: Option<Integer> = None;
     let mut best_exprs: Vec<String> = Vec::new();
     let mut timed_out = 0usize;
     let mut total_steps = 0u64;
     let mut max_steps_single = 0u64;
 
-    for res in outcomes {
-        total_steps += res.steps;
-        if res.steps > max_steps_single {
-            max_steps_single = res.steps;
+    let outcomes: Vec<(Option<Integer>, u64, String)> = batch
+        .par_iter()
+        .map(|grf| {
+            let (result, steps) = simulate(grf, &[], max_steps);
+            (result.into_value(), steps, grf.to_string())
+        })
+        .collect();
+
+    for (value, steps, display) in outcomes {
+        total_steps += steps;
+        if steps > max_steps_single {
+            max_steps_single = steps;
         }
-        match res.value {
+        match value {
             None => timed_out += 1,
             Some(v) => {
-                let cmp = best_val.as_ref().map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
+                let cmp =
+                    best_val.as_ref().map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
                 match cmp {
                     std::cmp::Ordering::Greater => {
                         best_val = Some(v);
-                        best_exprs = vec![res.display];
+                        best_exprs = vec![display];
                     }
-                    std::cmp::Ordering::Equal => {
-                        best_exprs.push(res.display);
-                    }
+                    std::cmp::Ordering::Equal => best_exprs.push(display),
                     std::cmp::Ordering::Less => {}
                 }
             }
@@ -155,23 +129,25 @@ fn merge_batch(
         *size_max_steps = br.max_steps_single;
     }
     if let Some(v) = br.best_value {
-        let cmp = size_best_val.as_ref().map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
+        let cmp =
+            size_best_val.as_ref().map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
         match cmp {
             std::cmp::Ordering::Greater => {
                 *size_best_val = Some(v);
                 *size_best_exprs = br.best_exprs;
             }
-            std::cmp::Ordering::Equal => {
-                size_best_exprs.extend(br.best_exprs);
-            }
+            std::cmp::Ordering::Equal => size_best_exprs.extend(br.best_exprs),
             std::cmp::Ordering::Less => {}
         }
     }
 }
 
-/// Estimate time (seconds) to enumerate a future size given a per-function time sample.
-/// Uses count_grf_fast (pure DP, no GRF materialisation) so this is O(size^3) not O(2^size).
-fn estimate_time(future_size: usize, allow_min: bool, skip_trivial: bool, secs_per_fn: f64) -> Option<f64> {
+fn estimate_time(
+    future_size: usize,
+    allow_min: bool,
+    skip_trivial: bool,
+    secs_per_fn: f64,
+) -> Option<f64> {
     let count = count_grf_fast(future_size, 0, allow_min, skip_trivial);
     if count == 0 || secs_per_fn <= 0.0 {
         return None;
@@ -191,22 +167,29 @@ fn fmt_duration(secs: f64) -> String {
     }
 }
 
+fn fmt_steps(n: u64) -> String {
+    if n < 1_000 {
+        format!("{}", n)
+    } else if n < 1_000_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else if n < 1_000_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else {
+        format!("{:.2}B", n as f64 / 1_000_000_000.0)
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
-    if !args.use_cache {
-        set_no_cache(true);
-    }
-
     println!(
-        "BBµ search: 0-arity {}, max_size={}, max_steps={}, skip_trivial={}, threads={}, batch={}, enum={}",
+        "BBµ search: 0-arity {}, max_size={}, max_steps={}, skip_trivial={}, threads={}, batch={}",
         if args.allow_min { "GRF" } else { "PRF" },
         args.max_size,
         args.max_steps,
         args.skip_trivial,
         rayon::current_num_threads(),
         args.batch_size,
-        if args.use_cache { "cached" } else { "streaming" },
     );
     println!("{}", "=".repeat(90));
 
@@ -214,11 +197,7 @@ fn main() {
     let mut running_best: Option<Integer> = None;
     let mut running_best_exprs: Vec<String> = Vec::new();
     let mut running_best_size: usize = 0;
-
-    // Exponentially smoothed seconds-per-function for time estimation.
-    // We smooth over completed sizes to get a stable estimate.
     let mut smoothed_secs_per_fn: Option<f64> = None;
-
     let total_start = Instant::now();
 
     for size in 1..=args.max_size {
@@ -230,20 +209,18 @@ fn main() {
         let mut size_best_exprs: Vec<String> = Vec::new();
         let mut size_total_steps: u64 = 0;
         let mut size_max_steps: u64 = 0;
-
-        // Batch accumulator – functions are cloned here so Rayon can own them.
         let mut batch: Vec<Grf> = Vec::with_capacity(args.batch_size);
 
-        // Track simulation time separately so we can report enum vs sim breakdown.
-        // Cell<Duration> gives interior mutability without changing flush's signature.
+        // Cell<Duration> gives interior mutability so the flush closure can
+        // accumulate simulation time without changing its signature.
         let sim_time_cell = Cell::new(Duration::ZERO);
 
         let flush = |batch: &mut Vec<Grf>,
-                         best_val: &mut Option<Integer>,
-                         best_exprs: &mut Vec<String>,
-                         timed_out: &mut usize,
-                         total_steps: &mut u64,
-                         max_steps: &mut u64| {
+                     best_val: &mut Option<Integer>,
+                     best_exprs: &mut Vec<String>,
+                     timed_out: &mut usize,
+                     total_steps: &mut u64,
+                     max_steps: &mut u64| {
             if batch.is_empty() {
                 return;
             }
@@ -254,8 +231,6 @@ fn main() {
             batch.clear();
         };
 
-        // Use stream_grf so top-level size-n arity-0 functions are never cached,
-        // saving significant memory for large n.
         stream_grf(size, 0, args.allow_min, args.skip_trivial, &mut |grf: &Grf| {
             total += 1;
             batch.push(grf.clone());
@@ -270,7 +245,6 @@ fn main() {
                 );
             }
         });
-        // flush remaining
         flush(
             &mut batch,
             &mut size_best_val,
@@ -284,7 +258,6 @@ fn main() {
         let sim_secs = sim_time_cell.get().as_secs_f64();
         let enum_secs = elapsed - sim_secs;
 
-        // Update smoothed secs-per-fn (EMA with α=0.3, or just use latest if first).
         if total > 0 {
             let cur_rate = elapsed / total as f64;
             smoothed_secs_per_fn = Some(match smoothed_secs_per_fn {
@@ -293,7 +266,6 @@ fn main() {
             });
         }
 
-        // Determine if we have a new running champion.
         let new_champion = match (&size_best_val, &running_best) {
             (Some(v), None) => {
                 running_best = Some(v.clone());
@@ -308,7 +280,6 @@ fn main() {
                 true
             }
             (Some(v), Some(cur)) if v == cur => {
-                // Tied with running best — add new expressions.
                 running_best_exprs.extend(size_best_exprs.iter().cloned());
                 false
             }
@@ -319,11 +290,10 @@ fn main() {
             Some(v) => fmt_integer(v),
             None => "-".to_string(),
         };
-        let (cache_entries, cache_total) = cache_stats();
         let champion_mark = if new_champion { " *** NEW CHAMPION ***" } else { "" };
 
         println!(
-            "n={:3}: {:9} fns, {:6} timeout, best={:>24}  [{:.2}s sim={:.2}s enum={:.2}s, {}steps, cache:{}/{}]{}",
+            "n={:3}: {:9} fns, {:6} timeout, best={:>24}  [{:.2}s sim={:.2}s enum={:.2}s, {}steps]{}",
             size,
             total,
             size_timed_out,
@@ -332,8 +302,6 @@ fn main() {
             sim_secs,
             enum_secs,
             fmt_steps(size_total_steps),
-            cache_entries,
-            fmt_steps(cache_total as u64),
             champion_mark,
         );
         const MAX_VIA: usize = 5;
@@ -345,7 +313,6 @@ fn main() {
                 println!("       ... (+{} more tied expressions)", size_best_exprs.len() - MAX_VIA);
             }
         } else if !new_champion && size_best_exprs.len() > 1 {
-            // Multiple tied expressions at this size — show count only.
             println!("       ({} ties at this size)", size_best_exprs.len());
         }
         if size_timed_out > 0 {
@@ -356,17 +323,18 @@ fn main() {
             );
         }
 
-        // Time estimates for the next `lookahead` sizes.
         if size < args.max_size && args.lookahead > 0 {
             if let Some(rate) = smoothed_secs_per_fn {
-                let mut estimates: Vec<String> = Vec::new();
-                for ds in 1..=args.lookahead {
-                    let future = size + ds;
-                    if let Some(est) = estimate_time(future, args.allow_min, args.skip_trivial, rate) {
-                        let count = count_grf_fast(future, 0, args.allow_min, args.skip_trivial);
-                        estimates.push(format!("n={}: ~{} ({} fns)", future, fmt_duration(est), count));
-                    }
-                }
+                let estimates: Vec<String> = (1..=args.lookahead)
+                    .filter_map(|ds| {
+                        let future = size + ds;
+                        let est =
+                            estimate_time(future, args.allow_min, args.skip_trivial, rate)?;
+                        let count =
+                            count_grf_fast(future, 0, args.allow_min, args.skip_trivial);
+                        Some(format!("n={}: ~{} ({} fns)", future, fmt_duration(est), count))
+                    })
+                    .collect();
                 if !estimates.is_empty() {
                     println!("       est: {}", estimates.join("  |  "));
                 }
@@ -385,9 +353,7 @@ fn main() {
     }
 
     let total_elapsed = total_start.elapsed().as_secs_f64();
-    let (final_cache_entries, final_cache_total) = cache_stats();
 
-    // --- Summary table ---
     println!();
     println!("{}", "=".repeat(90));
     println!(
@@ -443,22 +409,5 @@ fn main() {
             println!("  ... (+{} more)", ties - MAX_SUMMARY_VIA);
         }
     }
-    println!(
-        "Cache: {} key entries, {} total GRFs cached",
-        final_cache_entries,
-        fmt_steps(final_cache_total as u64)
-    );
     println!("Total time: {:.2}s", total_elapsed);
-}
-
-fn fmt_steps(n: u64) -> String {
-    if n < 1_000 {
-        format!("{}", n)
-    } else if n < 1_000_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else if n < 1_000_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else {
-        format!("{:.2}B", n as f64 / 1_000_000_000.0)
-    }
 }

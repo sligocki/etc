@@ -132,11 +132,7 @@ mod tests {
     use super::*;
     use crate::grf::Grf;
 
-    fn val(n: u64) -> Integer {
-        Integer::from(n)
-    }
-
-    fn sim(grf: &Grf, args: &[u64]) -> Option<u64> {
+fn sim(grf: &Grf, args: &[u64]) -> Option<u64> {
         let (result, _steps) = simulate(grf, args, 1_000_000);
         result.into_value().map(|v| u64::try_from(v).unwrap())
     }

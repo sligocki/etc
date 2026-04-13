@@ -105,6 +105,78 @@ fn canonical_inputs(arity: usize) -> Vec<Vec<u64>> {
     result
 }
 
+/// Classify the argument-list pattern of a C(R(g,h), f1,...,fm) expression.
+///
+/// Helps answer: *why* is this composition redundant, and is there a
+/// systematic structural rule that could prune it?
+///
+/// Precondition: `gs` is the arg list of a Comp whose head is a Rec, and
+/// `rec_arity` is the arity of that Rec (== gs.len() for a valid Comp).
+fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
+    let n = gs.len();
+
+    let all_proj = gs.iter().all(|g| matches!(g, Grf::Proj(_, _)));
+
+    if all_proj {
+        // Is it the identity tuple P(n,1), P(n,2), ..., P(n,n)?
+        let is_identity = gs.iter().enumerate().all(|(i, g)| {
+            matches!(g, Grf::Proj(k, j) if *k == n && *j == i + 1)
+        });
+        if is_identity {
+            return "all_proj_identity     [C(R,P(k,1),..,P(k,k)) ≡ R — always prunable]";
+        }
+
+        // Are all projection indices distinct? (a permutation of inputs)
+        let mut indices: Vec<usize> = gs
+            .iter()
+            .map(|g| if let Grf::Proj(_, j) = g { *j } else { 0 })
+            .collect();
+        indices.sort_unstable();
+        indices.dedup();
+        if indices.len() == n {
+            return "all_proj_permute      [C(R,P(k,σ(·))) — permutation of inputs]";
+        }
+        return "all_proj_duplicate    [C(R,P(k,·)) — some inputs repeated or dropped]";
+    }
+
+    // Mixed args — classify by what the first arg (the recursion counter) is,
+    // and whether any non-atom sub-expressions appear.
+    let all_atoms = gs
+        .iter()
+        .all(|g| matches!(g, Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _)));
+
+    let first_is_proj = matches!(gs.first(), Some(Grf::Proj(_, _)));
+    let first_is_succ = matches!(gs.first(), Some(Grf::Succ));
+
+    if all_atoms {
+        if first_is_succ {
+            return "atoms_first_S         [C(R,S,...) — counter is S or S(xi)]";
+        }
+        if first_is_proj {
+            return "atoms_first_proj      [C(R,P,...) — counter is an input, rest atoms]";
+        }
+        return "atoms_other           [C(R, atoms, first≠proj/succ/zero)]";
+    }
+
+    let has_rec = gs.iter().any(|g| matches!(g, Grf::Rec(_, _)));
+    let has_comp = gs.iter().any(|g| matches!(g, Grf::Comp(_, _, _)));
+
+    if has_rec {
+        if first_is_proj {
+            return "has_rec_first_proj    [counter is proj, some arg is Rec]";
+        }
+        return "has_rec_other         [some argument is a Rec, first≠proj]";
+    }
+    if has_comp {
+        if first_is_proj {
+            return "has_comp_first_proj   [counter is proj, some arg is Comp]";
+        }
+        return "has_comp_other        [some arg is Comp, first≠proj]";
+    }
+
+    "other"
+}
+
 /// Coarse structural label for a GRF — used to group redundancy examples.
 fn grf_category(grf: &Grf) -> &'static str {
     match grf {
@@ -173,6 +245,21 @@ fn main() {
     // canonical_expr → (total_cross_redundant, sample_redundant_exprs)
     let mut by_target: HashMap<String, (usize, Vec<(usize, String)>)> = HashMap::new();
 
+    // Deep analysis: C(R(g,h), f1,...) argument patterns.
+    // subcat → (total_seen, redundant_count, redund_examples, novel_examples)
+    //   redund_examples: (size, expr, min_size, min_expr)
+    //   novel_examples:  (size, expr)          ← the 0–few non-redundant ones
+    let crec_deep_samples = (args.samples * 3).max(15);
+    let mut crec_by_subcat: HashMap<
+        &'static str,
+        (
+            usize,
+            usize,
+            Vec<(usize, String, usize, String)>,
+            Vec<(usize, String)>,
+        ),
+    > = HashMap::new();
+
     // Per (size, arity): (total, novel, cross_redundant, pat_p11, pat_single_proj)
     // pat_p11:         C(f, P(1,1)) — always ≡ f, candidate for pruning
     // pat_single_proj: C(f, P(k,i)) for any k,i — single-arg comp with any proj
@@ -216,12 +303,37 @@ fn main() {
                 // Always tally category totals (used for % redundant in output).
                 *cat_total.entry(grf_category(grf)).or_default() += 1;
 
+                // C(R,·) deep analysis — count every occurrence.
+                let crec_sub = if let Grf::Comp(h, gs, _) = grf {
+                    if matches!(h.as_ref(), Grf::Rec(_, _)) {
+                        let s = crec_arg_pattern(gs);
+                        crec_by_subcat
+                            .entry(s)
+                            .or_insert((0, 0, vec![], vec![]))
+                            .0 += 1;
+                        Some(s)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
                 let fp = compute_fp(grf, &inputs, args.max_steps);
                 let key = (arity, fp);
                 let expr = grf.to_string();
 
                 match fp_db.get(&key) {
                     None => {
+                        // Track novel C(R,·) examples (these are the non-redundant ones).
+                        if let Some(sub) = crec_sub {
+                            let e = crec_by_subcat
+                                .entry(sub)
+                                .or_insert((0, 0, vec![], vec![]));
+                            if e.3.len() < crec_deep_samples {
+                                e.3.push((size, expr.clone()));
+                            }
+                        }
                         fp_db.insert(key, (size, expr));
                         novel += 1;
                     }
@@ -241,7 +353,18 @@ fn main() {
                             let tgt = by_target.entry(min_expr.clone()).or_default();
                             tgt.0 += 1;
                             if tgt.1.len() < args.samples {
-                                tgt.1.push((size, expr));
+                                tgt.1.push((size, expr.clone()));
+                            }
+
+                            // C(R,·) deep analysis — redundant count + examples.
+                            if let Some(sub) = crec_sub {
+                                let e = crec_by_subcat
+                                    .entry(sub)
+                                    .or_insert((0, 0, vec![], vec![]));
+                                e.1 += 1;
+                                if e.2.len() < crec_deep_samples {
+                                    e.2.push((size, expr, *min_size, min_expr.clone()));
+                                }
                             }
                         }
                         // same-size duplicates (two size-k GRFs with identical fingerprint)
@@ -313,6 +436,74 @@ fn main() {
             println!("           n={}  {}  ≡  n={}  {}", size, expr, min_size, min_expr);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Deep analysis: C(R(g,h), f1,...) argument patterns
+    // -----------------------------------------------------------------------
+    println!();
+    println!("{}", "=".repeat(78));
+    println!("Deep analysis: C(R(g,h), f1,...,fm) — breakdown by argument pattern");
+    println!("(sorted by % redundant; shows why C(R,·) is almost always useless)");
+    println!("{}", "=".repeat(78));
+
+    let mut crec_cats: Vec<_> = crec_by_subcat.iter().collect();
+    crec_cats.sort_by(|(_, (tot_a, red_a, _, _)), (_, (tot_b, red_b, _, _))| {
+        let pct_a = if *tot_a > 0 {
+            *red_a as f64 / *tot_a as f64
+        } else {
+            0.0
+        };
+        let pct_b = if *tot_b > 0 {
+            *red_b as f64 / *tot_b as f64
+        } else {
+            0.0
+        };
+        pct_b
+            .partial_cmp(&pct_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let crec_total_seen: usize = crec_by_subcat.values().map(|(t, _, _, _)| t).sum();
+    let crec_total_redund: usize = crec_by_subcat.values().map(|(_, r, _, _)| r).sum();
+
+    for (subcat, (total_in_sub, redund_in_sub, redund_examples, novel_examples)) in &crec_cats {
+        let pct = if *total_in_sub > 0 {
+            100.0 * *redund_in_sub as f64 / *total_in_sub as f64
+        } else {
+            0.0
+        };
+        let novel_in_sub = total_in_sub - redund_in_sub;
+        println!("\n[{redund_in_sub:>6}/{total_in_sub:<6} = {pct:5.1}%]  {subcat}");
+
+        // Show a selection of redundant examples.
+        let show_redund = redund_examples.len().min(args.samples);
+        for (size, expr, min_size, min_expr) in redund_examples.iter().take(show_redund) {
+            println!("  REDUND  n={}  {}  ≡  n={}  {}", size, expr, min_size, min_expr);
+        }
+        if redund_examples.len() > show_redund {
+            println!(
+                "  ... ({} more redundant examples)",
+                redund_examples.len() - show_redund
+            );
+        }
+
+        // Show ALL novel (non-redundant) examples — these are the safety-critical ones.
+        if novel_in_sub == 0 {
+            println!("  NOVEL   (none — this sub-pattern is always redundant at sizes tested)");
+        } else {
+            for (size, expr) in novel_examples.iter() {
+                println!("  NOVEL   n={}  {}", size, expr);
+            }
+            if novel_examples.len() < novel_in_sub {
+                println!("  ... ({} more novel, not shown)", novel_in_sub - novel_examples.len());
+            }
+        }
+    }
+    println!();
+    println!(
+        "C(R,·) total: {crec_total_seen} seen, {crec_total_redund} redundant ({:.1}%)",
+        100.0 * crec_total_redund as f64 / crec_total_seen.max(1) as f64,
+    );
 
     // -----------------------------------------------------------------------
     // Redundancy breakdown by canonical target

@@ -6,6 +6,7 @@
 use clap::Parser;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
+use gen_rec::pruning::PruningOpts;
 use gen_rec::simulate::simulate;
 use rayon::prelude::*;
 use rug::Integer;
@@ -30,6 +31,11 @@ struct Args {
     /// and so can be pruned without missing any champion values.
     #[arg(long)]
     include_trivial: bool,
+
+    /// Canonicalise composition: skip C(h,...) when h is a single-argument Comp.
+    /// C(C(f,g), k) = C(f, C(g,k)), so we always generate the right-associated form.
+    #[arg(long)]
+    comp_assoc: bool,
 
     /// Include Minimization combinator (default: PRF only).
     #[arg(long)]
@@ -153,10 +159,10 @@ fn merge_batch(
 fn estimate_time(
     future_size: usize,
     allow_min: bool,
-    skip_trivial: bool,
+    opts: PruningOpts,
     secs_per_fn: f64,
 ) -> Option<f64> {
-    let count = count_grf(future_size, 0, allow_min, skip_trivial);
+    let count = count_grf(future_size, 0, allow_min, opts);
     if count == 0 || secs_per_fn <= 0.0 {
         return None;
     }
@@ -189,14 +195,17 @@ fn fmt_steps(n: u64) -> String {
 
 fn main() {
     let args = Args::parse();
-    let skip_trivial = !args.include_trivial;
+    let opts = PruningOpts {
+        skip_trivial: !args.include_trivial,
+        comp_assoc: args.comp_assoc,
+    };
 
     println!(
-        "BBµ search: 0-arity {}, max_size={}, max_steps={}, skip_trivial={}, threads={}, batch={}",
+        "BBµ search: 0-arity {}, max_size={}, max_steps={}, opts={:?}, threads={}, batch={}",
         if args.allow_min { "GRF" } else { "PRF" },
         args.max_size,
         args.max_steps,
-        skip_trivial,
+        opts,
         rayon::current_num_threads(),
         args.batch_size,
     );
@@ -244,7 +253,7 @@ fn main() {
             size,
             0,
             args.allow_min,
-            skip_trivial,
+            opts,
             &mut |grf: &Grf| {
                 total += 1;
                 batch.push(grf.clone());
@@ -350,8 +359,8 @@ fn main() {
                 let estimates: Vec<String> = (1..=args.lookahead)
                     .filter_map(|ds| {
                         let future = size + ds;
-                        let est = estimate_time(future, args.allow_min, skip_trivial, rate)?;
-                        let count = count_grf(future, 0, args.allow_min, skip_trivial);
+                        let est = estimate_time(future, args.allow_min, opts, rate)?;
+                        let count = count_grf(future, 0, args.allow_min, opts);
                         Some(format!(
                             "n={}: ~{} ({} fns)",
                             future,
@@ -382,9 +391,9 @@ fn main() {
     println!();
     println!("{}", "=".repeat(90));
     println!(
-        "BBµ_{} summary  (skip_trivial={}, max_steps={})",
+        "BBµ_{} summary  (opts={:?}, max_steps={})",
         if args.allow_min { "GRF" } else { "PRF" },
-        skip_trivial,
+        opts,
         args.max_steps
     );
     println!("{}", "=".repeat(90));

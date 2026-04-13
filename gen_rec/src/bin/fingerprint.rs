@@ -7,7 +7,8 @@
 ///
 /// Outputs:
 ///   1. Summary table: total / novel / redundant counts per (size, arity)
-///   2. Redundancy breakdown with examples, grouped by structural category
+///   2. Redundancy by structural category (what does the redundant GRF look like?)
+///   3. Redundancy by canonical target (what smaller GRF is it equivalent to?)
 use clap::Parser;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
@@ -46,6 +47,10 @@ struct Args {
     #[arg(long)]
     no_comp_assoc: bool,
 
+    /// Disable R(Z(k), Z(k+2)) and R(Z(k), P(k+2,2)) pruning (on by default).
+    #[arg(long)]
+    no_rec_zero_base: bool,
+
     /// Disable C(R(g,h), Z(p), …) pruning (on by default).
     #[arg(long)]
     no_rec_zero_arg: bool,
@@ -53,6 +58,10 @@ struct Args {
     /// Max redundant examples to show per structural category.
     #[arg(long, default_value_t = 5)]
     samples: usize,
+
+    /// How many canonical targets to show in the by-target breakdown (0 = all).
+    #[arg(long, default_value_t = 20)]
+    top_targets: usize,
 }
 
 // A fingerprint is one entry per canonical input: None = diverged, Some(s) = output.
@@ -140,6 +149,7 @@ fn main() {
     let opts = PruningOpts {
         skip_trivial: !args.include_trivial,
         comp_assoc: !args.no_comp_assoc,
+        skip_rec_zero_base: !args.no_rec_zero_base,
         skip_rec_zero_arg: !args.no_rec_zero_arg,
     };
 
@@ -152,9 +162,14 @@ fn main() {
     // (arity, fingerprint) → (min_size_seen, canonical_expr)
     let mut fp_db: HashMap<(usize, Fingerprint), (usize, String)> = HashMap::new();
 
+    // Grouping 1: by structural category of the redundant GRF.
     // category → (total_cross_redundant, sample_examples)
     let mut by_cat: HashMap<&'static str, (usize, Vec<(usize, String, usize, String)>)> =
         HashMap::new();
+
+    // Grouping 2: by canonical target (the smaller GRF it is equivalent to).
+    // canonical_expr → (total_cross_redundant, sample_redundant_exprs)
+    let mut by_target: HashMap<String, (usize, Vec<(usize, String)>)> = HashMap::new();
 
     // Per (size, arity): (total, novel, cross_redundant)
     let mut summary: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
@@ -191,11 +206,20 @@ fn main() {
                     Some((min_size, min_expr)) => {
                         if *min_size < size {
                             cross_redundant += 1;
+
+                            // Grouping 1: structural category of the redundant GRF.
                             let cat = grf_category(grf);
                             let entry = by_cat.entry(cat).or_default();
                             entry.0 += 1;
                             if entry.1.len() < args.samples {
-                                entry.1.push((size, expr, *min_size, min_expr.clone()));
+                                entry.1.push((size, expr.clone(), *min_size, min_expr.clone()));
+                            }
+
+                            // Grouping 2: canonical target it is equivalent to.
+                            let tgt = by_target.entry(min_expr.clone()).or_default();
+                            tgt.0 += 1;
+                            if tgt.1.len() < args.samples {
+                                tgt.1.push((size, expr));
                             }
                         }
                         // same-size duplicates (two size-k GRFs with identical fingerprint)
@@ -240,14 +264,13 @@ fn main() {
     // -----------------------------------------------------------------------
     println!();
     println!("{}", "=".repeat(78));
-    println!("Cross-size redundancy by structural category");
+    println!("Cross-size redundancy by structural category of the redundant GRF");
     println!(
         "(redundant = fingerprint identical to a strictly smaller GRF of the same arity)"
     );
     println!("{}", "=".repeat(78));
 
     let mut cats: Vec<_> = by_cat.iter().collect();
-    // Sort by descending count so most impactful patterns appear first.
     cats.sort_by(|(_, (ca, _)), (_, (cb, _))| cb.cmp(ca));
 
     for (cat, (count, examples)) in &cats {
@@ -255,6 +278,34 @@ fn main() {
         for (size, expr, min_size, min_expr) in examples.iter() {
             println!("           n={}  {}  ≡  n={}  {}", size, expr, min_size, min_expr);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Redundancy breakdown by canonical target
+    // -----------------------------------------------------------------------
+    println!();
+    println!("{}", "=".repeat(78));
+    println!("Cross-size redundancy by canonical target (most-impersonated functions)");
+    println!("(each entry: the small canonical GRF and the larger GRFs equivalent to it)");
+    println!("{}", "=".repeat(78));
+
+    let mut targets: Vec<_> = by_target.iter().collect();
+    targets.sort_by(|(_, (ca, _)), (_, (cb, _))| cb.cmp(ca));
+
+    let limit = if args.top_targets == 0 {
+        targets.len()
+    } else {
+        args.top_targets.min(targets.len())
+    };
+
+    for (canonical, (count, examples)) in targets.iter().take(limit) {
+        println!("\n[{count:>8}] ≡  {canonical}");
+        for (size, expr) in examples.iter() {
+            println!("           n={}  {}", size, expr);
+        }
+    }
+    if targets.len() > limit {
+        println!("\n  ... ({} more canonical targets not shown)", targets.len() - limit);
     }
 
     // -----------------------------------------------------------------------

@@ -37,6 +37,12 @@ struct Args {
     #[arg(long)]
     no_comp_assoc: bool,
 
+    /// Disable R(Z(k), Z(k+2)) and R(Z(k), P(k+2,2)) pruning (on by default).
+    /// Both are always ≡ Z(k+1): the zero-base starts at 0 and the step either
+    /// returns 0 or returns the accumulator (which stays 0).
+    #[arg(long)]
+    no_rec_zero_base: bool,
+
     /// Disable C(R(g,h), Z(p), …) pruning (on by default).
     /// By default these are skipped: the first arg forces n=0, so the result
     /// equals C(g, …) which is strictly smaller and generated independently.
@@ -204,6 +210,7 @@ fn main() {
     let opts = PruningOpts {
         skip_trivial: !args.include_trivial,
         comp_assoc: !args.no_comp_assoc,
+        skip_rec_zero_base: !args.no_rec_zero_base,
         skip_rec_zero_arg: !args.no_rec_zero_arg,
     };
 

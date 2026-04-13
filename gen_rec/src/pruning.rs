@@ -23,6 +23,16 @@ pub struct PruningOpts {
     /// `skip_trivial`, so the whole expression disappears for free.
     pub comp_assoc: bool,
 
+    /// Skip `R(Z(k), h)` when `h` is `Z(k+2)` or `P(k+2, 2)`.
+    ///
+    /// Both cases produce a function that is always 0 = `Z(k+1)`:
+    /// - `h = Z(k+2)`: step always returns 0, base is 0.
+    /// - `h = P(k+2, 2)`: step returns the accumulator; accumulator starts at 0
+    ///   (from the Z base) and is returned unchanged every step, so stays 0.
+    ///
+    /// The equivalent `Z(k+1)` has size 1 vs 3 for `R(Z, h)`.
+    pub skip_rec_zero_base: bool,
+
     /// Skip `C(R(g, h), Z(p), f2, …)`.
     ///
     /// When the first argument to a Rec is structurally `Zero`, the recursion

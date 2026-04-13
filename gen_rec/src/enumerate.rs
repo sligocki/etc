@@ -103,7 +103,16 @@ fn for_each_grf(
             let hsize = n - gsize;
             for_each_grf(gsize, arity - 1, allow_min, opts, &mut |g: &Grf| {
                 let g_box = Box::new(g.clone());
+                let g_is_zero = matches!(g, Grf::Zero(_));
                 for_each_grf(hsize, arity + 1, allow_min, opts, &mut |h: &Grf| {
+                    // skip_rec_zero_base: R(Z(k), Z(k+2)) ≡ Z(k+1) (step always 0)
+                    //                    R(Z(k), P(k+2,2)) ≡ Z(k+1) (acc starts 0, stays 0)
+                    if opts.skip_rec_zero_base
+                        && g_is_zero
+                        && matches!(h, Grf::Zero(_) | Grf::Proj(_, 2))
+                    {
+                        return;
+                    }
                     callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
                 });
             });
@@ -302,6 +311,11 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
                     .saturating_mul(count_grf(n - gsize, arity + 1, allow_min, opts)),
             );
         }
+        // skip_rec_zero_base: at size=3 (n=2), prune R(Z(arity-1), Z(arity+1)) and
+        // R(Z(arity-1), P(arity+1,2)) — 2 expressions, both always ≡ Z(arity).
+        if opts.skip_rec_zero_base && n == 2 {
+            total = total.saturating_sub(2);
+        }
     }
 
     // M(f): f ∈ GRF_{arity+1}
@@ -325,6 +339,11 @@ fn count_rec_only(size: usize, arity: usize, allow_min: bool, opts: PruningOpts)
             count_grf(gsize, arity - 1, allow_min, opts)
                 .saturating_mul(count_grf(n - gsize, arity + 1, allow_min, opts)),
         );
+    }
+    // skip_rec_zero_base: R(Z(arity-1), Z(arity+1)) and R(Z(arity-1), P(arity+1,2))
+    // are pruned — exactly 2 expressions at size=3 for each arity ≥ 1.
+    if opts.skip_rec_zero_base && size == 3 {
+        total = total.saturating_sub(2);
     }
     total
 }
@@ -386,26 +405,37 @@ mod tests {
     const NO_PRUNE: PruningOpts = PruningOpts {
         skip_trivial: false,
         comp_assoc: false,
+        skip_rec_zero_base: false,
         skip_rec_zero_arg: false,
     };
     const SKIP_TRIVIAL: PruningOpts = PruningOpts {
         skip_trivial: true,
         comp_assoc: false,
+        skip_rec_zero_base: false,
         skip_rec_zero_arg: false,
     };
     const COMP_ASSOC: PruningOpts = PruningOpts {
         skip_trivial: false,
         comp_assoc: true,
+        skip_rec_zero_base: false,
+        skip_rec_zero_arg: false,
+    };
+    const SKIP_REC_ZERO_BASE: PruningOpts = PruningOpts {
+        skip_trivial: false,
+        comp_assoc: false,
+        skip_rec_zero_base: true,
         skip_rec_zero_arg: false,
     };
     const SKIP_REC_ZERO: PruningOpts = PruningOpts {
         skip_trivial: false,
         comp_assoc: false,
+        skip_rec_zero_base: false,
         skip_rec_zero_arg: true,
     };
     const ALL_OPTS: PruningOpts = PruningOpts {
         skip_trivial: true,
         comp_assoc: true,
+        skip_rec_zero_base: true,
         skip_rec_zero_arg: true,
     };
 
@@ -597,6 +627,45 @@ mod tests {
 
     // --- skip_rec_zero_arg ---
 
+    // --- skip_rec_zero_base ---
+
+    #[test]
+    fn test_skip_rec_zero_base_removes_specific_forms() {
+        // R(Z0, Z2) and R(Z0, P(2,2)) should be pruned (≡ Z1).
+        let pruned = collect(3, 1, false, SKIP_REC_ZERO_BASE);
+        let rz0z2 = "R(Z0, Z2)".parse::<Grf>().unwrap();
+        let rz0p22 = "R(Z0, P(2,2))".parse::<Grf>().unwrap();
+        assert!(
+            !pruned.iter().any(|g| *g == rz0z2),
+            "R(Z0,Z2) should be pruned by skip_rec_zero_base"
+        );
+        assert!(
+            !pruned.iter().any(|g| *g == rz0p22),
+            "R(Z0,P(2,2)) should be pruned by skip_rec_zero_base"
+        );
+
+        // R(Z0, P(2,1)) should NOT be pruned (step=counter, not acc).
+        let rz0p21 = "R(Z0, P(2,1))".parse::<Grf>().unwrap();
+        assert!(
+            pruned.iter().any(|g| *g == rz0p21),
+            "R(Z0,P(2,1)) should not be pruned (step returns counter, not zero)"
+        );
+    }
+
+    #[test]
+    fn test_skip_rec_zero_base_never_more_than_full() {
+        for size in 1..=8 {
+            for arity in 0..=2 {
+                let full = count_grf(size, arity, false, NO_PRUNE);
+                let pruned = count_grf(size, arity, false, SKIP_REC_ZERO_BASE);
+                assert!(
+                    pruned <= full,
+                    "skip_rec_zero_base produced more GRFs at size={size} arity={arity}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_skip_rec_zero_arg_removes_specific_form() {
         // C(R(Z0, Z2), Z0) should be removed (head is Rec, first arg is Zero).
@@ -643,7 +712,7 @@ mod tests {
         for size in 1..=7 {
             for arity in 0..=3 {
                 for allow_min in [false, true] {
-                    for opts in [NO_PRUNE, SKIP_TRIVIAL, COMP_ASSOC, SKIP_REC_ZERO, ALL_OPTS] {
+                    for opts in [NO_PRUNE, SKIP_TRIVIAL, COMP_ASSOC, SKIP_REC_ZERO_BASE, SKIP_REC_ZERO, ALL_OPTS] {
                         let actual = collect(size, arity, allow_min, opts).len();
                         let count = count_grf(size, arity, allow_min, opts);
                         assert_eq!(
@@ -661,16 +730,19 @@ mod tests {
     #[test]
     #[ignore = "informational count comparison, not a pass/fail test"]
     fn show_pruning_count_reductions() {
-        let st_only = PruningOpts { skip_trivial: true, comp_assoc: false, skip_rec_zero_arg: false };
-        let st_ca = PruningOpts { skip_trivial: true, comp_assoc: true, skip_rec_zero_arg: false };
+        let st = PruningOpts { skip_trivial: true, comp_assoc: false, skip_rec_zero_base: false, skip_rec_zero_arg: false };
+        let st_ca = PruningOpts { skip_trivial: true, comp_assoc: true, skip_rec_zero_base: false, skip_rec_zero_arg: false };
+        let st_ca_rzb = PruningOpts { skip_trivial: true, comp_assoc: true, skip_rec_zero_base: true, skip_rec_zero_arg: false };
         for n in [14, 15, 16, 17, 18, 19, 20] {
-            let base = count_grf(n, 0, false, st_only);
+            let base = count_grf(n, 0, false, st);
             let after_ca = count_grf(n, 0, false, st_ca);
+            let after_rzb = count_grf(n, 0, false, st_ca_rzb);
             let after_all = count_grf(n, 0, false, ALL_OPTS);
             println!(
-                "n={n:2}: +skip_trivial={base:>15}  +comp_assoc={after_ca:>15} ({:.1}%)  \
-                 +rec_zero={after_all:>15} ({:.1}%)",
+                "n={n:2}: st={base:>15}  +ca={after_ca:>15} ({:.1}%)  \
+                 +rzb={after_rzb:>15} ({:.1}%)  +rza={after_all:>15} ({:.1}%)",
                 100.0 * after_ca as f64 / base.max(1) as f64,
+                100.0 * after_rzb as f64 / base.max(1) as f64,
                 100.0 * after_all as f64 / base.max(1) as f64,
             );
         }

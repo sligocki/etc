@@ -71,6 +71,7 @@ fn for_each_grf(
                 }
 
                 let h_box = Box::new(h.clone());
+                let h_is_rec = matches!(h, Grf::Rec(_, _));
                 let mut args = Vec::with_capacity(m);
                 for_each_args(
                     gs_total,
@@ -80,6 +81,15 @@ fn for_each_grf(
                     opts,
                     &mut args,
                     &mut |gs: &[Grf]| {
+                        // skip_rec_zero_arg: C(R(g,h), Z(p), f2,...) ≡ C(g, f2,...)
+                        // The first arg being Zero forces n=0, so only the base case
+                        // fires. The strictly-smaller C(g, f2,...) is generated separately.
+                        if opts.skip_rec_zero_arg
+                            && h_is_rec
+                            && matches!(gs.first(), Some(Grf::Zero(_)))
+                        {
+                            return;
+                        }
                         callback(&Grf::Comp(h_box.clone(), gs.to_vec(), arity));
                     },
                 );
@@ -222,6 +232,17 @@ fn compute_as_head(size: usize, arity: usize, allow_min: bool, opts: PruningOpts
         let g_count = count_grf(gsize, arity, allow_min, opts);
         single_arg_count = single_arg_count.saturating_add(f_count.saturating_mul(g_count));
     }
+
+    // When skip_rec_zero_arg is on, C(R(g,h), Z(arity)) single-arg Comps are pruned
+    // and already excluded from count_grf, but the loop above still counts them via
+    // count_as_head(fsize=inner_total-1, 1) * count_grf(gsize=1, arity) because
+    // Rec heads pass count_as_head and Z(arity) is included in count_grf(1, arity).
+    // Correct by subtracting the count of these pruned expressions.
+    if opts.skip_rec_zero_arg && inner_total >= 2 {
+        let pruned_sa = count_rec_only(inner_total - 1, 1, allow_min, opts);
+        single_arg_count = single_arg_count.saturating_sub(pruned_sa);
+    }
+
     all.saturating_sub(single_arg_count)
 }
 
@@ -251,6 +272,28 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
         }
     }
 
+    // skip_rec_zero_arg: subtract C(R(g,h), Z(arity), f2,...,fm) for all m,g,h.
+    // These are pruned because the first arg is structurally Zero, forcing n=0,
+    // so the equivalent C(g, f2,...) (strictly smaller) is generated instead.
+    if opts.skip_rec_zero_arg {
+        for hsize in 1..=n {
+            let gs_total = n - hsize;
+            if gs_total == 0 {
+                continue; // need at least one arg (the Zero)
+            }
+            for m in 1..=gs_total {
+                let rec_count = count_rec_only(hsize, m, allow_min, opts);
+                if rec_count == 0 {
+                    continue;
+                }
+                // First arg is Z(arity): 1 choice, size 1.
+                // Remaining m-1 args of arity `arity` summing to gs_total-1.
+                let rest = count_many_fast(gs_total - 1, m - 1, arity, allow_min, opts);
+                total = total.saturating_sub(rec_count.saturating_mul(rest));
+            }
+        }
+    }
+
     // R(g, h): g ∈ GRF_{arity-1}, h ∈ GRF_{arity+1}
     if arity >= 1 {
         for gsize in 1..n {
@@ -266,6 +309,23 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
         total = total.saturating_add(count_grf(n, arity + 1, allow_min, opts));
     }
 
+    total
+}
+
+/// Count only the `R(g, h)` (Rec) expressions of exactly `size` and `arity`.
+/// Used to compute the skip_rec_zero_arg subtraction in `compute_count`.
+fn count_rec_only(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) -> usize {
+    if size < 3 || arity == 0 {
+        return 0;
+    }
+    let n = size - 1;
+    let mut total = 0usize;
+    for gsize in 1..n {
+        total = total.saturating_add(
+            count_grf(gsize, arity - 1, allow_min, opts)
+                .saturating_mul(count_grf(n - gsize, arity + 1, allow_min, opts)),
+        );
+    }
     total
 }
 
@@ -326,18 +386,27 @@ mod tests {
     const NO_PRUNE: PruningOpts = PruningOpts {
         skip_trivial: false,
         comp_assoc: false,
+        skip_rec_zero_arg: false,
     };
     const SKIP_TRIVIAL: PruningOpts = PruningOpts {
         skip_trivial: true,
         comp_assoc: false,
+        skip_rec_zero_arg: false,
     };
     const COMP_ASSOC: PruningOpts = PruningOpts {
         skip_trivial: false,
         comp_assoc: true,
+        skip_rec_zero_arg: false,
+    };
+    const SKIP_REC_ZERO: PruningOpts = PruningOpts {
+        skip_trivial: false,
+        comp_assoc: false,
+        skip_rec_zero_arg: true,
     };
     const ALL_OPTS: PruningOpts = PruningOpts {
         skip_trivial: true,
         comp_assoc: true,
+        skip_rec_zero_arg: true,
     };
 
     // --- atom counts (size=1) ---
@@ -526,6 +595,47 @@ mod tests {
         }
     }
 
+    // --- skip_rec_zero_arg ---
+
+    #[test]
+    fn test_skip_rec_zero_arg_removes_specific_form() {
+        // C(R(Z0, Z2), Z0) should be removed (head is Rec, first arg is Zero).
+        // It is equivalent to the strictly smaller C(Z0) = Z0 (size 1).
+        let pruned = collect(5, 0, false, SKIP_REC_ZERO);
+        let target = "C(R(Z0, Z2), Z0)".parse::<Grf>().unwrap();
+        assert!(
+            !pruned.iter().any(|g| *g == target),
+            "C(R(Z0,Z2),Z0) should be pruned by skip_rec_zero_arg"
+        );
+
+        // C(R(Z0, Z2), C(S, Z0)) should NOT be removed (first arg C(S,Z0) is not Zero).
+        let full = collect(7, 0, false, NO_PRUNE);
+        let non_pruned = "C(R(Z0, Z2), C(S, Z0))".parse::<Grf>().unwrap();
+        assert!(
+            full.iter().any(|g| *g == non_pruned),
+            "C(R(Z0,Z2),C(S,Z0)) must exist in full set"
+        );
+        let with_rule = collect(7, 0, false, SKIP_REC_ZERO);
+        assert!(
+            with_rule.iter().any(|g| *g == non_pruned),
+            "C(R(Z0,Z2),C(S,Z0)) should not be pruned (first arg is not Zero)"
+        );
+    }
+
+    #[test]
+    fn test_skip_rec_zero_arg_never_more_than_full() {
+        for size in 1..=8 {
+            for arity in 0..=2 {
+                let full = count_grf(size, arity, false, NO_PRUNE);
+                let pruned = count_grf(size, arity, false, SKIP_REC_ZERO);
+                assert!(
+                    pruned <= full,
+                    "skip_rec_zero_arg produced more GRFs at size={size} arity={arity}"
+                );
+            }
+        }
+    }
+
     // --- count_grf matches actual stream count ---
 
     #[test]
@@ -533,7 +643,7 @@ mod tests {
         for size in 1..=7 {
             for arity in 0..=3 {
                 for allow_min in [false, true] {
-                    for opts in [NO_PRUNE, SKIP_TRIVIAL, COMP_ASSOC, ALL_OPTS] {
+                    for opts in [NO_PRUNE, SKIP_TRIVIAL, COMP_ASSOC, SKIP_REC_ZERO, ALL_OPTS] {
                         let actual = collect(size, arity, allow_min, opts).len();
                         let count = count_grf(size, arity, allow_min, opts);
                         assert_eq!(
@@ -550,13 +660,18 @@ mod tests {
 
     #[test]
     #[ignore = "informational count comparison, not a pass/fail test"]
-    fn show_comp_assoc_count_reduction() {
+    fn show_pruning_count_reductions() {
+        let st_only = PruningOpts { skip_trivial: true, comp_assoc: false, skip_rec_zero_arg: false };
+        let st_ca = PruningOpts { skip_trivial: true, comp_assoc: true, skip_rec_zero_arg: false };
         for n in [14, 15, 16, 17, 18, 19, 20] {
-            let base = count_grf(n, 0, false, SKIP_TRIVIAL);
-            let reduced = count_grf(n, 0, false, ALL_OPTS);
+            let base = count_grf(n, 0, false, st_only);
+            let after_ca = count_grf(n, 0, false, st_ca);
+            let after_all = count_grf(n, 0, false, ALL_OPTS);
             println!(
-                "n={n:2}: skip_trivial={base:>15}  +comp_assoc={reduced:>15}  ({:.1}%)",
-                100.0 * reduced as f64 / base.max(1) as f64
+                "n={n:2}: +skip_trivial={base:>15}  +comp_assoc={after_ca:>15} ({:.1}%)  \
+                 +rec_zero={after_all:>15} ({:.1}%)",
+                100.0 * after_ca as f64 / base.max(1) as f64,
+                100.0 * after_all as f64 / base.max(1) as f64,
             );
         }
     }

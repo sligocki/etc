@@ -32,10 +32,16 @@ struct Args {
     #[arg(long)]
     include_trivial: bool,
 
-    /// Canonicalise composition: skip C(h,...) when h is a single-argument Comp.
-    /// C(C(f,g), k) = C(f, C(g,k)), so we always generate the right-associated form.
+    /// Disable composition canonicalisation (on by default).
+    /// By default C(C(f,g), k) is skipped in favour of the equivalent C(f, C(g,k)).
     #[arg(long)]
-    comp_assoc: bool,
+    no_comp_assoc: bool,
+
+    /// Disable C(R(g,h), Z(p), …) pruning (on by default).
+    /// By default these are skipped: the first arg forces n=0, so the result
+    /// equals C(g, …) which is strictly smaller and generated independently.
+    #[arg(long)]
+    no_rec_zero_arg: bool,
 
     /// Include Minimization combinator (default: PRF only).
     #[arg(long)]
@@ -197,7 +203,8 @@ fn main() {
     let args = Args::parse();
     let opts = PruningOpts {
         skip_trivial: !args.include_trivial,
-        comp_assoc: args.comp_assoc,
+        comp_assoc: !args.no_comp_assoc,
+        skip_rec_zero_arg: !args.no_rec_zero_arg,
     };
 
     println!(

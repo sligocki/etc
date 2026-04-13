@@ -22,4 +22,14 @@ pub struct PruningOpts {
     /// if `g` is `Z` or `P` then `C(g, k)` is already pruned by
     /// `skip_trivial`, so the whole expression disappears for free.
     pub comp_assoc: bool,
+
+    /// Skip `C(R(g, h), Z(p), f2, …)`.
+    ///
+    /// When the first argument to a Rec is structurally `Zero`, the recursion
+    /// counter is always 0, so only the base case fires:
+    ///   `C(R(g, h), Z(p), f2, …)(x) = R(g,h)(0, f2(x), …) = g(f2(x), …)`
+    ///               = `C(g, f2, …)(x)`
+    /// The equivalent `C(g, f2, …)` is strictly smaller (by `h.size() + 1`)
+    /// and will be generated independently by the enumerator.
+    pub skip_rec_zero_arg: bool,
 }

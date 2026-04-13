@@ -22,6 +22,10 @@ struct Args {
     #[arg(default_value_t = 10)]
     max_size: usize,
 
+    /// Minimum arity to analyze (default 1: 0-arity GRFs are constants, not true functions).
+    #[arg(long, default_value_t = 1)]
+    min_arity: usize,
+
     /// Maximum arity to analyze.
     #[arg(long, default_value_t = 3)]
     max_arity: usize,
@@ -38,9 +42,13 @@ struct Args {
     #[arg(long)]
     include_trivial: bool,
 
-    /// Canonicalise composition: skip C(h,...) when h is a single-argument Comp.
+    /// Disable composition canonicalisation (on by default).
     #[arg(long)]
-    comp_assoc: bool,
+    no_comp_assoc: bool,
+
+    /// Disable C(R(g,h), Z(p), …) pruning (on by default).
+    #[arg(long)]
+    no_rec_zero_arg: bool,
 
     /// Max redundant examples to show per structural category.
     #[arg(long, default_value_t = 5)]
@@ -131,12 +139,13 @@ fn main() {
     let args = Args::parse();
     let opts = PruningOpts {
         skip_trivial: !args.include_trivial,
-        comp_assoc: args.comp_assoc,
+        comp_assoc: !args.no_comp_assoc,
+        skip_rec_zero_arg: !args.no_rec_zero_arg,
     };
 
     println!(
-        "Fingerprinting: max_size={}, max_arity={}, allow_min={}, opts={:?}",
-        args.max_size, args.max_arity, args.allow_min, opts
+        "Fingerprinting: max_size={}, arity={}..={}, allow_min={}, opts={:?}",
+        args.max_size, args.min_arity, args.max_arity, args.allow_min, opts
     );
     println!("{}", "=".repeat(78));
 
@@ -150,7 +159,7 @@ fn main() {
     // Per (size, arity): (total, novel, cross_redundant)
     let mut summary: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
 
-    for arity in 0..=args.max_arity {
+    for arity in args.min_arity..=args.max_arity {
         let inputs = canonical_inputs(arity);
         let n_inputs = inputs.len();
 

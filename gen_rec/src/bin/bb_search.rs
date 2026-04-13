@@ -1,4 +1,4 @@
-/// Enumerate all 0-arity (P)RF of increasing size and track BBµ champions.
+/// Enumerate all 0-arity PRF of increasing size and track BBµ champions.
 ///
 /// Enumeration is single-threaded using a fully-streaming algorithm: GRF trees
 /// are generated one at a time without materialising any Vec<Grf>, keeping peak
@@ -25,11 +25,11 @@ struct Args {
     #[arg(long, default_value_t = 100_000_000)]
     max_steps: u64,
 
-    /// Skip trivial compositions: C(Z_m,...) and C(P^m_i,...).
-    /// These are always equivalent to simpler expressions (Z_k or g_i).
-    /// This prunes the search space without missing any champion values.
+    /// Include trivial compositions: C(Z_m,...) and C(P^m_i,...).
+    /// These are always equivalent to simpler expressions (Z_k or g_i)
+    /// and so can be pruned without missing any champion values.
     #[arg(long)]
-    skip_trivial: bool,
+    include_trivial: bool,
 
     /// Include Minimization combinator (default: PRF only).
     #[arg(long)]
@@ -189,13 +189,14 @@ fn fmt_steps(n: u64) -> String {
 
 fn main() {
     let args = Args::parse();
+    let skip_trivial = !args.include_trivial;
 
     println!(
         "BBµ search: 0-arity {}, max_size={}, max_steps={}, skip_trivial={}, threads={}, batch={}",
         if args.allow_min { "GRF" } else { "PRF" },
         args.max_size,
         args.max_steps,
-        args.skip_trivial,
+        skip_trivial,
         rayon::current_num_threads(),
         args.batch_size,
     );
@@ -243,7 +244,7 @@ fn main() {
             size,
             0,
             args.allow_min,
-            args.skip_trivial,
+            skip_trivial,
             &mut |grf: &Grf| {
                 total += 1;
                 batch.push(grf.clone());
@@ -349,8 +350,8 @@ fn main() {
                 let estimates: Vec<String> = (1..=args.lookahead)
                     .filter_map(|ds| {
                         let future = size + ds;
-                        let est = estimate_time(future, args.allow_min, args.skip_trivial, rate)?;
-                        let count = count_grf(future, 0, args.allow_min, args.skip_trivial);
+                        let est = estimate_time(future, args.allow_min, skip_trivial, rate)?;
+                        let count = count_grf(future, 0, args.allow_min, skip_trivial);
                         Some(format!(
                             "n={}: ~{} ({} fns)",
                             future,
@@ -383,7 +384,7 @@ fn main() {
     println!(
         "BBµ_{} summary  (skip_trivial={}, max_steps={})",
         if args.allow_min { "GRF" } else { "PRF" },
-        args.skip_trivial,
+        skip_trivial,
         args.max_steps
     );
     println!("{}", "=".repeat(90));

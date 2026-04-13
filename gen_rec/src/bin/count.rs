@@ -5,10 +5,10 @@
 ///
 /// Columns (each is a strict superset of the previous):
 ///   none     – no pruning
-///   +triv    – skip C(Z,…) and C(P,…)
-///   +assoc   – also canonicalise C(C(f,g),k) → C(f,C(g,k))
-///   +rzb     – also skip R(Z,Z) and R(Z,P_acc) ≡ Z
-///   +rza     – also skip C(R(g,h), Z, …) ≡ C(g, …)  [= all current rules]
+///   +triv    – skip C(Z,…) ≡ Z and C(P,…) ≡ …
+///   +rbase   – skip C(R(g,h), Z, …) ≡ C(g, …)
+///   +assoc   – skip C(C(f,g),k) ≡ C(f,C(g,k))
+///   +rzz     – skip R(Z,Z) and R(Z,P_acc) ≡ Z
 use clap::Parser;
 use gen_rec::enumerate::count_grf;
 use gen_rec::pruning::PruningOpts;
@@ -21,27 +21,19 @@ const NONE: PruningOpts = PruningOpts {
 };
 const TRIV: PruningOpts = PruningOpts {
     skip_trivial: true,
-    comp_assoc: false,
-    skip_rec_zero_base: false,
-    skip_rec_zero_arg: false,
+    ..NONE
+};
+const RBASE: PruningOpts = PruningOpts {
+    skip_rec_zero_arg: true,
+    ..TRIV
 };
 const ASSOC: PruningOpts = PruningOpts {
-    skip_trivial: true,
     comp_assoc: true,
-    skip_rec_zero_base: false,
-    skip_rec_zero_arg: false,
+    ..RBASE
 };
-const RZA: PruningOpts = PruningOpts {
-    skip_trivial: true,
-    comp_assoc: true,
-    skip_rec_zero_base: false,
-    skip_rec_zero_arg: true,
-};
-const ALL: PruningOpts = PruningOpts {
-    skip_trivial: true,
-    comp_assoc: true,
+const RZZ: PruningOpts = PruningOpts {
     skip_rec_zero_base: true,
-    skip_rec_zero_arg: true,
+    ..ASSOC
 };
 
 /// The configs in cumulative order, highest-impact rules first.
@@ -49,16 +41,16 @@ const ALL: PruningOpts = PruningOpts {
 const CONFIGS: &[(&str, PruningOpts)] = &[
     ("none", NONE),
     ("+triv", TRIV),
+    ("+rbase", RBASE),
     ("+assoc", ASSOC),
-    ("+rza", RZA),
-    ("+rzb", ALL),
+    ("+rzz", RZZ),
 ];
 
 #[derive(Parser, Debug)]
 #[command(about = "Count GRFs per size under each pruning configuration")]
 struct Args {
     /// Maximum size to count.
-    #[arg(default_value_t = 18)]
+    #[arg(default_value_t = 20)]
     max_size: usize,
 
     /// Arity to count.  Use 0 for BBµ (0-arity = constant PRFs).
@@ -152,7 +144,7 @@ fn main() {
     println!();
     println!();
     println!(
-        "Legend: none=unpruned  +triv=skip_trivial  +assoc=comp_assoc  +rza=rec_zero_arg  +rzb=rec_zero_base"
+        "Legend: none=unpruned  +triv=skip_trivial  +rbase=rec_zero_arg  +assoc=comp_assoc  +rzz=rec_zero_base"
     );
     println!("%red = % reduction from the immediately preceding column.");
 }

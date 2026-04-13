@@ -166,13 +166,17 @@ fn main() {
     // category → (total_cross_redundant, sample_examples)
     let mut by_cat: HashMap<&'static str, (usize, Vec<(usize, String, usize, String)>)> =
         HashMap::new();
+    // Total occurrences of each category (novel + redundant), for % redundant calculation.
+    let mut cat_total: HashMap<&'static str, usize> = HashMap::new();
 
     // Grouping 2: by canonical target (the smaller GRF it is equivalent to).
     // canonical_expr → (total_cross_redundant, sample_redundant_exprs)
     let mut by_target: HashMap<String, (usize, Vec<(usize, String)>)> = HashMap::new();
 
-    // Per (size, arity): (total, novel, cross_redundant)
-    let mut summary: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
+    // Per (size, arity): (total, novel, cross_redundant, pat_p11, pat_single_proj)
+    // pat_p11:         C(f, P(1,1)) — always ≡ f, candidate for pruning
+    // pat_single_proj: C(f, P(k,i)) for any k,i — single-arg comp with any proj
+    let mut summary: Vec<(usize, usize, usize, usize, usize, usize, usize)> = Vec::new();
 
     for arity in args.min_arity..=args.max_arity {
         let inputs = canonical_inputs(arity);
@@ -191,9 +195,27 @@ fn main() {
             let mut total = 0usize;
             let mut novel = 0usize;
             let mut cross_redundant = 0usize;
+            let mut pat_p11 = 0usize;
+            let mut pat_single_proj = 0usize;
 
             stream_grf(size, arity, args.allow_min, opts, &mut |grf: &Grf| {
                 total += 1;
+
+                // Pattern counting (before fingerprint work).
+                if let Grf::Comp(_, gs, _) = grf {
+                    if gs.len() == 1 {
+                        if gs[0] == Grf::Proj(1, 1) {
+                            pat_p11 += 1;
+                        }
+                        if matches!(gs[0], Grf::Proj(_, _)) {
+                            pat_single_proj += 1;
+                        }
+                    }
+                }
+
+                // Always tally category totals (used for % redundant in output).
+                *cat_total.entry(grf_category(grf)).or_default() += 1;
+
                 let fp = compute_fp(grf, &inputs, args.max_steps);
                 let key = (arity, fp);
                 let expr = grf.to_string();
@@ -228,7 +250,7 @@ fn main() {
                 }
             });
 
-            summary.push((size, arity, total, novel, cross_redundant));
+            summary.push((size, arity, total, novel, cross_redundant, pat_p11, pat_single_proj));
         }
     }
 
@@ -241,7 +263,7 @@ fn main() {
     );
     println!("{}", "-".repeat(58));
     let mut prev_arity = 999usize;
-    for (size, arity, total, novel, redund) in &summary {
+    for (size, arity, total, novel, redund, _, _) in &summary {
         if *arity != prev_arity {
             if prev_arity != 999 {
                 println!();
@@ -264,17 +286,29 @@ fn main() {
     // -----------------------------------------------------------------------
     println!();
     println!("{}", "=".repeat(78));
-    println!("Cross-size redundancy by structural category of the redundant GRF");
-    println!(
-        "(redundant = fingerprint identical to a strictly smaller GRF of the same arity)"
-    );
+    println!("Cross-size redundancy by structural category, sorted by % redundant");
+    println!("(format: [redundant/total_in_cat = pct%]  category)");
+    println!("(redundant = fingerprint identical to a strictly smaller GRF of the same arity)");
     println!("{}", "=".repeat(78));
 
     let mut cats: Vec<_> = by_cat.iter().collect();
-    cats.sort_by(|(_, (ca, _)), (_, (cb, _))| cb.cmp(ca));
+    // Sort by % redundant (redundant / total occurrences of that category), descending.
+    cats.sort_by(|(cat_a, (redund_a, _)), (cat_b, (redund_b, _))| {
+        let tot_a = cat_total.get(*cat_a).copied().unwrap_or(1) as f64;
+        let tot_b = cat_total.get(*cat_b).copied().unwrap_or(1) as f64;
+        let pct_a = *redund_a as f64 / tot_a;
+        let pct_b = *redund_b as f64 / tot_b;
+        pct_b.partial_cmp(&pct_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
 
-    for (cat, (count, examples)) in &cats {
-        println!("\n[{count:>8}]  {cat}");
+    for (cat, (redund, examples)) in &cats {
+        let total_in_cat = cat_total.get(*cat).copied().unwrap_or(0);
+        let pct = if total_in_cat > 0 {
+            100.0 * *redund as f64 / total_in_cat as f64
+        } else {
+            0.0
+        };
+        println!("\n[{redund:>6}/{total_in_cat:<6} = {pct:5.1}%]  {cat}");
         for (size, expr, min_size, min_expr) in examples.iter() {
             println!("           n={}  {}  ≡  n={}  {}", size, expr, min_size, min_expr);
         }
@@ -312,9 +346,9 @@ fn main() {
     // Grand total
     // -----------------------------------------------------------------------
     println!();
-    let total_all: usize = summary.iter().map(|(_, _, t, _, _)| t).sum();
-    let total_novel: usize = summary.iter().map(|(_, _, _, n, _)| n).sum();
-    let total_redund: usize = summary.iter().map(|(_, _, _, _, r)| r).sum();
+    let total_all: usize = summary.iter().map(|(_, _, t, _, _, _, _)| t).sum();
+    let total_novel: usize = summary.iter().map(|(_, _, _, n, _, _, _)| n).sum();
+    let total_redund: usize = summary.iter().map(|(_, _, _, _, r, _, _)| r).sum();
     println!("{}", "=".repeat(78));
     println!(
         "Grand total: {} GRFs,  {} novel ({:.1}%),  {} cross-redundant ({:.1}%)",
@@ -323,5 +357,77 @@ fn main() {
         100.0 * total_novel as f64 / total_all as f64,
         total_redund,
         100.0 * total_redund as f64 / total_all as f64,
+    );
+
+    // -----------------------------------------------------------------------
+    // Pattern frequency: candidate pruning rules
+    // -----------------------------------------------------------------------
+    println!();
+    println!("{}", "=".repeat(78));
+    println!("Candidate pruning pattern frequencies");
+    println!(
+        "  C(f, P(1,1))     — always ≡ f  (composition with 1-arity identity)"
+    );
+    println!(
+        "  C(f, P(k,i))     — single-arg comp with any projection  (superset)"
+    );
+    println!("Count = how many GRFs in the current enumeration match the pattern.");
+    println!("These would ALL be removed if the corresponding rule were implemented.");
+    println!("{}", "=".repeat(78));
+
+    let total_p11: usize = summary.iter().map(|(_, _, _, _, _, p, _)| p).sum();
+    let total_sproj: usize = summary.iter().map(|(_, _, _, _, _, _, s)| s).sum();
+
+    println!(
+        "{:>4}  {:>5}  {:>10}  {:>10}  {:>8}  {:>10}  {:>8}",
+        "size", "arity", "total", "C(f,P(1,1))", "P11%", "C(f,P(k,i))", "Proj%"
+    );
+    println!("{}", "-".repeat(68));
+    let mut prev_arity = 999usize;
+    for (size, arity, total, _, _, p11, sproj) in &summary {
+        if *arity != prev_arity {
+            if prev_arity != 999 {
+                println!();
+            }
+            prev_arity = *arity;
+        }
+        let p11_pct = if *total > 0 {
+            format!("{:6.1}%", 100.0 * *p11 as f64 / *total as f64)
+        } else {
+            "      -".to_string()
+        };
+        let sp_pct = if *total > 0 {
+            format!("{:6.1}%", 100.0 * *sproj as f64 / *total as f64)
+        } else {
+            "      -".to_string()
+        };
+        println!(
+            "{:>4}  {:>5}  {:>10}  {:>10}  {:>8}  {:>10}  {:>8}",
+            size, arity, total, p11, p11_pct, sproj, sp_pct
+        );
+    }
+    println!("{}", "-".repeat(68));
+    let p11_pct = if total_all > 0 {
+        format!("{:.1}%", 100.0 * total_p11 as f64 / total_all as f64)
+    } else {
+        "-".to_string()
+    };
+    let sp_pct = if total_all > 0 {
+        format!("{:.1}%", 100.0 * total_sproj as f64 / total_all as f64)
+    } else {
+        "-".to_string()
+    };
+    println!(
+        "Total C(f,P(1,1)): {:>8}  ({} of all enumerated GRFs)",
+        total_p11, p11_pct
+    );
+    println!(
+        "Total C(f,P(k,i)): {:>8}  ({} of all enumerated GRFs)",
+        total_sproj, sp_pct
+    );
+    println!();
+    println!(
+        "Implementing skip_comp_identity [C(f,P(1,1))≡f] would remove {} GRFs ({} of total)",
+        total_p11, p11_pct
     );
 }

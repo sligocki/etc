@@ -1,130 +1,158 @@
-// Compute number of general recursive functions of a given size.
-
+/// Count GRFs of each size under each pruning configuration.
+///
+/// Outputs a table showing how many GRFs exist at each size for each cumulative
+/// pruning config, so you can see the marginal benefit of each rule.
+///
+/// Columns (each is a strict superset of the previous):
+///   none     – no pruning
+///   +triv    – skip C(Z,…) and C(P,…)
+///   +assoc   – also canonicalise C(C(f,g),k) → C(f,C(g,k))
+///   +rzb     – also skip R(Z,Z) and R(Z,P_acc) ≡ Z
+///   +rza     – also skip C(R(g,h), Z, …) ≡ C(g, …)  [= all current rules]
 use clap::Parser;
-use memoize::memoize;
-use rug::{Float, Integer};
+use gen_rec::enumerate::count_grf;
+use gen_rec::pruning::PruningOpts;
 
-type BigInt = Integer;
+const NONE: PruningOpts = PruningOpts {
+    skip_trivial: false,
+    comp_assoc: false,
+    skip_rec_zero_base: false,
+    skip_rec_zero_arg: false,
+};
+const TRIV: PruningOpts = PruningOpts {
+    skip_trivial: true,
+    comp_assoc: false,
+    skip_rec_zero_base: false,
+    skip_rec_zero_arg: false,
+};
+const ASSOC: PruningOpts = PruningOpts {
+    skip_trivial: true,
+    comp_assoc: true,
+    skip_rec_zero_base: false,
+    skip_rec_zero_arg: false,
+};
+const RZA: PruningOpts = PruningOpts {
+    skip_trivial: true,
+    comp_assoc: true,
+    skip_rec_zero_base: false,
+    skip_rec_zero_arg: true,
+};
+const ALL: PruningOpts = PruningOpts {
+    skip_trivial: true,
+    comp_assoc: true,
+    skip_rec_zero_base: true,
+    skip_rec_zero_arg: true,
+};
 
-#[memoize]
-fn count(size: usize, arity: usize) -> BigInt {
-    // println!("  count({}, {})", size, arity);
-    if size == 0 {
-        return BigInt::from(0);
-    } else if size == 1 {
-        // Atoms
-        // Z^k and P^k_i forall 1 <= i <= k
-        let mut total = BigInt::from(arity + 1);
-        if arity == 1 {
-            // S is only a 1-arity function
-            total += 1;
-        }
-        // println!("  count({}, {}) = {}", size, arity, total);
-        return total;
-    } else {
-        // Combinators
-        let n = size - 1;
-
-        // M(f)
-        let mut total = count(n, arity + 1);
-        // println!("    M(f) {}", total);
-
-        // R(g,h)
-        if arity >= 1 {
-            for x in 1..n {
-                // |g| = x, |f| = y
-                let y = n - x;
-                // println!("      R(g,h) {} {}", x, y);
-                total += count(x, arity - 1) * count(y, arity + 1)
-            }
-            // println!("    R(g,h) {}", total);
-        }
-
-        // C(h, g_1, ..., g_m)
-        for x in 1..=n {
-            // |h| = x, sum |g_i| = y
-            let y = n - x;
-            // Disallow m=0: C(h)
-            for m in 1..=y {
-                // println!("      C(h,gs) {} {} {}", x, y, m);
-                total += count(x, m) * count_many(y, arity, m);
-                // println!("      C(h,gs) {}", total);
-            }
-        }
-        // println!("  count({}, {}) = {}", size, arity, total);
-        return total;
-    }
-}
-
-#[memoize]
-fn count_many(size: usize, arity: usize, num_funcs: usize) -> BigInt {
-    // println!("  count_many({}, {}, {})", size, arity, num_funcs);
-    if num_funcs > size {
-        return BigInt::from(0);
-    } else if num_funcs == 0 {
-        if size == 0 {
-            return BigInt::from(1);
-        } else {
-            return BigInt::from(0);
-        }
-    }
-    let mut total = BigInt::from(0);
-    if num_funcs >= 1 {
-        for x in 1..=size {
-            let y = size - x;
-            // println!("    A {} {} {}", x, y, num_funcs - 1);
-            total += count(x, arity) * count_many(y, arity, num_funcs - 1);
-            // println!("    B {}", total);
-        }
-    }
-    // println!("  count_many({}, {}, {}) = {}", size, arity, num_funcs, total);
-    total
-}
-
-fn log2(n: &BigInt) -> f32 {
-    Float::with_val(32, n).log2().to_f32()
-}
+/// The configs in cumulative order, highest-impact rules first.
+/// Each entry is (label, opts).
+const CONFIGS: &[(&str, PruningOpts)] = &[
+    ("none", NONE),
+    ("+triv", TRIV),
+    ("+assoc", ASSOC),
+    ("+rza", RZA),
+    ("+rzb", ALL),
+];
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(about = "Count GRFs per size under each pruning configuration")]
 struct Args {
+    /// Maximum size to count.
+    #[arg(default_value_t = 18)]
     max_size: usize,
+
+    /// Arity to count.  Use 0 for BBµ (0-arity = constant PRFs).
+    #[arg(default_value_t = 0)]
     arity: usize,
+
+    /// Include Minimization combinator (default: PRF only).
+    #[arg(long)]
+    allow_min: bool,
+}
+
+fn fmt_count(n: usize) -> String {
+    if n == 0 {
+        return "-".to_string();
+    }
+    if n < 1_000 {
+        format!("{}", n)
+    } else if n < 1_000_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else if n < 1_000_000_000 {
+        format!("{:.2}M", n as f64 / 1_000_000.0)
+    } else if n < 1_000_000_000_000usize {
+        format!("{:.2}B", n as f64 / 1_000_000_000.0)
+    } else {
+        format!("{:.2}T", n as f64 / 1_000_000_000_000.0)
+    }
 }
 
 fn main() {
     let args = Args::parse();
 
-    for size in 1..=args.max_size {
-        let total = count(size, args.arity);
-        println!(
-            "T({:2}, {}): {:4.0} bits  {}",
-            size,
-            args.arity,
-            log2(&total),
-            total
-        );
-    }
-}
+    // ---- header ----
+    println!(
+        "GRF counts: arity={}, allow_min={}",
+        args.arity, args.allow_min
+    );
+    println!("{}", "=".repeat(78));
 
-// Without allowing C(h):
-//
-//  T(1,0) = 1: Z^0
-//      T(1,1) = 3: Z^1, S, P^1_1
-//      T(1,2) = 3: Z^2, P^2_1, P^2_2
-//      T(1,k) = k+1: Z^k, P^k_i
-//  T(2,0) = 3: M(T(1,1))
-//      T(2,1) = 3: M(T(1,2))
-//      T(2,k) = k+2: M(T(1,k+1))
-//  T(3,0) = 6
-//          3: M(T(2,1))
-//          3: C(T(1,1), T(1,0))
-//      T(3,1) = 16
-//          4: M(T(2,2))
-//          3: R(T(1,0), T(1,2))
-//          9: C(T(1,1), T(1,1))
-// T(4,0) = 31:
-//      16: M(T(3,1))
-//      9: C(T(1,1), T(2,0))
-//      3: C(T(2,1), T(1,0))
-//      3: C(T(1,1), T(1,0), T(1,0))
+    // Column widths: count column W chars wide, reduction column 6 chars wide.
+    const W: usize = 10;
+    print!("{:>4}  {:>W$}", "size", CONFIGS[0].0);
+    for (name, _) in &CONFIGS[1..] {
+        print!("  {:>W$}  {:>5}", name, "%red");
+    }
+    println!();
+    let sep_width = 4 + 2 + W + (CONFIGS.len() - 1) * (2 + W + 2 + 5);
+    println!("{}", "-".repeat(sep_width));
+
+    let mut total_by_config = vec![0usize; CONFIGS.len()];
+
+    for size in 1..=args.max_size {
+        let counts: Vec<usize> = CONFIGS
+            .iter()
+            .map(|(_, opts)| count_grf(size, args.arity, args.allow_min, *opts))
+            .collect();
+
+        total_by_config
+            .iter_mut()
+            .zip(counts.iter())
+            .for_each(|(tot, &c)| *tot += c);
+
+        print!("{:>4}  {:>W$}", size, fmt_count(counts[0]));
+        for i in 1..CONFIGS.len() {
+            let prev = counts[i - 1];
+            let cur = counts[i];
+            let saved = prev.saturating_sub(cur);
+            let pct = if prev > 0 {
+                format!("{:4.1}%", 100.0 * saved as f64 / prev as f64)
+            } else {
+                "    -".to_string()
+            };
+            print!("  {:>W$}  {:>5}", fmt_count(cur), pct);
+        }
+        println!();
+    }
+
+    // ---- totals row ----
+    println!("{}", "-".repeat(sep_width));
+    print!("{:>4}  {:>W$}", "SUM", fmt_count(total_by_config[0]));
+    for i in 1..CONFIGS.len() {
+        let prev = total_by_config[i - 1];
+        let cur = total_by_config[i];
+        let saved = prev.saturating_sub(cur);
+        let pct = if prev > 0 {
+            format!("{:4.1}%", 100.0 * saved as f64 / prev as f64)
+        } else {
+            "    -".to_string()
+        };
+        print!("  {:>W$}  {:>5}", fmt_count(cur), pct);
+    }
+    println!();
+    println!();
+    println!(
+        "Legend: none=unpruned  +triv=skip_trivial  +assoc=comp_assoc  +rza=rec_zero_arg  +rzb=rec_zero_base"
+    );
+    println!("%red = % reduction from the immediately preceding column.");
+}

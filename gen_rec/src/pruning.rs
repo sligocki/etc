@@ -6,10 +6,11 @@
 /// Flags are independent and can be combined freely.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct PruningOpts {
-    /// Skip `C(Z_m, …)` and `C(P^m_i, …)` — these are always equivalent to
-    /// simpler expressions (`Z_k` or one of the argument functions) and can
-    /// never be BBµ champions.
-    pub skip_trivial: bool,
+    /// Skip `C(Z_m, …) = Z`
+    pub skip_comp_zero: bool,
+
+    /// Skip `C(P^m_i, g0, ... gm) = gi`
+    pub skip_comp_proj: bool,
 
     /// Canonicalise composition via associativity.
     ///
@@ -42,4 +43,27 @@ pub struct PruningOpts {
     /// The equivalent `C(g, f2, …)` is strictly smaller (by `h.size() + 1`)
     /// and will be generated independently by the enumerator.
     pub skip_rec_zero_arg: bool,
+}
+
+impl PruningOpts {
+    pub const fn default() -> PruningOpts { Self::all() }
+
+    pub const fn none() -> PruningOpts {
+        PruningOpts {
+            skip_comp_zero: false,
+            skip_comp_proj: false,
+            comp_assoc: false,
+            skip_rec_zero_base: false,
+            skip_rec_zero_arg: false,
+        }
+    }
+    pub const fn all() -> PruningOpts {
+        PruningOpts {
+            skip_comp_zero: true,
+            skip_comp_proj: true,
+            comp_assoc: true,
+            skip_rec_zero_base: true,
+            skip_rec_zero_arg: true,
+        }
+    }
 }

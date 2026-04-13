@@ -39,22 +39,6 @@ struct Args {
     #[arg(long)]
     allow_min: bool,
 
-    /// Include trivial compositions C(Z,...) and C(P,...).
-    #[arg(long)]
-    include_trivial: bool,
-
-    /// Disable composition canonicalisation (on by default).
-    #[arg(long)]
-    no_comp_assoc: bool,
-
-    /// Disable R(Z(k), Z(k+2)) and R(Z(k), P(k+2,2)) pruning (on by default).
-    #[arg(long)]
-    no_rec_zero_base: bool,
-
-    /// Disable C(R(g,h), Z(p), …) pruning (on by default).
-    #[arg(long)]
-    no_rec_zero_arg: bool,
-
     /// Max redundant examples to show per structural category.
     #[arg(long, default_value_t = 5)]
     samples: usize,
@@ -218,12 +202,7 @@ fn grf_category(grf: &Grf) -> &'static str {
 
 fn main() {
     let args = Args::parse();
-    let opts = PruningOpts {
-        skip_trivial: !args.include_trivial,
-        comp_assoc: !args.no_comp_assoc,
-        skip_rec_zero_base: !args.no_rec_zero_base,
-        skip_rec_zero_arg: !args.no_rec_zero_arg,
-    };
+    let opts = PruningOpts::default();
 
     println!(
         "Fingerprinting: max_size={}, arity={}..={}, allow_min={}, opts={:?}",

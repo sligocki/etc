@@ -26,29 +26,6 @@ struct Args {
     #[arg(long, default_value_t = 100_000_000)]
     max_steps: u64,
 
-    /// Include trivial compositions: C(Z_m,...) and C(P^m_i,...).
-    /// These are always equivalent to simpler expressions (Z_k or g_i)
-    /// and so can be pruned without missing any champion values.
-    #[arg(long)]
-    include_trivial: bool,
-
-    /// Disable composition canonicalisation (on by default).
-    /// By default C(C(f,g), k) is skipped in favour of the equivalent C(f, C(g,k)).
-    #[arg(long)]
-    no_comp_assoc: bool,
-
-    /// Disable R(Z(k), Z(k+2)) and R(Z(k), P(k+2,2)) pruning (on by default).
-    /// Both are always ≡ Z(k+1): the zero-base starts at 0 and the step either
-    /// returns 0 or returns the accumulator (which stays 0).
-    #[arg(long)]
-    no_rec_zero_base: bool,
-
-    /// Disable C(R(g,h), Z(p), …) pruning (on by default).
-    /// By default these are skipped: the first arg forces n=0, so the result
-    /// equals C(g, …) which is strictly smaller and generated independently.
-    #[arg(long)]
-    no_rec_zero_arg: bool,
-
     /// Include Minimization combinator (default: PRF only).
     #[arg(long)]
     allow_min: bool,
@@ -216,12 +193,7 @@ fn fmt_si_f64(n: f64) -> String {
 
 fn main() {
     let args = Args::parse();
-    let opts = PruningOpts {
-        skip_trivial: !args.include_trivial,
-        comp_assoc: !args.no_comp_assoc,
-        skip_rec_zero_base: !args.no_rec_zero_base,
-        skip_rec_zero_arg: !args.no_rec_zero_arg,
-    };
+    let opts = PruningOpts::default();
 
     println!(
         "BBµ search: 0-arity {}, max_size={}, max_steps={}, opts={:?}, threads={}, batch={}",

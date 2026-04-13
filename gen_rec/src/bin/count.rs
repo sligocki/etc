@@ -2,30 +2,22 @@
 ///
 /// Outputs a table showing how many GRFs exist at each size for each cumulative
 /// pruning config, so you can see the marginal benefit of each rule.
-///
-/// Columns (each is a strict superset of the previous):
-///   none     – no pruning
-///   +triv    – skip C(Z,…) ≡ Z and C(P,…) ≡ …
-///   +rbase   – skip C(R(g,h), Z, …) ≡ C(g, …)
-///   +assoc   – skip C(C(f,g),k) ≡ C(f,C(g,k))
-///   +rzz     – skip R(Z,Z) and R(Z,P_acc) ≡ Z
 use clap::Parser;
 use gen_rec::enumerate::count_grf;
 use gen_rec::pruning::PruningOpts;
 
-const NONE: PruningOpts = PruningOpts {
-    skip_trivial: false,
-    comp_assoc: false,
-    skip_rec_zero_base: false,
-    skip_rec_zero_arg: false,
-};
-const TRIV: PruningOpts = PruningOpts {
-    skip_trivial: true,
+const NONE: PruningOpts = PruningOpts::none();
+const CP: PruningOpts = PruningOpts {
+    skip_comp_proj: true,
     ..NONE
+};
+const CZ: PruningOpts = PruningOpts {
+    skip_comp_zero: true,
+    ..CP
 };
 const RBASE: PruningOpts = PruningOpts {
     skip_rec_zero_arg: true,
-    ..TRIV
+    ..CZ
 };
 const ASSOC: PruningOpts = PruningOpts {
     comp_assoc: true,
@@ -35,12 +27,14 @@ const RZZ: PruningOpts = PruningOpts {
     skip_rec_zero_base: true,
     ..ASSOC
 };
+// assert_eq!(RZZ, PruningOpts::all());
 
 /// The configs in cumulative order, highest-impact rules first.
 /// Each entry is (label, opts).
 const CONFIGS: &[(&str, PruningOpts)] = &[
     ("none", NONE),
-    ("+triv", TRIV),
+    ("+cp", CP),
+    ("+cz", CZ),
     ("+rbase", RBASE),
     ("+assoc", ASSOC),
     ("+rzz", RZZ),
@@ -144,7 +138,7 @@ fn main() {
     println!();
     println!();
     println!(
-        "Legend: none=unpruned  +triv=skip_trivial  +rbase=rec_zero_arg  +assoc=comp_assoc  +rzz=rec_zero_base"
+        "Legend: none=unpruned  +cp=skip_comp_proj  +cz=skip_comp_zero  +rbase=rec_zero_arg  +assoc=comp_assoc  +rzz=rec_zero_base"
     );
     println!("%red = % reduction from the immediately preceding column.");
 }

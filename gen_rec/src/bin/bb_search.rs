@@ -316,7 +316,7 @@ fn main() {
         };
 
         println!(
-            "n={:3}: best={}, {:6} holdouts, {:9} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
+            "n={}: best={}, {} holdouts, {} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
             size,
             total,
             size_timed_out,
@@ -391,12 +391,12 @@ fn main() {
     );
     println!("{}", "=".repeat(90));
     println!(
-        "{:>4}  {:>12}  {:>10}  {:>10}  {:>12}  {:>10}  {}",
-        "n", "#fns", "over_steps", "BBµ(n)", "total_steps", "max_steps", "Champion"
+        "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
+        "n", "BBµ(n) ≥", "max_steps", "holdouts", "#fns", "tot_steps", "Champion"
     );
     println!("{}", "-".repeat(90));
     for r in &results {
-        let val_str = match &r.best_value {
+        let max_val_str = match &r.best_value {
             Some(v) => fmt_integer(v),
             None => "-".to_string(),
         };
@@ -408,13 +408,13 @@ fn main() {
             format!("{} (+{} ties)", r.best_exprs[0], r.best_exprs.len() - 1)
         };
         println!(
-            "{:>4}  {:>12}  {:>10}  {:>10}  {:>12}  {:>10}  {}",
+            "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
             r.size,
-            r.total,
-            r.timed_out,
-            val_str,
-            fmt_si(r.total_steps),
+            max_val_str,
             fmt_si(r.max_steps_single),
+            r.timed_out,
+            r.total,
+            fmt_si(r.total_steps),
             expr_str,
         );
     }

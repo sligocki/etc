@@ -42,6 +42,36 @@ pub fn square() -> Grf {
     polygonal(2)
 }
 
+/// Iterate application of a function onto a base (incremented).
+///     RepSucc[f] := R(S, C(f, P_2)) = \xy. f^x(y+1)
+pub fn rep_succ(f: Grf) -> Grf {
+    let step = Grf::comp(f, vec![Grf::Proj(3, 2)]);
+    Grf::Rec(Box::new(Grf::Succ), Box::new(step))
+}
+
+/// Diagonalize 2-ary f -> unary and then repeatedly apply.
+///     DiagRep[f] := R(S, C(f, P(3,2), P(3,2))) = \xy. (\z. f(z,z))^x (y+1)
+pub fn diag_rep(f: Grf) -> Grf {
+    let diag = Grf::comp(f, vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]);
+    Grf::Rec(Box::new(Grf::Succ), Box::new(diag))
+}
+
+/// Diagonalize 2-ary f -> unary (incrementing input first).
+///     DiagS[f] := C(f, S, S) = \x. f(x+1, x+1)
+pub fn diag_succ(f: Grf) -> Grf {
+    Grf::comp(f, vec![Grf::Succ, Grf::Succ])
+}
+
+/// Ackermann of Diagonalized
+///     AckDiag[n,f] := DiagS[DiagRep^n[RepSucc[f]]]
+pub fn ack_diag(n: usize, mut f: Grf) -> Grf {
+    f = rep_succ(f);
+    for _ in 0..n {
+        f = diag_rep(f);
+    }
+    diag_succ(f)
+}
+
 /// Diagonalization across repeated application of a function
 ///   RepDiag[f](x) = f^{x+1}(x+2).
 ///   RepDiag[f] = C(R(S, C(f, P(3,2))), S, S) ∈ GRF_1.
@@ -154,15 +184,20 @@ mod tests {
         assert_eq!(c16.size(), 16);
         assert_eq!(eval(&c16, &[]), Some(10));
 
-        // 17: C(Tri, K[4])
-        let c17 = Grf::comp(triangular(), vec![constant(4, 0)]);
+        // 17: C(AckDiag[1,S], K[1])
+        let c17 = Grf::comp(ack_diag(1, Grf::Succ), vec![constant(1, 0)]);
         assert_eq!(c17.size(), 17);
-        assert_eq!(eval(&c17, &[]), Some(10));
+        assert_eq!(eval(&c17, &[]), Some(15));
 
         // 18: C(RepDiag[Tri], K[1])
         let c18 = Grf::comp(rep_diag(triangular()), vec![constant(1, 0)]);
         assert_eq!(c18.size(), 18);
         assert_eq!(eval(&c18, &[]), Some(21));
+
+        // 19: C(AckDiag[1,S], K[2])
+        let c19 = Grf::comp(ack_diag(1, Grf::Succ), vec![constant(2, 0)]);
+        assert_eq!(c19.size(), 19);
+        assert_eq!(eval(&c19, &[]), Some(39));
 
         // 20: C(RepDiag[Tri], K[2])
         let c20 = Grf::comp(rep_diag(triangular()), vec![constant(2, 0)]);

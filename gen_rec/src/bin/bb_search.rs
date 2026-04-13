@@ -193,15 +193,24 @@ fn fmt_duration(secs: f64) -> String {
     }
 }
 
-fn fmt_steps(n: u64) -> String {
+fn fmt_si(n: u64) -> String {
     if n < 1_000 {
         format!("{}", n)
-    } else if n < 1_000_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else if n < 1_000_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
     } else {
-        format!("{:.2}B", n as f64 / 1_000_000_000.0)
+        fmt_si_f64(n as f64)
+    }
+}
+fn fmt_si_f64(n: f64) -> String {
+    if n < 1_000.0 {
+        format!("{:.1}", n)
+    } else if n < 1_000_000.0 {
+        format!("{:.1}k", n / 1_000.0)
+    } else if n < 1_000_000_000.0 {
+        format!("{:.1}M", n / 1_000_000.0)
+    } else if n < 1_000_000_000_000.0 {
+        format!("{:.1}B", n / 1_000_000_000.0)
+    } else {
+        format!("{:.1}T", n / 1_000_000_000_000.0)
     }
 }
 
@@ -226,9 +235,6 @@ fn main() {
     println!("{}", "=".repeat(90));
 
     let mut results: Vec<SizeResult> = Vec::new();
-    let mut running_best: Option<Integer> = None;
-    let mut running_best_exprs: Vec<String> = Vec::new();
-    let mut running_best_size: usize = 0;
     let mut smoothed_secs_per_fn: Option<f64> = None;
     let total_start = Instant::now();
 
@@ -304,38 +310,13 @@ fn main() {
             });
         }
 
-        let new_champion = match (&size_best_val, &running_best) {
-            (Some(v), None) => {
-                running_best = Some(v.clone());
-                running_best_exprs = size_best_exprs.clone();
-                running_best_size = size;
-                true
-            }
-            (Some(v), Some(cur)) if v > cur => {
-                running_best = Some(v.clone());
-                running_best_exprs = size_best_exprs.clone();
-                running_best_size = size;
-                true
-            }
-            (Some(v), Some(cur)) if v == cur => {
-                running_best_exprs.extend(size_best_exprs.iter().cloned());
-                false
-            }
-            _ => false,
-        };
-
         let best_str = match &size_best_val {
             Some(v) => fmt_integer(v),
             None => "-".to_string(),
         };
-        let champion_mark = if new_champion {
-            " *** NEW CHAMPION ***"
-        } else {
-            ""
-        };
 
         println!(
-            "n={:3}: {:9} fns, {:6} timeout, best={:>24}  [{:.2}s sim={:.2}s enum={:.2}s, {}steps]{}",
+            "n={:3}: best={}, {:6} holdouts, {:9} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
             size,
             total,
             size_timed_out,
@@ -343,11 +324,11 @@ fn main() {
             elapsed,
             sim_secs,
             enum_secs,
-            fmt_steps(size_total_steps),
-            champion_mark,
+            fmt_si(size_total_steps),
+            fmt_si_f64(size_total_steps as f64 / elapsed),
         );
-        const MAX_VIA: usize = 5;
-        if new_champion && !size_best_exprs.is_empty() {
+        const MAX_VIA: usize = 20;
+        if !size_best_exprs.is_empty() {
             for expr in size_best_exprs.iter().take(MAX_VIA) {
                 println!("       via {}", expr);
             }
@@ -357,14 +338,12 @@ fn main() {
                     size_best_exprs.len() - MAX_VIA
                 );
             }
-        } else if !new_champion && size_best_exprs.len() > 1 {
-            println!("       ({} ties at this size)", size_best_exprs.len());
         }
         if size_timed_out > 0 {
             println!(
                 "       max_single={}, total_steps={}",
-                fmt_steps(size_max_steps),
-                fmt_steps(size_total_steps),
+                fmt_si(size_max_steps),
+                fmt_si(size_total_steps),
             );
         }
 
@@ -412,8 +391,8 @@ fn main() {
     );
     println!("{}", "=".repeat(90));
     println!(
-        "{:>4}  {:>10}  {:>7}  {:>26}  {:>12}  {:>12}  {}",
-        "n", "#fns", "timeout", "BBµ(n)", "total_steps", "max_steps", "Champion"
+        "{:>4}  {:>12}  {:>10}  {:>10}  {:>12}  {:>10}  {}",
+        "n", "#fns", "over_steps", "BBµ(n)", "total_steps", "max_steps", "Champion"
     );
     println!("{}", "-".repeat(90));
     for r in &results {
@@ -429,33 +408,16 @@ fn main() {
             format!("{} (+{} ties)", r.best_exprs[0], r.best_exprs.len() - 1)
         };
         println!(
-            "{:>4}  {:>10}  {:>7}  {:>26}  {:>12}  {:>12}  {}",
+            "{:>4}  {:>12}  {:>10}  {:>10}  {:>12}  {:>10}  {}",
             r.size,
             r.total,
             r.timed_out,
             val_str,
-            fmt_steps(r.total_steps),
-            fmt_steps(r.max_steps_single),
+            fmt_si(r.total_steps),
+            fmt_si(r.max_steps_single),
             expr_str,
         );
     }
     println!("{}", "-".repeat(90));
-    if let Some(v) = &running_best {
-        let ties = running_best_exprs.len();
-        println!(
-            "Overall champion: n={}, value={} ({} tied expression{})",
-            running_best_size,
-            fmt_integer(v),
-            ties,
-            if ties == 1 { "" } else { "s" },
-        );
-        const MAX_SUMMARY_VIA: usize = 5;
-        for expr in running_best_exprs.iter().take(MAX_SUMMARY_VIA) {
-            println!("  {}", expr);
-        }
-        if ties > MAX_SUMMARY_VIA {
-            println!("  ... (+{} more)", ties - MAX_SUMMARY_VIA);
-        }
-    }
     println!("Total time: {:.2}s", total_elapsed);
 }

@@ -279,10 +279,6 @@ struct Acc {
     over_steps_count: usize,
     best_score: Option<u64>,
     best_ranks: Vec<usize>,
-    /// Full NotableEntry for each rank in best_ranks.  Cleared whenever a
-    /// strictly better score is found, so it only ever holds final champions.
-    /// Merged into `notable` at the end of execute_task.
-    champions: Vec<NotableEntry>,
     notable: Vec<NotableEntry>,
 }
 
@@ -293,7 +289,6 @@ impl Acc {
             over_steps_count: 0,
             best_score: None,
             best_ranks: Vec::new(),
-            champions: Vec::new(),
             notable: Vec::new(),
         }
     }
@@ -321,41 +316,29 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
                 });
             }
             Some(s) => {
-                let is_champion = match acc.best_score {
+                match acc.best_score {
                     None => {
                         acc.best_score = Some(s);
                         acc.best_ranks = vec![rank];
-                        acc.champions.clear();
-                        true
                     }
                     Some(bs) if s > bs => {
                         acc.best_score = Some(s);
                         acc.best_ranks = vec![rank];
-                        acc.champions.clear();
-                        true
                     }
                     Some(bs) if s == bs => {
                         acc.best_ranks.push(rank);
-                        true
                     }
-                    _ => false,
-                };
-                let entry = NotableEntry {
-                    rank,
-                    expr,
-                    status: "halted".to_string(),
-                    unknown_reason: None,
-                    score: Some(s),
-                    steps,
-                };
-                // Champions are buffered separately; they're merged into
-                // notable at the end of execute_task once the final champion
-                // is known (avoids saving thousands of "former champions").
-                if is_champion {
-                    acc.champions.push(entry.clone());
+                    _ => {}
                 }
                 if s >= config.save_min_score || steps >= config.save_min_steps {
-                    acc.notable.push(entry);
+                    acc.notable.push(NotableEntry {
+                        rank,
+                        expr,
+                        status: "halted".to_string(),
+                        unknown_reason: None,
+                        score: Some(s),
+                        steps,
+                    });
                 }
             }
         }
@@ -382,15 +365,6 @@ fn execute_task(task: &TaskEntry, config: &Config, batch_size: usize) -> TaskRes
         },
     );
     flush_batch(&mut batch, config, &mut acc);
-
-    // Ensure the final champions always appear in notable.
-    let notable_rank_set: std::collections::HashSet<usize> =
-        acc.notable.iter().map(|n| n.rank).collect();
-    for entry in acc.champions.drain(..) {
-        if !notable_rank_set.contains(&entry.rank) {
-            acc.notable.push(entry);
-        }
-    }
 
     TaskResult {
         task_id: task.task_id,

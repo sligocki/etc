@@ -212,6 +212,17 @@ fn manifest_path(dir: &Path) -> PathBuf {
     dir.join("manifest.jsonl")
 }
 
+fn timestamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let s = secs % 60;
+    let m = (secs / 60) % 60;
+    let h = (secs / 3600) % 24;
+    format!("{h:02}:{m:02}:{s:02}")
+}
+
 fn read_config(dir: &Path) -> Config {
     let txt = fs::read_to_string(config_path(dir))
         .expect("Cannot read config.json — did you run `gen` first?");
@@ -316,19 +327,12 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
                 });
             }
             Some(s) => {
-                match acc.best_score {
-                    None => {
-                        acc.best_score = Some(s);
-                        acc.best_ranks = vec![rank];
-                    }
-                    Some(bs) if s > bs => {
-                        acc.best_score = Some(s);
-                        acc.best_ranks = vec![rank];
-                    }
-                    Some(bs) if s == bs => {
-                        acc.best_ranks.push(rank);
-                    }
-                    _ => {}
+                let is_new_best = acc.best_score.map_or(true, |bs| s > bs);
+                if is_new_best {
+                    acc.best_score = Some(s);
+                    acc.best_ranks = if s >= config.save_min_score { vec![rank] } else { vec![] };
+                } else if acc.best_score == Some(s) && s >= config.save_min_score {
+                    acc.best_ranks.push(rank);
                 }
                 if s >= config.save_min_score || steps >= config.save_min_steps {
                     acc.notable.push(NotableEntry {
@@ -392,12 +396,13 @@ fn run_task(task: &TaskEntry, config: &Config, dir: &Path, batch_size: usize) {
         return; // idempotent
     }
     println!(
-        "task {:06}: size={} ranks=[{}, {})",
-        task.task_id, task.size, task.start, task.start + task.count
+        "[{}] task {:06}: size={} ranks=[{}, {})",
+        timestamp(), task.task_id, task.size, task.start, task.start + task.count
     );
     let result = execute_task(task, config, batch_size);
     println!(
-        "task {:06}: done  best={:?}  over_steps={}  notable={}  [{:.2}s]",
+        "[{}] task {:06}: done  best={:?}  over_steps={}  notable={}  [{:.2}s]",
+        timestamp(),
         task.task_id,
         result.best_score,
         result.over_steps_count,
@@ -436,14 +441,17 @@ fn cmd_run(args: RunArgs) {
             });
 
             let tasks = read_manifest(&args.dir);
+            let total_tasks = tasks.len();
             let pending: Vec<TaskEntry> = tasks
                 .into_iter()
                 .filter(|t| !result_path(&args.dir, t.task_id).exists())
                 .collect();
 
             println!(
-                "Found {} pending tasks  [threads={}]",
+                "[{}] Pending tasks: {}/{}  [threads={}]",
+                timestamp(),
                 pending.len(),
+                total_tasks,
                 n_threads,
             );
 
@@ -471,7 +479,7 @@ fn cmd_run(args: RunArgs) {
             for h in handles {
                 h.join().unwrap();
             }
-            println!("All tasks done  [{:.2}s total]", total_start.elapsed().as_secs_f64());
+            println!("[{}] All tasks done  [{:.2}s total]", timestamp(), total_start.elapsed().as_secs_f64());
         }
         _ => {
             eprintln!("Specify either --task-id N or --all");

@@ -196,6 +196,10 @@ struct TaskResult {
     /// All ranks tied for best_score within this task.
     best_ranks: Vec<usize>,
     elapsed_secs: f64,
+    /// score → count of halted GRFs with that score.
+    score_hist: HashMap<u64, u64>,
+    /// steps → count of all GRFs that took that many steps.
+    steps_hist: HashMap<u64, u64>,
     // Per-GRF records for notable entries.
     notable: Vec<NotableEntry>,
 }
@@ -290,6 +294,10 @@ struct Acc {
     over_steps_count: usize,
     best_score: Option<u64>,
     best_ranks: Vec<usize>,
+    /// score → count, for halted GRFs only.
+    score_hist: HashMap<u64, u64>,
+    /// steps → count, for all GRFs.
+    steps_hist: HashMap<u64, u64>,
     notable: Vec<NotableEntry>,
 }
 
@@ -300,6 +308,8 @@ impl Acc {
             over_steps_count: 0,
             best_score: None,
             best_ranks: Vec::new(),
+            score_hist: HashMap::new(),
+            steps_hist: HashMap::new(),
             notable: Vec::new(),
         }
     }
@@ -314,6 +324,7 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
         let score = sim_result.into_value().map(|v| v.to_u64().unwrap_or(u64::MAX));
 
         acc.total_grfs += 1;
+        *acc.steps_hist.entry(steps).or_insert(0) += 1;
         match score {
             None => {
                 acc.over_steps_count += 1;
@@ -327,6 +338,7 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
                 });
             }
             Some(s) => {
+                *acc.score_hist.entry(s).or_insert(0) += 1;
                 let is_new_best = acc.best_score.map_or(true, |bs| s > bs);
                 if is_new_best {
                     acc.best_score = Some(s);
@@ -385,6 +397,8 @@ fn execute_task(task: &TaskEntry, config: &Config, batch_size: usize) -> TaskRes
         best_score: acc.best_score,
         best_ranks: acc.best_ranks,
         elapsed_secs: t0.elapsed().as_secs_f64(),
+        score_hist: acc.score_hist,
+        steps_hist: acc.steps_hist,
         notable: acc.notable,
     }
 }
@@ -496,6 +510,7 @@ struct SizeSummary {
     tasks_total: usize,
     total_grfs: usize,
     over_steps_count: usize,
+    runtime_sec: f64,
     best_score: Option<u64>,
     best_ranks: Vec<usize>,        // ranks tied at best_score
     best_exprs: Vec<String>,       // corresponding expr strings
@@ -546,6 +561,7 @@ fn cmd_summarize(args: SummarizeArgs) {
             tasks_total: *tasks_total_by_size.get(&r.size).unwrap_or(&0),
             total_grfs: 0,
             over_steps_count: 0,
+            runtime_sec: 0.0,
             best_score: None,
             best_ranks: Vec::new(),
             best_exprs: Vec::new(),
@@ -554,6 +570,7 @@ fn cmd_summarize(args: SummarizeArgs) {
         s.tasks_done += 1;
         s.total_grfs += r.total_grfs;
         s.over_steps_count += r.over_steps_count;
+        s.runtime_sec += r.elapsed_secs;
 
         // Merge champion ranks.
         if let Some(score) = r.best_score {
@@ -602,12 +619,6 @@ fn cmd_summarize(args: SummarizeArgs) {
 
     // Print header.
     let config = read_config(dir);
-    if is_partial {
-        println!(
-            "*** PARTIAL RESULTS: {}/{} tasks complete ***",
-            total_done, total_tasks
-        );
-    }
     println!(
         "BBµ summarize: allow_min={}, max_steps={}, opts={:?}",
         config.allow_min,
@@ -651,6 +662,15 @@ fn cmd_summarize(args: SummarizeArgs) {
         );
     }
     println!("{}", "-".repeat(90));
+
+    println!("\nTotal runtime: {:.0}s", by_size[&sizes[0]].runtime_sec);
+
+    if is_partial {
+        println!(
+            "\n*** PARTIAL RESULTS: {}/{} tasks complete ***",
+            total_done, total_tasks
+        );
+    }
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────

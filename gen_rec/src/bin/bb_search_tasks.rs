@@ -35,7 +35,7 @@ enum Cmd {
     /// Execute one task (--task-id) or all pending tasks (--all).
     Run(RunArgs),
     /// Read all result files and print a per-size champion summary.
-    Merge(MergeArgs),
+    Summarize(SummarizeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -93,7 +93,7 @@ struct RunArgs {
 }
 
 #[derive(Args, Debug)]
-struct MergeArgs {
+struct SummarizeArgs {
     /// Task workspace directory.
     dir: PathBuf,
 
@@ -482,9 +482,10 @@ fn cmd_run(args: RunArgs) {
 
 // ── merge ─────────────────────────────────────────────────────────────────────
 
-/// Per-size aggregate built during merge.
+/// Per-size aggregate built during summarize.
 struct SizeSummary {
     tasks_done: usize,
+    tasks_total: usize,
     total_grfs: usize,
     over_steps_count: usize,
     best_score: Option<u64>,
@@ -493,8 +494,15 @@ struct SizeSummary {
     notable: Vec<NotableEntry>,
 }
 
-fn cmd_merge(args: MergeArgs) {
+fn cmd_summarize(args: SummarizeArgs) {
     let dir = &args.dir;
+
+    // Count total tasks per size from the manifest.
+    let manifest = read_manifest(dir);
+    let mut tasks_total_by_size: HashMap<usize, usize> = HashMap::new();
+    for t in &manifest {
+        *tasks_total_by_size.entry(t.size).or_insert(0) += 1;
+    }
 
     // Read all task_*.json files.
     let mut results: Vec<TaskResult> = Vec::new();
@@ -527,6 +535,7 @@ fn cmd_merge(args: MergeArgs) {
     for r in &results {
         let s = by_size.entry(r.size).or_insert(SizeSummary {
             tasks_done: 0,
+            tasks_total: *tasks_total_by_size.get(&r.size).unwrap_or(&0),
             total_grfs: 0,
             over_steps_count: 0,
             best_score: None,
@@ -558,7 +567,7 @@ fn cmd_merge(args: MergeArgs) {
         s.notable.extend_from_slice(&r.notable);
     }
 
-    // Build best_exprs from notable (champions are always present in notable).
+    // Build best_exprs from notable.
     for s in by_size.values_mut() {
         if let Some(bs) = s.best_score {
             let rank_set: std::collections::HashSet<usize> =
@@ -578,17 +587,28 @@ fn cmd_merge(args: MergeArgs) {
     let mut sizes: Vec<usize> = by_size.keys().copied().collect();
     sizes.sort_unstable();
 
+    // Check completeness.
+    let total_done: usize = by_size.values().map(|s| s.tasks_done).sum();
+    let total_tasks: usize = manifest.len();
+    let is_partial = total_done < total_tasks;
+
     // Print header.
     let config = read_config(dir);
+    if is_partial {
+        println!(
+            "*** PARTIAL RESULTS: {}/{} tasks complete ***",
+            total_done, total_tasks
+        );
+    }
     println!(
-        "BBµ merge: allow_min={}, max_steps={}, opts={:?}",
+        "BBµ summarize: allow_min={}, max_steps={}, opts={:?}",
         config.allow_min,
         config.max_steps,
         PruningOpts::from(config.opts),
     );
     println!("{}", "=".repeat(90));
     println!(
-        "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
+        "{:>4}  {:>10}  {:>10}  {:>10}  {:>14}  {}",
         "size", "best_score", "over_steps", "#grfs", "tasks", "champion(s)"
     );
     println!("{}", "-".repeat(90));
@@ -598,6 +618,11 @@ fn cmd_merge(args: MergeArgs) {
         let score_str = match s.best_score {
             Some(v) => v.to_string(),
             None => "-".to_string(),
+        };
+        let tasks_str = if s.tasks_done < s.tasks_total {
+            format!("{}/{} (partial)", s.tasks_done, s.tasks_total)
+        } else {
+            format!("{}/{}", s.tasks_done, s.tasks_total)
         };
         let n_champions = s.best_exprs.len();
         let expr_str = if s.best_exprs.is_empty() {
@@ -613,12 +638,11 @@ fn cmd_merge(args: MergeArgs) {
             }
         };
         println!(
-            "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
-            sz, score_str, s.over_steps_count, s.total_grfs, s.tasks_done, expr_str,
+            "{:>4}  {:>10}  {:>10}  {:>10}  {:>14}  {}",
+            sz, score_str, s.over_steps_count, s.total_grfs, tasks_str, expr_str,
         );
     }
     println!("{}", "-".repeat(90));
-    println!("Total result files read: {}", results.len());
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -628,6 +652,6 @@ fn main() {
     match cli.cmd {
         Cmd::Gen(a) => cmd_gen(a),
         Cmd::Run(a) => cmd_run(a),
-        Cmd::Merge(a) => cmd_merge(a),
+        Cmd::Summarize(a) => cmd_summarize(a),
     }
 }

@@ -507,7 +507,6 @@ fn cmd_run(args: RunArgs) {
 /// Per-size aggregate built during summarize.
 struct SizeSummary {
     tasks_done: usize,
-    tasks_total: usize,
     total_grfs: usize,
     over_steps_count: usize,
     runtime_sec: f64,
@@ -522,10 +521,7 @@ fn cmd_summarize(args: SummarizeArgs) {
 
     // Count total tasks per size from the manifest.
     let manifest = read_manifest(dir);
-    let mut tasks_total_by_size: HashMap<usize, usize> = HashMap::new();
-    for t in &manifest {
-        *tasks_total_by_size.entry(t.size).or_insert(0) += 1;
-    }
+    let tasks_total = manifest.len();
 
     // Read all task_*.json files.
     let mut results: Vec<TaskResult> = Vec::new();
@@ -553,20 +549,19 @@ fn cmd_summarize(args: SummarizeArgs) {
         return;
     }
 
-    // Group by size.
-    let mut by_size: HashMap<usize, SizeSummary> = HashMap::new();
+    let size = results[0].size;
+    let mut s = SizeSummary {
+        tasks_done: 0,
+        total_grfs: 0,
+        over_steps_count: 0,
+        runtime_sec: 0.0,
+        best_score: None,
+        best_ranks: Vec::new(),
+        best_exprs: Vec::new(),
+        notable: Vec::new(),
+    };
     for r in &results {
-        let s = by_size.entry(r.size).or_insert(SizeSummary {
-            tasks_done: 0,
-            tasks_total: *tasks_total_by_size.get(&r.size).unwrap_or(&0),
-            total_grfs: 0,
-            over_steps_count: 0,
-            runtime_sec: 0.0,
-            best_score: None,
-            best_ranks: Vec::new(),
-            best_exprs: Vec::new(),
-            notable: Vec::new(),
-        });
+        assert_eq!(r.size, size);
         s.tasks_done += 1;
         s.total_grfs += r.total_grfs;
         s.over_steps_count += r.over_steps_count;
@@ -593,27 +588,21 @@ fn cmd_summarize(args: SummarizeArgs) {
     }
 
     // Build best_exprs from notable.
-    for s in by_size.values_mut() {
-        if let Some(bs) = s.best_score {
-            let rank_set: std::collections::HashSet<usize> =
-                s.best_ranks.iter().copied().collect();
-            s.best_exprs = s
-                .notable
-                .iter()
-                .filter(|n| n.score == Some(bs) && rank_set.contains(&n.rank))
-                .map(|n| n.expr.clone())
-                .collect();
-            s.best_exprs.sort();
-            s.best_exprs.dedup();
-        }
+    if let Some(bs) = s.best_score {
+        let rank_set: std::collections::HashSet<usize> =
+            s.best_ranks.iter().copied().collect();
+        s.best_exprs = s
+            .notable
+            .iter()
+            .filter(|n| n.score == Some(bs) && rank_set.contains(&n.rank))
+            .map(|n| n.expr.clone())
+            .collect();
+        s.best_exprs.sort();
+        s.best_exprs.dedup();
     }
 
-    // Sort sizes.
-    let mut sizes: Vec<usize> = by_size.keys().copied().collect();
-    sizes.sort_unstable();
-
     // Check completeness.
-    let total_done: usize = by_size.values().map(|s| s.tasks_done).sum();
+    let total_done: usize = s.tasks_done;
     let total_tasks: usize = manifest.len();
     let is_partial = total_done < total_tasks;
 
@@ -631,39 +620,31 @@ fn cmd_summarize(args: SummarizeArgs) {
         "size", "best_score", "over_steps", "#grfs", "tasks", "champion(s)"
     );
     println!("{}", "-".repeat(90));
-
-    for &sz in &sizes {
-        let s = &by_size[&sz];
-        let score_str = match s.best_score {
-            Some(v) => v.to_string(),
-            None => "-".to_string(),
-        };
-        let tasks_str = if s.tasks_done < s.tasks_total {
-            format!("{}/{} (partial)", s.tasks_done, s.tasks_total)
+    let score_str = match s.best_score {
+        Some(v) => v.to_string(),
+        None => "-".to_string(),
+    };
+    let tasks_str = format!("{}/{}", s.tasks_done, tasks_total);
+    let n_champions = s.best_exprs.len();
+    let expr_str = if s.best_exprs.is_empty() {
+        "-".to_string()
+    } else {
+        let shown = s.best_exprs.iter().take(args.max_champions);
+        let strs: Vec<&str> = shown.map(String::as_str).collect();
+        let rest = n_champions.saturating_sub(args.max_champions);
+        if rest > 0 {
+            format!("{} (+{} tied)", strs.join(", "), rest)
         } else {
-            format!("{}/{}", s.tasks_done, s.tasks_total)
-        };
-        let n_champions = s.best_exprs.len();
-        let expr_str = if s.best_exprs.is_empty() {
-            "-".to_string()
-        } else {
-            let shown = s.best_exprs.iter().take(args.max_champions);
-            let strs: Vec<&str> = shown.map(String::as_str).collect();
-            let rest = n_champions.saturating_sub(args.max_champions);
-            if rest > 0 {
-                format!("{} (+{} tied)", strs.join(", "), rest)
-            } else {
-                strs.join(", ")
-            }
-        };
-        println!(
-            "{:>4}  {:>10}  {:>10}  {:>10}  {:>14}  {}",
-            sz, score_str, s.over_steps_count, s.total_grfs, tasks_str, expr_str,
-        );
-    }
+            strs.join(", ")
+        }
+    };
+    println!(
+        "{:>4}  {:>10}  {:>10}  {:>10}  {:>14}  {}",
+        size, score_str, s.over_steps_count, s.total_grfs, tasks_str, expr_str,
+    );
     println!("{}", "-".repeat(90));
 
-    println!("\nTotal runtime: {:.0}s", by_size[&sizes[0]].runtime_sec);
+    println!("\nTotal runtime: {:.0}s", s.runtime_sec);
 
     if is_partial {
         println!(

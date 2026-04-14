@@ -9,7 +9,6 @@ use gen_rec::enumerate::{count_grf, seek_stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::pruning::PruningOpts;
 use gen_rec::simulate::simulate;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -295,24 +294,14 @@ impl Acc {
     }
 }
 
-/// Simulate one batch in parallel, fold results into `acc`.
+/// Simulate one batch serially, fold results into `acc`.
 fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
-    if batch.is_empty() {
-        return;
-    }
-    let outcomes: Vec<(usize, String, Option<u64>, u64)> = batch
-        .par_iter()
-        .map(|(rank, grf)| {
-            let (sim_result, steps) = simulate(grf, &[], config.max_steps);
-            let score = sim_result.into_value().map(|v| {
-                // score ≤ steps ≤ max_steps ≤ u64::MAX, so this never fails.
-                v.to_u64().unwrap_or(u64::MAX)
-            });
-            (*rank, grf.to_string(), score, steps)
-        })
-        .collect();
+    for (rank, grf) in batch.drain(..) {
+        let expr = grf.to_string();
+        let (sim_result, steps) = simulate(&grf, &[], config.max_steps);
+        // score ≤ steps ≤ max_steps ≤ u64::MAX, so to_u64() never fails.
+        let score = sim_result.into_value().map(|v| v.to_u64().unwrap_or(u64::MAX));
 
-    for (rank, expr, score, steps) in outcomes {
         acc.total_grfs += 1;
         match score {
             None => {
@@ -327,7 +316,6 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
                 });
             }
             Some(s) => {
-                // Update champion.
                 match acc.best_score {
                     None => {
                         acc.best_score = Some(s);
@@ -342,8 +330,12 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
                     }
                     _ => {}
                 }
-                // Save if notable.
-                if s >= config.save_min_score || steps >= config.save_min_steps {
+                // Always save champion-scored GRFs so best_ranks entries are
+                // always present in notable (checked after updating best_score).
+                if s >= config.save_min_score
+                    || steps >= config.save_min_steps
+                    || acc.best_score == Some(s)
+                {
                     acc.notable.push(NotableEntry {
                         rank,
                         expr,
@@ -356,7 +348,6 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
             }
         }
     }
-    batch.clear();
 }
 
 /// Run one task and return the result.  Does NOT write to disk.
@@ -429,13 +420,6 @@ fn run_task(task: &TaskEntry, config: &Config, dir: &Path, batch_size: usize) {
 // ── run ───────────────────────────────────────────────────────────────────────
 
 fn cmd_run(args: RunArgs) {
-    if let Some(t) = args.threads {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(t)
-            .build_global()
-            .expect("Cannot configure Rayon thread pool");
-    }
-
     let config = read_config(&args.dir);
 
     match (args.task_id, args.all) {
@@ -449,23 +433,48 @@ fn cmd_run(args: RunArgs) {
             run_task(task, &config, &args.dir, args.batch_size);
         }
         (_, true) => {
-            // All pending tasks.
+            // All pending tasks — one task per worker thread.
+            let n_threads = args.threads.unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            });
+
             let tasks = read_manifest(&args.dir);
-            let pending: Vec<&TaskEntry> = tasks
-                .iter()
+            let pending: Vec<TaskEntry> = tasks
+                .into_iter()
                 .filter(|t| !result_path(&args.dir, t.task_id).exists())
                 .collect();
 
             println!(
-                "Found {} pending tasks out of {} total  [threads={}]",
+                "Found {} pending tasks  [threads={}]",
                 pending.len(),
-                tasks.len(),
-                rayon::current_num_threads(),
+                n_threads,
             );
 
+            use std::sync::{Arc, Mutex};
+            use std::collections::VecDeque;
+            let queue = Arc::new(Mutex::new(pending.into_iter().collect::<VecDeque<_>>()));
             let total_start = Instant::now();
-            for task in pending {
-                run_task(task, &config, &args.dir, args.batch_size);
+
+            let handles: Vec<_> = (0..n_threads)
+                .map(|_| {
+                    let queue = Arc::clone(&queue);
+                    let config = config.clone();
+                    let dir = args.dir.clone();
+                    let batch_size = args.batch_size;
+                    std::thread::spawn(move || loop {
+                        let task = queue.lock().unwrap().pop_front();
+                        match task {
+                            None => break,
+                            Some(t) => run_task(&t, &config, &dir, batch_size),
+                        }
+                    })
+                })
+                .collect();
+
+            for h in handles {
+                h.join().unwrap();
             }
             println!("All tasks done  [{:.2}s total]", total_start.elapsed().as_secs_f64());
         }
@@ -534,7 +543,7 @@ fn cmd_merge(args: MergeArgs) {
         s.total_grfs += r.total_grfs;
         s.over_steps_count += r.over_steps_count;
 
-        // Merge champion.
+        // Merge champion ranks.
         if let Some(score) = r.best_score {
             match s.best_score {
                 None => {
@@ -554,7 +563,7 @@ fn cmd_merge(args: MergeArgs) {
         s.notable.extend_from_slice(&r.notable);
     }
 
-    // Build best_exprs: find notable entries whose rank is in best_ranks.
+    // Build best_exprs from notable (champions are always present in notable).
     for s in by_size.values_mut() {
         if let Some(bs) = s.best_score {
             let rank_set: std::collections::HashSet<usize> =
@@ -562,9 +571,7 @@ fn cmd_merge(args: MergeArgs) {
             s.best_exprs = s
                 .notable
                 .iter()
-                .filter(|n| {
-                    n.score == Some(bs) && rank_set.contains(&n.rank)
-                })
+                .filter(|n| n.score == Some(bs) && rank_set.contains(&n.rank))
                 .map(|n| n.expr.clone())
                 .collect();
             s.best_exprs.sort();

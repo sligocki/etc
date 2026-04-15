@@ -34,6 +34,8 @@ enum Cmd {
     Gen(GenArgs),
     /// Execute one task (--task-id) or all pending tasks (--all).
     Run(RunArgs),
+    /// Simulate a rank range directly and print one result line per GRF.
+    Sim(SimArgs),
     /// Read all result files and print a per-size champion summary.
     Summarize(SummarizeArgs),
 }
@@ -90,6 +92,22 @@ struct RunArgs {
     /// Simulation batch size (tune to your CPU count × ~200).
     #[arg(long, default_value_t = 2_000)]
     batch_size: usize,
+}
+
+#[derive(Args, Debug)]
+struct SimArgs {
+    /// Task workspace directory (reads size/opts/allow_min from config.json).
+    dir: PathBuf,
+
+    /// 0-based rank of the first GRF to simulate.
+    start: usize,
+
+    /// Number of GRFs to simulate.
+    count: usize,
+
+    /// Override max_steps from config.
+    #[arg(long)]
+    max_steps: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -503,6 +521,38 @@ fn cmd_run(args: RunArgs) {
     }
 }
 
+// ── sim ───────────────────────────────────────────────────────────────────────
+
+fn cmd_sim(args: SimArgs) {
+    let config = read_config(&args.dir);
+    let opts: PruningOpts = config.opts.into();
+    let max_steps = args.max_steps.unwrap_or(config.max_steps);
+
+    // Config doesn't store size; read it from the manifest.
+    let manifest = read_manifest(&args.dir);
+    let size = manifest.first().expect("empty manifest").size;
+
+    println!(
+        "size={}  ranks=[{}, {})  max_steps={}",
+        size, args.start, args.start + args.count, max_steps,
+    );
+
+    let mut rank = args.start;
+    seek_stream_grf(
+        size, 0, config.allow_min, opts,
+        args.start, args.count,
+        &mut |grf: &Grf| {
+            let expr = grf.to_string();
+            let (sim_result, steps) = simulate(grf, &[], max_steps);
+            match sim_result.into_value() {
+                None    => println!("rank={rank:>12}  unknown(over_steps)  steps={steps}  {expr}"),
+                Some(s) => println!("rank={rank:>12}  halted  score={s}  steps={steps}  {expr}"),
+            }
+            rank += 1;
+        },
+    );
+}
+
 // ── merge ─────────────────────────────────────────────────────────────────────
 
 fn merge_hist(mut combined: HashMap<u64, u64>, other: &HashMap<u64, u64>) -> HashMap<u64, u64> {
@@ -672,6 +722,7 @@ fn main() {
     match cli.cmd {
         Cmd::Gen(a) => cmd_gen(a),
         Cmd::Run(a) => cmd_run(a),
+        Cmd::Sim(a) => cmd_sim(a),
         Cmd::Summarize(a) => cmd_summarize(a),
     }
 }

@@ -94,12 +94,11 @@ pub fn adt(n: usize) -> Grf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulate::simulate;
+    use crate::simulate::{simulate, Num};
 
-    // TODO: use version from simulate::tests
-    fn eval(grf: &Grf, args: &[u64]) -> Option<u64> {
+    fn eval(grf: &Grf, args: &[Num]) -> Option<Num> {
         let (result, _steps) = simulate(grf, args, 1_000_000);
-        result.into_value().map(|v| u64::try_from(v).unwrap())
+        result.into_value()
     }
 
     #[test]
@@ -162,7 +161,7 @@ mod tests {
         // RepDiag[Tri](3) = Tri^4(5) = Tri(Tri(Tri(15))) = Tri(Tri(120)) = Tri(7260) = 26,357,430
         let (result, _) = simulate(&dt, &[3], 200_000_000);
         assert_eq!(
-            result.into_value().map(|v| u64::try_from(v).unwrap()),
+            result.into_value(),
             Some(26_357_430)
         );
     }

@@ -7,9 +7,8 @@ use clap::Parser;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::pruning::PruningOpts;
-use gen_rec::simulate::simulate;
+use gen_rec::simulate::{simulate, Num};
 use rayon::prelude::*;
-use rug::Integer;
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 
@@ -41,7 +40,7 @@ struct Args {
 
 /// Aggregate result for one batch.
 struct BatchResult {
-    best_value: Option<Integer>,
+    best_value: Option<Num>,
     best_exprs: Vec<String>,
     timed_out: usize,
     total_steps: u64,
@@ -53,31 +52,22 @@ struct SizeResult {
     size: usize,
     total: usize,
     timed_out: usize,
-    best_value: Option<Integer>,
+    best_value: Option<Num>,
     best_exprs: Vec<String>,
     total_steps: u64,
     max_steps_single: u64,
 }
 
-fn fmt_integer(v: &Integer) -> String {
-    let s = v.to_string();
-    if s.len() <= 22 {
-        s
-    } else {
-        let log10 = v.significant_bits() as f64 * std::f64::consts::LOG10_2;
-        format!("~10^{:.2} ({} digits)", log10, s.len())
-    }
-}
 
 /// Simulate a batch of GRFs in parallel and return aggregate results.
 fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
-    let mut best_val: Option<Integer> = None;
+    let mut best_val: Option<Num> = None;
     let mut best_exprs: Vec<String> = Vec::new();
     let mut timed_out = 0usize;
     let mut total_steps = 0u64;
     let mut max_steps_single = 0u64;
 
-    let outcomes: Vec<(Option<Integer>, u64, String)> = batch
+    let outcomes: Vec<(Option<Num>, u64, String)> = batch
         .par_iter()
         .map(|grf| {
             let (result, steps) = simulate(grf, &[], max_steps);
@@ -119,7 +109,7 @@ fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
 /// Merge a BatchResult into per-size accumulators.
 fn merge_batch(
     br: BatchResult,
-    size_best_val: &mut Option<Integer>,
+    size_best_val: &mut Option<Num>,
     size_best_exprs: &mut Vec<String>,
     size_timed_out: &mut usize,
     size_total_steps: &mut u64,
@@ -215,7 +205,7 @@ fn main() {
 
         let mut total = 0usize;
         let mut size_timed_out = 0usize;
-        let mut size_best_val: Option<Integer> = None;
+        let mut size_best_val: Option<Num> = None;
         let mut size_best_exprs: Vec<String> = Vec::new();
         let mut size_total_steps: u64 = 0;
         let mut size_max_steps: u64 = 0;
@@ -226,7 +216,7 @@ fn main() {
         let sim_time_cell = Cell::new(Duration::ZERO);
 
         let flush = |batch: &mut Vec<Grf>,
-                     best_val: &mut Option<Integer>,
+                     best_val: &mut Option<Num>,
                      best_exprs: &mut Vec<String>,
                      timed_out: &mut usize,
                      total_steps: &mut u64,
@@ -283,7 +273,7 @@ fn main() {
         }
 
         let best_str = match &size_best_val {
-            Some(v) => fmt_integer(v),
+            Some(v) => v.to_string(),
             None => "-".to_string(),
         };
 
@@ -369,7 +359,7 @@ fn main() {
     println!("{}", "-".repeat(90));
     for r in &results {
         let max_val_str = match &r.best_value {
-            Some(v) => fmt_integer(v),
+            Some(v) => v.to_string(),
             None => "-".to_string(),
         };
         let expr_str = if r.best_exprs.is_empty() {

@@ -322,8 +322,7 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
     for (rank, grf) in batch.drain(..) {
         let expr = grf.to_string();
         let (sim_result, steps) = simulate(&grf, &[], config.max_steps);
-        // score ≤ steps ≤ max_steps ≤ u64::MAX, so to_u64() never fails.
-        let score = sim_result.into_value().map(|v| v.to_u64().unwrap_or(u64::MAX));
+        let score = sim_result.into_value();
 
         acc.total_grfs += 1;
         *acc.steps_hist.entry(steps).or_insert(0) += 1;

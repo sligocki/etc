@@ -197,8 +197,10 @@ struct TaskResult {
     best_ranks: Vec<usize>,
     elapsed_secs: f64,
     /// score → count of halted GRFs with that score.
+    #[serde(default)]
     score_hist: HashMap<u64, u64>,
     /// steps → count of all GRFs that took that many steps.
+    #[serde(default)]
     steps_hist: HashMap<u64, u64>,
     // Per-GRF records for notable entries.
     notable: Vec<NotableEntry>,

@@ -504,6 +504,24 @@ fn cmd_run(args: RunArgs) {
 
 // ── merge ─────────────────────────────────────────────────────────────────────
 
+fn merge_hist(mut combined: HashMap<u64, u64>, other: &HashMap<u64, u64>) -> HashMap<u64, u64> {
+    for (key, value) in other {
+        combined.entry(*key)
+                .and_modify(|v| *v += *value)
+                .or_insert(*value);
+    }
+    combined
+}
+
+fn print_hist(hist: HashMap<u64, u64>) {
+    println!("  Total: {:>14}", hist.values().sum::<u64>());
+    let mut sorted_entries: Vec<_> = hist.iter().collect();
+    sorted_entries.sort_by_key(|&(key, _value)| key);
+    for (val, count) in sorted_entries {
+        println!("  {:>5}: {:>14}", val, count);
+    }
+}
+
 /// Per-size aggregate built during summarize.
 struct SizeSummary {
     tasks_done: usize,
@@ -560,6 +578,8 @@ fn cmd_summarize(args: SummarizeArgs) {
         best_exprs: Vec::new(),
         notable: Vec::new(),
     };
+    let mut score_hist : HashMap<u64, u64> = HashMap::new();
+    let mut steps_hist : HashMap<u64, u64> = HashMap::new();
     for r in &results {
         assert_eq!(r.size, size);
         s.tasks_done += 1;
@@ -585,6 +605,8 @@ fn cmd_summarize(args: SummarizeArgs) {
             }
         }
         s.notable.extend_from_slice(&r.notable);
+        score_hist = merge_hist(score_hist, &r.score_hist);
+        steps_hist = merge_hist(steps_hist, &r.steps_hist);
     }
 
     // Build best_exprs from notable.
@@ -606,49 +628,37 @@ fn cmd_summarize(args: SummarizeArgs) {
     let total_tasks: usize = manifest.len();
     let is_partial = total_done < total_tasks;
 
-    // Print header.
-    let config = read_config(dir);
-    println!(
-        "BBµ summarize: allow_min={}, max_steps={}, opts={:?}",
-        config.allow_min,
-        config.max_steps,
-        PruningOpts::from(config.opts),
-    );
-    println!("{}", "=".repeat(90));
-    println!(
-        "{:>4}  {:>10}  {:>10}  {:>10}  {:>14}  {}",
-        "size", "best_score", "over_steps", "#grfs", "tasks", "champion(s)"
-    );
-    println!("{}", "-".repeat(90));
+    println!();
+    println!("Steps Histogram");
+    print_hist(steps_hist);
+    println!();
+    println!("Score Histogram");
+    print_hist(score_hist);
+    println!();
+
+    println!("Size: {}", size);
     let score_str = match s.best_score {
         Some(v) => v.to_string(),
         None => "-".to_string(),
     };
-    let tasks_str = format!("{}/{}", s.tasks_done, tasks_total);
-    let n_champions = s.best_exprs.len();
-    let expr_str = if s.best_exprs.is_empty() {
-        "-".to_string()
-    } else {
-        let shown = s.best_exprs.iter().take(args.max_champions);
-        let strs: Vec<&str> = shown.map(String::as_str).collect();
-        let rest = n_champions.saturating_sub(args.max_champions);
-        if rest > 0 {
-            format!("{} (+{} tied)", strs.join(", "), rest)
-        } else {
-            strs.join(", ")
-        }
-    };
-    println!(
-        "{:>4}  {:>10}  {:>10}  {:>10}  {:>14}  {}",
-        size, score_str, s.over_steps_count, s.total_grfs, tasks_str, expr_str,
-    );
-    println!("{}", "-".repeat(90));
+    println!("Max Score: {}", score_str);
+    println!("# Over Steps: {}", s.over_steps_count);
+    println!("Total GRFs: {}", s.total_grfs);
+    println!("Tasks Complete: {}/{}", s.tasks_done, tasks_total);
+    println!();
 
-    println!("\nTotal runtime: {:.0}s", s.runtime_sec);
+    println!("Champions:");
+    for champ in s.best_exprs {
+        println!("  {}", champ);
+    }
+    println!();
+
+    println!("Total runtime: {:.0}s", s.runtime_sec);
+    println!();
 
     if is_partial {
         println!(
-            "\n*** PARTIAL RESULTS: {}/{} tasks complete ***",
+            "*** PARTIAL RESULTS: {}/{} tasks complete ***",
             total_done, total_tasks
         );
     }

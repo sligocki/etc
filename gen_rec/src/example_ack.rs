@@ -1,5 +1,6 @@
 /// A hand-built GRF encoding of a function with Ackermann growth.
 use crate::grf::Grf;
+use crate::examples::{constant, rep_succ, diag_rep, diag_succ};
 
 // List <-> Integer encoding:
 //    We encode a list of Nat into a Nat by using run lengths of 1s in binary encoding.
@@ -184,28 +185,49 @@ pub fn ack_loop() -> Grf {
 }
 
 /// AckWorm(x): A version of Hydra game/Goodstein sequence
-///   Returns smallest m such that AckLoop(m, x) = []
+///     Equivalent to algorithm:
+///         N = 0
+///         while list x is not empty and not all 0s:
+///             N += 1
+///             k = pop_last(x)
+///             if k > 0: append N copies of (k-1) to x
+///         return N
+///     Guaranteed to halt on all inputs, but it grows faster than all PRF
+/// M(AckLoop)
 /// Arity: 1, Size: 86
 pub fn ack_worm() -> Grf {
     Grf::Min(Box::new(ack_loop()))
 }
 
-// TODO
-// /// ack(n) dominates any PRF
-// /// Arity: 0, Size:
-// pub fn ack() -> Grf {
-//     Grf::comp(ack_worm(), )
-// }
+/// Ack(n) := AckWorm([n])
+///     Dominates all PRF
+/// C(AckWorm, C(Append, P(1,1), Z1))
+/// Arity: 1, Size: 116
+pub fn ack() -> Grf {
+    Grf::comp(ack_worm(), vec![Grf::comp(append(), vec![Grf::Proj(1,1), Grf::Zero(1)])])
+}
 
-// pub fn rep_ack() -> Grf {
+/// RepAck(k,n) := Ack^k(n+1)
+/// R(S, C(Ack, P(3,2)))
+/// Arity: 2, Size: 120
+pub fn rep_ack() -> Grf {
+    rep_succ(ack())
+}
 
-// }
+/// RepRepAck(k,n) := (\x. RepAck(x,x))^k (n+1)
+/// R(S, C(RepAck, P(3,2), P(3,2)))
+/// Arity: 2, Size: 125
+pub fn rep_rep_ack() -> Grf {
+    diag_rep(rep_ack())
+}
 
-// /// A GRF that computes a number > Graham's number
-// /// Arity: 0, Size: ?
-// pub fn graham() -> Grf {
-
-// }
+/// A GRF that computes a number > Graham's number
+/// C(C(RepRepAck, S, S), K[1])
+/// Arity: 0, Size: 132
+pub fn graham() -> Grf {
+    // RRA(2,2) = RA^2(3) = RA(Ack^3(4))
+    Grf::comp(diag_succ(rep_rep_ack()), vec![constant(1, 0)])
+}
 
 #[cfg(test)]
 mod tests {
@@ -259,6 +281,10 @@ mod tests {
             ("ack_step", &ack_step, 2, 80),
             ("ack_loop", &ack_loop, 2, 85),
             ("ack_worm", &ack_worm, 1, 86),
+            ("ack", &ack, 1, 116),
+            ("rep_ack", &rep_ack, 2, 120),
+            ("rep_rep_ack", &rep_rep_ack, 2, 125),
+            ("graham", &graham, 0, 132),
         ];
         for (name, f, arity, size) in cases {
             let g = f();
@@ -497,8 +523,6 @@ mod tests {
 
     #[test]
     fn test_ack_worm_small() {
-        use crate::optimize::opt_inline_proj;
-
         let f = ack_worm();
 
         // [1] -> [0] = 0
@@ -549,10 +573,25 @@ mod tests {
             let l = vec![1; n];
             assert_eq!(eval(&f, &[list2int(&l)]), Some(2_u64.pow(n as u32) - 1));
         }
+    }
 
-        // Proj inline optimization
-        assert_eq!(f.size(), 86);
-        let opt = opt_inline_proj(f);
-        assert_eq!(opt.size(), 79);
+    #[test]
+    fn ack_worm_compress() {
+        use crate::optimize::opt_inline_proj;
+
+        let before = ack_worm();
+        assert_eq!(before.size(), 86);
+        let after = opt_inline_proj(before);
+        assert_eq!(after.size(), 79);
+    }
+
+    #[test]
+    fn graham_compress() {
+        use crate::optimize::opt_inline_proj;
+
+        let before = graham();
+        assert_eq!(before.size(), 132);
+        let after = opt_inline_proj(before);
+        assert_eq!(after.size(), 121);
     }
 }

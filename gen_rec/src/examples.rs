@@ -72,25 +72,6 @@ pub fn ack_diag(n: usize, mut f: Grf) -> Grf {
     diag_succ(f)
 }
 
-/// Diagonalization across repeated application of a function
-///   RepDiag[f](x) = f^{x+1}(x+2).
-///   RepDiag[f] = C(R(S, C(f, P(3,2))), S, S) ∈ GRF_1.
-pub fn rep_diag(f: Grf) -> Grf {
-    let step = Grf::comp(f, vec![Grf::Proj(3, 2)]);
-    let outer = Grf::rec(Grf::Succ, step);
-    Grf::comp(outer, vec![Grf::Succ, Grf::Succ])
-}
-
-/// Ackermann Diagonalized Triangle
-/// adt[n] = RepDiag^n[Tri]
-pub fn adt(n: usize) -> Grf {
-    let mut f = triangular();
-    for _ in 0..n {
-        f = rep_diag(f);
-    }
-    f
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,41 +123,19 @@ mod tests {
     }
 
     #[test]
-    fn test_diag_tri() {
-        // RepDiag[Tri](n) = Tri^{n+1}(n+2)
-        let dt = adt(1);
-        assert_eq!(dt.arity(), 1);
-        assert_eq!(dt.size(), 14);
-
-        // RepDiag[Tri](1) = Tri^2(3) = Tri(Tri(3)) = Tri(6) = 21
-        assert_eq!(eval(&dt, &[1]), Some(21));
-        // RepDiag[Tri](2) = Tri^3(4) = Tri(Tri(10)) = Tri(55) = 1540
-        assert_eq!(eval(&dt, &[2]), Some(1540));
-    }
-
-    #[test]
-    #[ignore = "Too slow for standard testing"]
-    fn test_diag_tri_big() {
-        let dt = adt(1);
-        // RepDiag[Tri](3) = Tri^4(5) = Tri(Tri(Tri(15))) = Tri(Tri(120)) = Tri(7260) = 26,357,430
-        let (result, _) = simulate(&dt, &[3], 200_000_000);
-        assert_eq!(result.into_value(), Some(26_357_430));
-    }
-
-    #[test]
     fn test_champions() {
         // 13: K[6]
         let c13 = constant(6, 0);
         assert_eq!(c13.size(), 13);
         assert_eq!(eval(&c13, &[]), Some(6));
 
-        // 14: C(RepDiag[S], K[2])
-        let c14 = Grf::comp(rep_diag(Grf::Succ), vec![constant(2, 0)]);
+        // 14: C(AckDiag[0,S], K[2])
+        let c14 = Grf::comp(ack_diag(0, Grf::Succ), vec![constant(2, 0)]);
         assert_eq!(c14.size(), 14);
         assert_eq!(eval(&c14, &[]), Some(7));
 
-        // 16: C(RepDiag[Plus[2]], K[2])
-        let c16 = Grf::comp(rep_diag(plus_n(2)), vec![constant(2, 0)]);
+        // 16: C(AckDiag[0,Plus[2]], K[2])
+        let c16 = Grf::comp(ack_diag(0, plus_n(2)), vec![constant(2, 0)]);
         assert_eq!(c16.size(), 16);
         assert_eq!(eval(&c16, &[]), Some(10));
 
@@ -185,8 +144,8 @@ mod tests {
         assert_eq!(c17.size(), 17);
         assert_eq!(eval(&c17, &[]), Some(15));
 
-        // 18: C(RepDiag[Tri], K[1])
-        let c18 = Grf::comp(rep_diag(triangular()), vec![constant(1, 0)]);
+        // 18: C(AckDiag[0,Tri], K[1])
+        let c18 = Grf::comp(ack_diag(0, triangular()), vec![constant(1, 0)]);
         assert_eq!(c18.size(), 18);
         assert_eq!(eval(&c18, &[]), Some(21));
 
@@ -195,9 +154,26 @@ mod tests {
         assert_eq!(c19.size(), 19);
         assert_eq!(eval(&c19, &[]), Some(39));
 
-        // 20: C(RepDiag[Tri], K[2])
-        let c20 = Grf::comp(rep_diag(triangular()), vec![constant(2, 0)]);
+        // 20: C(AckDiag[0,Tri], K[2])
+        let c20 = Grf::comp(ack_diag(0, triangular()), vec![constant(2, 0)]);
         assert_eq!(c20.size(), 20);
         assert_eq!(eval(&c20, &[]), Some(1540));
+    }
+
+    #[test]
+    #[ignore = "Too slow for standard testing"]
+    fn test_champions_big() {
+        // Runtime: 2s
+        // C(AckDiag[0,Tri], K[3]) -> 26_357_430
+        let t22 = Grf::comp(ack_diag(0, triangular()), vec![constant(3, 0)]);
+        assert_eq!(t22.size(), 22);
+        let (result, _) = simulate(&t22, &[], 200_000_000);
+        assert_eq!(result.into_value(), Some(26_357_430));
+
+        // C(AckDiag[2,S], K[1]) -> > 10^13
+        let c22 = Grf::comp(ack_diag(2, Grf::Succ), vec![constant(1, 0)]);
+        assert_eq!(c22.size(), 22);
+        // Too large to reasonably simulate
+        // assert_eq!(result.into_value(), Some(22_539_988_369_407));
     }
 }

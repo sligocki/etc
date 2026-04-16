@@ -11,9 +11,9 @@
 ///   3. Redundancy by canonical target (what smaller GRF is it equivalent to?)
 use clap::Parser;
 use gen_rec::enumerate::{count_grf, stream_grf};
+use gen_rec::fingerprint::{canonical_inputs, compute_fp, Fingerprint};
 use gen_rec::grf::Grf;
 use gen_rec::pruning::PruningOpts;
-use gen_rec::simulate::simulate;
 use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
@@ -48,46 +48,6 @@ struct Args {
     top_targets: usize,
 }
 
-// A fingerprint is one entry per canonical input: None = diverged, Some(s) = output.
-type Fingerprint = Vec<Option<String>>;
-
-fn compute_fp(grf: &Grf, inputs: &[Vec<u64>], max_steps: u64) -> Fingerprint {
-    inputs
-        .iter()
-        .map(|inp| {
-            let (result, _) = simulate(grf, inp, max_steps);
-            result.into_value().map(|v| v.to_string())
-        })
-        .collect()
-}
-
-/// Generate the canonical input set for a given arity.
-/// For arity k, produce all k-tuples drawn from {0 .. per_dim-1}
-/// where per_dim is chosen so the total stays ≤ ~32 test cases.
-fn canonical_inputs(arity: usize) -> Vec<Vec<u64>> {
-    if arity == 0 {
-        return vec![vec![]];
-    }
-    let per_dim: u64 = match arity {
-        1 => 8, // 8 inputs
-        2 => 4, // 16 inputs
-        3 => 3, // 27 inputs
-        _ => 2, // 2^arity inputs
-    };
-    let mut result: Vec<Vec<u64>> = vec![vec![]];
-    for _ in 0..arity {
-        let mut next = Vec::new();
-        for prefix in &result {
-            for v in 0..per_dim {
-                let mut row = prefix.clone();
-                row.push(v);
-                next.push(row);
-            }
-        }
-        result = next;
-    }
-    result
-}
 
 /// Classify the argument-list pattern of a C(R(g,h), f1,...,fm) expression.
 ///

@@ -39,6 +39,16 @@ pub enum Grf {
 }
 
 impl Grf {
+    /// Convenience constructor for Rec: boxes both sub-functions.
+    pub fn rec(g: Self, h: Self) -> Self {
+        Grf::Rec(Box::new(g), Box::new(h))
+    }
+
+    /// Convenience constructor for Min: boxes the inner function.
+    pub fn min(f: Self) -> Self {
+        Grf::Min(Box::new(f))
+    }
+
     /// Convenience constructor for Comp: derives and stores the arity of the args.
     ///
     /// Panics if `args` is empty (Comp requires at least 1 argument function).

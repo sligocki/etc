@@ -10,27 +10,21 @@ use crate::examples::{constant, rep_succ, diag_rep, diag_succ};
 /// R(Z0, P(2,1))
 /// Arity: 1, Size: 3
 pub fn pred() -> Grf {
-    Grf::Rec(Box::new(Grf::Zero(0)), Box::new(Grf::Proj(2, 1)))
+    Grf::rec(Grf::Zero(0), Grf::Proj(2, 1))
 }
 
 /// Not(x) := 1 if x = 0, else 0
 /// R(C(S, Z0), Z2)
 /// Arity: 1, Size: 5
 pub fn not() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::comp(Grf::Succ, vec![Grf::Zero(0)])),
-        Box::new(Grf::Zero(2)),
-    )
+    Grf::rec(Grf::comp(Grf::Succ, vec![Grf::Zero(0)]), Grf::Zero(2))
 }
 
 /// Sgn(x) := 0 if x = 0, else 1
 /// R(Z0, C(S, Z2))
 /// Arity: 1, Size: 5
 pub fn sgn() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::Zero(0)),
-        Box::new(Grf::comp(Grf::Succ, vec![Grf::Zero(2)])),
-    )
+    Grf::rec(Grf::Zero(0), Grf::comp(Grf::Succ, vec![Grf::Zero(2)]))
 }
 
 /// Plus2(x) := x + 2
@@ -44,52 +38,37 @@ pub fn plus2() -> Grf {
 /// R(Z0, C(Plus2, P(2,2)))
 /// Arity: 1, Size: 7
 pub fn double() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::Zero(0)),
-        Box::new(Grf::comp(plus2(), vec![Grf::Proj(2, 2)])),
-    )
+    Grf::rec(Grf::Zero(0), Grf::comp(plus2(), vec![Grf::Proj(2, 2)]))
 }
 
 /// RMonus(x,y) := y ∸ x
 /// R(P(1,1), C(Pred, P(3,2)))
 /// Arity: 2, Size: 7
 pub fn rmonus() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::Proj(1, 1)),
-        Box::new(Grf::comp(pred(), vec![Grf::Proj(3, 2)])),
-    )
+    Grf::rec(Grf::Proj(1, 1), Grf::comp(pred(), vec![Grf::Proj(3, 2)]))
 }
 
 /// Mod2(x) := x mod 2
 /// R(Z0, C(Not, P(2,2)))
 /// Arity: 1, Size: 9
 pub fn mod2() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::Zero(0)),
-        Box::new(Grf::comp(not(), vec![Grf::Proj(2, 2)])),
-    )
+    Grf::rec(Grf::Zero(0), Grf::comp(not(), vec![Grf::Proj(2, 2)]))
 }
 
 /// Shift(k,x) := x · 2^k
 /// R(P(1,1), C(Double, P(3,2)))
 /// Arity: 2, Size: 11
 pub fn shift() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::Proj(1, 1)),
-        Box::new(Grf::comp(double(), vec![Grf::Proj(3, 2)])),
-    )
+    Grf::rec(Grf::Proj(1, 1), Grf::comp(double(), vec![Grf::Proj(3, 2)]))
 }
 
 /// RMonusOdd(x,y) := y ∸ (2x + 1)
 /// R(Pred, C(Pred, C(Pred, P(3,2))))
 /// Arity: 2, Size: 13
 pub fn rmonus_odd() -> Grf {
-    Grf::Rec(
-        Box::new(pred()),
-        Box::new(Grf::comp(
-            pred(),
-            vec![Grf::comp(pred(), vec![Grf::Proj(3, 2)])],
-        )),
+    Grf::rec(
+        pred(),
+        Grf::comp(pred(), vec![Grf::comp(pred(), vec![Grf::Proj(3, 2)])]),
     )
 }
 
@@ -97,17 +76,14 @@ pub fn rmonus_odd() -> Grf {
 /// M(RMonusOdd)
 /// Arity: 1, Size: 14
 pub fn div2() -> Grf {
-    Grf::Min(Box::new(rmonus_odd()))
+    Grf::min(rmonus_odd())
 }
 
 /// Div2k(k,x) := ⌊x / 2^k⌋
 /// R(P(1,1), C(Div2, P(3,2)))
 /// Arity: 2, Size: 18
 pub fn div2k() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::Proj(1, 1)),
-        Box::new(Grf::comp(div2(), vec![Grf::Proj(3, 2)])),
-    )
+    Grf::rec(Grf::Proj(1, 1), Grf::comp(div2(), vec![Grf::Proj(3, 2)]))
 }
 
 /// Append(k,x) := x · 2^k ∸ Sgn(k)
@@ -126,12 +102,9 @@ pub fn append() -> Grf {
 /// R(P(2,2), C(SafeBlock, P(4,3), P(4,2)))
 /// Arity: 3, Size: 31
 pub fn append_n() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::Proj(2, 2)),
-        Box::new(Grf::comp(
-            append(),
-            vec![Grf::Proj(4, 3), Grf::Proj(4, 2)],
-        )),
+    Grf::rec(
+        Grf::Proj(2, 2),
+        Grf::comp(append(), vec![Grf::Proj(4, 3), Grf::Proj(4, 2)]),
     )
 }
 
@@ -147,7 +120,7 @@ pub fn bit() -> Grf {
 /// M(Bit)
 /// Arity: 1, Size: 29
 pub fn pop_k() -> Grf {
-    Grf::Min(Box::new(bit()))
+    Grf::min(bit())
 }
 
 /// AckStep(n, x): Apply one step of Ackermann worm to list x
@@ -175,12 +148,9 @@ pub fn ack_step() -> Grf {
 /// R(P(1,1), C(AckStep, P(3,1), P(3,2)))
 /// Arity: 2, Size: 85
 pub fn ack_loop() -> Grf {
-    Grf::Rec(
-        Box::new(Grf::Proj(1, 1)),
-        Box::new(Grf::comp(
-            ack_step(),
-            vec![Grf::Proj(3, 1), Grf::Proj(3, 2)],
-        )),
+    Grf::rec(
+        Grf::Proj(1, 1),
+        Grf::comp(ack_step(), vec![Grf::Proj(3, 1), Grf::Proj(3, 2)]),
     )
 }
 
@@ -196,7 +166,7 @@ pub fn ack_loop() -> Grf {
 /// M(AckLoop)
 /// Arity: 1, Size: 86
 pub fn ack_worm() -> Grf {
-    Grf::Min(Box::new(ack_loop()))
+    Grf::min(ack_loop())
 }
 // AckWorm([4]) = 41 2^38 - 1 = [1,1,0,0,38]
 

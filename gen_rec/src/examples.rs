@@ -26,12 +26,12 @@ pub fn plus_n(n: usize) -> Grf {
 /// Square = polygonal(2) = \x. x^2
 pub fn polygonal(n: usize) -> Grf {
     // R(Z0, R(S, C(Plus[n], P^3_2)))
-    Grf::Rec(
-        Box::new(Grf::Zero(0)),
-        Box::new(Grf::Rec(
-            Box::new(Grf::Succ),
-            Box::new(Grf::comp(plus_n(n), vec![Grf::Proj(3, 2)])),
-        )),
+    Grf::rec(
+        Grf::Zero(0),
+        Grf::rec(
+            Grf::Succ,
+            Grf::comp(plus_n(n), vec![Grf::Proj(3, 2)]),
+        ),
     )
 }
 
@@ -46,14 +46,14 @@ pub fn square() -> Grf {
 ///     RepSucc[f] := R(S, C(f, P_2)) = \xy. f^x(y+1)
 pub fn rep_succ(f: Grf) -> Grf {
     let step = Grf::comp(f, vec![Grf::Proj(3, 2)]);
-    Grf::Rec(Box::new(Grf::Succ), Box::new(step))
+    Grf::rec(Grf::Succ, step)
 }
 
 /// Diagonalize 2-ary f -> unary and then repeatedly apply.
 ///     DiagRep[f] := R(S, C(f, P(3,2), P(3,2))) = \xy. (\z. f(z,z))^x (y+1)
 pub fn diag_rep(f: Grf) -> Grf {
     let diag = Grf::comp(f, vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]);
-    Grf::Rec(Box::new(Grf::Succ), Box::new(diag))
+    Grf::rec(Grf::Succ, diag)
 }
 
 /// Diagonalize 2-ary f -> unary (incrementing input first).
@@ -77,7 +77,7 @@ pub fn ack_diag(n: usize, mut f: Grf) -> Grf {
 ///   RepDiag[f] = C(R(S, C(f, P(3,2))), S, S) ∈ GRF_1.
 pub fn rep_diag(f: Grf) -> Grf {
     let step = Grf::comp(f, vec![Grf::Proj(3, 2)]);
-    let outer = Grf::Rec(Box::new(Grf::Succ), Box::new(step));
+    let outer = Grf::rec(Grf::Succ, step);
     Grf::comp(outer, vec![Grf::Succ, Grf::Succ])
 }
 

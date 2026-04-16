@@ -515,6 +515,10 @@ mod tests {
         assert_eq!(eval(&f, &[list2int(&[1,1])]), Some(3));
         // [1,2] -> [1,1] -> [1,0,0] -> [1,0] -> [1] -> [0]*5
         assert_eq!(eval(&f, &[list2int(&[1,2])]), Some(5));
+        // Too big:
+        // [1,3] -> [1,2] -> [1,1,1] -> [1,1,0,0,0] -> [1,1,0,0] -> [1,1,0] -> [1,1]
+        //       -> 1 0^7 --(7)--> [1] -> [0]*15
+        // assert_eq!(eval(&f, &[list2int(&[1,3])]), Some(15));
 
         // Proj inline optimization
         assert_eq!(f.size(), 86);

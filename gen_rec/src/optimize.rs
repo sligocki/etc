@@ -456,7 +456,22 @@ mod tests {
     }
 
     #[test]
-    fn opt_fingerprint_shrinks() {
+    fn fingerprint_monus2() {
+        // Build a DB up to size 8 covering arities 0..=3.
+        let db = FingerprintDb::build(8, 3, false, 10_000);
+
+        let pred = grf!("R(Z0, P(2,1))");
+        // C(Pred, Pred)
+        let before = Grf::comp(pred.clone(), vec![pred]);
+        let after = opt_fingerprint(before.clone(), &db);
+
+        assert_eq!(after, grf!("R(Z0, R(Z1, P(3,1)))"));
+        assert!(after.size() < before.size());
+        check_equiv(&before, &after, 16);
+    }
+
+    #[test]
+    fn fingerprint_ack_worm() {
         use crate::example_ack::ack_worm;
 
         // Build a DB up to size 8 covering arities 0..=3.
@@ -465,6 +480,7 @@ mod tests {
         let before = ack_worm();
         let after = opt_fingerprint(before.clone(), &db);
 
+        println!("Size: {} -> {}", before.size(), after.size());
         assert!(
             after.size() <= before.size(),
             "fingerprint opt should not grow the GRF; before={}, after={}",

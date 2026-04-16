@@ -131,6 +131,12 @@ impl FingerprintDb {
         db
     }
 
+    pub fn compute_fp(&self, grf: &Grf) -> Fingerprint {
+        let arity = grf.arity();
+        let inputs = self.inputs.get(&arity).unwrap();
+        compute_fp(grf, inputs, self.max_steps)
+    }
+
     /// Look up the smallest known GRF equivalent to `grf`, if one exists in the DB
     /// and is strictly smaller.
     ///

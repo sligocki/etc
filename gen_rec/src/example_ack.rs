@@ -86,25 +86,25 @@ pub fn div2k() -> Grf {
     Grf::rec(Grf::Proj(1, 1), Grf::comp(div2(), vec![Grf::Proj(3, 2)]))
 }
 
-/// Append(k,x) := x · 2^k ∸ Sgn(k)
+/// DecAppend(k,x) := x · 2^k ∸ Sgn(k)
 ///   If k ≥ 1: Decrement last value of list x and append k ([..., a] -> [..., a-1, k])
 ///   if k = 0: Do nothing
 /// C(RMonus, C(Sgn, P(2,1)), Shift)
 /// Arity: 2, Size: 26
-pub fn append() -> Grf {
+pub fn dec_append() -> Grf {
     Grf::comp(
         rmonus(),
         vec![Grf::comp(sgn(), vec![Grf::Proj(2, 1)]), shift()],
     )
 }
 
-/// AppendN(n, k, x): [...] + [k] -> [...] + [k-1]*n + [k]
-/// R(P(2,2), C(SafeBlock, P(4,3), P(4,2)))
+/// DecAppendN(n, k, x): [...] + [k] -> [...] + [k-1]*n + [k]
+/// R(P(2,2), C(DecAppend, P(4,3), P(4,2)))
 /// Arity: 3, Size: 31
-pub fn append_n() -> Grf {
+pub fn dec_append_n() -> Grf {
     Grf::rec(
         Grf::Proj(2, 2),
-        Grf::comp(append(), vec![Grf::Proj(4, 3), Grf::Proj(4, 2)]),
+        Grf::comp(dec_append(), vec![Grf::Proj(4, 3), Grf::Proj(4, 2)]),
     )
 }
 
@@ -127,13 +127,13 @@ pub fn pop_k() -> Grf {
 ///   Equivalent to:
 ///     * Pop last element of list x -> k
 ///     * Append n+1 copies of k-1 to list x
-/// C(Div2, C(AppendN, P(2,1), C(PopK, P(2,2)), P(2,2)))
+/// C(Div2, C(DecAppendN, P(2,1), C(PopK, P(2,2)), P(2,2)))
 /// Arity: 2, Size: 80
 pub fn ack_step() -> Grf {
     Grf::comp(
         div2(),
         vec![Grf::comp(
-            append_n(),
+            dec_append_n(),
             vec![
                 Grf::Proj(2, 1), // n
                 Grf::comp(pop_k(), vec![Grf::Proj(2, 2)]),
@@ -279,10 +279,10 @@ mod tests {
             ("rmonus_odd", &rmonus_odd, 2, 13),
             ("div2", &div2, 1, 14),
             ("div2k", &div2k, 2, 18),
-            ("append", &append, 2, 26),
+            ("dec_append", &dec_append, 2, 26),
             ("bit", &bit, 2, 28),
             ("pop_k", &pop_k, 1, 29),
-            ("append_n", &append_n, 3, 31),
+            ("dec_append_n", &dec_append_n, 3, 31),
             ("ack_step", &ack_step, 2, 80),
             ("ack_loop", &ack_loop, 2, 85),
             ("ack_worm", &ack_worm, 1, 86),
@@ -406,8 +406,8 @@ mod tests {
     }
 
     #[test]
-    fn test_append() {
-        let f = append();
+    fn test_dec_append() {
+        let f = dec_append();
         assert_eq!(eval(&f, &[0, list2int(&[2])]), Some(list2int(&[2])));
         // Decrement last and append k
         assert_eq!(
@@ -429,9 +429,9 @@ mod tests {
     }
 
     #[test]
-    fn test_append_n() {
-        // AppendN(n, k, x): [...] + [k] -> [...] + [k-1]*n + [k]
-        let f = append_n();
+    fn test_dec_append_n() {
+        // DecAppendN(n, k, x): [...] + [k] -> [...] + [k-1]*n + [k]
+        let f = dec_append_n();
 
         // Base cases (n = 0): result = x unchanged
         for x in 0..16 {

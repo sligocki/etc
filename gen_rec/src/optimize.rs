@@ -384,4 +384,42 @@ mod tests {
         assert_eq!(after, grf!("R(Z3,P(5,5))"));
         check_equiv(&before, &after, 4);
     }
+
+    #[test]
+    fn opt_nested_c_in_c() {
+        // C(C(R(Z1,P(3,3)), P(2,1), P(2,2)), P(3,1), P(3,3))
+        //   computes (n, x, y) -> if n=0 then 0 else y  (size 9)
+        //
+        // The two Comps are directly nested: the outer C's HEAD is itself a Comp
+        // with all-Proj args.  Optimization proceeds in two sequential passes:
+        //
+        //   Pass 1 (outer C, args=[P(3,1),P(3,3)]):
+        //     inline_proj rewires the inner C's Proj args → P(2,1)->P(3,1), P(2,2)->P(3,3)
+        //     intermediate: C(R(Z1,P(3,3)), P(3,1), P(3,3))
+        //
+        //   Pass 2 (that intermediate C, args=[P(3,1),P(3,3)]):
+        //     inline_proj(R(Z1,P(3,3)), 3, [1,3]) → R(Z2, P(4,4))
+        //     final: R(Z2, P(4,4))  (size 3, saves 6)
+        let before = grf!("C(C(R(Z1,P(3,3)),P(2,1),P(2,2)),P(3,1),P(3,3))");
+        let after = opt_inline_proj(before.clone());
+        assert_eq!(after, grf!("R(Z2,P(4,4))"));
+        check_equiv(&before, &after, 5);
+    }
+
+    #[test]
+    fn opt_ack_worm() {
+        use crate::example_ack::ack_worm;
+
+        let before = ack_worm();
+        let after = opt_inline_proj(before.clone());
+
+        assert!(
+            after.size() < before.size(),
+            "expected size to shrink; before={}, after={}",
+            before.size(),
+            after.size()
+        );
+
+        check_equiv(&before, &after, 32);
+    }
 }

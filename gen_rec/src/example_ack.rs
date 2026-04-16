@@ -473,6 +473,8 @@ mod tests {
 
     #[test]
     fn test_ack_worm_small() {
+        use crate::optimize::opt_inline_proj;
+
         // ack_worm(x) = min{n : ack_loop(n,x) = 0}
         let f = ack_worm();
         assert_eq!(eval(&f, &[0]), Some(0)); // StateLoop(0,0)=0 immediately
@@ -481,5 +483,10 @@ mod tests {
         assert_eq!(eval(&f, &[3]), Some(2)); // terminates at step 2
         assert_eq!(eval(&f, &[7]), Some(2)); // terminates at step 2
         assert_eq!(eval(&f, &[15]), Some(3)); // terminates at step 3
+
+        // Proj inline optimization
+        assert_eq!(f.size(), 86);
+        let opt = opt_inline_proj(f);
+        assert_eq!(opt.size(), 79);
     }
 }

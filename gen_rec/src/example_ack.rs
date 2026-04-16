@@ -153,7 +153,7 @@ pub fn pop_k() -> Grf {
 ///   Equivalent to:
 ///     * Pop last element of list x -> k
 ///     * Append n+1 copies of k-1 to list x
-/// C(Div2, C(AppendN, P(2,1), P(2,2), C(PopK, P(2,2))))
+/// C(Div2, C(AppendN, P(2,1), C(PopK, P(2,2)), P(2,2)))
 /// Arity: 2, Size: 80
 pub fn ack_step() -> Grf {
     Grf::comp(
@@ -161,9 +161,9 @@ pub fn ack_step() -> Grf {
         vec![Grf::comp(
             append_n(),
             vec![
-                Grf::Proj(2, 1),
-                Grf::Proj(2, 2),
+                Grf::Proj(2, 1), // n
                 Grf::comp(pop_k(), vec![Grf::Proj(2, 2)]),
+                Grf::Proj(2, 2), // x
             ],
         )],
     )
@@ -455,43 +455,66 @@ mod tests {
 
     #[test]
     fn test_ack_step() {
+        // AckStep(n, x): x = [...] + [k] -> [...] + [k-1]*(n+1)
         let f = ack_step();
         assert_eq!(eval(&f, &[0, list2int(&[2])]), Some(list2int(&[1])));
-        // assert_eq!(eval(&f, &[0, list2int(&[5])]), Some(list2int(&[4])));
-        // assert_eq!(eval(&f, &[0, list2int(&[1,2,3])]), Some(list2int(&[1,2,2])));
-        // assert_eq!(eval(&f, &[1, list2int(&[2])]), Some(list2int(&[1,1])));
-        // assert_eq!(eval(&f, &[1, list2int(&[3,2,1])]), Some(list2int(&[3,2,0,0])));
-        // assert_eq!(eval(&f, &[3, list2int(&[1,0,2])]), Some(list2int(&[1,0,1,1,1,1])));
+        assert_eq!(eval(&f, &[0, list2int(&[5])]), Some(list2int(&[4])));
+        assert_eq!(eval(&f, &[0, list2int(&[1,2,3])]), Some(list2int(&[1,2,2])));
+        assert_eq!(eval(&f, &[1, list2int(&[2])]), Some(list2int(&[1,1])));
+        assert_eq!(eval(&f, &[1, list2int(&[1,2,1])]), Some(list2int(&[1,2,0,0])));
+        assert_eq!(eval(&f, &[2, list2int(&[1,0,2])]), Some(list2int(&[1,0,1,1,1])));
     }
 
     #[test]
     fn test_ack_loop() {
+        // AckLoop(m, x): Iterate AckStep m times on list x (with increasing values of n)
         let f = ack_loop();
-        // assert_eq!(eval(&f, &[0, list2int(&[2])]), Some(list2int(&[1])));
-        // assert_eq!(eval(&f, &[0, list2int(&[5])]), Some(list2int(&[4])));
-        // assert_eq!(eval(&f, &[0, list2int(&[1,2,3])]), Some(list2int(&[1,2,2])));
-        // assert_eq!(eval(&f, &[1, list2int(&[5])]), Some(list2int(&[4,4])));
-        // assert_eq!(eval(&f, &[1, list2int(&[3,2,1])]), Some(list2int(&[3,2,0,0])));
-        // assert_eq!(eval(&f, &[3, list2int(&[1,0,2])]), Some(list2int(&[1,0,1,1,1,1])));
+
+        // Base cases (m = 0): result = x unchanged
+        for x in 0..16 {
+            assert_eq!(eval(&f, &[0, x]), Some(x));
+        }
+
+        // One ack_step(0, .): [..., k] -> [..., k-1]
+        assert_eq!(eval(&f, &[1, list2int(&[1])]), Some(list2int(&[0])));
+        assert_eq!(eval(&f, &[1, list2int(&[2])]), Some(list2int(&[1])));
+        assert_eq!(eval(&f, &[1, list2int(&[1,2,3])]), Some(list2int(&[1,2,2])));
+
+        // Two ack_steps:
+        //      ack_step(0, .): [..., k] -> [..., k-1]
+        //      ack_step(1, .): [..., k-1] -> [..., k-2, k-2]
+        assert_eq!(eval(&f, &[2, list2int(&[3])]), Some(list2int(&[1,1])));
+        assert_eq!(eval(&f, &[2, list2int(&[1,2])]), Some(list2int(&[1,0,0])));
+        // [1,1] -> [1,0] -> [1]
+        assert_eq!(eval(&f, &[2, list2int(&[1,1])]), Some(list2int(&[1])));
+
+        // [3] -> [2] -> [1,1] -> [1,0,0,0] -> [1,0,0]
+        assert_eq!(eval(&f, &[4, list2int(&[3])]), Some(list2int(&[1,0,0])));
+        // Too big:
+        // [4] -> [3] -> [2,2] -> [2,1,1,1]
+        // assert_eq!(eval(&f, &[3, list2int(&[4])]), Some(list2int(&[2,1,1,1])));
     }
 
     #[test]
     fn test_ack_worm_small() {
         use crate::optimize::opt_inline_proj;
 
-        // ack_worm(x) = min{n : ack_loop(n,x) = 0}
         let f = ack_worm();
-        // assert_eq!(eval(&f, &[0]), Some(0)); // StateLoop(0,0)=0 immediately
-        // assert_eq!(eval(&f, &[1]), Some(1)); // StateLoop(1,1)=ack_step(0,1)=0
-        // assert_eq!(eval(&f, &[2]), Some(1)); // StateLoop(1,2)=ack_step(0,2)=0
-        // assert_eq!(eval(&f, &[3]), Some(2)); // terminates at step 2
-        // assert_eq!(eval(&f, &[7]), Some(2)); // terminates at step 2
-        // assert_eq!(eval(&f, &[15]), Some(3)); // terminates at step 3
-        // [1,1] -> [1,0] -> [1] -> [0,0,0]
-        // assert_eq!(eval(&f, &[0b101]), Some(2));
 
-        // // [2,2,2] -(1)> [2,2,1] -(2)> [2,2,0,0] -> [2,2,0] -> [2,2] -(5)> [2,1,1,1,1,1]
-        // assert_eq!(eval(&f, &[0b11011011]), Some(3));
+        // [1] -> [0] = 0
+        assert_eq!(eval(&f, &[list2int(&[1])]), Some(1));
+        // [2] -> [1] -> [0,0] = 0
+        assert_eq!(eval(&f, &[list2int(&[2])]), Some(2));
+        // [3] -> [2] -> [1,1] -> [1,0,0,0] -> [1,0,0] -> [1,0] -> [1] -> [0]*7 0
+        assert_eq!(eval(&f, &[list2int(&[3])]), Some(7));
+        // Too big:
+        // [4] -> [3] -> [2,2] -> [2,1,1,1] -> [2,1,1,0,0,0,0] -> ... 
+        // assert_eq!(eval(&f, &[list2int(&[4])]), Some(?));
+
+        // [1,1] -> [1,0] -> [1] -> [0,0,0]
+        assert_eq!(eval(&f, &[list2int(&[1,1])]), Some(3));
+        // [1,2] -> [1,1] -> [1,0,0] -> [1,0] -> [1] -> [0]*5
+        assert_eq!(eval(&f, &[list2int(&[1,2])]), Some(5));
 
         // Proj inline optimization
         assert_eq!(f.size(), 86);

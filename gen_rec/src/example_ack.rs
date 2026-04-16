@@ -176,6 +176,10 @@ pub fn init_list() -> Grf {
     // A number ending in at least n+1 1s in binary
     diag_rep(rep_succ(Grf::Succ))
 }
+// InitList(0,0) = 2 2^0 - 1 = 0b1 = [1]
+// InitList(1,1) = 3 2^1 - 1 = 0b101 = [1,1]
+// InitList(2,2) = 4 2^2 - 1 = 0b1111 = [4]
+// InitList(3,3) = 5 2^3 - 1 = 0b100111 = [1,0,3]
 
 /// Ack(n,_) > AckWorm([n+1])
 ///     Dominates all PRF
@@ -183,9 +187,22 @@ pub fn init_list() -> Grf {
 pub fn ack() -> Grf {
     Grf::comp(ack_worm(), vec![init_list()])
 }
+// Ack(1) = AckWomr([1,1]) = 3
+// Ack(2) = AckWorm([4]) = 41 2^38 - 1
+// Ack(3) = AckWorm([1,0,3]) = 16
+
+/// Omega() > f_omega(10^10)
+pub fn omega() -> Grf {
+    // f(n,n) = ack^n(n)
+    let ack_diag = Grf::comp(ack(), vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]);
+    let f = Grf::rec(Grf::Proj(1,1), ack_diag);
+    // h(n) = f(n+1,n+1)
+    let h = diag_succ(f);
+    // h(1) = f(2) = ack^2(2) = ack(41 2^38 - 1) >> f_omega(10^10)
+    Grf::comp(h, vec![constant(1, 0)])
+}
 
 /// Graham() > Graham's number
-/// C(C(RepRepAck, S, S), K[1])
 pub fn graham() -> Grf {
     // f(n,n) = ack^n(n+1)
     // g(n,n) = f^n(n+1)
@@ -193,7 +210,7 @@ pub fn graham() -> Grf {
     let f = diag_rep(ack());
     let g = diag_rep(f);
     let h = diag_succ(g);
-    // h(1) = g(2) = f^2(3) = f(ack^3(4)) = f(ack^2(41 2^38 - 1)) >> f(64) > Graham
+    // h(1) = g(2) = f^2(3) = f(ack^3(4)) > f(ack^2(41 2^38 - 1)) >> f(64) > Graham
     Grf::comp(h, vec![constant(1, 0)])
 }
 
@@ -251,6 +268,7 @@ mod tests {
             ("ack_worm", &ack_worm, 1, 86),
             ("init_list", &init_list, 2, 10),
             ("ack", &ack, 2, 97),
+            ("omega", &omega, 0, 109),
             ("graham", &graham, 0, 114),
         ];
         for (name, f, arity, size) in cases {

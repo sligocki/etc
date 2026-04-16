@@ -34,7 +34,7 @@ struct Args {
     verbose: bool,
 
     /// Stop after this many steps (0 = unlimited).
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 1_000_000_000)]
     max_steps: u64,
 }
 

@@ -94,6 +94,53 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
     }
 }
 
+/// Walks the GRF tree and inlines projection arguments wherever possible.
+///
+/// At each `Comp(h, gs, k)` node where every `gi` is a `Proj`, the composition
+/// is replaced by `inline_proj(h, k, rewiring)` (which always produces a smaller
+/// result).  The walk continues recursively into the inlined result so that newly
+/// exposed opportunities are caught.
+///
+/// Returns the optimized GRF, or the original unchanged if no opportunity was found.
+pub fn opt_inline_proj(f: Grf) -> Grf {
+    match f {
+        // Atoms have no sub-expressions to descend into.
+        Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => f,
+
+        Grf::Comp(h, gs, k) => {
+            // Collect the projection indices if every argument is a Proj.
+            let rewiring: Option<Vec<usize>> = gs
+                .iter()
+                .map(|g| match g {
+                    Grf::Proj(_, i) => Some(*i),
+                    _ => None,
+                })
+                .collect();
+
+            // rewiring == Some(rw) means that all gs were projections
+            if let Some(rw) = rewiring {
+                if let Some(inlined) = inline_proj(&h, k, &rw) {
+                    // Inlining always shrinks size; recurse into the result to
+                    // catch any newly exposed opportunities.
+                    return opt_inline_proj(inlined);
+                }
+            }
+
+            // Can't inline at this level — recurse into the head and each arg.
+            let new_h = opt_inline_proj(*h);
+            let new_gs = gs.into_iter().map(opt_inline_proj).collect();
+            Grf::Comp(Box::new(new_h), new_gs, k)
+        }
+
+        Grf::Rec(g, h) => Grf::Rec(
+            Box::new(opt_inline_proj(*g)),
+            Box::new(opt_inline_proj(*h)),
+        ),
+
+        Grf::Min(inner) => Grf::Min(Box::new(opt_inline_proj(*inner))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +298,90 @@ mod tests {
                 "identity rewiring changed {s}"
             );
         }
+    }
+
+    // ── opt_inline_proj ───────────────────────────────────────────────────────
+
+    // Runs `f` and `g` on every input tuple with each element in `0..=max_val`
+    // and asserts they produce identical results.
+    fn check_equiv(f: &Grf, g: &Grf, max_val: u64) {
+        use crate::simulate::simulate;
+        let arity = f.arity();
+        assert_eq!(arity, g.arity(), "arity mismatch between f and g");
+        let count = (max_val + 1).pow(arity as u32);
+        for i in 0..count {
+            let args: Vec<u64> = (0..arity)
+                .map(|d| (i / (max_val + 1).pow(d as u32)) % (max_val + 1))
+                .collect();
+            let (rf, _) = simulate(f, &args, 100_000);
+            let (rg, _) = simulate(g, &args, 100_000);
+            assert_eq!(
+                rf.into_value(),
+                rg.into_value(),
+                "mismatch at args {:?}",
+                args
+            );
+        }
+    }
+
+    #[test]
+    fn opt_motivating_example() {
+        // C(R(Z1,P(3,3)), P(4,1), P(4,4)):  \nxyz. if n=0 then 0 else z  (size 6)
+        // Should optimize to R(Z3,P(5,5))                                 (size 3)
+        let before = grf!("C(R(Z1,P(3,3)),P(4,1),P(4,4))");
+        let after = opt_inline_proj(before.clone());
+        assert_eq!(after.size(), before.size() - 3, "expected size saving of 3");
+        check_equiv(&before, &after, 4);
+    }
+
+    #[test]
+    fn opt_plus_skip_middle_arg() {
+        // C(plus, P(3,1), P(3,3)):  \nyx. n + x  (ignores y)
+        // plus = R(P(1,1), C(S,P(3,2)))
+        let before = grf!("C(R(P(1,1),C(S,P(3,2))),P(3,1),P(3,3))");
+        let after = opt_inline_proj(before.clone());
+        assert!(after.size() < before.size(), "size should shrink");
+        check_equiv(&before, &after, 5);
+    }
+
+    #[test]
+    fn opt_atoms_unchanged() {
+        // Atoms have nothing to optimize.
+        for s in ["S", "Z3", "P(4,2)"] {
+            let f = grf!(s);
+            assert_eq!(opt_inline_proj(f.clone()), f, "atom {s} should not change");
+        }
+    }
+
+    #[test]
+    fn opt_non_proj_arg_blocks_inlining() {
+        // C(P(2,1), S, P(2,2)) — second arg is S (not a Proj); inlining blocked.
+        // No other Comp-with-all-Proj exists inside, so the whole tree is unchanged.
+        let f = grf!("C(P(2,1),S,P(2,2))");
+        assert_eq!(opt_inline_proj(f.clone()), f);
+    }
+
+    #[test]
+    fn opt_nested_in_rec_step() {
+        // R(Z1, C(P(3,3), P(3,1), P(3,2), P(3,3))):
+        //   the all-Proj Comp in the step function collapses to P(3,3).
+        // Expected: R(Z1, P(3,3))
+        let before = grf!("R(Z1,C(P(3,3),P(3,1),P(3,2),P(3,3)))");
+        let after = opt_inline_proj(before.clone());
+        assert_eq!(after, grf!("R(Z1,P(3,3))"));
+        check_equiv(&before, &after, 5);
+    }
+
+    #[test]
+    fn opt_multi_step() {
+        // C(R(Z1, C(P(3,3),P(3,1),P(3,2),P(3,3))), P(4,1), P(4,4)):
+        //   Step 1 — outer C inlines its Proj args into the Rec, producing
+        //             R(Z3, C(P(3,3), P(5,1), P(5,2), P(5,5))).
+        //   Step 2 — the Comp in the step fn collapses to P(5,5).
+        //   Final: R(Z3, P(5,5))
+        let before = grf!("C(R(Z1,C(P(3,3),P(3,1),P(3,2),P(3,3))),P(4,1),P(4,4))");
+        let after = opt_inline_proj(before.clone());
+        assert_eq!(after, grf!("R(Z3,P(5,5))"));
+        check_equiv(&before, &after, 4);
     }
 }

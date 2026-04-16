@@ -198,6 +198,7 @@ pub fn ack_loop() -> Grf {
 pub fn ack_worm() -> Grf {
     Grf::Min(Box::new(ack_loop()))
 }
+// AckWorm([4]) = 41 2^38 - 1 = [1,1,0,0,38]
 
 /// Ack(n) := AckWorm([n])
 ///     Dominates all PRF
@@ -225,7 +226,7 @@ pub fn rep_rep_ack() -> Grf {
 /// C(C(RepRepAck, S, S), K[1])
 /// Arity: 0, Size: 132
 pub fn graham() -> Grf {
-    // RRA(2,2) = RA^2(3) = RA(Ack^3(4))
+    // RRA(2,2) = RA^2(3) = RA(Ack^3(4)) = RA(Ack^2(41 2^38 - 1)) >> RA(64) > Graham
     Grf::comp(diag_succ(rep_rep_ack()), vec![constant(1, 0)])
 }
 
@@ -533,7 +534,9 @@ mod tests {
         assert_eq!(eval(&f, &[list2int(&[3])]), Some(7));
         // Too big:
         // [4] -> [3] -> [2,2] -> [2,1,1,1] -> [2,1,1,0,0,0,0] --(4)--> [2,1,1]
-        //     -> [2,1] 0^9 --(9)--> [2,1] -> 2 0^19 --(19)--> 2 -> 1^39 -> ...
+        //     -> [2,1] 0^9 --(9)--> [2,1] -> 2 0^19 --(19)--> 2 -> 1^39 ->
+        //     -> 1^38 0^40 --> 1^38 -> 1^37 0^81
+        //     ---> 0^{41 2^38 - 1}
         // assert_eq!(eval(&f, &[list2int(&[4])]), Some(?));
 
         // [1,0] -> [1] -> [0,0]

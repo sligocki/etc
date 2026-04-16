@@ -154,7 +154,8 @@ pub fn ack_loop() -> Grf {
     )
 }
 
-/// AckWorm(x): A version of Hydra game/Goodstein sequence
+/// AckWorm(x): A version of Hydra game/Goodstein sequence for linear trees
+///             (Instead of a branching hydra, it is a linear worm)
 ///     Equivalent to algorithm:
 ///         N = 0
 ///         while list x is not empty and not all 0s:
@@ -162,7 +163,22 @@ pub fn ack_loop() -> Grf {
 ///             k = pop_last(x)
 ///             if k > 0: append N copies of (k-1) to x
 ///         return N
-///     Guaranteed to halt on all inputs, but it grows faster than all PRF
+// 
+//      Let (N, [..., k]) --> (E_k(N), [...])
+//          E_0(N) = N+1
+//          E_{k+1}(N) = E_k^{N+1}(N+1)
+//      E_k(N) > 2 {k-1} (N+1)
+// 
+//      Then: AckWorm([a,b,c]) = E_a(E_b(E_c(0))) / 2
+//          Note: The / 2 at the end accounts for the fact that we halt
+//          early when we get to all 0s (which was not accounted for in
+//          the E_k derivation above)
+// 
+//      AckWorm([k]) = E_k(0)/2 = E_{k-1}(1)/2 = E_{k-2}^2(2)/2 ...
+//                   > 2 {k-3} 2 {k-3} 3
+//      Which grows faster than all PRFs
+// 
+//      Guaranteed to halt on all inputs, but it grows faster than all PRF
 /// M(AckLoop)
 /// Arity: 1, Size: 86
 pub fn ack_worm() -> Grf {
@@ -171,6 +187,7 @@ pub fn ack_worm() -> Grf {
 // AckWorm([4]) = 41 2^38 - 1 = [1,1,0,0,38]
 
 /// InitList(n,_) := list ending in a value >= n
+/// Arity: 2, Size: 11
 pub fn init_list() -> Grf {
     // (n,m) -> (m+2) 2^n - 1
     // A number ending in at least n+1 1s in binary
@@ -184,6 +201,7 @@ pub fn init_list() -> Grf {
 /// Ack(n,_) > AckWorm([n+1])
 ///     Dominates all PRF
 /// C(AckWorm, InitList)
+/// Arity: 2, Size: 97
 pub fn ack() -> Grf {
     Grf::comp(ack_worm(), vec![init_list()])
 }
@@ -192,6 +210,7 @@ pub fn ack() -> Grf {
 // Ack(3) = AckWorm([1,0,3]) = 16
 
 /// Omega() > f_omega(10^10)
+/// Arity: 0, Size: 109
 pub fn omega() -> Grf {
     // f(n,n) = ack^n(n)
     let ack_diag = Grf::comp(ack(), vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]);
@@ -203,6 +222,7 @@ pub fn omega() -> Grf {
 }
 
 /// Graham() > Graham's number
+/// Arity: 0, Size: 114
 pub fn graham() -> Grf {
     // f(n,n) = ack^n(n+1)
     // g(n,n) = f^n(n+1)

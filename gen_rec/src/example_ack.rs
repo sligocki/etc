@@ -170,34 +170,30 @@ pub fn ack_worm() -> Grf {
 }
 // AckWorm([4]) = 41 2^38 - 1 = [1,1,0,0,38]
 
-/// Ack(n) := AckWorm([n])
+/// InitList(n,_) := list ending in a value >= n+1
+pub fn init_list() -> Grf {
+    // (n,m) -> (m+3) 2^{n+1} - 1
+    // A number ending in at least n+1 1s in binary
+    diag_rep(rep_succ(Grf::Succ))
+}
+
+/// Ack(n,_) > AckWorm([n+1])
 ///     Dominates all PRF
-/// C(AckWorm, C(Append, P(1,1), Z1))
-/// Arity: 1, Size: 116
+/// C(AckWorm, InitList)
 pub fn ack() -> Grf {
-    Grf::comp(ack_worm(), vec![Grf::comp(append(), vec![Grf::Proj(1,1), Grf::Zero(1)])])
+    Grf::comp(ack_worm(), vec![init_list()])
 }
 
-/// RepAck(k,n) := Ack^k(n+1)
-/// R(S, C(Ack, P(3,2)))
-/// Arity: 2, Size: 120
-pub fn rep_ack() -> Grf {
-    rep_succ(ack())
-}
-
-/// RepRepAck(k,n) := (\x. RepAck(x,x))^k (n+1)
-/// R(S, C(RepAck, P(3,2), P(3,2)))
-/// Arity: 2, Size: 125
-pub fn rep_rep_ack() -> Grf {
-    diag_rep(rep_ack())
-}
-
-/// A GRF that computes a number > Graham's number
+/// Graham() > Graham's number
 /// C(C(RepRepAck, S, S), K[1])
-/// Arity: 0, Size: 132
 pub fn graham() -> Grf {
-    // RRA(2,2) = RA^2(3) = RA(Ack^3(4)) = RA(Ack^2(41 2^38 - 1)) >> RA(64) > Graham
-    Grf::comp(diag_succ(rep_rep_ack()), vec![constant(1, 0)])
+    // f(n) = ack^n(n+1)
+    // g(n) = f^n(n+1)
+    // h(n) = g(n+1)
+    let g = diag_rep(ack());
+    let h = diag_succ(g);
+    // h(1) = g(2) = f^2(3) = f(ack^3(4)) = f(ack^2(41 2^38 - 1)) >> f(64) > Graham
+    Grf::comp(h, vec![constant(1, 0)])
 }
 
 #[cfg(test)]
@@ -252,10 +248,9 @@ mod tests {
             ("ack_step", &ack_step, 2, 80),
             ("ack_loop", &ack_loop, 2, 85),
             ("ack_worm", &ack_worm, 1, 86),
-            ("ack", &ack, 1, 116),
-            ("rep_ack", &rep_ack, 2, 120),
-            ("rep_rep_ack", &rep_rep_ack, 2, 125),
-            ("graham", &graham, 0, 132),
+            ("init_list", &init_list, 2, 10),
+            ("ack", &ack, 2, 97),
+            ("graham", &graham, 0, 109),
         ];
         for (name, f, arity, size) in cases {
             let g = f();
@@ -563,8 +558,8 @@ mod tests {
         use crate::optimize::opt_inline_proj;
 
         let before = graham();
-        assert_eq!(before.size(), 132);
+        assert_eq!(before.size(), 109);
         let after = opt_inline_proj(before);
-        assert_eq!(after.size(), 121);
+        assert_eq!(after.size(), 102);
     }
 }

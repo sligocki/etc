@@ -107,7 +107,7 @@ pub fn div2k() -> Grf {
 }
 
 /// SafeBlock(k,x) := x · 2^k ∸ Sgn(k)
-///   If k ≥ 1: Append (k-1) to list x
+///   If k ≥ 1: Decrement last value of list x and append k ([..., a] -> [..., a-1, k])
 ///   if k = 0: Do nothing
 /// C(RMonus, C(Sgn, P(2,1)), Shift)
 /// Arity: 2, Size: 26
@@ -211,6 +211,25 @@ pub fn ack_worm() -> Grf {
 mod tests {
     use super::*;
     use crate::simulate::{simulate, Num};
+
+    fn list2int(xs: Vec<Num>) -> Num {
+        let mut val = 0;
+        for x in xs {
+            val = (val << 1) + 1;
+            val = (val << x) - 1;
+        }
+        val
+    }
+
+    #[test]
+    fn test_list2int() {
+        assert_eq!(list2int(vec![1, 2, 3]), 0b010110111);
+        assert_eq!(list2int(vec![5, 0, 1]), 0b011111001);
+        assert_eq!(list2int(vec![1, 0, 0]), 0b0100);
+        // Note: Leading 0s are lost in encoding
+        assert_eq!(list2int(vec![0, 0, 0]), 0b000);
+        assert_eq!(list2int(vec![]), 0);
+    }
 
     fn eval(grf: &Grf, args: &[Num]) -> Option<Num> {
         let (result, _steps) = simulate(grf, args, 10_000_000);
@@ -357,27 +376,25 @@ mod tests {
 
     #[test]
     fn test_safe_block() {
-        // safe_block(k, x) = x * 2^k ∸ Sgn(k)
         let f = safe_block();
-        assert_eq!(eval(&f, &[0, 3]), Some(3));  // 3*1 ∸ 0 = 3
-        assert_eq!(eval(&f, &[1, 3]), Some(5));  // 3*2 ∸ 1 = 5
-        assert_eq!(eval(&f, &[2, 3]), Some(11)); // 3*4 ∸ 1 = 11
-        assert_eq!(eval(&f, &[3, 1]), Some(7));  // 1*8 ∸ 1 = 7
-        assert_eq!(eval(&f, &[0, 0]), Some(0));  // 0*1 ∸ 0 = 0
-        assert_eq!(eval(&f, &[1, 0]), Some(0));  // 0*2 ∸ 1 = 0 (truncated)
+        assert_eq!(eval(&f, &[0, list2int(vec![2])]), Some(list2int(vec![2])));
+        // Decrement last and append k
+        assert_eq!(eval(&f, &[1, list2int(vec![2])]), Some(list2int(vec![1, 1])));
+        assert_eq!(eval(&f, &[2, list2int(vec![2])]), Some(list2int(vec![1, 2])));
+        assert_eq!(eval(&f, &[3, list2int(vec![2])]), Some(list2int(vec![1, 3])));
+        assert_eq!(eval(&f, &[2, list2int(vec![1, 1])]), Some(list2int(vec![1, 0, 2])));
     }
 
     #[test]
     fn test_bit() {
         // bit(k, x) = the k-th bit of x
         let f = bit();
-        // 5 = 0b101
-        assert_eq!(eval(&f, &[0, 5]), Some(1));
-        assert_eq!(eval(&f, &[1, 5]), Some(0));
-        assert_eq!(eval(&f, &[2, 5]), Some(1));
-        assert_eq!(eval(&f, &[3, 5]), Some(0));
+        assert_eq!(eval(&f, &[0, 0b101]), Some(1));
+        assert_eq!(eval(&f, &[1, 0b101]), Some(0));
+        assert_eq!(eval(&f, &[2, 0b101]), Some(1));
+        assert_eq!(eval(&f, &[3, 0b101]), Some(0));
         // exhaustive check for small values
-        for x in 0u64..=15 {
+        for x in 0u64..16 {
             for k in 0u64..=5 {
                 assert_eq!(
                     eval(&f, &[k, x]),
@@ -406,10 +423,6 @@ mod tests {
 
     #[test]
     fn test_append_n() {
-        // append_n(n, k, x):
-        //   base:  append_n(0, k, x) = x   [P(2,2) selects x as 2nd rest-arg]
-        //   step:  append_n(n+1, k, x) = safe_block(append_n(n,k,x), k)
-        //            where safe_block(a, b) = b * 2^a ∸ Sgn(a)
         let f = append_n();
         // Base cases (n = 0): result = x unchanged
         assert_eq!(eval(&f, &[0, 0, 0]), Some(0));

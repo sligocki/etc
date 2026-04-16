@@ -1,3 +1,4 @@
+use crate::fingerprint::FingerprintDb;
 use crate::grf::Grf;
 
 /// Rewires `f` to a new arity context.
@@ -138,6 +139,37 @@ pub fn opt_inline_proj(f: Grf) -> Grf {
         ),
 
         Grf::Min(inner) => Grf::Min(Box::new(opt_inline_proj(*inner))),
+    }
+}
+
+/// Optimizes a GRF by replacing subexpressions with smaller equivalents from `db`.
+///
+/// Traversal is top-down: at each node, check the DB first. If a smaller equivalent
+/// is found, return it immediately (the subtree is replaced wholesale — no need to
+/// recurse into children that are being thrown away). If no match, recurse into
+/// children and reconstruct.
+///
+/// The DB only contains fully-computed fingerprints, so every match is guaranteed
+/// to be a correct functional equivalence.
+pub fn opt_fingerprint(f: Grf, db: &FingerprintDb) -> Grf {
+    // Top-down: try to replace the whole node before touching children.
+    if let Some(smaller) = db.lookup_smaller(&f) {
+        return smaller.clone();
+    }
+
+    // No match at this level — recurse into children.
+    match f {
+        Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => f,
+
+        Grf::Comp(h, gs, k) => {
+            let new_h = opt_fingerprint(*h, db);
+            let new_gs = gs.into_iter().map(|g| opt_fingerprint(g, db)).collect();
+            Grf::Comp(Box::new(new_h), new_gs, k)
+        }
+
+        Grf::Rec(g, h) => Grf::rec(opt_fingerprint(*g, db), opt_fingerprint(*h, db)),
+
+        Grf::Min(inner) => Grf::min(opt_fingerprint(*inner, db)),
     }
 }
 
@@ -421,5 +453,43 @@ mod tests {
         );
 
         check_equiv(&before, &after, 32);
+    }
+
+    #[test]
+    fn opt_fingerprint_shrinks() {
+        use crate::example_ack::ack_worm;
+
+        // Build a DB up to size 8 covering arities 0..=3.
+        let db = FingerprintDb::build(8, 3, false, 10_000);
+
+        let before = ack_worm();
+        let after = opt_fingerprint(before.clone(), &db);
+
+        assert!(
+            after.size() <= before.size(),
+            "fingerprint opt should not grow the GRF; before={}, after={}",
+            before.size(),
+            after.size()
+        );
+        check_equiv(&before, &after, 16);
+    }
+
+    #[test]
+    fn opt_fingerprint_correct_on_small() {
+        // C(S, Z1) computes \x. 1. The DB should contain Z1 -> \x. 0 and
+        // C(S,Z1) -> \x. 1. A size-5 GRF like C(S,C(S,Z1)) computes \x. 2,
+        // which equals C(S,C(S,Z1)) at size 5 — no smaller form exists without Min.
+        // But C(S,R(Z0,P(2,1))) (\x. 1+pred(x)) should reduce to C(S,Z1) for x>0
+        // ... actually these compute different functions. Just verify no incorrect
+        // replacements are made.
+        let db = FingerprintDb::build(6, 1, false, 10_000);
+
+        for s in ["S", "Z1", "P(1,1)", "C(S,Z1)", "C(S,S)", "R(Z0,P(2,1))"] {
+            let f: Grf = s.parse().unwrap();
+            let opt = opt_fingerprint(f.clone(), &db);
+            // Optimized form must be no larger and must compute the same function.
+            assert!(opt.size() <= f.size(), "{s}: size grew");
+            check_equiv(&f, &opt, 8);
+        }
     }
 }

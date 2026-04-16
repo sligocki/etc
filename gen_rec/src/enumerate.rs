@@ -55,7 +55,7 @@ fn for_each_grf(
             for_each_grf(hsize, m, allow_min, opts, &mut |h: &Grf| {
                 // Prune C(Z,...) and C(P,...)
                 if opts.skip_comp_zero && matches!(h, Grf::Zero(_)) {
-                    return
+                    return;
                 }
                 if opts.skip_comp_proj && matches!(h, Grf::Proj(_, _)) {
                     return;
@@ -245,8 +245,13 @@ fn seek_grfs(
 
             // When skip_rec_zero_arg: Rec heads have fewer valid arg tuples.
             let args_rec = if opts.skip_rec_zero_arg && gs_total >= 1 {
-                args_all
-                    .saturating_sub(count_many_fast(gs_total - 1, m - 1, arity, allow_min, opts))
+                args_all.saturating_sub(count_many_fast(
+                    gs_total - 1,
+                    m - 1,
+                    arity,
+                    allow_min,
+                    opts,
+                ))
             } else {
                 args_all
             };
@@ -323,7 +328,11 @@ fn seek_grfs(
             let g_total = count_grf(gsize, arity - 1, allow_min, opts);
             let h_total = count_grf(hsize, arity + 1, allow_min, opts);
             // skip_rec_zero_base prunes exactly 2 pairs at n==2 across ALL g's.
-            let pruned_in_block = if opts.skip_rec_zero_base && n == 2 { 2usize } else { 0 };
+            let pruned_in_block = if opts.skip_rec_zero_base && n == 2 {
+                2usize
+            } else {
+                0
+            };
             let gsize_block = g_total
                 .saturating_mul(h_total)
                 .saturating_sub(pruned_in_block);
@@ -341,8 +350,11 @@ fn seek_grfs(
                 let g_box = Box::new(g.clone());
                 let g_is_zero = matches!(g, Grf::Zero(_));
                 // skip_rec_zero_base: prune R(Z, Z) and R(Z, P(_,2)) at n==2.
-                let pruned_h =
-                    if opts.skip_rec_zero_base && g_is_zero && n == 2 { 2usize } else { 0 };
+                let pruned_h = if opts.skip_rec_zero_base && g_is_zero && n == 2 {
+                    2usize
+                } else {
+                    0
+                };
                 let h_count = h_total.saturating_sub(pruned_h);
 
                 if *skip >= h_count {
@@ -352,9 +364,17 @@ fn seek_grfs(
 
                 if pruned_h == 0 {
                     // No per-g pruning; seek through h's normally.
-                    seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                        callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
-                    });
+                    seek_grfs(
+                        hsize,
+                        arity + 1,
+                        allow_min,
+                        opts,
+                        skip,
+                        rem,
+                        &mut |h: &Grf| {
+                            callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                        },
+                    );
                 } else {
                     // n==2, g_is_zero, hsize==1.  h's are size-1 atoms of arity+1.
                     // Pruned: Zero(arity+1) and Proj(arity+1, 2).
@@ -428,8 +448,13 @@ fn seek_args(
             return;
         }
 
-        let rest_count =
-            count_many_fast(remaining_size - x, remaining_count - 1, arity, allow_min, opts);
+        let rest_count = count_many_fast(
+            remaining_size - x,
+            remaining_count - 1,
+            arity,
+            allow_min,
+            opts,
+        );
         if rest_count == 0 {
             continue;
         }
@@ -457,8 +482,7 @@ fn seek_args(
         // Inside this size-x block: iterate g's, skipping whole rest_count groups.
         if is_first && x == 1 {
             // Enumerate non-Zero size-1 atoms in canonical order.
-            let mut non_zero_atoms: Vec<Grf> =
-                (1..=arity).map(|i| Grf::Proj(arity, i)).collect();
+            let mut non_zero_atoms: Vec<Grf> = (1..=arity).map(|i| Grf::Proj(arity, i)).collect();
             if arity == 1 {
                 non_zero_atoms.push(Grf::Succ);
             }
@@ -574,13 +598,13 @@ fn compute_as_head(size: usize, arity: usize, allow_min: bool, opts: PruningOpts
     if size == 1 {
         let mut count = 0;
         if arity == 1 {
-            count += 1;  // S is always a legal head
+            count += 1; // S is always a legal head
         }
         if !opts.skip_comp_zero {
-            count += 1;  // Z only valid if not skipping C(Z, ...)
+            count += 1; // Z only valid if not skipping C(Z, ...)
         }
         if !opts.skip_comp_proj {
-            count += arity;  // P_i only valid if not skipping C(P, ...)
+            count += arity; // P_i only valid if not skipping C(P, ...)
         }
         return count;
     }
@@ -674,8 +698,12 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
     if arity >= 1 {
         for gsize in 1..n {
             total = total.saturating_add(
-                count_grf(gsize, arity - 1, allow_min, opts)
-                    .saturating_mul(count_grf(n - gsize, arity + 1, allow_min, opts)),
+                count_grf(gsize, arity - 1, allow_min, opts).saturating_mul(count_grf(
+                    n - gsize,
+                    arity + 1,
+                    allow_min,
+                    opts,
+                )),
             );
         }
         // skip_rec_zero_base: at size=3 (n=2), prune R(Z(arity-1), Z(arity+1)) and
@@ -703,8 +731,12 @@ fn count_rec_only(size: usize, arity: usize, allow_min: bool, opts: PruningOpts)
     let mut total = 0usize;
     for gsize in 1..n {
         total = total.saturating_add(
-            count_grf(gsize, arity - 1, allow_min, opts)
-                .saturating_mul(count_grf(n - gsize, arity + 1, allow_min, opts)),
+            count_grf(gsize, arity - 1, allow_min, opts).saturating_mul(count_grf(
+                n - gsize,
+                arity + 1,
+                allow_min,
+                opts,
+            )),
         );
     }
     // skip_rec_zero_base: R(Z(arity-1), Z(arity+1)) and R(Z(arity-1), P(arity+1,2))
@@ -731,15 +763,9 @@ fn count_many_fast(
     let max_first = total_size.saturating_sub(num_funcs - 1);
     let mut total = 0usize;
     for x in 1..=max_first {
-        total = total.saturating_add(
-            count_grf(x, arity, allow_min, opts).saturating_mul(count_many_fast(
-                total_size - x,
-                num_funcs - 1,
-                arity,
-                allow_min,
-                opts,
-            )),
-        );
+        total = total.saturating_add(count_grf(x, arity, allow_min, opts).saturating_mul(
+            count_many_fast(total_size - x, num_funcs - 1, arity, allow_min, opts),
+        ));
     }
     total
 }
@@ -1246,8 +1272,16 @@ mod tests {
         for size in 1..=7 {
             for arity in 0..=3 {
                 for allow_min in [false, true] {
-                    for opts in [NO_PRUNE, SKIP_COMP_ZERO, SKIP_COMP_PROJ, SKIP_COMP_TRIVIAL,
-                                 COMP_ASSOC, SKIP_REC_ZERO_BASE, SKIP_REC_ZERO, ALL_OPTS] {
+                    for opts in [
+                        NO_PRUNE,
+                        SKIP_COMP_ZERO,
+                        SKIP_COMP_PROJ,
+                        SKIP_COMP_TRIVIAL,
+                        COMP_ASSOC,
+                        SKIP_REC_ZERO_BASE,
+                        SKIP_REC_ZERO,
+                        ALL_OPTS,
+                    ] {
                         let actual = collect(size, arity, allow_min, opts).len();
                         let count = count_grf(size, arity, allow_min, opts);
                         assert_eq!(

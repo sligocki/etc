@@ -276,11 +276,13 @@ fn cmd_gen(args: GenArgs) {
         save_min_score: args.save_min_score,
         save_min_steps: args.save_min_steps,
     };
-    fs::write(config_path(dir), serde_json::to_string_pretty(&config).unwrap())
-        .expect("Cannot write config.json");
+    fs::write(
+        config_path(dir),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .expect("Cannot write config.json");
 
-    let manifest =
-        fs::File::create(manifest_path(dir)).expect("Cannot create manifest.jsonl");
+    let manifest = fs::File::create(manifest_path(dir)).expect("Cannot create manifest.jsonl");
     let mut manifest = BufWriter::new(manifest);
 
     let mut task_id = 0usize;
@@ -290,7 +292,12 @@ fn cmd_gen(args: GenArgs) {
     let mut start = 0;
     while start < count {
         let chunk = (count - start).min(args.chunk_size);
-        let entry = TaskEntry { task_id, size: args.size, start, count: chunk };
+        let entry = TaskEntry {
+            task_id,
+            size: args.size,
+            start,
+            count: chunk,
+        };
         writeln!(manifest, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
         task_id += 1;
         total_grfs += chunk;
@@ -361,7 +368,11 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
                 let is_new_best = acc.best_score.map_or(true, |bs| s > bs);
                 if is_new_best {
                     acc.best_score = Some(s);
-                    acc.best_ranks = if s >= config.save_min_score { vec![rank] } else { vec![] };
+                    acc.best_ranks = if s >= config.save_min_score {
+                        vec![rank]
+                    } else {
+                        vec![]
+                    };
                 } else if acc.best_score == Some(s) && s >= config.save_min_score {
                     acc.best_ranks.push(rank);
                 }
@@ -389,8 +400,12 @@ fn execute_task(task: &TaskEntry, config: &Config, batch_size: usize) -> TaskRes
     let mut rank = task.start;
 
     seek_stream_grf(
-        task.size, 0, config.allow_min, opts,
-        task.start, task.count,
+        task.size,
+        0,
+        config.allow_min,
+        opts,
+        task.start,
+        task.count,
         &mut |grf: &Grf| {
             batch.push((rank, grf.clone()));
             rank += 1;
@@ -430,7 +445,11 @@ fn run_task(task: &TaskEntry, config: &Config, dir: &Path, batch_size: usize) {
     }
     println!(
         "[{}] task {:06}: size={} ranks=[{}, {})",
-        timestamp(), task.task_id, task.size, task.start, task.start + task.count
+        timestamp(),
+        task.task_id,
+        task.size,
+        task.start,
+        task.start + task.count
     );
     let result = execute_task(task, config, batch_size);
     println!(
@@ -488,8 +507,8 @@ fn cmd_run(args: RunArgs) {
                 n_threads,
             );
 
-            use std::sync::{Arc, Mutex};
             use std::collections::VecDeque;
+            use std::sync::{Arc, Mutex};
             let queue = Arc::new(Mutex::new(pending.into_iter().collect::<VecDeque<_>>()));
             let total_start = Instant::now();
 
@@ -512,7 +531,11 @@ fn cmd_run(args: RunArgs) {
             for h in handles {
                 h.join().unwrap();
             }
-            println!("[{}] All tasks done  [{:.2}s total]", timestamp(), total_start.elapsed().as_secs_f64());
+            println!(
+                "[{}] All tasks done  [{:.2}s total]",
+                timestamp(),
+                total_start.elapsed().as_secs_f64()
+            );
         }
         _ => {
             eprintln!("Specify either --task-id N or --all");
@@ -534,18 +557,25 @@ fn cmd_sim(args: SimArgs) {
 
     println!(
         "size={}  ranks=[{}, {})  max_steps={}",
-        size, args.start, args.start + args.count, max_steps,
+        size,
+        args.start,
+        args.start + args.count,
+        max_steps,
     );
 
     let mut rank = args.start;
     seek_stream_grf(
-        size, 0, config.allow_min, opts,
-        args.start, args.count,
+        size,
+        0,
+        config.allow_min,
+        opts,
+        args.start,
+        args.count,
         &mut |grf: &Grf| {
             let expr = grf.to_string();
             let (sim_result, steps) = simulate(grf, &[], max_steps);
             match sim_result.into_value() {
-                None    => println!("rank={rank:>12}  unknown(over_steps)  steps={steps}  {expr}"),
+                None => println!("rank={rank:>12}  unknown(over_steps)  steps={steps}  {expr}"),
                 Some(s) => println!("rank={rank:>12}  halted  score={s}  steps={steps}  {expr}"),
             }
             rank += 1;
@@ -557,9 +587,10 @@ fn cmd_sim(args: SimArgs) {
 
 fn merge_hist(mut combined: HashMap<u64, u64>, other: &HashMap<u64, u64>) -> HashMap<u64, u64> {
     for (key, value) in other {
-        combined.entry(*key)
-                .and_modify(|v| *v += *value)
-                .or_insert(*value);
+        combined
+            .entry(*key)
+            .and_modify(|v| *v += *value)
+            .or_insert(*value);
     }
     combined
 }
@@ -580,8 +611,8 @@ struct SizeSummary {
     over_steps_count: usize,
     runtime_sec: f64,
     best_score: Option<u64>,
-    best_ranks: Vec<usize>,        // ranks tied at best_score
-    best_exprs: Vec<String>,       // corresponding expr strings
+    best_ranks: Vec<usize>,  // ranks tied at best_score
+    best_exprs: Vec<String>, // corresponding expr strings
     notable: Vec<NotableEntry>,
 }
 
@@ -629,8 +660,8 @@ fn cmd_summarize(args: SummarizeArgs) {
         best_exprs: Vec::new(),
         notable: Vec::new(),
     };
-    let mut score_hist : HashMap<u64, u64> = HashMap::new();
-    let mut steps_hist : HashMap<u64, u64> = HashMap::new();
+    let mut score_hist: HashMap<u64, u64> = HashMap::new();
+    let mut steps_hist: HashMap<u64, u64> = HashMap::new();
     for r in &results {
         assert_eq!(r.size, size);
         s.tasks_done += 1;
@@ -662,8 +693,7 @@ fn cmd_summarize(args: SummarizeArgs) {
 
     // Build best_exprs from notable.
     if let Some(bs) = s.best_score {
-        let rank_set: std::collections::HashSet<usize> =
-            s.best_ranks.iter().copied().collect();
+        let rank_set: std::collections::HashSet<usize> = s.best_ranks.iter().copied().collect();
         s.best_exprs = s
             .notable
             .iter()

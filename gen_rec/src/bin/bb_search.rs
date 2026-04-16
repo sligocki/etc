@@ -58,7 +58,6 @@ struct SizeResult {
     max_steps_single: u64,
 }
 
-
 /// Simulate a batch of GRFs in parallel and return aggregate results.
 fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
     let mut best_val: Option<Num> = None;
@@ -231,26 +230,20 @@ fn main() {
             batch.clear();
         };
 
-        stream_grf(
-            size,
-            0,
-            args.allow_min,
-            opts,
-            &mut |grf: &Grf| {
-                total += 1;
-                batch.push(grf.clone());
-                if batch.len() >= args.batch_size {
-                    flush(
-                        &mut batch,
-                        &mut size_best_val,
-                        &mut size_best_exprs,
-                        &mut size_timed_out,
-                        &mut size_total_steps,
-                        &mut size_max_steps,
-                    );
-                }
-            },
-        );
+        stream_grf(size, 0, args.allow_min, opts, &mut |grf: &Grf| {
+            total += 1;
+            batch.push(grf.clone());
+            if batch.len() >= args.batch_size {
+                flush(
+                    &mut batch,
+                    &mut size_best_val,
+                    &mut size_best_exprs,
+                    &mut size_timed_out,
+                    &mut size_total_steps,
+                    &mut size_max_steps,
+                );
+            }
+        });
         flush(
             &mut batch,
             &mut size_best_val,

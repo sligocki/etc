@@ -85,7 +85,10 @@ pub fn shift() -> Grf {
 pub fn rmonus_odd() -> Grf {
     Grf::Rec(
         Box::new(pred()),
-        Box::new(Grf::comp(pred(), vec![Grf::comp(pred(), vec![Grf::Proj(3, 2)])])),
+        Box::new(Grf::comp(
+            pred(),
+            vec![Grf::comp(pred(), vec![Grf::Proj(3, 2)])],
+        )),
     )
 }
 
@@ -114,10 +117,7 @@ pub fn div2k() -> Grf {
 pub fn safe_block() -> Grf {
     Grf::comp(
         rmonus(),
-        vec![
-            Grf::comp(sgn(), vec![Grf::Proj(2, 1)]),
-            shift(),
-        ],
+        vec![Grf::comp(sgn(), vec![Grf::Proj(2, 1)]), shift()],
     )
 }
 
@@ -192,7 +192,7 @@ pub fn ack_worm() -> Grf {
 
 // TODO
 // /// ack(n) dominates any PRF
-// /// Arity: 0, Size: 
+// /// Arity: 0, Size:
 // pub fn ack() -> Grf {
 //     Grf::comp(ack_worm(), )
 // }
@@ -241,29 +241,29 @@ mod tests {
     #[test]
     fn test_arity_and_size() {
         let cases: &[(&str, &dyn Fn() -> Grf, usize, usize)] = &[
-            ("pred",       &pred,       1,  3),
-            ("not",        &not,        1,  5),
-            ("sgn",        &sgn,        1,  5),
-            ("plus2",      &plus2,      1,  3),
-            ("double",     &double,     1,  7),
-            ("rmonus",     &rmonus,     2,  7),
-            ("mod2",       &mod2,       1,  9),
-            ("shift",      &shift,      2, 11),
+            ("pred", &pred, 1, 3),
+            ("not", &not, 1, 5),
+            ("sgn", &sgn, 1, 5),
+            ("plus2", &plus2, 1, 3),
+            ("double", &double, 1, 7),
+            ("rmonus", &rmonus, 2, 7),
+            ("mod2", &mod2, 1, 9),
+            ("shift", &shift, 2, 11),
             ("rmonus_odd", &rmonus_odd, 2, 13),
-            ("div2",       &div2,       1, 14),
-            ("div2k",      &div2k,      2, 18),
+            ("div2", &div2, 1, 14),
+            ("div2k", &div2k, 2, 18),
             ("safe_block", &safe_block, 2, 26),
-            ("bit",        &bit,        2, 28),
-            ("pop_k",      &pop_k,      1, 29),
-            ("append_n",   &append_n,   3, 31),
-            ("ack_step",   &ack_step,   2, 80),
+            ("bit", &bit, 2, 28),
+            ("pop_k", &pop_k, 1, 29),
+            ("append_n", &append_n, 3, 31),
+            ("ack_step", &ack_step, 2, 80),
             ("ack_loop", &ack_loop, 2, 85),
-            ("ack_worm",   &ack_worm,   1, 86),
+            ("ack_worm", &ack_worm, 1, 86),
         ];
         for (name, f, arity, size) in cases {
             let g = f();
             assert_eq!(g.arity(), *arity, "{name}: wrong arity");
-            assert_eq!(g.size(),  *size,  "{name}: wrong size");
+            assert_eq!(g.size(), *size, "{name}: wrong size");
         }
     }
 
@@ -379,10 +379,22 @@ mod tests {
         let f = safe_block();
         assert_eq!(eval(&f, &[0, list2int(vec![2])]), Some(list2int(vec![2])));
         // Decrement last and append k
-        assert_eq!(eval(&f, &[1, list2int(vec![2])]), Some(list2int(vec![1, 1])));
-        assert_eq!(eval(&f, &[2, list2int(vec![2])]), Some(list2int(vec![1, 2])));
-        assert_eq!(eval(&f, &[3, list2int(vec![2])]), Some(list2int(vec![1, 3])));
-        assert_eq!(eval(&f, &[2, list2int(vec![1, 1])]), Some(list2int(vec![1, 0, 2])));
+        assert_eq!(
+            eval(&f, &[1, list2int(vec![2])]),
+            Some(list2int(vec![1, 1]))
+        );
+        assert_eq!(
+            eval(&f, &[2, list2int(vec![2])]),
+            Some(list2int(vec![1, 2]))
+        );
+        assert_eq!(
+            eval(&f, &[3, list2int(vec![2])]),
+            Some(list2int(vec![1, 3]))
+        );
+        assert_eq!(
+            eval(&f, &[2, list2int(vec![1, 1])]),
+            Some(list2int(vec![1, 0, 2]))
+        );
     }
 
     #[test]
@@ -396,11 +408,7 @@ mod tests {
         // exhaustive check for small values
         for x in 0u64..16 {
             for k in 0u64..=5 {
-                assert_eq!(
-                    eval(&f, &[k, x]),
-                    Some((x >> k) & 1),
-                    "bit({k}, {x})"
-                );
+                assert_eq!(eval(&f, &[k, x]), Some((x >> k) & 1), "bit({k}, {x})");
             }
         }
     }
@@ -409,12 +417,12 @@ mod tests {
     fn test_pop_k() {
         // pop_k(x) = number of trailing 1-bits (length of lowest 1-run)
         let f = pop_k();
-        assert_eq!(eval(&f, &[0b0]),  Some(0));
-        assert_eq!(eval(&f, &[0b1]),  Some(1));
-        assert_eq!(eval(&f, &[0b10]),  Some(0));
-        assert_eq!(eval(&f, &[0b11]),  Some(2));
-        assert_eq!(eval(&f, &[0b110]),  Some(0));
-        assert_eq!(eval(&f, &[0b111]),  Some(3));
+        assert_eq!(eval(&f, &[0b0]), Some(0));
+        assert_eq!(eval(&f, &[0b1]), Some(1));
+        assert_eq!(eval(&f, &[0b10]), Some(0));
+        assert_eq!(eval(&f, &[0b11]), Some(2));
+        assert_eq!(eval(&f, &[0b110]), Some(0));
+        assert_eq!(eval(&f, &[0b111]), Some(3));
         assert_eq!(eval(&f, &[0b1111]), Some(4));
         assert_eq!(eval(&f, &[0b11011]), Some(2));
         assert_eq!(eval(&f, &[0b11001]), Some(1));
@@ -443,12 +451,12 @@ mod tests {
         // ack_step(a, b) = Div2(append_n(a, b, PopK(b)))
         let f = ack_step();
         // a=0: Div2(PopK(b))
-        assert_eq!(eval(&f, &[0, 1]),  Some(0)); // PopK(1)=1, Div2(1)=0
-        assert_eq!(eval(&f, &[0, 3]),  Some(1)); // PopK(3)=2, Div2(2)=1
-        assert_eq!(eval(&f, &[0, 7]),  Some(1)); // PopK(7)=3, Div2(3)=1
+        assert_eq!(eval(&f, &[0, 1]), Some(0)); // PopK(1)=1, Div2(1)=0
+        assert_eq!(eval(&f, &[0, 3]), Some(1)); // PopK(3)=2, Div2(2)=1
+        assert_eq!(eval(&f, &[0, 7]), Some(1)); // PopK(7)=3, Div2(3)=1
         assert_eq!(eval(&f, &[0, 15]), Some(2)); // PopK(15)=4, Div2(4)=2
         // a=1, b=1: append_n(1,1,1)=safe_block(PopK(1),1)=safe_block(1,1)=1*2∸1=1; Div2(1)=0
-        assert_eq!(eval(&f, &[1, 1]),  Some(0));
+        assert_eq!(eval(&f, &[1, 1]), Some(0));
     }
 
     #[test]
@@ -459,19 +467,19 @@ mod tests {
         for x in 0u64..=5 {
             assert_eq!(eval(&f, &[0, x]), Some(x));
         }
-        assert_eq!(eval(&f, &[1, 3]),  Some(1)); // ack_step(0,3)=1
-        assert_eq!(eval(&f, &[2, 3]),  Some(0)); // ack_step(1,1)=0
+        assert_eq!(eval(&f, &[1, 3]), Some(1)); // ack_step(0,3)=1
+        assert_eq!(eval(&f, &[2, 3]), Some(0)); // ack_step(1,1)=0
     }
 
     #[test]
     fn test_ack_worm_small() {
         // ack_worm(x) = min{n : ack_loop(n,x) = 0}
         let f = ack_worm();
-        assert_eq!(eval(&f, &[0]),  Some(0)); // StateLoop(0,0)=0 immediately
-        assert_eq!(eval(&f, &[1]),  Some(1)); // StateLoop(1,1)=ack_step(0,1)=0
-        assert_eq!(eval(&f, &[2]),  Some(1)); // StateLoop(1,2)=ack_step(0,2)=0
-        assert_eq!(eval(&f, &[3]),  Some(2)); // terminates at step 2
-        assert_eq!(eval(&f, &[7]),  Some(2)); // terminates at step 2
+        assert_eq!(eval(&f, &[0]), Some(0)); // StateLoop(0,0)=0 immediately
+        assert_eq!(eval(&f, &[1]), Some(1)); // StateLoop(1,1)=ack_step(0,1)=0
+        assert_eq!(eval(&f, &[2]), Some(1)); // StateLoop(1,2)=ack_step(0,2)=0
+        assert_eq!(eval(&f, &[3]), Some(2)); // terminates at step 2
+        assert_eq!(eval(&f, &[7]), Some(2)); // terminates at step 2
         assert_eq!(eval(&f, &[15]), Some(3)); // terminates at step 3
     }
 }

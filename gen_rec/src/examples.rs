@@ -160,10 +160,7 @@ mod tests {
         let dt = adt(1);
         // RepDiag[Tri](3) = Tri^4(5) = Tri(Tri(Tri(15))) = Tri(Tri(120)) = Tri(7260) = 26,357,430
         let (result, _) = simulate(&dt, &[3], 200_000_000);
-        assert_eq!(
-            result.into_value(),
-            Some(26_357_430)
-        );
+        assert_eq!(result.into_value(), Some(26_357_430));
     }
 
     #[test]

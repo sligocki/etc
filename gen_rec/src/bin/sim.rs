@@ -62,6 +62,9 @@ fn main() {
     let (result, steps) = simulate(&grf, &args.inputs, args.max_steps);
     match result.into_value() {
         Some(v) => println!("result: {}  ({} steps)", v, steps),
-        None => println!("result: timed out after {} steps (limit: {})", steps, args.max_steps),
+        None => println!(
+            "result: timed out after {} steps (limit: {})",
+            steps, args.max_steps
+        ),
     }
 }

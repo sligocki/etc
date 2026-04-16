@@ -69,10 +69,10 @@ fn canonical_inputs(arity: usize) -> Vec<Vec<u64>> {
         return vec![vec![]];
     }
     let per_dim: u64 = match arity {
-        1 => 8,  // 8 inputs
-        2 => 4,  // 16 inputs
-        3 => 3,  // 27 inputs
-        _ => 2,  // 2^arity inputs
+        1 => 8, // 8 inputs
+        2 => 4, // 16 inputs
+        3 => 3, // 27 inputs
+        _ => 2, // 2^arity inputs
     };
     let mut result: Vec<Vec<u64>> = vec![vec![]];
     for _ in 0..arity {
@@ -103,9 +103,10 @@ fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
 
     if all_proj {
         // Is it the identity tuple P(n,1), P(n,2), ..., P(n,n)?
-        let is_identity = gs.iter().enumerate().all(|(i, g)| {
-            matches!(g, Grf::Proj(k, j) if *k == n && *j == i + 1)
-        });
+        let is_identity = gs
+            .iter()
+            .enumerate()
+            .all(|(i, g)| matches!(g, Grf::Proj(k, j) if *k == n && *j == i + 1));
         if is_identity {
             return "all_proj_identity     [C(R,P(k,1),..,P(k,k)) ≡ R — always prunable]";
         }
@@ -286,10 +287,7 @@ fn main() {
                 let crec_sub = if let Grf::Comp(h, gs, _) = grf {
                     if matches!(h.as_ref(), Grf::Rec(_, _)) {
                         let s = crec_arg_pattern(gs);
-                        crec_by_subcat
-                            .entry(s)
-                            .or_insert((0, 0, vec![], vec![]))
-                            .0 += 1;
+                        crec_by_subcat.entry(s).or_insert((0, 0, vec![], vec![])).0 += 1;
                         Some(s)
                     } else {
                         None
@@ -306,9 +304,7 @@ fn main() {
                     None => {
                         // Track novel C(R,·) examples (these are the non-redundant ones).
                         if let Some(sub) = crec_sub {
-                            let e = crec_by_subcat
-                                .entry(sub)
-                                .or_insert((0, 0, vec![], vec![]));
+                            let e = crec_by_subcat.entry(sub).or_insert((0, 0, vec![], vec![]));
                             if e.3.len() < crec_deep_samples {
                                 e.3.push((size, expr.clone()));
                             }
@@ -325,7 +321,9 @@ fn main() {
                             let entry = by_cat.entry(cat).or_default();
                             entry.0 += 1;
                             if entry.1.len() < args.samples {
-                                entry.1.push((size, expr.clone(), *min_size, min_expr.clone()));
+                                entry
+                                    .1
+                                    .push((size, expr.clone(), *min_size, min_expr.clone()));
                             }
 
                             // Grouping 2: canonical target it is equivalent to.
@@ -337,9 +335,7 @@ fn main() {
 
                             // C(R,·) deep analysis — redundant count + examples.
                             if let Some(sub) = crec_sub {
-                                let e = crec_by_subcat
-                                    .entry(sub)
-                                    .or_insert((0, 0, vec![], vec![]));
+                                let e = crec_by_subcat.entry(sub).or_insert((0, 0, vec![], vec![]));
                                 e.1 += 1;
                                 if e.2.len() < crec_deep_samples {
                                     e.2.push((size, expr, *min_size, min_expr.clone()));
@@ -352,7 +348,15 @@ fn main() {
                 }
             });
 
-            summary.push((size, arity, total, novel, cross_redundant, pat_p11, pat_single_proj));
+            summary.push((
+                size,
+                arity,
+                total,
+                novel,
+                cross_redundant,
+                pat_p11,
+                pat_single_proj,
+            ));
         }
     }
 
@@ -400,7 +404,9 @@ fn main() {
         let tot_b = cat_total.get(*cat_b).copied().unwrap_or(1) as f64;
         let pct_a = *redund_a as f64 / tot_a;
         let pct_b = *redund_b as f64 / tot_b;
-        pct_b.partial_cmp(&pct_a).unwrap_or(std::cmp::Ordering::Equal)
+        pct_b
+            .partial_cmp(&pct_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     for (cat, (redund, examples)) in &cats {
@@ -412,7 +418,10 @@ fn main() {
         };
         println!("\n[{redund:>6}/{total_in_cat:<6} = {pct:5.1}%]  {cat}");
         for (size, expr, min_size, min_expr) in examples.iter() {
-            println!("           n={}  {}  ≡  n={}  {}", size, expr, min_size, min_expr);
+            println!(
+                "           n={}  {}  ≡  n={}  {}",
+                size, expr, min_size, min_expr
+            );
         }
     }
 
@@ -457,7 +466,10 @@ fn main() {
         // Show a selection of redundant examples.
         let show_redund = redund_examples.len().min(args.samples);
         for (size, expr, min_size, min_expr) in redund_examples.iter().take(show_redund) {
-            println!("  REDUND  n={}  {}  ≡  n={}  {}", size, expr, min_size, min_expr);
+            println!(
+                "  REDUND  n={}  {}  ≡  n={}  {}",
+                size, expr, min_size, min_expr
+            );
         }
         if redund_examples.len() > show_redund {
             println!(
@@ -474,7 +486,10 @@ fn main() {
                 println!("  NOVEL   n={}  {}", size, expr);
             }
             if novel_examples.len() < novel_in_sub {
-                println!("  ... ({} more novel, not shown)", novel_in_sub - novel_examples.len());
+                println!(
+                    "  ... ({} more novel, not shown)",
+                    novel_in_sub - novel_examples.len()
+                );
             }
         }
     }
@@ -509,7 +524,10 @@ fn main() {
         }
     }
     if targets.len() > limit {
-        println!("\n  ... ({} more canonical targets not shown)", targets.len() - limit);
+        println!(
+            "\n  ... ({} more canonical targets not shown)",
+            targets.len() - limit
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -535,12 +553,8 @@ fn main() {
     println!();
     println!("{}", "=".repeat(78));
     println!("Candidate pruning pattern frequencies");
-    println!(
-        "  C(f, P(1,1))     — always ≡ f  (composition with 1-arity identity)"
-    );
-    println!(
-        "  C(f, P(k,i))     — single-arg comp with any projection  (superset)"
-    );
+    println!("  C(f, P(1,1))     — always ≡ f  (composition with 1-arity identity)");
+    println!("  C(f, P(k,i))     — single-arg comp with any projection  (superset)");
     println!("Count = how many GRFs in the current enumeration match the pattern.");
     println!("These would ALL be removed if the corresponding rule were implemented.");
     println!("{}", "=".repeat(78));

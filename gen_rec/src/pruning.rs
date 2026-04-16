@@ -46,7 +46,9 @@ pub struct PruningOpts {
 }
 
 impl PruningOpts {
-    pub const fn default() -> PruningOpts { Self::all() }
+    pub const fn default() -> PruningOpts {
+        Self::all()
+    }
 
     pub const fn none() -> PruningOpts {
         PruningOpts {

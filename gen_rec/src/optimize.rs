@@ -471,6 +471,22 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Broken"]
+    fn fingerprint_monus2_app() {
+        // Build a DB up to size 8 covering arities 0..=3.
+        let db = FingerprintDb::build(8, 3, false, 10_000);
+
+        let pred = grf!("R(Z0, P(2,1))");
+        // C(Pred, C(Pred, P(3,2)))
+        let before = Grf::comp(pred.clone(), vec![Grf::comp(pred, vec![Grf::Proj(3,2)])]);
+        let after = opt_fingerprint(before.clone(), &db);
+
+        assert_eq!(after, grf!("C(R(Z0, R(Z1, P(3,1))), P(3,2))"));
+        assert!(after.size() < before.size());
+        check_equiv(&before, &after, 16);
+    }
+
+    #[test]
     fn fingerprint_ack_worm() {
         use crate::example_ack::ack_worm;
 

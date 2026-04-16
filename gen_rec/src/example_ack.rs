@@ -170,9 +170,9 @@ pub fn ack_worm() -> Grf {
 }
 // AckWorm([4]) = 41 2^38 - 1 = [1,1,0,0,38]
 
-/// InitList(n,_) := list ending in a value >= n+1
+/// InitList(n,_) := list ending in a value >= n
 pub fn init_list() -> Grf {
-    // (n,m) -> (m+3) 2^{n+1} - 1
+    // (n,m) -> (m+2) 2^n - 1
     // A number ending in at least n+1 1s in binary
     diag_rep(rep_succ(Grf::Succ))
 }
@@ -187,10 +187,11 @@ pub fn ack() -> Grf {
 /// Graham() > Graham's number
 /// C(C(RepRepAck, S, S), K[1])
 pub fn graham() -> Grf {
-    // f(n) = ack^n(n+1)
-    // g(n) = f^n(n+1)
-    // h(n) = g(n+1)
-    let g = diag_rep(ack());
+    // f(n,n) = ack^n(n+1)
+    // g(n,n) = f^n(n+1)
+    // h(n) = g(n+1,n+1)
+    let f = diag_rep(ack());
+    let g = diag_rep(f);
     let h = diag_succ(g);
     // h(1) = g(2) = f^2(3) = f(ack^3(4)) = f(ack^2(41 2^38 - 1)) >> f(64) > Graham
     Grf::comp(h, vec![constant(1, 0)])
@@ -250,7 +251,7 @@ mod tests {
             ("ack_worm", &ack_worm, 1, 86),
             ("init_list", &init_list, 2, 10),
             ("ack", &ack, 2, 97),
-            ("graham", &graham, 0, 109),
+            ("graham", &graham, 0, 114),
         ];
         for (name, f, arity, size) in cases {
             let g = f();
@@ -554,12 +555,23 @@ mod tests {
     }
 
     #[test]
+    fn test_init_list() {
+        let f = init_list();
+        for n in 0u64..12 {
+            let x = eval(&f, &[n, n]).unwrap();
+            // Check that last n bits are all 1s
+            let mask = 2_u64.pow(n as u32) - 1;
+            assert_eq!(x & mask, mask, "init_list({n},{n}) = {x}");
+        }
+    }
+
+    #[test]
     fn graham_compress() {
         use crate::optimize::opt_inline_proj;
 
         let before = graham();
-        assert_eq!(before.size(), 109);
+        assert_eq!(before.size(), 114);
         let after = opt_inline_proj(before);
-        assert_eq!(after.size(), 102);
+        assert_eq!(after.size(), 107);
     }
 }

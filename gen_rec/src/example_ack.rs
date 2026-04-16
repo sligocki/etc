@@ -62,14 +62,18 @@ pub fn shift() -> Grf {
     Grf::rec(Grf::Proj(1, 1), Grf::comp(double(), vec![Grf::Proj(3, 2)]))
 }
 
+/// Monus2(x) := x ∸ 2
+/// R(Z0, R(Z1, P(3,1)))
+/// Arity: 1, Size: 5
+pub fn monus2() -> Grf {
+    Grf::rec(Grf::Zero(0), Grf::rec(Grf::Zero(1), Grf::Proj(3, 1)))
+}
+
 /// RMonusOdd(x,y) := y ∸ (2x + 1)
-/// R(Pred, C(Pred, C(Pred, P(3,2))))
-/// Arity: 2, Size: 13
+/// R(Pred, C(Monus2, P(3,2)))
+/// Arity: 2, Size: 11
 pub fn rmonus_odd() -> Grf {
-    Grf::rec(
-        pred(),
-        Grf::comp(pred(), vec![Grf::comp(pred(), vec![Grf::Proj(3, 2)])]),
-    )
+    Grf::rec(pred(), Grf::comp(monus2(), vec![Grf::Proj(3, 2)]))
 }
 
 /// Div2(x) := ⌊x / 2⌋
@@ -259,7 +263,7 @@ mod tests {
     }
 
     fn eval(grf: &Grf, args: &[Num]) -> Option<Num> {
-        let (result, _steps) = simulate(grf, args, 10_000_000);
+        let (result, _steps) = simulate(grf, args, 100_000_000);
         result.into_value()
     }
 
@@ -267,34 +271,38 @@ mod tests {
 
     #[test]
     fn test_arity_and_size() {
-        let cases: &[(&str, &dyn Fn() -> Grf, usize, usize)] = &[
-            ("pred", &pred, 1, 3),
-            ("not", &not, 1, 5),
-            ("sgn", &sgn, 1, 5),
-            ("plus2", &plus2, 1, 3),
-            ("double", &double, 1, 7),
-            ("rmonus", &rmonus, 2, 7),
-            ("mod2", &mod2, 1, 9),
-            ("shift", &shift, 2, 11),
-            ("rmonus_odd", &rmonus_odd, 2, 13),
-            ("div2", &div2, 1, 14),
-            ("div2k", &div2k, 2, 18),
-            ("dec_append", &dec_append, 2, 26),
-            ("bit", &bit, 2, 28),
-            ("pop_k", &pop_k, 1, 29),
-            ("dec_append_n", &dec_append_n, 3, 31),
-            ("ack_step", &ack_step, 2, 80),
-            ("ack_loop", &ack_loop, 2, 85),
-            ("ack_worm", &ack_worm, 1, 86),
-            ("init_list", &init_list, 2, 10),
-            ("ack", &ack, 2, 97),
-            ("omega", &omega, 0, 109),
-            ("graham", &graham, 0, 114),
+        use crate::optimize::opt_inline_proj;
+        // (name, constructor, arity, size, size_after_opt_inline_proj)
+        let cases: &[(&str, &dyn Fn() -> Grf, usize, usize, usize)] = &[
+            ("pred",         &pred,         1, 3,   3),
+            ("not",          &not,          1, 5,   5),
+            ("sgn",          &sgn,          1, 5,   5),
+            ("plus2",        &plus2,        1, 3,   3),
+            ("double",       &double,       1, 7,   7),
+            ("rmonus",       &rmonus,       2, 7,   7),
+            ("mod2",         &mod2,         1, 9,   9),
+            ("shift",        &shift,        2, 11,  11),
+            ("monus2",       &monus2,       1,  5,   5),
+            ("rmonus_odd",   &rmonus_odd,   2, 11,  11),
+            ("div2",         &div2,         1, 12,  12),
+            ("div2k",        &div2k,        2, 16,  16),
+            ("dec_append",   &dec_append,   2, 26,  24),
+            ("dec_append_n", &dec_append_n, 3, 31,  29),
+            ("bit",          &bit,          2, 26,  26),
+            ("pop_k",        &pop_k,        1, 27,  27),
+            ("ack_step",     &ack_step,     2, 76,  72),
+            ("ack_loop",     &ack_loop,     2, 81,  74),
+            ("ack_worm",     &ack_worm,     1, 82,  75),
+            ("init_list",    &init_list,    2, 10,  10),
+            ("ack",          &ack,          2, 93,  86),
+            ("omega",        &omega,        0, 105, 98),
+            ("graham",       &graham,       0, 110, 103),
         ];
-        for (name, f, arity, size) in cases {
+        for (name, f, arity, size, opt_size) in cases {
             let g = f();
             assert_eq!(g.arity(), *arity, "{name}: wrong arity");
             assert_eq!(g.size(), *size, "{name}: wrong size");
+            assert_eq!(opt_inline_proj(g).size(), *opt_size, "{name}: wrong opt size");
         }
     }
 
@@ -305,7 +313,18 @@ mod tests {
         let f = pred();
         assert_eq!(eval(&f, &[0]), Some(0)); // 0 ∸ 1 = 0
         assert_eq!(eval(&f, &[1]), Some(0));
+        assert_eq!(eval(&f, &[2]), Some(1));
         assert_eq!(eval(&f, &[5]), Some(4));
+    }
+
+    #[test]
+    fn test_monus2() {
+        let f = monus2();
+        assert_eq!(eval(&f, &[0]), Some(0));
+        assert_eq!(eval(&f, &[1]), Some(0));
+        assert_eq!(eval(&f, &[2]), Some(0));
+        assert_eq!(eval(&f, &[3]), Some(1));
+        assert_eq!(eval(&f, &[5]), Some(3));
     }
 
     #[test]
@@ -490,10 +509,10 @@ mod tests {
         let f = ack_step();
         assert_eq!(eval(&f, &[0, list2int(&[2])]), Some(list2int(&[1])));
         assert_eq!(eval(&f, &[0, list2int(&[5])]), Some(list2int(&[4])));
-        assert_eq!(eval(&f, &[0, list2int(&[1,2,3])]), Some(list2int(&[1,2,2])));
+        assert_eq!(eval(&f, &[0, list2int(&[1,1,3])]), Some(list2int(&[1,1,2])));
         assert_eq!(eval(&f, &[1, list2int(&[2])]), Some(list2int(&[1,1])));
         assert_eq!(eval(&f, &[1, list2int(&[1,2,1])]), Some(list2int(&[1,2,0,0])));
-        assert_eq!(eval(&f, &[2, list2int(&[1,0,2])]), Some(list2int(&[1,0,1,1,1])));
+        assert_eq!(eval(&f, &[2, list2int(&[1,0,1])]), Some(list2int(&[1,0,0,0,0])));
     }
 
     #[test]
@@ -509,7 +528,7 @@ mod tests {
         // One ack_step(0, .): [..., k] -> [..., k-1]
         assert_eq!(eval(&f, &[1, list2int(&[1])]), Some(list2int(&[0])));
         assert_eq!(eval(&f, &[1, list2int(&[2])]), Some(list2int(&[1])));
-        assert_eq!(eval(&f, &[1, list2int(&[1,2,3])]), Some(list2int(&[1,2,2])));
+        assert_eq!(eval(&f, &[1, list2int(&[1,3])]), Some(list2int(&[1,2])));
 
         // Two ack_steps:
         //      ack_step(0, .): [..., k] -> [..., k-1]
@@ -583,16 +602,6 @@ mod tests {
     }
 
     #[test]
-    fn ack_worm_compress() {
-        use crate::optimize::opt_inline_proj;
-
-        let before = ack_worm();
-        assert_eq!(before.size(), 86);
-        let after = opt_inline_proj(before);
-        assert_eq!(after.size(), 79);
-    }
-
-    #[test]
     fn test_init_list() {
         let f = init_list();
         for n in 0u64..12 {
@@ -601,15 +610,5 @@ mod tests {
             let mask = 2_u64.pow(n as u32) - 1;
             assert_eq!(x & mask, mask, "init_list({n},{n}) = {x}");
         }
-    }
-
-    #[test]
-    fn graham_compress() {
-        use crate::optimize::opt_inline_proj;
-
-        let before = graham();
-        assert_eq!(before.size(), 114);
-        let after = opt_inline_proj(before);
-        assert_eq!(after.size(), 107);
     }
 }

@@ -6,8 +6,8 @@
 ///   db build fp/ --max-size 8 --allow-min --arities 0,1,2 --jobs 4
 use clap::{Parser, Subcommand};
 use gen_rec::novel_db::{
-    db_filename, db_paths_in_dir, extend_novel_map, load_novel_file, merge_into, save_novel_file,
-    NovelMap,
+    db_filename, db_paths_in_dir, extend_novel_map, load_novel_file, merge_into, retry_timed_out,
+    save_novel_file, NovelMap,
 };
 use rayon::prelude::*;
 use std::path::PathBuf;
@@ -67,8 +67,8 @@ fn cmd_status(dir: &PathBuf) {
         return;
     }
 
-    // Collect (arity, allow_min, max_size, entry_count) from each file.
-    let mut info: Vec<(usize, bool, usize, usize)> = Vec::new();
+    // Collect (arity, allow_min, max_size, entry_count, timed_out_count) from each file.
+    let mut info: Vec<(usize, bool, usize, usize, usize)> = Vec::new();
     for path in &paths {
         // Try to parse arity from filename: a{N}_{prf|min}.db
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -85,7 +85,9 @@ fn cmd_status(dir: &PathBuf) {
         };
 
         match load_novel_file(path) {
-            Ok((meta, map)) => info.push((arity, allow_min, meta.max_size, map.len())),
+            Ok((meta, map, timed_out)) => {
+                info.push((arity, allow_min, meta.max_size, map.len(), timed_out.len()));
+            }
             Err(e) => eprintln!("warning: skipping {}: {e}", path.display()),
         }
     }
@@ -96,35 +98,44 @@ fn cmd_status(dir: &PathBuf) {
     }
 
     // Sort and display.
-    info.sort_by_key(|(a, m, _, _)| (*a, *m));
-    let max_arity = info.iter().map(|(a, _, _, _)| *a).max().unwrap_or(0);
+    info.sort_by_key(|(a, m, _, _, _)| (*a, *m));
+    let max_arity = info.iter().map(|(a, _, _, _, _)| *a).max().unwrap_or(0);
 
-    println!("{:<6}  {:>8}  {:>8}  {:>8}", "arity", "prf", "min", "entries");
-    println!("{}", "-".repeat(36));
+    // Show t/o column only if any file has timed-out entries.
+    let any_timed_out = info.iter().any(|(_, _, _, _, t)| *t > 0);
+
+    if any_timed_out {
+        println!("{:<6}  {:>8}  {:>8}  {:>8}  {:>6}", "arity", "prf", "min", "entries", "t/o");
+        println!("{}", "-".repeat(44));
+    } else {
+        println!("{:<6}  {:>8}  {:>8}  {:>8}", "arity", "prf", "min", "entries");
+        println!("{}", "-".repeat(36));
+    }
 
     for arity in 0..=max_arity {
-        let prf = info.iter().find(|(a, m, _, _)| *a == arity && !m);
-        let min = info.iter().find(|(a, m, _, _)| *a == arity && *m);
+        let prf = info.iter().find(|(a, m, _, _, _)| *a == arity && !m);
+        let min = info.iter().find(|(a, m, _, _, _)| *a == arity && *m);
 
-        let prf_str = prf.map_or("–".to_string(), |(_, _, sz, _)| sz.to_string());
-        let min_str = min.map_or("–".to_string(), |(_, _, sz, _)| sz.to_string());
-        let entries = prf.map_or(0, |(_, _, _, n)| *n) + min.map_or(0, |(_, _, _, n)| *n);
-        let entries_str = if entries == 0 {
-            "–".to_string()
+        let prf_str = prf.map_or("–".to_string(), |(_, _, sz, _, _)| sz.to_string());
+        let min_str = min.map_or("–".to_string(), |(_, _, sz, _, _)| sz.to_string());
+        let entries = prf.map_or(0, |(_, _, _, n, _)| *n) + min.map_or(0, |(_, _, _, n, _)| *n);
+        let entries_str = if entries == 0 { "–".to_string() } else { entries.to_string() };
+
+        if any_timed_out {
+            let to = prf.map_or(0, |(_, _, _, _, t)| *t) + min.map_or(0, |(_, _, _, _, t)| *t);
+            let to_str = if to == 0 { "–".to_string() } else { to.to_string() };
+            println!("{:<6}  {:>8}  {:>8}  {:>8}  {:>6}", arity, prf_str, min_str, entries_str, to_str);
         } else {
-            entries.to_string()
-        };
-
-        println!(
-            "{:<6}  {:>8}  {:>8}  {:>8}",
-            arity, prf_str, min_str, entries_str
-        );
+            println!("{:<6}  {:>8}  {:>8}  {:>8}", arity, prf_str, min_str, entries_str);
+        }
     }
     println!();
-    println!(
-        "Total entries: {}",
-        info.iter().map(|(_, _, _, n)| n).sum::<usize>()
-    );
+    let total_entries: usize = info.iter().map(|(_, _, _, n, _)| n).sum();
+    let total_to: usize = info.iter().map(|(_, _, _, _, t)| t).sum();
+    println!("Total entries: {total_entries}");
+    if total_to > 0 {
+        println!("Timed-out (pending retry): {total_to}");
+    }
 }
 
 // ── build ─────────────────────────────────────────────────────────────────────
@@ -141,23 +152,27 @@ fn run_build_job(job: &BuildJob) {
     let t0 = Instant::now();
     let mut map: NovelMap = NovelMap::new();
     let mut start_size = 1usize;
+    let mut prev_timed_out: Vec<(usize, String)> = Vec::new();
+    let mut prev_max_steps = job.max_steps;
 
     // For allow_min runs, seed from the prf file to prevent re-discovery.
     if job.allow_min {
         let seed = db_filename(&job.dir, job.arity, false);
         if seed.exists() {
-            if let Ok((_, seed_map)) = load_novel_file(&seed) {
+            if let Ok((_, seed_map, _)) = load_novel_file(&seed) {
                 merge_into(&mut map, seed_map);
             }
         }
     }
 
-    // Load existing target file to determine start_size.
+    // Load existing target file to determine start_size and any timed-out entries.
     let target = db_filename(&job.dir, job.arity, job.allow_min);
     if target.exists() {
         match load_novel_file(&target) {
-            Ok((meta, file_map)) => {
+            Ok((meta, file_map, timed_out)) => {
                 start_size = meta.max_size + 1;
+                prev_max_steps = meta.max_steps;
+                prev_timed_out = timed_out;
                 merge_into(&mut map, file_map);
             }
             Err(e) => {
@@ -176,26 +191,50 @@ fn run_build_job(job: &BuildJob) {
         if job.allow_min { "min" } else { "prf" }
     );
 
-    if start_size > job.max_size {
+    // Retry previously-timed-out entries if the step budget has increased.
+    let (mut timed_out_list, recovered) =
+        if !prev_timed_out.is_empty() && job.max_steps > prev_max_steps {
+            eprintln!(
+                "[{label}] retrying {} timed-out entries (max_steps: {} → {}) ...",
+                prev_timed_out.len(),
+                prev_max_steps,
+                job.max_steps,
+            );
+            retry_timed_out(prev_timed_out, &mut map, job.arity, job.max_steps)
+        } else {
+            (prev_timed_out, 0)
+        };
+
+    let size_range_done = start_size > job.max_size;
+    let nothing_to_do = size_range_done && recovered == 0 && timed_out_list.is_empty();
+
+    if nothing_to_do {
         println!("[{label}] already at max_size={}, nothing to do", job.max_size);
         return;
     }
 
-    eprintln!(
-        "[{label}] enumerating sizes {}..={} ...",
-        start_size, job.max_size
-    );
-
-    let new_entries = extend_novel_map(
-        &mut map,
-        job.arity,
-        start_size,
-        job.max_size,
-        job.allow_min,
-        job.max_steps,
-        false, // partial=false: total functions only
-        false, // progress: suppress per-size lines (parallel output would be garbled)
-    );
+    // Enumerate new sizes.
+    let mut total_tested = 0usize;
+    let mut total_new = 0usize;
+    if !size_range_done {
+        eprintln!(
+            "[{label}] enumerating sizes {}..={} ...",
+            start_size, job.max_size
+        );
+        let stats = extend_novel_map(
+            &mut map,
+            job.arity,
+            start_size,
+            job.max_size,
+            job.allow_min,
+            job.max_steps,
+            false, // partial=false: total functions only
+            false, // progress: suppress per-size lines (parallel output would be garbled)
+        );
+        total_tested = stats.total_tested;
+        total_new = stats.total_new;
+        timed_out_list.extend(stats.timed_out_entries);
+    }
 
     if let Err(e) = save_novel_file(
         &target,
@@ -203,16 +242,29 @@ fn run_build_job(job: &BuildJob) {
         job.max_size,
         job.max_steps,
         &map,
+        &timed_out_list,
     ) {
         eprintln!("[{label}] error saving: {e}");
         return;
     }
 
+    // Build summary line.
+    let mut parts: Vec<String> = Vec::new();
+    if total_tested > 0 {
+        parts.push(format!("{total_tested} tested"));
+    }
+    if recovered > 0 {
+        parts.push(format!("{recovered} t/o recovered"));
+    }
+    if !timed_out_list.is_empty() {
+        parts.push(format!("{} timed-out", timed_out_list.len()));
+    }
+    parts.push(format!("+{total_new} novel ({} total)", map.len()));
+
     println!(
-        "[{label}] done: {} total entries, +{} new, in {:.1}s  → {}",
-        map.len(),
-        new_entries,
+        "[{label}] done in {:.1}s: {}  → {}",
         t0.elapsed().as_secs_f64(),
+        parts.join(", "),
         target.display(),
     );
 }

@@ -76,7 +76,7 @@ fn main() {
             let seed = db_filename(dir, args.arity, false);
             if seed.exists() {
                 match load_novel_file(&seed) {
-                    Ok((_, seed_map)) => merge_into(&mut map, seed_map),
+                    Ok((_, seed_map, _)) => merge_into(&mut map, seed_map),
                     Err(e) => {
                         eprintln!("warning: could not load seed {}: {e}", seed.display())
                     }
@@ -87,7 +87,7 @@ fn main() {
         let target = db_filename(dir, args.arity, args.allow_min);
         if target.exists() {
             match load_novel_file(&target) {
-                Ok((meta, file_map)) => {
+                Ok((meta, file_map, _)) => {
                     start_size = meta.max_size + 1;
                     merge_into(&mut map, file_map);
                 }
@@ -102,7 +102,7 @@ fn main() {
     // ── --load: manual files ──────────────────────────────────────────────────
     for load_path in &args.load {
         match load_novel_file(load_path) {
-            Ok((meta, file_map)) => {
+            Ok((meta, file_map, _)) => {
                 // Advance start_size only from files with matching allow_min coverage.
                 if meta.allow_min == args.allow_min {
                     start_size = start_size.max(meta.max_size + 1);
@@ -118,7 +118,7 @@ fn main() {
 
     // ── enumerate ─────────────────────────────────────────────────────────────
     if start_size <= args.max_size {
-        extend_novel_map(
+        let _ = extend_novel_map(
             &mut map,
             args.arity,
             start_size,
@@ -153,7 +153,7 @@ fn main() {
 
     if let Some(path) = save_path {
         if let Err(e) =
-            save_novel_file(&path, args.allow_min, args.max_size, args.max_steps, &map)
+            save_novel_file(&path, args.allow_min, args.max_size, args.max_steps, &map, &[])
         {
             eprintln!("error: could not save to {}: {e}", path.display());
             std::process::exit(1);

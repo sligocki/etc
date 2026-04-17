@@ -4,6 +4,9 @@
 ///   Line 1: `allow_min=<bool> max_size=<usize> max_steps=<u64>`
 ///   Subsequent lines: `<size>\t<grf>\t<fingerprint>`
 ///     where fingerprint is comma-separated integers / `?` for None.
+///   Timed-out lines: `<size>\t<grf>\t?`  (single `?` = no fingerprint computed)
+///     These are GRFs that did not converge within max_steps. On reload with a
+///     higher step budget, they are retried and may be recovered into the main map.
 ///
 /// Canonical filenames: `a{arity}_{prf|min}.db`
 use crate::enumerate::stream_grf;
@@ -54,15 +57,22 @@ pub fn format_fp(fp: &Fingerprint) -> String {
         .join(",")
 }
 
-/// Load a novel DB file into a `NovelMap`.
+/// Load a novel DB file.
 ///
-/// Lines with a stored fingerprint use it directly. Lines without (old format)
-/// are re-fingerprinted using `meta.max_steps`.
-pub fn load_novel_file(path: &Path) -> io::Result<(NovelDbMeta, NovelMap)> {
+/// Returns `(meta, map, timed_out)` where:
+/// - `map`: entries with known fingerprints (the normal novel entries)
+/// - `timed_out`: `(size, grf_string)` pairs stored with a `?` fingerprint —
+///   GRFs that did not converge when the file was written; may be retried with
+///   a higher step budget via `retry_timed_out`.
+///
+/// Lines with a stored fingerprint use it directly. Lines without a fingerprint
+/// column (old format) are re-fingerprinted using `meta.max_steps`.
+pub fn load_novel_file(path: &Path) -> io::Result<(NovelDbMeta, NovelMap, Vec<(usize, String)>)> {
     let file = std::fs::File::open(path)?;
     let reader = io::BufReader::new(file);
     let mut meta: Option<NovelDbMeta> = None;
     let mut map: NovelMap = HashMap::new();
+    let mut timed_out: Vec<(usize, String)> = Vec::new();
     let mut needs_refp: Vec<(usize, Grf)> = Vec::new();
 
     for (lineno, line) in reader.lines().enumerate() {
@@ -115,6 +125,13 @@ pub fn load_novel_file(path: &Path) -> io::Result<(NovelDbMeta, NovelMap)> {
                 format!("{}: line {}: bad size '{size_s}'", path.display(), lineno + 1),
             )
         })?;
+
+        // A lone "?" in the fingerprint column means "timed out when written".
+        if fp_s == Some("?") {
+            timed_out.push((size, grf_s.to_string()));
+            continue;
+        }
+
         let grf: Grf = grf_s.parse().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -163,16 +180,58 @@ pub fn load_novel_file(path: &Path) -> io::Result<(NovelDbMeta, NovelMap)> {
         }
     }
 
-    Ok((meta, map))
+    Ok((meta, map, timed_out))
 }
 
-/// Save a NovelMap to a file, including stored fingerprints.
+/// Re-fingerprint a list of previously-timed-out `(size, grf_string)` entries
+/// using a (presumably larger) step budget.
+///
+/// Entries that converge are merged into `map` (keeping the smaller GRF per
+/// fingerprint). Entries that still time out are returned as the remaining
+/// timed-out list.
+///
+/// Returns `(still_timed_out, recovered_count)`.
+pub fn retry_timed_out(
+    entries: Vec<(usize, String)>,
+    map: &mut NovelMap,
+    arity: usize,
+    max_steps: u64,
+) -> (Vec<(usize, String)>, usize) {
+    let inputs = canonical_inputs(arity);
+    let mut still_timed_out = Vec::new();
+    let mut recovered = 0usize;
+
+    for (size, grf_str) in entries {
+        let grf: Grf = match grf_str.parse() {
+            Ok(g) => g,
+            Err(_) => { still_timed_out.push((size, grf_str)); continue; }
+        };
+        let fp = compute_fp(&grf, &inputs, max_steps);
+        if fp_is_complete(&fp) {
+            let is_novel = map.get(&fp).map_or(true, |(s, _)| size < *s);
+            if is_novel {
+                map.insert(fp, (size, grf_str));
+            }
+            recovered += 1;
+        } else {
+            still_timed_out.push((size, grf_str));
+        }
+    }
+
+    (still_timed_out, recovered)
+}
+
+/// Save a NovelMap to a file, including stored fingerprints and timed-out entries.
+///
+/// Timed-out entries are written with a lone `?` as the fingerprint column so they
+/// can be retried on a future run with a higher step budget.
 pub fn save_novel_file(
     path: &Path,
     allow_min: bool,
     max_size: usize,
     max_steps: u64,
     map: &NovelMap,
+    timed_out: &[(usize, String)],
 ) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -188,6 +247,12 @@ pub fn save_novel_file(
     for (fp, size, grf) in entries {
         writeln!(w, "{size}\t{grf}\t{}", format_fp(fp))?;
     }
+    // Write timed-out entries sorted by (size, grf) for determinism.
+    let mut to_sorted = timed_out.to_vec();
+    to_sorted.sort_by(|(sa, ga), (sb, gb)| sa.cmp(sb).then(ga.cmp(gb)));
+    for (size, grf) in &to_sorted {
+        writeln!(w, "{size}\t{grf}\t?")?;
+    }
     Ok(())
 }
 
@@ -201,7 +266,17 @@ pub fn merge_into(dst: &mut NovelMap, src: NovelMap) {
     }
 }
 
-/// Enumerate GRFs and add novel ones to `map`. Returns count of new/improved entries.
+/// Statistics returned by `extend_novel_map`.
+pub struct EnumStats {
+    /// Total GRFs passed to the fingerprinting step.
+    pub total_tested: usize,
+    /// GRFs that were novel (added or replaced a larger entry in the map).
+    pub total_new: usize,
+    /// GRFs that did not converge within the step budget (excluded from map when !partial).
+    /// Contains `(size, grf_string)` for persistence across runs.
+    pub timed_out_entries: Vec<(usize, String)>,
+}
+
 pub fn extend_novel_map(
     map: &mut NovelMap,
     arity: usize,
@@ -211,10 +286,10 @@ pub fn extend_novel_map(
     max_steps: u64,
     partial: bool,
     progress: bool,
-) -> usize {
+) -> EnumStats {
     let opts = PruningOpts::default();
     let inputs = canonical_inputs(arity);
-    let mut total_new = 0usize;
+    let mut stats = EnumStats { total_tested: 0, total_new: 0, timed_out_entries: Vec::new() };
 
     for size in start_size..=max_size {
         let mut n_enum = 0usize;
@@ -223,16 +298,21 @@ pub fn extend_novel_map(
         stream_grf(size, arity, allow_min, opts, &mut |grf| {
             n_enum += 1;
             let fp = compute_fp(grf, &inputs, max_steps);
-            if !partial && !fp_is_complete(&fp) {
-                return;
+            if !fp_is_complete(&fp) {
+                if !partial {
+                    stats.timed_out_entries.push((size, grf.to_string()));
+                    return;
+                }
             }
             let is_novel = map.get(&fp).map_or(true, |(s, _)| size < *s);
             if is_novel {
                 map.insert(fp, (size, grf.to_string()));
                 n_new += 1;
-                total_new += 1;
+                stats.total_new += 1;
             }
         });
+
+        stats.total_tested += n_enum;
 
         if progress {
             eprintln!(
@@ -241,7 +321,7 @@ pub fn extend_novel_map(
             );
         }
     }
-    total_new
+    stats
 }
 
 // ── FingerprintDb construction from novel files ───────────────────────────────
@@ -261,8 +341,9 @@ pub fn db_paths_in_dir(dir: &Path) -> io::Result<Vec<PathBuf>> {
 
 /// Build a `FingerprintDb` from a single novel DB file.
 /// Uses stored fingerprints when available (no re-simulation needed).
+/// Timed-out entries in the file are ignored (they have no fingerprint to look up).
 pub fn fingerprint_db_from_file(path: &Path, max_steps: u64) -> io::Result<FingerprintDb> {
-    let (meta, map) = load_novel_file(path)?;
+    let (meta, map, _timed_out) = load_novel_file(path)?;
     if meta.max_steps != max_steps {
         eprintln!(
             "warning: {} was built with max_steps={} but loading with max_steps={}; \
@@ -282,10 +363,11 @@ pub fn fingerprint_db_from_file(path: &Path, max_steps: u64) -> io::Result<Finge
 }
 
 /// Build a `FingerprintDb` from all `.db` files in a directory.
+/// Timed-out entries in any file are ignored (they have no fingerprint to look up).
 pub fn fingerprint_db_from_dir(dir: &Path, max_steps: u64) -> io::Result<FingerprintDb> {
     let mut db = FingerprintDb::build_empty(max_steps);
     for path in db_paths_in_dir(dir)? {
-        let (meta, map) = match load_novel_file(&path) {
+        let (meta, map, _timed_out) = match load_novel_file(&path) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("warning: skipping {}: {e}", path.display());

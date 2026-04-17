@@ -17,6 +17,7 @@ use gen_rec::example_ack::{
 use gen_rec::fingerprint::FingerprintDb;
 use gen_rec::grf::Grf;
 use gen_rec::optimize::{opt_fingerprint, opt_inline_proj};
+use std::path::PathBuf;
 
 const WRAP: usize = 72;
 
@@ -40,15 +41,20 @@ struct Args {
     #[arg(long)]
     no_fingerprint: bool,
 
-    /// Max GRF size included in the fingerprint DB.
+    /// Load fingerprint DB from a novel DB file instead of building it.
+    /// When set, --db-max-size / --db-max-arity / --db-allow-min are ignored.
+    #[arg(long, value_name = "PATH")]
+    db_path: Option<PathBuf>,
+
+    /// Max GRF size included in the fingerprint DB (ignored if --db-path is set).
     #[arg(long, default_value_t = 8)]
     db_max_size: usize,
 
-    /// Max arity included in the fingerprint DB.
+    /// Max arity included in the fingerprint DB (ignored if --db-path is set).
     #[arg(long, default_value_t = 3)]
     db_max_arity: usize,
 
-    /// Include Minimization in the fingerprint DB.
+    /// Include Minimization in the fingerprint DB (ignored if --db-path is set).
     #[arg(long)]
     db_allow_min: bool,
 
@@ -213,17 +219,30 @@ fn main() {
 
     // Pass 2: opt_fingerprint
     if !args.no_fingerprint {
-        eprint!(
-            "Building fingerprint DB (size≤{}, arity≤{})... ",
-            args.db_max_size, args.db_max_arity
-        );
-        let db = FingerprintDb::build(
-            args.db_max_size,
-            args.db_max_arity,
-            args.db_allow_min,
-            args.max_steps,
-        );
-        eprintln!("done.");
+        let db = if let Some(ref path) = args.db_path {
+            eprint!("Loading fingerprint DB from {}... ", path.display());
+            match FingerprintDb::from_novel_db(path, args.max_steps) {
+                Ok(db) => { eprintln!("done."); db }
+                Err(e) => {
+                    eprintln!();
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            eprint!(
+                "Building fingerprint DB (size≤{}, arity≤{})... ",
+                args.db_max_size, args.db_max_arity
+            );
+            let db = FingerprintDb::build(
+                args.db_max_size,
+                args.db_max_arity,
+                args.db_allow_min,
+                args.max_steps,
+            );
+            eprintln!("done.");
+            db
+        };
 
         let title = format!(
             "opt_fingerprint  DB: size≤{}, arity≤{}",

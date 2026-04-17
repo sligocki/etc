@@ -439,23 +439,6 @@ mod tests {
     }
 
     #[test]
-    fn opt_ack_worm() {
-        use crate::example_ack::ack_worm;
-
-        let before = ack_worm();
-        let after = opt_inline_proj(before.clone());
-
-        assert!(
-            after.size() < before.size(),
-            "expected size to shrink; before={}, after={}",
-            before.size(),
-            after.size()
-        );
-
-        check_equiv(&before, &after, 32);
-    }
-
-    #[test]
     fn fingerprint_monus2() {
         // Build a DB up to size 8 covering arities 0..=3.
         let db = FingerprintDb::build(8, 3, false, 10_000);
@@ -487,26 +470,6 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_ack_worm() {
-        use crate::example_ack::ack_worm;
-
-        // Build a DB up to size 8 covering arities 0..=3.
-        let db = FingerprintDb::build(8, 3, false, 10_000);
-
-        let before = ack_worm();
-        let after = opt_fingerprint(before.clone(), &db);
-
-        println!("Size: {} -> {}", before.size(), after.size());
-        assert!(
-            after.size() <= before.size(),
-            "fingerprint opt should not grow the GRF; before={}, after={}",
-            before.size(),
-            after.size()
-        );
-        check_equiv(&before, &after, 16);
-    }
-
-    #[test]
     fn opt_fingerprint_correct_on_small() {
         // C(S, Z1) computes \x. 1. The DB should contain Z1 -> \x. 0 and
         // C(S,Z1) -> \x. 1. A size-5 GRF like C(S,C(S,Z1)) computes \x. 2,
@@ -523,5 +486,35 @@ mod tests {
             assert!(opt.size() <= f.size(), "{s}: size grew");
             check_equiv(&f, &opt, 8);
         }
+    }
+
+    #[test]
+    fn opt_ack_worm() {
+        use crate::example_ack::ack_worm;
+
+        let db = FingerprintDb::build(10, 3, false, 10_000);
+
+        let orig = ack_worm();
+        let opt_ip = opt_inline_proj(orig.clone());
+        let opt_fp = opt_fingerprint(opt_ip.clone(), &db);
+
+        println!("Original: {}", orig.to_string());
+        println!("Opt_IP:   {}", opt_ip.to_string());
+        println!("Opt_FP:   {}", opt_fp.to_string());
+        println!("Size: {} -> {} -> {}", orig.size(), opt_ip.size(), opt_fp.size());
+
+        assert!(opt_ip.size() < orig.size(),
+            "opt_inline_proj should not grow the GRF; before={}, after={}",
+            orig.size(),
+            opt_ip.size()
+        );
+        check_equiv(&orig, &opt_ip, 16);
+
+        assert!(opt_fp.size() < opt_ip.size(),
+            "opt_fingerprint should not grow the GRF; before={}, after={}",
+            opt_ip.size(),
+            opt_fp.size()
+        );
+        check_equiv(&opt_ip, &opt_fp, 16);
     }
 }

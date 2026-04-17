@@ -1,32 +1,26 @@
 /// List the smallest non-redundant GRF for each distinct total function of a given arity.
 ///
-/// A GRF is non-redundant if no smaller GRF computes the same function on all inputs.
-/// By default only GRFs that converge on every canonical input are shown (total functions).
-/// Use --partial to also include GRFs with at least one timeout.
-///
 /// Usage examples:
-///   novel                          # arity 1, sizes 1..=10, total only
-///   novel 2                        # arity 2
-///   novel 1 --max-size 12 --allow-min
-///   novel 1 --partial              # include partial functions
+///   novel                                    # arity 1, sizes 1..=10, total only
+///   novel 2 --max-size 12                    # arity 2
+///   novel 1 --allow-min                      # include Min combinator
+///   novel 1 --partial                        # include partial functions
 ///   novel 1 --max-size 10 --save prf10.db
 ///   novel 1 --max-size 12 --load prf10.db --save prf12.db
-///   novel 1 --max-size 8 --allow-min --load prf10.db --save min8.db
+///   novel 1 --max-size 12 --db-dir fp/       # auto-load/save a1_prf.db in fp/
+///   novel 1 --max-size 8 --allow-min --db-dir fp/
 use clap::Parser;
-use gen_rec::enumerate::stream_grf;
-use gen_rec::fingerprint::{canonical_inputs, compute_fp, fp_is_complete, Fingerprint};
-use gen_rec::grf::Grf;
-use gen_rec::pruning::PruningOpts;
-use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use gen_rec::novel_db::{
+    db_filename, extend_novel_map, format_fp, load_novel_file, merge_into, save_novel_file,
+    NovelMap,
+};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
     about = "List the smallest non-redundant GRF for each distinct function",
     long_about = "Enumerates GRFs in size order and prints each one that computes a\n\
-                  function not yet seen among smaller GRFs.\n\
-                  Progress is printed to stderr."
+                  function not yet seen among smaller GRFs."
 )]
 struct Args {
     /// Arity of GRFs to enumerate.
@@ -49,6 +43,12 @@ struct Args {
     #[arg(long)]
     partial: bool,
 
+    /// DB directory: auto-loads a{arity}_{prf|min}.db (and the matching prf file as
+    /// a seed for --allow-min runs), then saves back when done.
+    /// Mutually exclusive with --load / --save.
+    #[arg(long, value_name = "DIR")]
+    db_dir: Option<PathBuf>,
+
     /// Load one or more pre-computed novel DB files (can be repeated).
     #[arg(long, value_name = "PATH")]
     load: Vec<PathBuf>,
@@ -62,236 +62,102 @@ struct Args {
     progress: bool,
 }
 
-// ── file format ───────────────────────────────────────────────────────────────
-
-struct DbMeta {
-    allow_min: bool,
-    max_size: usize,
-}
-
-fn parse_header(line: &str) -> Option<DbMeta> {
-    if !line.starts_with("allow_min=") {
-        return None;
-    }
-    let mut allow_min = false;
-    let mut max_size = 0usize;
-    for kv in line.split_whitespace() {
-        if let Some(v) = kv.strip_prefix("allow_min=") {
-            allow_min = v == "true";
-        } else if let Some(v) = kv.strip_prefix("max_size=") {
-            max_size = v.parse().unwrap_or(0);
-        }
-    }
-    Some(DbMeta { allow_min, max_size })
-}
-
-/// Load a novel DB file.  Returns (meta, entries) where entries is a vec of (size, grf_string).
-fn load_db_file(path: &Path) -> io::Result<(DbMeta, Vec<(usize, String)>)> {
-    let file = std::fs::File::open(path)?;
-    let reader = io::BufReader::new(file);
-    let mut meta: Option<DbMeta> = None;
-    let mut entries: Vec<(usize, String)> = Vec::new();
-
-    for (lineno, line) in reader.lines().enumerate() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if meta.is_none() {
-            meta = Some(parse_header(line).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("{}: line {}: expected header", path.display(), lineno + 1),
-                )
-            })?);
-            continue;
-        }
-        let mut parts = line.splitn(2, '\t');
-        let size: usize = parts
-            .next()
-            .unwrap_or("")
-            .trim()
-            .parse()
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("{}: line {}: bad size", path.display(), lineno + 1),
-                )
-            })?;
-        let grf_str = parts.next().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("{}: line {}: missing grf", path.display(), lineno + 1),
-            )
-        })?;
-        entries.push((size, grf_str.to_string()));
-    }
-
-    let meta = meta.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{}: file has no header", path.display()),
-        )
-    })?;
-    Ok((meta, entries))
-}
-
-fn save_db_file(
-    path: &Path,
-    allow_min: bool,
-    max_size: usize,
-    max_steps: u64,
-    fp_db: &HashMap<Fingerprint, (usize, String)>,
-) -> io::Result<()> {
-    let file = std::fs::File::create(path)?;
-    let mut w = io::BufWriter::new(file);
-    writeln!(
-        w,
-        "allow_min={allow_min} max_size={max_size} max_steps={max_steps}"
-    )?;
-    // Sort by size then grf string for deterministic output.
-    let mut entries: Vec<(&usize, &String)> = fp_db.values().map(|(s, g)| (s, g)).collect();
-    entries.sort_by_key(|(s, g)| (*s, g.as_str()));
-    for (size, grf) in entries {
-        writeln!(w, "{size}\t{grf}")?;
-    }
-    Ok(())
-}
-
-// ── fingerprint helpers ───────────────────────────────────────────────────────
-
-fn fingerprint_grf(
-    grf: &Grf,
-    inputs: &[Vec<u64>],
-    max_steps: u64,
-    partial: bool,
-) -> Option<Fingerprint> {
-    let fp = compute_fp(grf, inputs, max_steps);
-    let is_total = fp_is_complete(&fp);
-    if !partial && !is_total {
-        None
-    } else {
-        Some(fp)
-    }
-}
-
-// ── main ─────────────────────────────────────────────────────────────────────
-
 fn main() {
     let args = Args::parse();
-    let opts = PruningOpts::default();
-    let inputs = canonical_inputs(args.arity);
 
-    // fp → (size, grf_string)
-    let mut fp_db: HashMap<Fingerprint, (usize, String)> = HashMap::new();
-
-    // ── load pre-computed files ───────────────────────────────────────────────
+    let mut map: NovelMap = NovelMap::new();
     let mut start_size = 1usize;
 
+    // ── db-dir: auto-load ─────────────────────────────────────────────────────
+    if let Some(ref dir) = args.db_dir {
+        // For allow_min runs, pre-populate from the prf file so PRF functions
+        // whose Min version is smaller still show the Min version as "novel".
+        if args.allow_min {
+            let seed = db_filename(dir, args.arity, false);
+            if seed.exists() {
+                match load_novel_file(&seed) {
+                    Ok((_, seed_map)) => merge_into(&mut map, seed_map),
+                    Err(e) => {
+                        eprintln!("warning: could not load seed {}: {e}", seed.display())
+                    }
+                }
+            }
+        }
+        // Load the main target file (get start_size from its header).
+        let target = db_filename(dir, args.arity, args.allow_min);
+        if target.exists() {
+            match load_novel_file(&target) {
+                Ok((meta, file_map)) => {
+                    start_size = meta.max_size + 1;
+                    merge_into(&mut map, file_map);
+                }
+                Err(e) => {
+                    eprintln!("error: could not load {}: {e}", target.display());
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
+    // ── --load: manual files ──────────────────────────────────────────────────
     for load_path in &args.load {
-        let (meta, entries) = match load_db_file(load_path) {
-            Ok(r) => r,
+        match load_novel_file(load_path) {
+            Ok((meta, file_map)) => {
+                // Advance start_size only from files with matching allow_min coverage.
+                if meta.allow_min == args.allow_min {
+                    start_size = start_size.max(meta.max_size + 1);
+                }
+                merge_into(&mut map, file_map);
+            }
             Err(e) => {
                 eprintln!("error: could not load {}: {e}", load_path.display());
                 std::process::exit(1);
             }
-        };
-
-        // Advance start_size only from files whose allow_min coverage matches ours.
-        if meta.allow_min == args.allow_min {
-            start_size = start_size.max(meta.max_size + 1);
-        }
-
-        for (size, grf_str) in entries {
-            let grf: Grf = match grf_str.parse() {
-                Ok(g) => g,
-                Err(e) => {
-                    eprintln!("warning: skipping bad grf '{grf_str}': {e}");
-                    continue;
-                }
-            };
-            if grf.arity() != args.arity {
-                continue; // different arity — still populates fp_db to prevent re-discovery
-            }
-            if let Some(fp) = fingerprint_grf(&grf, &inputs, args.max_steps, args.partial) {
-                let is_novel = fp_db.get(&fp).map_or(true, |(s, _)| size < *s);
-                if is_novel {
-                    fp_db.insert(fp, (size, grf_str));
-                }
-            }
         }
     }
 
-    // ── enumerate new sizes ───────────────────────────────────────────────────
+    // ── enumerate ─────────────────────────────────────────────────────────────
     if start_size <= args.max_size {
-        for size in start_size..=args.max_size {
-            let mut total = 0usize;
-            let mut novel = 0usize;
-
-            stream_grf(size, args.arity, args.allow_min, opts, &mut |grf| {
-                total += 1;
-                if let Some(fp) = fingerprint_grf(grf, &inputs, args.max_steps, args.partial) {
-                    let is_novel = fp_db.get(&fp).map_or(true, |(s, _)| size < *s);
-                    if is_novel {
-                        let expr = grf.to_string();
-                        fp_db.insert(fp, (size, expr));
-                        novel += 1;
-                    }
-                }
-            });
-
-            if args.progress {
-                eprintln!(
-                    "size {:>3}: {:>8} enumerated, {:>6} novel ({} distinct functions total)",
-                    size,
-                    total,
-                    novel,
-                    fp_db.len()
-                );
-            }
-        }
+        extend_novel_map(
+            &mut map,
+            args.arity,
+            start_size,
+            args.max_size,
+            args.allow_min,
+            args.max_steps,
+            args.partial,
+            args.progress,
+        );
     }
 
-    // Print all entries sorted by (size, grf_string).
-    let mut output: Vec<(usize, &String, &Fingerprint)> = fp_db
-        .iter()
-        .map(|(fp, (size, grf))| (*size, grf, fp))
-        .collect();
-    output.sort_by_key(|(size, grf, _)| (*size, grf.as_str()));
+    // ── print sorted output ───────────────────────────────────────────────────
+    let mut output: Vec<(usize, &String, &_)> =
+        map.iter().map(|(fp, (s, g))| (*s, g, fp)).collect();
+    output.sort_by_key(|(s, g, _)| (*s, g.as_str()));
     for (size, grf, fp) in &output {
-        println!("{:>4}  {:<40}  [{}]", size, grf, fp_display(fp));
+        println!("{:>4}  {:<40}  [{}]", size, grf, format_fp(fp));
     }
 
     eprintln!(
-        "Done. {} distinct functions found for arity {} up to size {}.",
-        fp_db.len(),
+        "Done. {} distinct functions for arity {} up to size {}.",
+        map.len(),
         args.arity,
         args.max_size,
     );
 
     // ── save ──────────────────────────────────────────────────────────────────
-    if let Some(save_path) = &args.save {
-        if let Err(e) = save_db_file(
-            save_path,
-            args.allow_min,
-            args.max_size,
-            args.max_steps,
-            &fp_db,
-        ) {
-            eprintln!("error: could not save to {}: {e}", save_path.display());
+    let save_path = args
+        .save
+        .clone()
+        .or_else(|| args.db_dir.as_ref().map(|d| db_filename(d, args.arity, args.allow_min)));
+
+    if let Some(path) = save_path {
+        if let Err(e) =
+            save_novel_file(&path, args.allow_min, args.max_size, args.max_steps, &map)
+        {
+            eprintln!("error: could not save to {}: {e}", path.display());
             std::process::exit(1);
         }
-        eprintln!("Saved {} entries to {}.", fp_db.len(), save_path.display());
+        eprintln!("Saved {} entries to {}.", map.len(), path.display());
     }
-}
-
-fn fp_display(fp: &Fingerprint) -> String {
-    fp.iter()
-        .map(|v| match v {
-            Some(n) => n.to_string(),
-            None => "?".to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }

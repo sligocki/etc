@@ -4,8 +4,6 @@ use crate::grf::Grf;
 use crate::pruning::PruningOpts;
 use crate::simulate::simulate;
 use std::collections::HashMap;
-use std::io::{self, BufRead};
-use std::path::Path;
 
 /// A fingerprint: one entry per canonical input. None = timed-out, Some(v) = output value.
 ///
@@ -163,59 +161,28 @@ impl FingerprintDb {
         db
     }
 
-    /// Build a `FingerprintDb` by loading a novel DB file and re-fingerprinting its entries.
-    ///
-    /// The file format is the same as written by `novel --save`:
-    /// - Line 1: `allow_min=<bool> max_size=<usize> max_steps=<u64>` (metadata, ignored here)
-    /// - Subsequent lines: `<size>\t<grf_string>`
-    /// - Lines starting with `#` are ignored.
-    ///
-    /// `max_steps` controls the simulation budget used for all future `lookup_smaller` calls.
-    /// It need not match the value stored in the file header.
-    pub fn from_novel_db(path: &Path, max_steps: u64) -> io::Result<Self> {
-        let file = std::fs::File::open(path)?;
-        let reader = io::BufReader::new(file);
-        let mut db = FingerprintDb {
+    /// Create an empty `FingerprintDb` with no entries.
+    /// Entries can be added with `add_entry`. Used by `novel_db` when loading from files.
+    pub fn build_empty(max_steps: u64) -> Self {
+        FingerprintDb {
             map: HashMap::new(),
             inputs: HashMap::new(),
             max_steps,
-        };
-
-        for (lineno, line) in reader.lines().enumerate() {
-            let line = line?;
-            let line = line.trim();
-            // Skip blank lines and the header / comments
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            // Header line (first non-comment line) starts with a known key
-            if line.starts_with("allow_min=") {
-                continue;
-            }
-            // Data line: "<size>\t<grf_string>"
-            let mut parts = line.splitn(2, '\t');
-            let _size_str = parts.next().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("line {lineno}: missing size"))
-            })?;
-            let grf_str = parts.next().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("line {lineno}: missing grf"))
-            })?;
-            let grf: Grf = grf_str.parse().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("line {lineno}: parse error: {e}"),
-                )
-            })?;
-
-            let arity = grf.arity();
-            let inputs = db.inputs.entry(arity).or_insert_with(|| canonical_inputs(arity));
-            let fp = compute_fp(&grf, inputs, max_steps);
-            if fp_is_complete(&fp) {
-                db.map.entry((arity, fp)).or_insert(grf);
-            }
         }
+    }
 
-        Ok(db)
+    /// Insert a (fingerprint, grf) pair. Keeps the smaller GRF if one already exists.
+    /// The canonical inputs for `arity` are cached on first use.
+    pub fn add_entry(&mut self, arity: usize, fp: Fingerprint, grf: Grf) {
+        self.inputs.entry(arity).or_insert_with(|| canonical_inputs(arity));
+        self.map
+            .entry((arity, fp))
+            .and_modify(|existing| {
+                if grf.size() < existing.size() {
+                    *existing = grf.clone();
+                }
+            })
+            .or_insert(grf);
     }
 
     pub fn compute_fp(&self, grf: &Grf) -> Fingerprint {

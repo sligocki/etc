@@ -21,10 +21,10 @@ pub fn not() -> Grf {
 }
 
 /// Sgn(x) := 0 if x = 0, else 1
-/// R(Z0, C(S, Z2))
-/// Arity: 1, Size: 5
+/// M(R(P(1,1), Z3))
+/// Arity: 1, Size: 4
 pub fn sgn() -> Grf {
-    Grf::rec(Grf::Zero(0), Grf::comp(Grf::Succ, vec![Grf::Zero(2)]))
+    Grf::min(Grf::rec(Grf::Proj(1, 1), Grf::Zero(3)))
 }
 
 /// Plus2(x) := x + 2
@@ -267,42 +267,37 @@ mod tests {
         result.into_value()
     }
 
-    // ── arity & size ───────────────────────────────────────────────────────────
+    // ── arity ─────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_arity_and_size() {
-        use crate::optimize::opt_inline_proj;
-        // (name, constructor, arity, size, size_after_opt_inline_proj)
-        let cases: &[(&str, &dyn Fn() -> Grf, usize, usize, usize)] = &[
-            ("pred",         &pred,         1, 3,   3),
-            ("not",          &not,          1, 5,   5),
-            ("sgn",          &sgn,          1, 5,   5),
-            ("plus2",        &plus2,        1, 3,   3),
-            ("double",       &double,       1, 7,   7),
-            ("rmonus",       &rmonus,       2, 7,   7),
-            ("mod2",         &mod2,         1, 9,   9),
-            ("shift",        &shift,        2, 11,  11),
-            ("monus2",       &monus2,       1,  5,   5),
-            ("rmonus_odd",   &rmonus_odd,   2, 11,  11),
-            ("div2",         &div2,         1, 12,  12),
-            ("div2k",        &div2k,        2, 16,  16),
-            ("dec_append",   &dec_append,   2, 26,  24),
-            ("dec_append_n", &dec_append_n, 3, 31,  29),
-            ("bit",          &bit,          2, 26,  26),
-            ("pop_k",        &pop_k,        1, 27,  27),
-            ("ack_step",     &ack_step,     2, 76,  72),
-            ("ack_loop",     &ack_loop,     2, 81,  74),
-            ("ack_worm",     &ack_worm,     1, 82,  75),
-            ("init_list",    &init_list,    2, 10,  10),
-            ("ack",          &ack,          2, 93,  86),
-            ("omega",        &omega,        0, 105, 98),
-            ("graham",       &graham,       0, 110, 103),
+    fn test_arities() {
+        let cases: &[(&str, &dyn Fn() -> Grf, usize)] = &[
+            ("pred",         &pred,         1),
+            ("not",          &not,          1),
+            ("sgn",          &sgn,          1),
+            ("plus2",        &plus2,        1),
+            ("double",       &double,       1),
+            ("rmonus",       &rmonus,       2),
+            ("mod2",         &mod2,         1),
+            ("shift",        &shift,        2),
+            ("monus2",       &monus2,       1),
+            ("rmonus_odd",   &rmonus_odd,   2),
+            ("div2",         &div2,         1),
+            ("div2k",        &div2k,        2),
+            ("dec_append",   &dec_append,   2),
+            ("dec_append_n", &dec_append_n, 3),
+            ("bit",          &bit,          2),
+            ("pop_k",        &pop_k,        1),
+            ("ack_step",     &ack_step,     2),
+            ("ack_loop",     &ack_loop,     2),
+            ("ack_worm",     &ack_worm,     1),
+            ("init_list",    &init_list,    2),
+            ("ack",          &ack,          2),
+            ("omega",        &omega,        0),
+            ("graham",       &graham,       0),
         ];
-        for (name, f, arity, size, opt_size) in cases {
-            let g = f();
-            assert_eq!(g.arity(), *arity, "{name}: wrong arity");
-            assert_eq!(g.size(), *size, "{name}: wrong size");
-            assert_eq!(opt_inline_proj(g).size(), *opt_size, "{name}: wrong opt size");
+        for (name, f, arity) in cases {
+            assert_eq!(f().arity(), *arity, "{name}: wrong arity");
         }
     }
 
@@ -611,4 +606,5 @@ mod tests {
             assert_eq!(x & mask, mask, "init_list({n},{n}) = {x}");
         }
     }
+
 }

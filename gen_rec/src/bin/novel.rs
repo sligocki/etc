@@ -1,13 +1,14 @@
-/// List the smallest non-redundant GRF for each distinct function of a given arity.
+/// List the smallest non-redundant GRF for each distinct total function of a given arity.
 ///
 /// A GRF is non-redundant if no smaller GRF computes the same function on all inputs.
-/// Two GRFs are considered equivalent when they agree on a canonical input set (same
-/// outputs including divergence).
+/// By default only GRFs that converge on every canonical input are shown (total functions).
+/// Use --partial to also include GRFs with at least one timeout.
 ///
 /// Usage examples:
-///   non_redundant          # arity 1, sizes 1..=10
-///   non_redundant 2        # arity 2
-///   non_redundant 1 --max-size 12 --allow-min
+///   novel                          # arity 1, sizes 1..=10, total only
+///   novel 2                        # arity 2
+///   novel 1 --max-size 12 --allow-min
+///   novel 1 --partial              # include partial functions
 use clap::Parser;
 use gen_rec::enumerate::stream_grf;
 use gen_rec::fingerprint::{canonical_inputs, compute_fp, Fingerprint};
@@ -38,6 +39,10 @@ struct Args {
     #[arg(long)]
     allow_min: bool,
 
+    /// Include GRFs with timeouts (partial functions); default is total-only.
+    #[arg(long)]
+    partial: bool,
+
     /// Print progress to stderr after each size.
     #[arg(long)]
     progress: bool,
@@ -59,19 +64,22 @@ fn main() {
             total += 1;
             let fp = compute_fp(grf, &inputs, args.max_steps);
 
-            if !fp_db.contains_key(&fp) {
-                let expr = grf.to_string();
-                let fp_str: Vec<String> = fp
-                    .iter()
-                    .map(|v| match v {
-                        Some(n) => n.to_string(),
-                        None => "?".to_string(),
-                    })
-                    .collect();
-                fp_db.insert(fp, expr.clone());
-                println!("{:>4}  {:<40}  [{}]", size, expr, fp_str.join(", "));
-                novel += 1;
+            let is_total = fp.iter().all(|v| v.is_some());
+            if (!args.partial && !is_total) || fp_db.contains_key(&fp) {
+                return;
             }
+
+            let expr = grf.to_string();
+            let fp_str: Vec<String> = fp
+                .iter()
+                .map(|v| match v {
+                    Some(n) => n.to_string(),
+                    None => "?".to_string(),
+                })
+                .collect();
+            fp_db.insert(fp, expr.clone());
+            println!("{:>4}  {:<40}  [{}]", size, expr, fp_str.join(", "));
+            novel += 1;
         });
 
         if args.progress {

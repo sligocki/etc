@@ -50,6 +50,7 @@ pub fn rmonus() -> Grf {
 
 /// Mod2(x) := x mod 2
 /// R(Z0, C(Not, P(2,2)))
+/// Smaller: R(Z0, C(R(S, Z3), P(2,2), Z2))
 /// Arity: 1, Size: 9
 pub fn mod2() -> Grf {
     Grf::rec(Grf::Zero(0), Grf::comp(not(), vec![Grf::Proj(2, 2)]))
@@ -191,7 +192,7 @@ pub fn ack_worm() -> Grf {
 // AckWorm([4]) = 41 2^38 - 1 = [1,1,0,0,38]
 
 /// InitList(n,_) := list ending in a value >= n
-/// Arity: 2, Size: 11
+/// Arity: 2, Size: 10
 pub fn init_list() -> Grf {
     // (n,m) -> (m+2) 2^n - 1
     // A number ending in at least n+1 1s in binary

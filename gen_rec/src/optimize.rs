@@ -470,6 +470,19 @@ mod tests {
     }
 
     #[test]
+    fn fingerprint_sgn() {
+        // Optimal Sgn is size 4, using M().
+        let db = FingerprintDb::build(4, 2, true, 1_000);
+
+        let before = grf!("R(Z0, C(S, Z2))");
+        let after = opt_fingerprint(before.clone(), &db);
+
+        assert_eq!(after, grf!("M(R(P(1,1), Z3))"));
+        assert!(after.size() < before.size());
+        check_equiv(&before, &after, 16);
+    }
+
+    #[test]
     fn opt_fingerprint_correct_on_small() {
         // C(S, Z1) computes \x. 1. The DB should contain Z1 -> \x. 0 and
         // C(S,Z1) -> \x. 1. A size-5 GRF like C(S,C(S,Z1)) computes \x. 2,

@@ -17,32 +17,59 @@ pub fn fp_is_complete(fp: &Fingerprint) -> bool {
     fp.iter().all(|v| v.is_some())
 }
 
-/// Generate the canonical input set for a given arity.
-/// For arity k, produce all k-tuples drawn from {0 .. per_dim-1}
-/// where per_dim is chosen so the total stays ≤ ~32 test cases.
-pub fn canonical_inputs(arity: usize) -> Vec<Vec<u64>> {
-    if arity == 0 {
-        return vec![vec![]];
+/// Minimal linear congruential generator for deterministic pseudorandom inputs.
+/// No external dependencies required.
+struct Lcg(u64);
+
+impl Lcg {
+    fn new(seed: u64) -> Self {
+        // XOR-fold to avoid degenerate all-zero state.
+        Lcg(seed ^ 0x9e3779b97f4a7c15)
     }
-    let per_dim: u64 = match arity {
-        1 => 8, // 8 inputs
-        2 => 4, // 16 inputs
-        3 => 3, // 27 inputs
-        _ => 2, // 2^arity inputs
-    };
-    let mut result: Vec<Vec<u64>> = vec![vec![]];
-    for _ in 0..arity {
-        let mut next = Vec::new();
-        for prefix in &result {
-            for v in 0..per_dim {
-                let mut row = prefix.clone();
-                row.push(v);
-                next.push(row);
-            }
+
+    fn next(&mut self) -> u64 {
+        self.0 = self.0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0
+    }
+
+    /// Sample a value biased toward small numbers.
+    ///
+    /// Picks a random bit-length in 0..=6, then fills those bits randomly.
+    /// Resulting values are in [0, 63] with approximately:
+    ///   0: ~28%,  1: ~14%,  2-3: ~7% each,  4-7: ~3.5% each,  8-63: ~17% spread
+    fn sample_biased(&mut self) -> u64 {
+        let num_bits = self.next() % 7; // 0, 1, 2, 3, 4, 5, or 6
+        if num_bits == 0 {
+            0
+        } else {
+            self.next() & ((1u64 << num_bits) - 1)
         }
-        result = next;
     }
-    result
+}
+
+/// Generate `count` pseudorandom input tuples for a given arity using the given seed.
+fn sampled_inputs(arity: usize, count: usize, seed: u64) -> Vec<Vec<u64>> {
+    let mut rng = Lcg::new(seed);
+    (0..count)
+        .map(|_| (0..arity).map(|_| rng.sample_biased()).collect())
+        .collect()
+}
+
+/// Generate the canonical input set for a given arity.
+///
+/// Arity 0: single empty input.
+/// Arity 1: exhaustive {0..7} — small enough to cover completely.
+/// Arity ≥ 2: 32 pseudorandom points with a small-biased distribution (values in
+///   [0,63]), seeded deterministically per arity. Fixed points cover a wider range
+///   than a small grid while keeping the count constant regardless of arity.
+pub fn canonical_inputs(arity: usize) -> Vec<Vec<u64>> {
+    match arity {
+        0 => vec![vec![]],
+        1 => (0u64..8).map(|v| vec![v]).collect(),
+        k => sampled_inputs(k, 32, 0xdeadbeefdeadbeef_u64.wrapping_mul(k as u64)),
+    }
 }
 
 /// Compute the fingerprint of a GRF on the given canonical inputs.
@@ -58,32 +85,35 @@ pub fn compute_fp(grf: &Grf, inputs: &[Vec<u64>], max_steps: u64) -> Fingerprint
 
 /// A broader input set used to verify candidate replacements before committing.
 ///
-/// The canonical inputs (used for the DB keys) are intentionally small so the DB
-/// stays tractable. But two GRFs can agree on those small inputs and still differ
-/// on larger ones. Before substituting, we re-check on this denser grid.
+/// Uses an exhaustive grid on small values (guaranteeing that every value 0..k
+/// appears in every dimension) rather than random sampling. This is complementary
+/// to the pseudorandom canonical inputs: canonical covers a wide range including
+/// larger values, verification guarantees exhaustive coverage of small values.
+///
+/// For arity ≥ 4 the grid would explode, so we fall back to pseudorandom with a
+/// different seed from canonical_inputs.
 pub fn verification_inputs(arity: usize) -> Vec<Vec<u64>> {
-    if arity == 0 {
-        return vec![vec![]];
-    }
-    let per_dim: u64 = match arity {
-        1 => 16,
-        2 => 8,
-        3 => 5,
-        _ => 3,
-    };
-    let mut result: Vec<Vec<u64>> = vec![vec![]];
-    for _ in 0..arity {
-        let mut next = Vec::new();
-        for prefix in &result {
-            for v in 0..per_dim {
-                let mut row = prefix.clone();
-                row.push(v);
-                next.push(row);
+    match arity {
+        0 => vec![vec![]],
+        1 => (0u64..16).map(|v| vec![v]).collect(),
+        k @ 2..=3 => {
+            let per_dim: u64 = if k == 2 { 8 } else { 5 };
+            let mut result: Vec<Vec<u64>> = vec![vec![]];
+            for _ in 0..k {
+                let mut next = Vec::new();
+                for prefix in &result {
+                    for v in 0..per_dim {
+                        let mut row = prefix.clone();
+                        row.push(v);
+                        next.push(row);
+                    }
+                }
+                result = next;
             }
+            result
         }
-        result = next;
+        k => sampled_inputs(k, 64, 0xcafebabecafebabe_u64.wrapping_mul(k as u64)),
     }
-    result
 }
 
 /// A database of the smallest known GRF for each fully-computed fingerprint,

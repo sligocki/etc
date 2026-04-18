@@ -5,11 +5,13 @@
 ///   db build fp/ --max-size 12 --arities 0,1,2,3
 ///   db build fp/ --max-size 8 --allow-min --arities 0,1,2 --jobs 4
 ///   db build fp/ --arities 0,1,2,3               # infinite mode: runs until Ctrl+C
+///   db build fp/ --max-size 10 --fp-inputs 64    # novel-sub-expression mode
 use clap::{Parser, Subcommand};
 use gen_rec::novel_db::{
     db_filename, db_paths_in_dir, extend_novel_map, load_novel_file, merge_into, retry_timed_out,
     save_novel_file, NovelMap,
 };
+use gen_rec::novel_enum::NovelEnumerator;
 use rayon::prelude::*;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -53,6 +55,13 @@ enum Command {
         /// Number of parallel jobs (default: number of logical CPUs).
         #[arg(long, default_value_t = 0)]
         jobs: usize,
+
+        /// Use novel-sub-expression enumeration with this many fingerprint inputs.
+        /// When set, only canonical (minimal) GRFs are used as sub-expressions,
+        /// drastically reducing the search space.  Requires --max-size.
+        /// NOTE: always enumerates from size 1 (cannot resume from an existing file).
+        #[arg(long, default_value_t = 0)]
+        fp_inputs: usize,
     },
 }
 
@@ -149,6 +158,9 @@ struct BuildJob {
     /// None = infinite mode: enumerate until interrupted.
     max_size: Option<usize>,
     max_steps: u64,
+    /// 0 = use standard exhaustive enumeration; >0 = use NovelEnumerator with this
+    /// many fingerprint inputs. Requires max_size to be Some.
+    fp_inputs: usize,
 }
 
 fn run_build_job(job: &BuildJob) {
@@ -222,20 +234,41 @@ fn run_build_job(job: &BuildJob) {
             let mut total_tested = 0usize;
             let mut total_new = 0usize;
             if !size_range_done {
-                eprintln!("[{label}] enumerating sizes {start_size}..={max_size} ...");
-                let stats = extend_novel_map(
-                    &mut map,
-                    job.arity,
-                    start_size,
-                    max_size,
-                    job.allow_min,
-                    job.max_steps,
-                    false,
-                    false,
-                );
-                total_tested = stats.total_tested;
-                total_new = stats.total_new;
-                timed_out_list.extend(stats.timed_out_entries);
+                if job.fp_inputs > 0 {
+                    // Novel-sub-expression mode: enumerate from scratch using only
+                    // canonical sub-expressions.  Cannot resume from start_size > 1
+                    // because the enumerator builds its own seen-set internally.
+                    eprintln!(
+                        "[{label}] novel-enum sizes 1..={max_size} (fp_inputs={}) ...",
+                        job.fp_inputs,
+                    );
+                    let mut en =
+                        NovelEnumerator::new(job.fp_inputs, job.max_steps, job.allow_min);
+                    let entries = en.run(job.arity, 1, max_size, false);
+                    total_tested = entries.len(); // approximate: counts novel GRFs only
+                    for (fp, size, grf_str) in entries {
+                        let is_novel = map.get(&fp).map_or(true, |(s, _)| size < *s);
+                        if is_novel {
+                            map.insert(fp, (size, grf_str));
+                            total_new += 1;
+                        }
+                    }
+                } else {
+                    eprintln!("[{label}] enumerating sizes {start_size}..={max_size} ...");
+                    let stats = extend_novel_map(
+                        &mut map,
+                        job.arity,
+                        start_size,
+                        max_size,
+                        job.allow_min,
+                        job.max_steps,
+                        false,
+                        false,
+                    );
+                    total_tested = stats.total_tested;
+                    total_new = stats.total_new;
+                    timed_out_list.extend(stats.timed_out_entries);
+                }
             }
 
             if let Err(e) = save_novel_file(
@@ -313,20 +346,26 @@ fn cmd_build(
     arities: &[usize],
     max_steps: u64,
     jobs: usize,
+    fp_inputs: usize,
 ) {
     if let Err(e) = std::fs::create_dir_all(dir) {
         eprintln!("error: could not create {}: {e}", dir.display());
         std::process::exit(1);
     }
 
+    if fp_inputs > 0 && max_size.is_none() {
+        eprintln!("error: --fp-inputs requires --max-size (infinite mode not supported with novel-sub-expression enumeration)");
+        std::process::exit(1);
+    }
+
     // Build job list: PRF for all arities, then Min if requested.
     let mut job_list: Vec<BuildJob> = Vec::new();
     for &arity in arities {
-        job_list.push(BuildJob { dir: dir.clone(), arity, allow_min: false, max_size, max_steps });
+        job_list.push(BuildJob { dir: dir.clone(), arity, allow_min: false, max_size, max_steps, fp_inputs });
     }
     if allow_min {
         for &arity in arities {
-            job_list.push(BuildJob { dir: dir.clone(), arity, allow_min: true, max_size, max_steps });
+            job_list.push(BuildJob { dir: dir.clone(), arity, allow_min: true, max_size, max_steps, fp_inputs });
         }
     }
 
@@ -372,6 +411,7 @@ fn main() {
             arities,
             max_steps,
             jobs,
-        } => cmd_build(&dir, max_size, allow_min, &arities, max_steps, jobs),
+            fp_inputs,
+        } => cmd_build(&dir, max_size, allow_min, &arities, max_steps, jobs, fp_inputs),
     }
 }

@@ -4,6 +4,7 @@ pub mod examples;
 pub mod fingerprint;
 pub mod grf;
 pub mod novel_db;
+pub mod novel_enum;
 pub mod optimize;
 pub mod pruning;
 pub mod simulate;

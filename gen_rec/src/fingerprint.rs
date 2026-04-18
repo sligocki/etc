@@ -57,6 +57,25 @@ fn sampled_inputs(arity: usize, count: usize, seed: u64) -> Vec<Vec<u64>> {
         .collect()
 }
 
+/// Generate `n` canonical inputs for a given arity.
+///
+/// Arity 0: always returns a single empty input (fp_size has no effect).
+/// Arity 1: exhaustive {0, 1, ..., n-1}.
+/// Arity ≥ 2: n pseudorandom points using the same seed as `canonical_inputs`.
+///
+/// Because arity ≥ 2 uses a sequential LCG, the first n outputs of
+/// `canonical_inputs_n(arity, m)` (m > n) are identical to
+/// `canonical_inputs_n(arity, n)`. This means fingerprints computed on a
+/// larger input set can be sliced to simulate smaller fp_sizes without
+/// re-enumerating.
+pub fn canonical_inputs_n(arity: usize, n: usize) -> Vec<Vec<u64>> {
+    match arity {
+        0 => vec![vec![]],
+        1 => (0u64..n as u64).map(|v| vec![v]).collect(),
+        k => sampled_inputs(k, n, 0xdeadbeefdeadbeef_u64.wrapping_mul(k as u64)),
+    }
+}
+
 /// Generate the canonical input set for a given arity.
 ///
 /// Arity 0: single empty input.

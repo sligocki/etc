@@ -31,7 +31,7 @@ struct Args {
     #[arg(long, default_value_t = 10)]
     max_size: usize,
 
-    /// Max simulation steps per input when computing fingerprints.
+    /// Max simulation steps per input when computing fingerprints (0 = unlimited).
     #[arg(long, default_value_t = 10_000)]
     max_steps: u64,
 

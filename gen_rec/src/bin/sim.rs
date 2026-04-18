@@ -22,7 +22,7 @@ struct Args {
     /// Input arguments to the function (must match its arity).
     inputs: Vec<u64>,
 
-    /// Maximum simulation steps before giving up.
+    /// Maximum simulation steps before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
     max_steps: u64,
 }
@@ -62,9 +62,13 @@ fn main() {
     let (result, steps) = simulate(&grf, &args.inputs, args.max_steps);
     match result.into_value() {
         Some(v) => println!("result: {}  ({} steps)", v, steps),
-        None => println!(
-            "result: timed out after {} steps (limit: {})",
-            steps, args.max_steps
-        ),
+        None => {
+            let limit = if args.max_steps == 0 {
+                "unlimited".to_string()
+            } else {
+                args.max_steps.to_string()
+            };
+            println!("result: timed out after {} steps (limit: {})", steps, limit);
+        }
     }
 }

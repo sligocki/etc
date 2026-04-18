@@ -31,7 +31,7 @@ struct Args {
     #[arg(long, default_value_t = 3)]
     max_arity: usize,
 
-    /// Max steps per simulation (keep small for fast fingerprinting).
+    /// Max steps per simulation (0 = unlimited; keep small for fast fingerprinting).
     #[arg(long, default_value_t = 10_000)]
     max_steps: u64,
 

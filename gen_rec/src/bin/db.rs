@@ -48,7 +48,7 @@ enum Command {
         #[arg(long, value_delimiter = ',', default_values = ["0", "1", "2", "3"])]
         arities: Vec<usize>,
 
-        /// Max simulation steps per input when computing fingerprints.
+        /// Max simulation steps per input when computing fingerprints (0 = unlimited).
         #[arg(long, default_value_t = 10_000)]
         max_steps: u64,
 
@@ -206,13 +206,16 @@ fn run_build_job(job: &BuildJob) {
     );
 
     // Retry previously-timed-out entries if the step budget has increased.
+    // max_steps=0 means unlimited, which is always >= any previous finite budget.
+    let budget_increased = job.max_steps == 0 || job.max_steps > prev_max_steps;
     let (mut timed_out_list, recovered) =
-        if !prev_timed_out.is_empty() && job.max_steps > prev_max_steps {
+        if !prev_timed_out.is_empty() && budget_increased {
+            let new_label = if job.max_steps == 0 { "unlimited".to_string() } else { job.max_steps.to_string() };
             eprintln!(
                 "[{label}] retrying {} timed-out entries (max_steps: {} → {}) ...",
                 prev_timed_out.len(),
                 prev_max_steps,
-                job.max_steps,
+                new_label,
             );
             retry_timed_out(prev_timed_out, &mut map, job.arity, job.max_steps)
         } else {
@@ -386,8 +389,9 @@ fn cmd_build(
         Some(s) => format!("max_size={s}"),
         None => "infinite".to_string(),
     };
+    let steps_label = if max_steps == 0 { "unlimited".to_string() } else { max_steps.to_string() };
     println!(
-        "Building {} job(s) with {} thread(s), {size_desc}, max_steps={max_steps}",
+        "Building {} job(s) with {} thread(s), {size_desc}, max_steps={steps_label}",
         job_list.len(),
         n_jobs,
     );

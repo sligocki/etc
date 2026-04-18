@@ -21,7 +21,7 @@ struct Args {
     /// Maximum size to enumerate up to.
     max_size: usize,
 
-    /// Maximum steps per simulation before giving up.
+    /// Maximum steps per simulation before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
     max_steps: u64,
 

@@ -35,7 +35,7 @@ struct Args {
     #[arg(long, default_value_t = 8)]
     max_size: usize,
 
-    /// Max simulation steps per input when computing fingerprints.
+    /// Max simulation steps per input when computing fingerprints (0 = unlimited).
     #[arg(long, default_value_t = 10_000)]
     max_steps: u64,
 
@@ -93,11 +93,16 @@ fn main() {
         // Cap fp_sizes at max_fp (no point asking for more than we computed).
         let fp_sizes: Vec<usize> = fp_sizes.into_iter().filter(|&s| s <= max_fp).collect();
 
+        let steps_label = if args.max_steps == 0 {
+            "unlimited".to_string()
+        } else {
+            args.max_steps.to_string()
+        };
         println!(
             "arity={}  max_size={}  max_steps={}{}  ({} GRFs, {} timed-out)",
             arity,
             args.max_size,
-            args.max_steps,
+            steps_label,
             if args.allow_min { "  allow_min" } else { "" },
             n_total,
             n_timeout,

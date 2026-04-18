@@ -64,7 +64,7 @@ struct Args {
     #[arg(long)]
     db_allow_min: bool,
 
-    /// Simulation step budget used when fingerprinting.
+    /// Simulation step budget used when fingerprinting (0 = unlimited).
     #[arg(long, default_value_t = 10_000)]
     max_steps: u64,
 }

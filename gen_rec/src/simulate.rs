@@ -37,6 +37,9 @@ impl SimResult {
 ///
 /// Returns `(result, steps_taken)`.
 ///
+/// **`max_steps = 0` means no limit** — the simulation runs until it terminates or
+/// loops forever. Use only when the GRF is known to be total (e.g. PRF-only).
+///
 /// Step counting: every call to `eval` costs 1 step. This naturally captures:
 /// - Atoms: 1 step each
 /// - C(h, g1..gm): 1 + steps(g1) + ... + steps(gm) + steps(h) steps
@@ -49,7 +52,7 @@ pub fn simulate(grf: &Grf, args: &[Num], max_steps: Num) -> (SimResult, Num) {
 }
 
 fn eval(grf: &Grf, args: &[Num], steps: &mut Num, max_steps: Num) -> SimResult {
-    if *steps >= max_steps {
+    if max_steps != 0 && *steps >= max_steps {
         return SimResult::OutOfSteps;
     }
     *steps += 1;

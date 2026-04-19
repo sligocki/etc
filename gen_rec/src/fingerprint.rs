@@ -50,29 +50,98 @@ impl Lcg {
 }
 
 /// Generate `count` pseudorandom input tuples for a given arity using the given seed.
+/// Skips duplicates — each returned tuple is unique.
 fn sampled_inputs(arity: usize, count: usize, seed: u64) -> Vec<Vec<u64>> {
     let mut rng = Lcg::new(seed);
-    (0..count)
-        .map(|_| (0..arity).map(|_| rng.sample_biased()).collect())
-        .collect()
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::with_capacity(count);
+    while result.len() < count {
+        let input: Vec<u64> = (0..arity).map(|_| rng.sample_biased()).collect();
+        if seen.insert(input.clone()) {
+            result.push(input);
+        }
+    }
+    result
+}
+
+/// Build an exhaustive grid of all k-tuples with each component in 0..per_dim,
+/// in lexicographic order.
+fn grid_inputs(arity: usize, per_dim: u64) -> Vec<Vec<u64>> {
+    let mut result = vec![vec![]];
+    for _ in 0..arity {
+        let mut next = Vec::new();
+        for prefix in &result {
+            for v in 0..per_dim {
+                let mut row = prefix.clone();
+                row.push(v);
+                next.push(row);
+            }
+        }
+        result = next;
+    }
+    result
+}
+
+/// Generate `count` canonical input tuples for arity ≥ 2.
+///
+/// Strategy: use an exhaustive grid (every combination of small values) up to
+/// `count` points, then fill remaining slots with unique random samples at larger
+/// values.  The grid ensures every small-value combination is represented exactly
+/// once, which is the most information-dense starting set.  The random tail
+/// covers larger values that the grid misses.
+///
+/// `per_dim` is chosen as the largest integer where per_dim^arity ≤ count.
+fn grid_then_random(arity: usize, count: usize, seed: u64) -> Vec<Vec<u64>> {
+    // Largest per_dim such that per_dim^arity ≤ count.
+    let per_dim = {
+        let mut p = 1u64;
+        loop {
+            let next = p + 1;
+            // next^arity ≤ count?
+            let product = (0..arity).try_fold(1usize, |acc, _| {
+                acc.checked_mul(next as usize)
+            });
+            match product {
+                Some(n) if n <= count => p = next,
+                _ => break,
+            }
+        }
+        p
+    };
+
+    let mut inputs = grid_inputs(arity, per_dim);
+    // inputs is already ≤ count in length; fill the rest with unique random samples.
+    if inputs.len() < count {
+        let mut seen: std::collections::HashSet<Vec<u64>> =
+            inputs.iter().cloned().collect();
+        let mut rng = Lcg::new(seed);
+        while inputs.len() < count {
+            let input: Vec<u64> = (0..arity).map(|_| rng.sample_biased()).collect();
+            if seen.insert(input.clone()) {
+                inputs.push(input);
+            }
+        }
+    }
+    inputs
 }
 
 /// Generate `n` canonical inputs for a given arity.
 ///
 /// Arity 0: always returns a single empty input (fp_size has no effect).
 /// Arity 1: exhaustive {0, 1, ..., n-1}.
-/// Arity ≥ 2: n pseudorandom points using the same seed as `canonical_inputs`.
+/// Arity ≥ 2: exhaustive grid of small values up to n points, then unique random
+///   samples for the remainder.  See `grid_then_random` for details.
 ///
-/// Because arity ≥ 2 uses a sequential LCG, the first n outputs of
-/// `canonical_inputs_n(arity, m)` (m > n) are identical to
-/// `canonical_inputs_n(arity, n)`. This means fingerprints computed on a
-/// larger input set can be sliced to simulate smaller fp_sizes without
-/// re-enumerating.
+/// NOTE: unlike the old pure-random approach, `canonical_inputs_n(arity, n)` is
+/// NOT a prefix of `canonical_inputs_n(arity, m)` for m > n when arity ≥ 2,
+/// because the grid size (per_dim) depends on n.  Fingerprints computed at
+/// different fp_sizes are therefore not comparable by slicing; each fp_size must
+/// be re-computed independently.
 pub fn canonical_inputs_n(arity: usize, n: usize) -> Vec<Vec<u64>> {
     match arity {
         0 => vec![vec![]],
         1 => (0u64..n as u64).map(|v| vec![v]).collect(),
-        k => sampled_inputs(k, n, 0xdeadbeefdeadbeef_u64.wrapping_mul(k as u64)),
+        k => grid_then_random(k, n, 0xdeadbeefdeadbeef_u64.wrapping_mul(k as u64)),
     }
 }
 
@@ -80,14 +149,14 @@ pub fn canonical_inputs_n(arity: usize, n: usize) -> Vec<Vec<u64>> {
 ///
 /// Arity 0: single empty input.
 /// Arity 1: exhaustive {0..7} — small enough to cover completely.
-/// Arity ≥ 2: 32 pseudorandom points with a small-biased distribution (values in
-///   [0,63]), seeded deterministically per arity. Fixed points cover a wider range
-///   than a small grid while keeping the count constant regardless of arity.
+/// Arity ≥ 2: 32 points via `grid_then_random` — an exhaustive grid of small
+///   values (e.g. all 5×5=25 pairs for arity 2, plus 7 random extras), then
+///   unique random samples to fill the remainder.
 pub fn canonical_inputs(arity: usize) -> Vec<Vec<u64>> {
     match arity {
         0 => vec![vec![]],
         1 => (0u64..8).map(|v| vec![v]).collect(),
-        k => sampled_inputs(k, 32, 0xdeadbeefdeadbeef_u64.wrapping_mul(k as u64)),
+        k => grid_then_random(k, 32, 0xdeadbeefdeadbeef_u64.wrapping_mul(k as u64)),
     }
 }
 

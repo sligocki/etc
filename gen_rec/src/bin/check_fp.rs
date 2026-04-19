@@ -1,10 +1,9 @@
 /// Measure how fingerprint input-set size affects novel-function counts.
 ///
-/// Enumerates GRFs once per arity using the largest requested fp_size, then
-/// slices each fingerprint to simulate smaller sizes — avoiding redundant
-/// re-enumeration.  A count that stabilises as fp_size grows suggests the
-/// input set is large enough to distinguish all distinct functions at that
-/// arity/max_size.
+/// Enumerates GRFs once per arity per fp_size, fingerprints each GRF on the
+/// canonical input set for that fp_size, and counts distinct fingerprints.
+/// A count that stabilises as fp_size grows suggests the input set is large
+/// enough to distinguish all distinct functions at that arity/max_size.
 ///
 /// Usage examples:
 ///   check_fp                                      # arity 1, sizes 1..=8
@@ -53,9 +52,6 @@ fn main() {
     let args = Args::parse();
     let opts = PruningOpts::default();
 
-    // Largest fp_size drives the enumeration; smaller sizes are free slices.
-    let max_fp = *args.fp_sizes.iter().max().expect("fp_sizes is non-empty");
-
     // Current defaults (used to annotate the table).
     let default_fp = |arity: usize| -> usize {
         match arity {
@@ -66,6 +62,16 @@ fn main() {
     };
 
     for &arity in &args.arities {
+        // Sort and deduplicate fp_sizes for clean output.
+        let mut fp_sizes = args.fp_sizes.clone();
+        fp_sizes.sort_unstable();
+        fp_sizes.dedup();
+
+        let max_fp = *fp_sizes.last().expect("fp_sizes is non-empty");
+
+        // Generate a single input set at max_fp.  Smaller fp_sizes are prefixes of
+        // this set, preserving the monotonicity property: adding more inputs can only
+        // split previously-merged equivalence classes, never merge them.
         let inputs = canonical_inputs_n(arity, max_fp);
 
         // Enumerate once, collect all complete fingerprints at max_fp size.
@@ -85,19 +91,25 @@ fn main() {
             });
         }
 
-        // Sort and deduplicate fp_sizes for clean output.
-        let mut fp_sizes = args.fp_sizes.clone();
-        fp_sizes.sort_unstable();
-        fp_sizes.dedup();
-
-        // Cap fp_sizes at max_fp (no point asking for more than we computed).
-        let fp_sizes: Vec<usize> = fp_sizes.into_iter().filter(|&s| s <= max_fp).collect();
-
         let steps_label = if args.max_steps == 0 {
             "unlimited".to_string()
         } else {
             args.max_steps.to_string()
         };
+
+        // Collect all (fp_size, count) pairs by slicing each fp to [:fp_size].
+        // Because all fp_sizes use prefixes of the same input set, counts are
+        // monotonically non-decreasing — a necessary condition for stability detection.
+        let counts: Vec<(usize, usize)> = fp_sizes
+            .iter()
+            .map(|&fp_size| {
+                let cap = fp_size.min(inputs.len());
+                let distinct: HashSet<&[Option<u64>]> =
+                    all_fps.iter().map(|fp| &fp[..cap]).collect();
+                (fp_size, distinct.len())
+            })
+            .collect();
+
         println!(
             "arity={}  max_size={}  max_steps={}{}  ({} GRFs, {} timed-out)",
             arity,
@@ -111,18 +123,6 @@ fn main() {
         println!(" {}", "-".repeat(27));
 
         let def = default_fp(arity);
-
-        // Collect all (fp_size, count) pairs first so we can identify the true
-        // stable point in a second pass.
-        let counts: Vec<(usize, usize)> = fp_sizes
-            .iter()
-            .map(|&fp_size| {
-                let cap = fp_size.min(inputs.len());
-                let distinct: HashSet<&[Option<u64>]> =
-                    all_fps.iter().map(|fp| &fp[..cap]).collect();
-                (fp_size, distinct.len())
-            })
-            .collect();
 
         // The count is monotonically non-decreasing (more inputs can only split
         // previously-merged functions).  "Stable" = first row that reaches the

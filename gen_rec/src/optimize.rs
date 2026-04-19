@@ -505,7 +505,7 @@ mod tests {
     fn opt_ack_worm() {
         use crate::example_ack::ack_worm;
 
-        let db = FingerprintDb::build(10, 3, false, 10_000);
+        let db = FingerprintDb::build(8, 3, false, 10_000);
 
         let orig = ack_worm();
         let opt_ip = opt_inline_proj(orig.clone());

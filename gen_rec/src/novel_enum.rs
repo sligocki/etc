@@ -278,6 +278,16 @@ impl NovelEnumerator {
         }
     }
 
+    /// Return the canonical GRFs at `(arity, size)`, or an empty slice if not yet computed.
+    ///
+    /// Call `compute_size(arity, size)` first to populate the memo.
+    pub fn candidates(&self, arity: usize, size: usize) -> &[Grf] {
+        self.memo
+            .get(&(arity, size))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
     /// Main entry point.
     ///
     /// Computes all novel GRFs for `target_arity` at sizes `start_size..=max_size`.

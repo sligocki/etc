@@ -18,9 +18,21 @@ use gen_rec::optimize::{opt_fingerprint, opt_inline_proj};
 #[derive(Parser, Debug)]
 #[command(about = "Print sizes for all example_ack GRFs before and after optimization")]
 struct Args {
-    /// Load fingerprint DB from all .db files in this directory.
-    #[arg(long, value_name = "DIR")]
-    db_dir: Option<PathBuf>,
+    /// Max GRF size included in the fingerprint DB (0 = skip fingerprint pass).
+    #[arg(long, default_value_t = 0)]
+    fp_max_size: usize,
+
+    /// Max arity included in the fingerprint DB.
+    #[arg(long, default_value_t = 3)]
+    fp_max_arity: usize,
+
+    /// Include Minimization in the fingerprint DB.
+    #[arg(long)]
+    fp_allow_min: bool,
+
+    /// Max simulation steps when fingerprinting.
+    #[arg(long, default_value_t = 100_000)]
+    max_steps: u64,
 }
 
 fn main() {

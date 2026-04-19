@@ -195,7 +195,9 @@ pub fn ack_worm() -> Grf {
 /// Arity: 2, Size: 10
 pub fn init_list() -> Grf {
     // (n,m) -> (m+2) 2^n - 1
-    // A number ending in at least n+1 1s in binary
+    // A number ending in at least n 1s in binary
+    // the (m+2) bit is sort of irrelevant, this just happens
+    // to be a cheep GRF that is guaranteed to end in n 1s
     diag_rep(rep_succ(Grf::Succ))
 }
 // InitList(0,0) = 2 2^0 - 1 = 0b1 = [1]
@@ -203,7 +205,7 @@ pub fn init_list() -> Grf {
 // InitList(2,2) = 4 2^2 - 1 = 0b1111 = [4]
 // InitList(3,3) = 5 2^3 - 1 = 0b100111 = [1,0,3]
 
-/// Ack(n,_) > AckWorm([n+1])
+/// Ack(n,_) > AckWorm([n])
 ///     Dominates all PRF
 /// C(AckWorm, InitList)
 /// Arity: 2, Size: 97
@@ -568,6 +570,7 @@ mod tests {
         // [1,3] -> [1,2] -> [1,1,1] -> [1,1,0,0,0] -> [1,1,0,0] -> [1,1,0] -> [1,1]
         //       -> 1 0^7 --(7)--> [1] -> [0]*15
         // assert_eq!(eval(&f, &[list2int(&[1,3])]), Some(15));
+
         // [2,0] -> [2] -> [1,1] -> [1,0,0,0] -> [1,0,0] -> [1,0] -> [1] -> [0]*7
         assert_eq!(eval(&f, &[list2int(&[2,0])]), Some(7));
         // Too big:
@@ -608,4 +611,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_ack() {
+        let il = init_list();
+        let a = ack();
+
+        // Ack(1,1) = AckWomr([1,1]) = 3
+        assert_eq!(eval(&il, &[1,1]), Some(list2int(&[1,1])));
+        assert_eq!(eval(&a, &[1,1]), Some(3));
+
+        // Ack(2) = AckWorm([4]) = 41 2^38 - 1
+        assert_eq!(eval(&il, &[2,2]), Some(list2int(&[4])));
+        // assert_eq!(eval(&a, &[2,2]), Some(41 * 2.pow(38) - 1));
+
+        // Ack(3) = AckWorm([1,0,3]) = 16
+        assert_eq!(eval(&il, &[3,3]), Some(list2int(&[1,0,3])));
+        // assert_eq!(eval(&a, &[3,3]), Some(16));
+    }
 }

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 use std::iter::Peekable;
 use std::str::{Chars, FromStr};
@@ -87,6 +88,66 @@ impl Grf {
             Grf::Comp(h, gs, _) => 1 + h.size() + gs.iter().map(Grf::size).sum::<usize>(),
             Grf::Rec(g, h) => 1 + g.size() + h.size(),
             Grf::Min(f) => 1 + f.size(),
+        }
+    }
+
+    /// Returns the set of argument positions (1-indexed) this GRF syntactically reads.
+    ///
+    /// This is a conservative over-approximation: if `j` is absent from the result,
+    /// the GRF provably ignores argument `j`. If `j` is present, it may or may not
+    /// actually depend on it (e.g. `Rec` always conservatively includes arg 1).
+    ///
+    /// Used by the simulator to detect when a `Rec` step function ignores its
+    /// accumulator (arg 2), enabling the fast-forward optimization.
+    pub fn used_args(&self) -> BTreeSet<usize> {
+        match self {
+            Grf::Zero(_) => BTreeSet::new(),
+            Grf::Succ => [1].into_iter().collect(),
+            Grf::Proj(_, i) => [*i].into_iter().collect(),
+            Grf::Comp(h, gs, _) => {
+                // C(h, g1..gm)(args) = h(g1(args), ..., gm(args)).
+                // Comp reads arg j iff h reads some position i where gi reads arg j.
+                let h_used = h.used_args();
+                let mut result = BTreeSet::new();
+                for (idx, g) in gs.iter().enumerate() {
+                    if h_used.contains(&(idx + 1)) {
+                        result.extend(g.used_args());
+                    }
+                }
+                result
+            }
+            Grf::Rec(g, h) => {
+                // R(g,h)(n, r1..r_{k-1}): base g(r1..r_{k-1}), step h(i, acc, r1..r_{k-1}).
+                // g's arg j  →  Rec's arg j+1  (rest starts at position 2 of Rec).
+                // h's arg j (j≥3)  →  Rec's arg j-1  (h's positions 1,2 are i and acc).
+                // Rec always conservatively includes arg 1 (the counter n).
+                let g_used = g.used_args();
+                let h_used = h.used_args();
+                let mut result = BTreeSet::new();
+                result.insert(1);
+                for j in g_used {
+                    result.insert(j + 1);
+                }
+                for j in h_used {
+                    if j >= 3 {
+                        result.insert(j - 1);
+                    }
+                    // j=1 (loop counter i) already covered by arg 1 above.
+                    // j=2 (accumulator) is internal — doesn't add a new Rec input.
+                }
+                result
+            }
+            Grf::Min(f) => {
+                // M(f)(r1..r_k): f(i, r1..r_k). f's arg j (j≥2) → Min's arg j-1.
+                let f_used = f.used_args();
+                let mut result = BTreeSet::new();
+                for j in f_used {
+                    if j >= 2 {
+                        result.insert(j - 1);
+                    }
+                }
+                result
+            }
         }
     }
 
@@ -297,5 +358,65 @@ mod tests {
         // Not PRFs
         assert!(!grf!("M(P(1,1))").is_prf());
         assert!(!grf!("C(S, M(S))").is_prf());
+    }
+
+    fn ua(s: &str) -> BTreeSet<usize> {
+        s.parse::<Grf>().unwrap().used_args()
+    }
+
+    fn set(xs: &[usize]) -> BTreeSet<usize> {
+        xs.iter().cloned().collect()
+    }
+
+    #[test]
+    fn test_used_args_atoms() {
+        assert_eq!(ua("Z0"), set(&[]));
+        assert_eq!(ua("Z3"), set(&[]));
+        assert_eq!(ua("S"), set(&[1]));
+        assert_eq!(ua("P(1,1)"), set(&[1]));
+        assert_eq!(ua("P(3,2)"), set(&[2]));
+    }
+
+    #[test]
+    fn test_used_args_comp() {
+        // C(S, Z1): S uses arg 1 of its input = g1's output. g1=Z1 uses nothing.
+        assert_eq!(ua("C(S,Z1)"), set(&[]));
+        // C(S, P(2,1)): S uses arg 1 = P(2,1)'s output. P(2,1) uses arg 1.
+        assert_eq!(ua("C(S,P(2,1))"), set(&[1]));
+        // C(P(2,1), S, Z1): P(2,1) uses position 1 = S's output. S uses arg 1.
+        assert_eq!(ua("C(P(2,1),S,Z1)"), set(&[1]));
+        // C(P(2,2), S, Z1): P(2,2) uses position 2 = Z1's output. Z1 uses nothing.
+        assert_eq!(ua("C(P(2,2),S,Z1)"), set(&[]));
+    }
+
+    #[test]
+    fn test_used_args_rec() {
+        // R(Z0, P(2,2)): g=Z0 uses {}, h=P(2,2) uses {2} (acc, internal). Rec uses {1}.
+        assert_eq!(ua("R(Z0,P(2,2))"), set(&[1]));
+        // R(P(1,1), C(S,P(3,2))): add(n, m). g=P(1,1) uses {1}→Rec arg 2.
+        // h=C(S,P(3,2)) uses {2} (acc, internal). Rec uses {1,2}.
+        assert_eq!(ua("R(P(1,1),C(S,P(3,2)))"), set(&[1, 2]));
+        // R(Z1, P(3,1)): predecessor. g=Z1 uses {}, h=P(3,1) uses {1} (counter, internal).
+        // h uses nothing with j>=3. Rec uses {1}.
+        assert_eq!(ua("R(Z1,P(3,1))"), set(&[1]));
+    }
+
+    #[test]
+    fn test_used_args_rec_acc_ignored() {
+        // Key invariant for the fast-forward optimisation:
+        // R(Z1, P(3,1)) has used_args = {1}, so arg 2 (acc) is absent.
+        let inner = grf!("R(Z1,P(3,1))");
+        assert!(!inner.used_args().contains(&2));
+        // Outer R(Z0, inner): inner.used_args = {1}, so inner ignores acc.
+        let outer = Grf::rec(Grf::Zero(0), inner);
+        assert!(!outer.used_args().contains(&2));
+    }
+
+    #[test]
+    fn test_used_args_min() {
+        // M(P(1,1)): f(i)=i, f uses {1} (i, internal). Min's args: f's j>=2 → none.
+        assert_eq!(ua("M(P(1,1))"), set(&[]));
+        // M(P(2,2)): f(i,x)=x, f uses {2} → Min's arg 1.
+        assert_eq!(ua("M(P(2,2))"), set(&[1]));
     }
 }

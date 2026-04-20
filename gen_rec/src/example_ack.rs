@@ -349,10 +349,12 @@ mod tests {
     }
 
     #[test]
-    fn test_double() {
-        let f = double();
-        for x in 0u64..10 {
-            assert_eq!(eval(&f, &[x]), Some(2 * x), "double({x})");
+    fn test_add() {
+        let f = add();
+        for x in 0u64..6 {
+            for y in 0u64..6 {
+                assert_eq!(eval(&f, &[x, y]), Some(x+y), "add({x}, {y})");
+            }
         }
     }
 

@@ -7,7 +7,7 @@
 ///
 use clap::Parser;
 use gen_rec::example_ack::{
-    ack, ack_loop, ack_step, ack_worm, bit, dec_append, dec_append_n, div2, div2k, double,
+    ack, ack_loop, ack_step, ack_worm, add, bit, dec_append, dec_append_n, div2, div2k,
     graham, init_list, mod2, monus2, not, omega, plus2, pop_k, pred, rmonus, rmonus_odd, sgn,
     shift,
 };
@@ -43,7 +43,7 @@ fn main() {
         ("not",          not()),
         ("sgn",          sgn()),
         ("plus2",        plus2()),
-        ("double",       double()),
+        ("add",          add()),
         ("rmonus",       rmonus()),
         ("mod2",         mod2()),
         ("shift",        shift()),

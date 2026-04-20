@@ -11,7 +11,7 @@
 ///   ack_step, ack_loop, ack_worm, init_list, ack, omega, graham
 use clap::Parser;
 use gen_rec::example_ack::{
-    ack, ack_loop, ack_step, ack_worm, bit, dec_append, dec_append_n, div2, div2k, double,
+    ack, ack_loop, ack_step, ack_worm, add, bit, dec_append, dec_append_n, div2, div2k,
     graham, init_list, mod2, not, omega, plus2, pop_k, pred, rmonus, rmonus_odd, sgn, shift,
 };
 use gen_rec::fingerprint::FingerprintDb;
@@ -171,7 +171,7 @@ fn resolve(expr: &str) -> Result<Grf, String> {
         "not" => not(),
         "sgn" => sgn(),
         "plus2" => plus2(),
-        "double" => double(),
+        "add" => add(),
         "rmonus" => rmonus(),
         "mod2" => mod2(),
         "shift" => shift(),
@@ -212,7 +212,7 @@ fn main() {
         original.arity(),
         original.size()
     );
-    println!("  {}", trunc(&original.to_string()));
+    println!("  {}", original.to_string());
 
     let mut current = original.clone();
 
@@ -276,6 +276,6 @@ fn main() {
             100.0 * total_saved as f64 / original.size() as f64,
         );
         println!();
-        println!("  {}", trunc(&current.to_string()));
+        println!("  {}", current.to_string());
     }
 }

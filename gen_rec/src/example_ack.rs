@@ -34,11 +34,11 @@ pub fn plus2() -> Grf {
     Grf::comp(Grf::Succ, vec![Grf::Succ])
 }
 
-/// Double(x) := 2x
-/// R(Z0, C(Plus2, P(2,2)))
-/// Arity: 1, Size: 7
-pub fn double() -> Grf {
-    Grf::rec(Grf::Zero(0), Grf::comp(plus2(), vec![Grf::Proj(2, 2)]))
+/// Add(x,y) := x + y
+/// R(P(1,1), C(S, P(3,2)))
+/// Arity: 2, Size: 5
+pub fn add() -> Grf {
+    Grf::rec(Grf::Proj(1,1), Grf::comp(Grf::Succ, vec![Grf::Proj(3,2)]))
 }
 
 /// RMonus(x,y) := y ∸ x
@@ -57,10 +57,10 @@ pub fn mod2() -> Grf {
 }
 
 /// Shift(k,x) := x · 2^k
-/// R(P(1,1), C(Double, P(3,2)))
-/// Arity: 2, Size: 11
+/// R(P(1,1), C(Add, P(3,2), P(3,2)))
+/// Arity: 2, Size: 10
 pub fn shift() -> Grf {
-    Grf::rec(Grf::Proj(1, 1), Grf::comp(double(), vec![Grf::Proj(3, 2)]))
+    Grf::rec(Grf::Proj(1, 1), Grf::comp(add(), vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]))
 }
 
 /// Monus2(x) := x ∸ 2
@@ -279,7 +279,7 @@ mod tests {
             ("not",          &not,          1),
             ("sgn",          &sgn,          1),
             ("plus2",        &plus2,        1),
-            ("double",       &double,       1),
+            ("add",          &add,          2),
             ("rmonus",       &rmonus,       2),
             ("mod2",         &mod2,         1),
             ("shift",        &shift,        2),

@@ -449,7 +449,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Broken"]
     fn fingerprint_monus2_app() {
         // Build a DB up to size 8 covering arities 0..=3.
         let db = FingerprintDb::build(8, 3, false, 10_000);

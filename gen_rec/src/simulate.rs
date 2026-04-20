@@ -65,23 +65,22 @@ impl Default for SimOpts {
 /// Uses `SimOpts::default()` (rec_fast_forward enabled). Use `simulate_opts` to
 /// disable the optimization, e.g. for benchmarking or step-count tests.
 pub fn simulate(grf: &Grf, args: &[Num], max_steps: Num) -> (SimResult, Num) {
-    simulate_opts(grf, args, max_steps, SimOpts::default())
+    let step_budget = if max_steps == 0 { None } else { Some(max_steps) };
+    simulate_opts(grf, args, step_budget, SimOpts::default())
 }
 
 /// Simulate with explicit options. See `SimOpts` and `simulate`.
-pub fn simulate_opts(grf: &Grf, args: &[Num], max_steps: Num, opts: SimOpts) -> (SimResult, Num) {
-    let mut steps: Num = 0;
-    let result = eval(grf, args, &mut steps, max_steps, opts);
-    (result, steps)
-}
-
-fn eval(grf: &Grf, args: &[Num], steps: &mut Num, max_steps: Num, opts: SimOpts) -> SimResult {
-    if max_steps != 0 && *steps >= max_steps {
-        return SimResult::OutOfSteps;
+///
+/// `step_budget` is the total number of steps available for this call and all
+/// its sub-calls. `None` means unlimited. The returned step count is how many
+/// steps were consumed.
+pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: SimOpts) -> (SimResult, Num) {
+    if step_budget == Some(0) {
+        return (SimResult::OutOfSteps, 0);
     }
-    *steps += 1;
+    let mut steps: Num = 1; // cost of this call
 
-    match grf {
+    let result = match grf {
         Grf::Zero(_) => SimResult::Value(0),
 
         Grf::Succ => SimResult::Value(args[0] + 1),
@@ -92,12 +91,16 @@ fn eval(grf: &Grf, args: &[Num], steps: &mut Num, max_steps: Num, opts: SimOpts)
             // Evaluate each gi(args), collecting results as new arg list for h.
             let mut h_args: Vec<Num> = Vec::with_capacity(gs.len());
             for g in gs.iter() {
-                match eval(g, args, steps, max_steps, opts) {
+                let (result, s) = simulate_opts(g, args, step_budget.map(|b| b - steps), opts);
+                steps += s;
+                match result {
                     SimResult::Value(v) => h_args.push(v),
-                    other => return other,
+                    other => return (other, steps),
                 }
             }
-            eval(h, &h_args, steps, max_steps, opts)
+            let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps), opts);
+            steps += s;
+            result
         }
 
         Grf::Rec(g, h) => {
@@ -116,12 +119,16 @@ fn eval(grf: &Grf, args: &[Num], steps: &mut Num, max_steps: Num, opts: SimOpts)
                 h_args.push(n - 1);
                 h_args.push(0); // accumulator: ignored by h, value is arbitrary
                 h_args.extend_from_slice(rest);
-                return eval(h, &h_args, steps, max_steps, opts);
+                let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps), opts);
+                steps += s;
+                return (result, steps);
             }
 
-            let mut acc = match eval(g, rest, steps, max_steps, opts) {
+            let (base, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps), opts);
+            steps += s;
+            let mut acc = match base {
                 SimResult::Value(v) => v,
-                other => return other,
+                other => return (other, steps),
             };
 
             for i in 0..n {
@@ -130,9 +137,11 @@ fn eval(grf: &Grf, args: &[Num], steps: &mut Num, max_steps: Num, opts: SimOpts)
                 h_args.push(acc);
                 h_args.extend_from_slice(rest);
 
-                acc = match eval(h, &h_args, steps, max_steps, opts) {
+                let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps), opts);
+                steps += s;
+                acc = match result {
                     SimResult::Value(v) => v,
-                    other => return other,
+                    other => return (other, steps),
                 };
             }
 
@@ -147,14 +156,18 @@ fn eval(grf: &Grf, args: &[Num], steps: &mut Num, max_steps: Num, opts: SimOpts)
                 f_args.push(i);
                 f_args.extend_from_slice(args);
 
-                match eval(f, &f_args, steps, max_steps, opts) {
-                    SimResult::Value(0) => return SimResult::Value(i),
+                let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
+                steps += s;
+                match result {
+                    SimResult::Value(0) => break SimResult::Value(i),
                     SimResult::Value(_) => i += 1,
-                    other => return other,
+                    other => return (other, steps),
                 }
             }
         }
-    }
+    };
+
+    (result, steps)
 }
 
 #[cfg(test)]
@@ -261,7 +274,7 @@ mod tests {
         let (_, steps) = simulate(&Grf::Zero(0), &[], 1_000_000);
         assert_eq!(steps, 1);
 
-        // C(S, Z0)(): eval(C) = 1, eval(Z0) = 1, eval(S) = 1 → 3 steps
+        // C(S, Z0)(): simulate_opts(C) = 1, simulate_opts(Z0) = 1, simulate_opts(S) = 1 → 3 steps
         let f = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
         let (_, steps) = simulate(&f, &[], 1_000_000);
         assert_eq!(steps, 3);
@@ -269,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_rec_steps() {
-        // R(Z0, P(2,2))(3): eval(R)=1, eval(Z0)=1, then 3 evals of h → 5 steps
+        // R(Z0, P(2,2))(3): simulate_opts(R)=1, simulate_opts(Z0)=1, then 3 evals of h → 5 steps
         let g = Grf::Zero(0);
         let h = Grf::Proj(2, 2);
         let r = Grf::Rec(Box::new(g), Box::new(h));
@@ -304,7 +317,7 @@ mod tests {
         for n in 0u64..=10 {
             let expected = n.saturating_sub(1);
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
-            let (v_no, _) = simulate_opts(&r, &[n], 1_000_000, no_ff());
+            let (v_no, _) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
             assert_eq!(v_ff.into_value(), Some(expected), "ff wrong at n={n}");
             assert_eq!(v_no.into_value(), Some(expected), "no_ff wrong at n={n}");
         }
@@ -325,7 +338,7 @@ mod tests {
         // Both with and without fast-forward must give the same answer.
         for n in 0u64..=20 {
             let (r_ff, _) = simulate(&f, &[n], 1_000_000);
-            let (r_no, _) = simulate_opts(&f, &[n], 1_000_000, no_ff());
+            let (r_no, _) = simulate_opts(&f, &[n], Some(1_000_000), no_ff());
             assert_eq!(
                 r_ff.into_value(),
                 r_no.into_value(),
@@ -339,7 +352,7 @@ mod tests {
         let f = nested_rec();
         let n = 1000u64;
         let (_, steps_ff) = simulate(&f, &[n], 0);
-        let (_, steps_no) = simulate_opts(&f, &[n], 0, no_ff());
+        let (_, steps_no) = simulate_opts(&f, &[n], None, no_ff());
         // Without fast-forward: O(n^2). With: O(1). Confirm dramatically fewer steps.
         // Difference is really 3 vs 501502 !
         assert!(
@@ -357,7 +370,7 @@ mod tests {
         let h = Grf::Proj(2, 2);
         let r = Grf::Rec(Box::new(g), Box::new(h));
         let (val_ff, steps_ff) = simulate(&r, &[3], 1_000_000);
-        let (val_no, steps_no) = simulate_opts(&r, &[3], 1_000_000, no_ff());
+        let (val_no, steps_no) = simulate_opts(&r, &[3], Some(1_000_000), no_ff());
         assert_eq!(val_ff.into_value(), val_no.into_value());
         // Step counts must be identical since ff doesn't apply here.
         assert_eq!(steps_ff, steps_no);

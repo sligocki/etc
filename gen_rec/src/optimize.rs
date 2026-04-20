@@ -176,12 +176,7 @@ pub fn opt_fingerprint(f: Grf, db: &FingerprintDb) -> Grf {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    macro_rules! grf {
-        ($s:expr) => {
-            $s.parse::<Grf>().unwrap()
-        };
-    }
+    use crate::grf;
 
     // ── atoms ────────────────────────────────────────────────────────────────
 
@@ -322,7 +317,7 @@ mod tests {
             ("M(Z2)", &[1]),
         ];
         for &(s, rw) in cases {
-            let f = grf!(s);
+            let f: Grf = s.parse().unwrap();
             let new_arity = f.arity();
             assert_eq!(
                 inline_proj(&f, new_arity, rw),
@@ -380,7 +375,7 @@ mod tests {
     fn opt_atoms_unchanged() {
         // Atoms have nothing to optimize.
         for s in ["S", "Z3", "P(4,2)"] {
-            let f = grf!(s);
+            let f: Grf = s.parse().unwrap();
             assert_eq!(opt_inline_proj(f.clone()), f, "atom {s} should not change");
         }
     }

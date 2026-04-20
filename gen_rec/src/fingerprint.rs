@@ -66,7 +66,7 @@ fn sampled_inputs(arity: usize, count: usize, seed: u64) -> Vec<Vec<u64>> {
 
 /// Build an exhaustive grid of all k-tuples with each component in 0..per_dim,
 /// in lexicographic order.
-fn grid_inputs(arity: usize, per_dim: u64) -> Vec<Vec<u64>> {
+pub fn grid_inputs(arity: usize, per_dim: u64) -> Vec<Vec<u64>> {
     let mut result = vec![vec![]];
     for _ in 0..arity {
         let mut next = Vec::new();

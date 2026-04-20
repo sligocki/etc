@@ -3,6 +3,22 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 
+/// Parse a GRF from a format string, panicking on error.
+///
+/// Accepts the same format arguments as `format!`, passes the result through
+/// `str::parse::<Grf>()`, and unwraps. Useful in tests and examples.
+///
+/// ```ignore
+/// let f = grf!("R(Z0, P(2,1))");
+/// let g = grf!("C(S, P({k},{i})", k = 3, i = 2);
+/// ```
+#[macro_export]
+macro_rules! grf {
+    ($($arg:tt)*) => {
+        format!($($arg)*).parse::<$crate::grf::Grf>().unwrap()
+    };
+}
+
 /// A General Recursive Function (GRF).
 ///
 /// Each GRF has a well-defined arity (number of inputs) derivable from its structure.
@@ -280,12 +296,6 @@ impl FromStr for Grf {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    macro_rules! grf {
-        ($($arg:tt)*) => {
-            format!($($arg)*).parse::<Grf>().unwrap()
-        };
-    }
 
     #[test]
     fn test_atom_arities() {

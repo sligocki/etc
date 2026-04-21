@@ -115,9 +115,9 @@ struct SummarizeArgs {
     /// Task workspace directory.
     dir: PathBuf,
 
-    /// Maximum champion expressions to display per size.
-    #[arg(long, default_value_t = 5)]
-    max_champions: usize,
+    /// How many top-scoring GRFs to display.
+    #[arg(long, default_value_t = 10)]
+    top: usize,
 }
 
 // ── Serialisable data types ───────────────────────────────────────────────────
@@ -662,8 +662,6 @@ struct SizeSummary {
     over_steps_count: usize,
     runtime_sec: f64,
     best_score: Option<u64>,
-    best_ranks: Vec<usize>,  // ranks tied at best_score
-    best_exprs: Vec<String>, // corresponding expr strings
     notable: Vec<NotableEntry>,
 }
 
@@ -707,8 +705,6 @@ fn cmd_summarize(args: SummarizeArgs) {
         over_steps_count: 0,
         runtime_sec: 0.0,
         best_score: None,
-        best_ranks: Vec::new(),
-        best_exprs: Vec::new(),
         notable: Vec::new(),
     };
     let mut score_hist: HashMap<u64, u64> = HashMap::new();
@@ -720,21 +716,9 @@ fn cmd_summarize(args: SummarizeArgs) {
         s.over_steps_count += r.over_steps_count;
         s.runtime_sec += r.elapsed_secs;
 
-        // Merge champion ranks.
         if let Some(score) = r.best_score {
-            match s.best_score {
-                None => {
-                    s.best_score = Some(score);
-                    s.best_ranks = r.best_ranks.clone();
-                }
-                Some(bs) if score > bs => {
-                    s.best_score = Some(score);
-                    s.best_ranks = r.best_ranks.clone();
-                }
-                Some(bs) if score == bs => {
-                    s.best_ranks.extend_from_slice(&r.best_ranks);
-                }
-                _ => {}
+            if s.best_score.map_or(true, |bs| score > bs) {
+                s.best_score = Some(score);
             }
         }
         s.notable.extend_from_slice(&r.notable);
@@ -742,28 +726,31 @@ fn cmd_summarize(args: SummarizeArgs) {
         steps_hist = merge_hist(steps_hist, &r.steps_hist);
     }
 
-    // Build best_exprs from notable.
-    if let Some(bs) = s.best_score {
-        let rank_set: std::collections::HashSet<usize> = s.best_ranks.iter().copied().collect();
-        s.best_exprs = s
-            .notable
-            .iter()
-            .filter(|n| n.score == Some(bs) && rank_set.contains(&n.rank))
-            .map(|n| n.expr.clone())
-            .collect();
-        s.best_exprs.sort();
-        s.best_exprs.dedup();
-    }
+    // Build top-N list: deduplicate by expr, sort by score desc.
+    let mut seen_exprs = std::collections::HashSet::new();
+    let mut top_entries: Vec<(u64, String)> = s.notable.iter()
+        .filter_map(|n| n.score.map(|sc| (sc, n.expr.clone())))
+        .filter(|(_, expr)| seen_exprs.insert(expr.clone()))
+        .collect();
+    top_entries.sort_by(|a, b| b.0.cmp(&a.0));
+    top_entries.truncate(args.top);
 
     // Check completeness.
     let total_done: usize = s.tasks_done;
     let total_tasks: usize = manifest.len();
     let is_partial = total_done < total_tasks;
 
+    let max_steps = steps_hist.keys().copied().max().unwrap_or(0);
     println!();
     print_pow2_hist("Steps Histogram", steps_hist);
     println!();
     print_pow2_hist("Score Histogram", score_hist);
+    println!();
+
+    println!("Top {} GRFs:", args.top);
+    for (score, expr) in &top_entries {
+        println!("  {:>6}  {}", score, expr);
+    }
     println!();
 
     println!("Size: {}", size);
@@ -772,15 +759,10 @@ fn cmd_summarize(args: SummarizeArgs) {
         None => "-".to_string(),
     };
     println!("Max Score: {}", score_str);
+    println!("Max Steps: {}", max_steps);
     println!("# Over Steps: {}", s.over_steps_count);
     println!("Total GRFs: {}", s.total_grfs);
     println!("Tasks Complete: {}/{}", s.tasks_done, tasks_total);
-    println!();
-
-    println!("Champions:");
-    for champ in s.best_exprs {
-        println!("  {}", champ);
-    }
     println!();
 
     println!("Total runtime: {:.0}s", s.runtime_sec);

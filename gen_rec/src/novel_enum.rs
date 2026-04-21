@@ -42,7 +42,9 @@
 /// let entries = en.run(2, 1, 8, false);
 /// // entries: Vec<(Fingerprint, usize, String)> for arity=2, sizes 1..=8
 /// ```
-use crate::fingerprint::{canonical_inputs_n, compute_fp, fp_is_complete, Fingerprint};
+use crate::fingerprint::{
+    canonical_inputs_n, compute_fp, fp_is_complete, verification_inputs, Fingerprint,
+};
 use crate::grf::Grf;
 use std::collections::{HashMap, HashSet};
 
@@ -50,10 +52,12 @@ use std::collections::{HashMap, HashSet};
 pub struct NovelEnumerator {
     /// (arity, size) → list of novel GRFs of exactly that (arity, size)
     memo: HashMap<(usize, usize), Vec<Grf>>,
-    /// arity → set of fingerprints already seen (for deduplication across sizes)
+    /// arity → set of combined fingerprints already seen (primary ++ verification banks)
     seen: HashMap<usize, HashSet<Fingerprint>>,
-    /// arity → canonical inputs (cached)
+    /// arity → primary canonical inputs (cached)
     inputs: HashMap<usize, Vec<Vec<u64>>>,
+    /// arity → verification inputs (broader exhaustive grid, cached)
+    verify_inputs: HashMap<usize, Vec<Vec<u64>>>,
     fp_inputs: usize,
     max_steps: u64,
     allow_min: bool,
@@ -65,6 +69,7 @@ impl NovelEnumerator {
             memo: HashMap::new(),
             seen: HashMap::new(),
             inputs: HashMap::new(),
+            verify_inputs: HashMap::new(),
             fp_inputs,
             max_steps,
             allow_min,
@@ -78,11 +83,24 @@ impl NovelEnumerator {
             .or_insert_with(|| canonical_inputs_n(arity, self.fp_inputs))
     }
 
-    /// Compute the fingerprint for a GRF. Borrows `self` mutably for the inputs cache.
+    /// Return the cached verification input set for `arity`, computing it if needed.
+    fn verify_inputs_for(&mut self, arity: usize) -> &Vec<Vec<u64>> {
+        self.verify_inputs
+            .entry(arity)
+            .or_insert_with(|| verification_inputs(arity))
+    }
+
+    /// Compute the primary fingerprint for a GRF.
     fn fingerprint(&mut self, grf: &Grf) -> Fingerprint {
         let arity = grf.arity();
-        // Avoid borrow conflict: clone the inputs out before passing to compute_fp.
         let inputs = self.inputs_for(arity).clone();
+        compute_fp(grf, &inputs, self.max_steps)
+    }
+
+    /// Compute the verification fingerprint for a GRF (broader input set).
+    fn verify_fingerprint(&mut self, grf: &Grf) -> Fingerprint {
+        let arity = grf.arity();
+        let inputs = self.verify_inputs_for(arity).clone();
         compute_fp(grf, &inputs, self.max_steps)
     }
 
@@ -102,13 +120,24 @@ impl NovelEnumerator {
         let mut novel: Vec<Grf> = Vec::new();
 
         for grf in candidates {
-            let fp = self.fingerprint(&grf);
-            if !fp_is_complete(&fp) {
+            let primary_fp = self.fingerprint(&grf);
+            if !fp_is_complete(&primary_fp) {
                 continue;
             }
+            // Two-bank check: require both the primary and verification fingerprints
+            // to match before declaring equivalence.  Combining them into one Vec
+            // means we only skip a candidate when it agrees with a known GRF on ALL
+            // inputs from both banks, greatly reducing false-positive equivalences.
+            let verify_fp = self.verify_fingerprint(&grf);
+            if !fp_is_complete(&verify_fp) {
+                continue;
+            }
+            let mut combined = primary_fp;
+            combined.extend(verify_fp);
+
             let seen_set = self.seen.entry(arity).or_default();
-            if !seen_set.contains(&fp) {
-                seen_set.insert(fp);
+            if !seen_set.contains(&combined) {
+                seen_set.insert(combined);
                 novel.push(grf);
             }
         }
@@ -288,6 +317,32 @@ impl NovelEnumerator {
             .unwrap_or(&[])
     }
 
+    /// Return a summary of all (arity, size) pairs currently in the memo.
+    ///
+    /// Returns a Vec sorted by (arity, size), each entry is (arity, size, novel_count).
+    pub fn memo_stats(&self) -> Vec<(usize, usize, usize)> {
+        let mut v: Vec<(usize, usize, usize)> = self
+            .memo
+            .iter()
+            .map(|(&(a, s), gs)| (a, s, gs.len()))
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Generate all GRFs of exactly `(arity, size)` using canonical sub-expressions,
+    /// WITHOUT functional deduplication.
+    ///
+    /// This is the correct interface for BBµ search: the champion at size n may
+    /// compute a value already seen at a smaller size (so it won't appear in
+    /// `candidates`), but it is still a valid size-n GRF worth simulating.
+    ///
+    /// The caller must have already called `compute_size(arity, s)` for all
+    /// dependencies (or called `compute_size(arity, size)` which ensures them).
+    pub fn raw_candidates_at_size(&self, arity: usize, size: usize) -> Vec<Grf> {
+        self.generate_candidates(arity, size)
+    }
+
     /// Main entry point.
     ///
     /// Computes all novel GRFs for `target_arity` at sizes `start_size..=max_size`.
@@ -344,6 +399,7 @@ impl NovelEnumerator {
 mod tests {
     use super::*;
     use crate::novel_db::{extend_novel_map, NovelMap};
+    use crate::simulate::simulate;
 
     /// The novel-sub-expression enumerator must find at least as many distinct
     /// functions as the exhaustive `extend_novel_map` enumerator for small sizes
@@ -414,5 +470,43 @@ mod tests {
             entries.len(),
             ref_map.len(),
         );
+    }
+
+    /// Correctness gate: NovelEnumerator must find the correct BBµ(n) value at
+    /// every size where it is known, for arity-0 PRFs up to size 12.
+    ///
+    /// Known BBµ values from exhaustive bb_search (holdouts=0 at each size):
+    ///   n=1 → 0,  n=3 → 1,  n=5 → 2,  n=7 → 3,  n=8 → 2,
+    ///   n=9 → 4,  n=10 → 3, n=11 → 5, n=12 → 5.
+    #[test]
+    fn novel_enum_bb_correctness_arity0() {
+        // (size, expected_bb_value)
+        let known: &[(usize, u64)] = &[
+            (1, 0), (3, 1), (5, 2), (7, 3), (8, 2),
+            (9, 4), (10, 3), (11, 5), (12, 5),
+        ];
+        let max_size = 12;
+        let max_steps = 100_000_000;
+
+        let mut en = NovelEnumerator::new(64, 100_000, false);
+        for size in 1..=max_size {
+            en.compute_size(0, size);
+        }
+
+        for &(size, expected) in known {
+            let raw = en.raw_candidates_at_size(0, size);
+            let best: u64 = raw
+                .iter()
+                .filter_map(|grf| {
+                    let (result, _) = simulate(grf, &[], max_steps);
+                    result.into_value()
+                })
+                .max()
+                .unwrap_or(0);
+            assert_eq!(
+                best, expected,
+                "BBµ({size}) = {best}, expected {expected}"
+            );
+        }
     }
 }

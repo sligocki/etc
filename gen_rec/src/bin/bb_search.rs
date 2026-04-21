@@ -273,9 +273,9 @@ fn main() {
         println!(
             "n={}: best={}, {} holdouts, {} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
             size,
-            total,
-            size_timed_out,
             best_str,
+            size_timed_out,
+            total,
             elapsed,
             sim_secs,
             enum_secs,

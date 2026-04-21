@@ -765,7 +765,7 @@ fn cmd_summarize(args: SummarizeArgs) {
     println!("Tasks Complete: {}/{}", s.tasks_done, tasks_total);
     println!();
 
-    println!("Total runtime: {:.0}s", s.runtime_sec);
+    println!("Total runtime: {:.1} core-hr", s.runtime_sec / 3600.0);
     println!();
 
     if is_partial {

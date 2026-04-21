@@ -343,6 +343,146 @@ impl NovelEnumerator {
         self.generate_candidates(arity, size)
     }
 
+    /// Pre-warm the memo for every (arity, size) pair that will be accessed
+    /// when streaming arity-0 GRFs of `target_size` with the given `threshold`.
+    ///
+    /// The streaming path needs `memo[(k, s)]` for all `k ≥ 0` and
+    /// `s ≤ min(threshold, target_size − 1 − k)`.  Call this before
+    /// `stream_from_novel_db` to ensure no lazy fingerprinting fires during
+    /// the stream itself.
+    ///
+    /// The function is incremental: entries already in the memo are skipped.
+    pub fn pre_warm_for_size(&mut self, target_size: usize, threshold: usize) {
+        // As k grows, min(threshold, target_size-1-k) decreases monotonically
+        // to 0, so we can stop as soon as max_s hits 0.
+        for k in 0.. {
+            let max_s = threshold.min(target_size.saturating_sub(1).saturating_sub(k));
+            if max_s == 0 {
+                break;
+            }
+            self.ensure_up_to(k, max_s);
+        }
+    }
+
+    /// Stream all GRFs of exactly (arity, size) using the novel memo for any
+    /// sub-expression of size ≤ threshold, and exhaustive streaming above.
+    ///
+    /// - size ≤ threshold: lazily computes the memo entry (if needed) and yields
+    ///   only the canonical representatives — no fingerprint false-positive risk
+    ///   because the same careful fingerprinting used to build the memo applies.
+    /// - size > threshold: yields every combinator whose sub-expressions all
+    ///   satisfy the same policy recursively.  No fingerprinting is done at this
+    ///   level, so no candidates are ever incorrectly pruned.
+    ///
+    /// This is the building block for the hybrid BBµ search: keep `threshold`
+    /// small (≤ 12) so the memo is cheap to build with generous `fp_inputs`,
+    /// then stream large expressions exhaustively from canonical small pieces.
+    pub fn stream_from_novel_db(
+        &mut self,
+        arity: usize,
+        size: usize,
+        threshold: usize,
+        callback: &mut dyn FnMut(&Grf),
+    ) {
+        if size <= threshold {
+            // Populate lazily, then stream canonical representatives.
+            self.ensure_up_to(arity, size);
+            let grfs = self.memo.get(&(arity, size)).cloned().unwrap_or_default();
+            for grf in &grfs {
+                callback(grf);
+            }
+            return;
+        }
+
+        // size == 1 is only reached when threshold == 0; emit atoms directly.
+        if size == 1 {
+            callback(&Grf::Zero(arity));
+            for i in 1..=arity {
+                callback(&Grf::Proj(arity, i));
+            }
+            if arity == 1 {
+                callback(&Grf::Succ);
+            }
+            return;
+        }
+
+        let n = size - 1;
+
+        // Comp(h, g1..gm)
+        for hsize in 1..n {
+            let gs_total = n - hsize;
+            for m in 1..=gs_total {
+                let mut heads: Vec<Grf> = Vec::new();
+                self.stream_from_novel_db(m, hsize, threshold, &mut |h| heads.push(h.clone()));
+                for head in heads {
+                    self.stream_novel_arg_combos(
+                        arity, m, gs_total, threshold, &mut Vec::new(),
+                        &mut |args: &[Grf]| {
+                            callback(&Grf::Comp(Box::new(head.clone()), args.to_vec(), arity));
+                        },
+                    );
+                }
+            }
+        }
+
+        // Rec(g, h)
+        if arity >= 1 {
+            for gsize in 1..n {
+                let hsize = n - gsize;
+                let mut bases: Vec<Grf> = Vec::new();
+                self.stream_from_novel_db(arity - 1, gsize, threshold, &mut |g| bases.push(g.clone()));
+                for base in &bases {
+                    let mut steps: Vec<Grf> = Vec::new();
+                    self.stream_from_novel_db(arity + 1, hsize, threshold, &mut |h| steps.push(h.clone()));
+                    for step in &steps {
+                        callback(&Grf::rec(base.clone(), step.clone()));
+                    }
+                }
+            }
+        }
+
+        // Min(f)
+        if self.allow_min {
+            let mut inners: Vec<Grf> = Vec::new();
+            self.stream_from_novel_db(arity + 1, n, threshold, &mut |f| inners.push(f.clone()));
+            for inner in &inners {
+                callback(&Grf::min(inner.clone()));
+            }
+        }
+    }
+
+    /// Helper for `stream_from_novel_db`: enumerate ordered m-tuples of GRFs
+    /// with arity `arg_arity` and total size `total_size`, yielding each via
+    /// `callback`.
+    fn stream_novel_arg_combos(
+        &mut self,
+        arg_arity: usize,
+        count: usize,
+        total_size: usize,
+        threshold: usize,
+        current: &mut Vec<Grf>,
+        callback: &mut dyn FnMut(&[Grf]),
+    ) {
+        if count == 0 {
+            if total_size == 0 {
+                callback(current);
+            }
+            return;
+        }
+        let max_this = total_size.saturating_sub(count - 1);
+        for s in 1..=max_this {
+            let mut slot: Vec<Grf> = Vec::new();
+            self.stream_from_novel_db(arg_arity, s, threshold, &mut |g| slot.push(g.clone()));
+            for grf in slot {
+                current.push(grf);
+                self.stream_novel_arg_combos(
+                    arg_arity, count - 1, total_size - s, threshold, current, callback,
+                );
+                current.pop();
+            }
+        }
+    }
+
     /// Main entry point.
     ///
     /// Computes all novel GRFs for `target_arity` at sizes `start_size..=max_size`.

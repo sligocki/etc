@@ -137,8 +137,8 @@ impl AliasDb {
         for (alias, grf) in &base {
             let arity = grf.arity();
             let w1 = weaken(grf);
-            push!(format!("{alias}_{}", arity + 1), w1.clone());
-            push!(format!("{alias}_{}", arity + 2), weaken(&w1));
+            push!(format!("{alias}^{}", arity + 1), w1.clone());
+            push!(format!("{alias}^{}", arity + 2), weaken(&w1));
         }
 
         // Largest-GRF-first: more specific (larger) aliases win over fragments.

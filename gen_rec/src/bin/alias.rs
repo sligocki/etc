@@ -74,6 +74,6 @@ fn main() {
     println!("raw  [arity={}, size={}]:", grf.arity(), grf.size());
     println!("  {}", grf);
     println!();
-    println!("named:");
+    println!("alias:");
     println!("  {}", db.alias(&grf));
 }

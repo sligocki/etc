@@ -119,6 +119,10 @@ struct SummarizeArgs {
     /// How many top-scoring GRFs to display.
     #[arg(long, default_value_t = 10)]
     top: usize,
+
+    /// Show raw GRF strings instead of aliases.
+    #[arg(long)]
+    no_alias: bool,
 }
 
 // ── Serialisable data types ───────────────────────────────────────────────────
@@ -748,12 +752,14 @@ fn cmd_summarize(args: SummarizeArgs) {
     print_pow2_hist("Score Histogram", score_hist);
     println!();
 
-    let alias_db = AliasDb::default();
+    let alias_db = if args.no_alias { None } else { Some(AliasDb::default()) };
     println!("Top {} GRFs:", args.top);
     for (score, expr) in &top_entries {
-        let named = expr.parse::<Grf>().map(|g| alias_db.alias(&g))
-            .unwrap_or_else(|_| expr.clone());
-        println!("  {:>6}  {}  [{}]", score, expr, named);
+        let display = match &alias_db {
+            Some(db) => expr.parse::<Grf>().map(|g| db.alias(&g)).unwrap_or_else(|_| expr.clone()),
+            None => expr.clone(),
+        };
+        println!("  {:>6}  {}", score, display);
     }
     println!();
 

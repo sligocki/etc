@@ -37,6 +37,10 @@ struct Args {
     /// How many future sizes to show time estimates for.
     #[arg(long, default_value_t = 3)]
     lookahead: usize,
+
+    /// Show raw GRF strings instead of aliases.
+    #[arg(long)]
+    no_alias: bool,
 }
 
 /// Aggregate result for one batch.
@@ -196,7 +200,13 @@ fn main() {
     );
     println!("{}", "=".repeat(90));
 
-    let alias_db = AliasDb::default();
+    let alias_db = if args.no_alias { None } else { Some(AliasDb::default()) };
+    let fmt = |expr: &str| -> String {
+        match &alias_db {
+            Some(db) => expr.parse::<Grf>().map(|g| db.alias(&g)).unwrap_or_else(|_| expr.to_string()),
+            None => expr.to_string(),
+        }
+    };
     let mut results: Vec<SizeResult> = Vec::new();
     let mut smoothed_secs_per_fn: Option<f64> = None;
     let total_start = Instant::now();
@@ -287,8 +297,7 @@ fn main() {
         const MAX_VIA: usize = 20;
         if !size_best_exprs.is_empty() {
             for expr in size_best_exprs.iter().take(MAX_VIA) {
-                let grf: Grf = expr.parse().unwrap();
-                println!("       via {}  [{}]", expr, alias_db.alias(&grf));
+                println!("       via {}", fmt(expr));
             }
             if size_best_exprs.len() > MAX_VIA {
                 println!(
@@ -361,15 +370,12 @@ fn main() {
         let expr_str = if r.best_exprs.is_empty() {
             "-".to_string()
         } else {
-            let raw = &r.best_exprs[0];
-            let named = raw.parse::<Grf>().map(|g| alias_db.alias(&g))
-                .unwrap_or_else(|_| raw.clone());
-            let suffix = if r.best_exprs.len() > 1 {
-                format!("  (+{} ties)", r.best_exprs.len() - 1)
+            let s = fmt(&r.best_exprs[0]);
+            if r.best_exprs.len() > 1 {
+                format!("{s}  (+{} ties)", r.best_exprs.len() - 1)
             } else {
-                String::new()
-            };
-            format!("{named}{suffix}")
+                s
+            }
         };
         println!(
             "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",

@@ -27,7 +27,7 @@ pub struct AliasDb {
 
 impl AliasDb {
     /// Build the catalogue.  `max_param` controls how many levels of
-    /// parameterised macros (constant, plus_n, AckDiag, …) are expanded.
+    /// parameterised macros (constant, Plus[n], AckDiag, …) are expanded.
     /// The default is 6.
     pub fn new(max_param: usize) -> Self {
         let mut entries: Vec<Entry> = Vec::new();
@@ -39,38 +39,44 @@ impl AliasDb {
         }
 
         // ── example_ack named functions ──────────────────────────────────────
-        push!("pred",         pred());
-        push!("not",          not());
-        push!("sgn",          sgn());
-        push!("plus2",        plus2());
-        push!("add",          add());
-        push!("rmonus",       rmonus());
-        push!("mod2",         mod2());
-        push!("shift",        shift());
-        push!("rmonus_odd",   rmonus_odd());
-        push!("div2",         div2());
-        push!("div2k",        div2k());
-        push!("dec_append",   dec_append());
-        push!("dec_append_n", dec_append_n());
-        push!("bit",          bit());
-        push!("pop_k",        pop_k());
-        push!("ack_step",     ack_step());
-        push!("ack_loop",     ack_loop());
-        push!("ack_worm",     ack_worm());
-        push!("init_list",    init_list());
-        push!("ack",          ack());
-        push!("omega",        omega());
-        push!("graham",       graham());
+        push!("Pred",        pred());
+        push!("Not",         not());
+        push!("Sgn",         sgn());
+        push!("Add",         add());
+        push!("RMonus",      rmonus());
+        push!("Mod2",        mod2());
+        push!("Shift",       shift());
+        push!("RMonusOdd",   rmonus_odd());
+        push!("Div2",        div2());
+        push!("Div2k",       div2k());
+        push!("DecAppend",   dec_append());
+        push!("DecAppendN",  dec_append_n());
+        push!("Bit",         bit());
+        push!("PopK",        pop_k());
+        push!("AckStep",     ack_step());
+        push!("AckLoop",     ack_loop());
+        push!("AckWorm",     ack_worm());
+        push!("InitList",    init_list());
+        push!("Ack",         ack());
+        push!("Omega",       omega());
+        push!("Graham",      graham());
 
         // ── examples: fixed functions ────────────────────────────────────────
-        push!("tri",    crate::examples::triangular());
-        push!("square", crate::examples::square());
+        push!("Tri",    crate::examples::triangular());
+        push!("Square", crate::examples::square());
 
-        // ── examples: parameterised ──────────────────────────────────────────
-        for n in 1..=max_param {
-            push!(format!("plus_{n}"),       plus_n(n));
-            push!(format!("polygonal({n})"), polygonal(n));
+        // ── Plus[n]: skip n=1 (that's just S, left as-is) ───────────────────
+        // plus2() from example_ack equals plus_n(2) from examples; one entry covers both.
+        for n in 2..=max_param {
+            push!(format!("Plus[{n}]"), plus_n(n));
         }
+
+        // ── Polygonal[n] ─────────────────────────────────────────────────────
+        for n in 1..=max_param {
+            push!(format!("Polygonal[{n}]"), polygonal(n));
+        }
+
+        // ── K[n] constants ───────────────────────────────────────────────────
         for n in 0..=max_param {
             push!(format!("K[{n}]"), constant(n, 0));
             for k in 1..=3usize {
@@ -78,16 +84,16 @@ impl AliasDb {
             }
         }
 
-        // ── rep_succ / diag_rep / diag_succ applied to small bases ───────────
+        // ── RepSucc / DiagRep / DiagSucc applied to small bases ──────────────
         let bases: &[(&str, Grf)] = &[
-            ("S",     Grf::Succ),
-            ("plus2", plus2()),
-            ("tri",   crate::examples::triangular()),
+            ("S",       Grf::Succ),
+            ("Plus[2]", plus2()),
+            ("Tri",     crate::examples::triangular()),
         ];
         for (bname, base) in bases {
-            push!(format!("rep_succ({bname})"),  rep_succ(base.clone()));
-            push!(format!("diag_rep({bname})"),  diag_rep(base.clone()));
-            push!(format!("diag_succ({bname})"), diag_succ(base.clone()));
+            push!(format!("RepSucc[{bname}]"),  rep_succ(base.clone()));
+            push!(format!("DiagRep[{bname}]"),  diag_rep(base.clone()));
+            push!(format!("DiagSucc[{bname}]"), diag_succ(base.clone()));
         }
 
         // ── AckDiag[n, base] ─────────────────────────────────────────────────
@@ -147,16 +153,29 @@ mod tests {
     #[test]
     fn test_exact_atoms() {
         let db = AliasDb::default();
-        assert_eq!(db.alias(&pred()), "pred");
-        assert_eq!(db.alias(&add()), "add");
-        assert_eq!(db.alias(&ack_worm()), "ack_worm");
+        assert_eq!(db.alias(&pred()), "Pred");
+        assert_eq!(db.alias(&add()), "Add");
+        assert_eq!(db.alias(&ack_worm()), "AckWorm");
+    }
+
+    #[test]
+    fn test_succ_not_aliased() {
+        let db = AliasDb::default();
+        // S stays as S, not Plus[1]
+        assert_eq!(db.alias(&Grf::Succ), "S");
+    }
+
+    #[test]
+    fn test_plus2_aliased() {
+        let db = AliasDb::default();
+        assert_eq!(db.alias(&plus2()), "Plus[2]");
     }
 
     #[test]
     fn test_sub_expression() {
         let db = AliasDb::default();
         let grf = Grf::comp(add(), vec![plus2()]);
-        assert_eq!(db.alias(&grf), "C(add, plus2)");
+        assert_eq!(db.alias(&grf), "C(Add, Plus[2])");
     }
 
     #[test]

@@ -5,7 +5,7 @@
 ///   sim "R(P(1,1), C(S, P(3,2)))" 3 2
 ///   sim --max-steps 1000 "M(S)"
 use clap::Parser;
-use gen_rec::grf::Grf;
+use gen_rec::alias::AliasDb;
 use gen_rec::simulate::simulate;
 
 #[derive(Parser, Debug)]
@@ -16,7 +16,7 @@ use gen_rec::simulate::simulate;
                   Combinators: C(<h>, <g1>, ...) R(<g>, <h>) M(<f>)"
 )]
 struct Args {
-    /// GRF expression to simulate, e.g. \"C(S, Z0)\" or \"R(P(1,1), C(S, P(3,2)))\"
+    /// GRF expression or alias name (Add, AckWorm, Plus[2], ...).
     expr: String,
 
     /// Input arguments to the function (must match its arity).
@@ -30,10 +30,10 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let grf: Grf = match args.expr.parse() {
+    let grf = match AliasDb::default().resolve(&args.expr) {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("Parse error: {e}");
+            eprintln!("error: {e}");
             std::process::exit(1);
         }
     };

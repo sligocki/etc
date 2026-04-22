@@ -147,6 +147,60 @@ impl AliasDb {
         Self { entries, colored }
     }
 
+    /// Look up a GRF by alias name, or parse a raw GRF expression string.
+    ///
+    /// Alias names embedded inside a larger expression are also substituted
+    /// before parsing, so `C(ShiftS, S, S)` and `R(Add, K[2])` work too.
+    /// Name matching is case-insensitive.  Returns `Err` if parsing fails.
+    pub fn resolve(&self, expr: &str) -> Result<Grf, String> {
+        self.preprocess(expr.trim())
+            .parse::<Grf>()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Replace every alias token in `expr` with its raw GRF string.
+    ///
+    /// Tokens are maximal runs of `[A-Za-z0-9_]` optionally followed by a
+    /// `[…]` suffix (e.g. `Plus[2]`, `AckDiag[1,S]`).  Tokens that match an
+    /// alias name (case-insensitive) are replaced with the corresponding raw
+    /// GRF string; everything else is passed through unchanged.
+    fn preprocess(&self, expr: &str) -> String {
+        let bytes = expr.as_bytes();
+        let n = bytes.len();
+        let mut out = String::with_capacity(n);
+        let mut i = 0;
+        while i < n {
+            if bytes[i].is_ascii_alphabetic() {
+                let start = i;
+                // scan word chars
+                while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                // scan optional [...] suffix
+                if i < n && bytes[i] == b'[' {
+                    i += 1;
+                    while i < n && bytes[i] != b']' {
+                        i += 1;
+                    }
+                    if i < n {
+                        i += 1; // consume ']'
+                    }
+                }
+                let token = &expr[start..i];
+                let lower = token.to_ascii_lowercase();
+                if let Some(entry) = self.entries.iter().find(|e| e.alias.to_ascii_lowercase() == lower) {
+                    out.push_str(&entry.grf.to_string());
+                } else {
+                    out.push_str(token);
+                }
+            } else {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+        out
+    }
+
     /// Rewrite `grf` bottom-up, substituting every matching sub-expression
     /// with its alias.  Returns the full expression as a string.
     pub fn alias(&self, grf: &Grf) -> String {
@@ -220,6 +274,14 @@ mod tests {
     fn test_plus2_aliased() {
         let db = AliasDb::default();
         assert_eq!(db.alias(&plus2()), "Plus[2]");
+    }
+
+    #[test]
+    fn test_resolve_embedded_alias() {
+        let db = AliasDb::default();
+        let direct = db.resolve("C(ShiftS, S, S)").unwrap();
+        let raw = db.resolve(&format!("C({}, S, S)", shift_succ())).unwrap();
+        assert_eq!(direct, raw);
     }
 
     #[test]

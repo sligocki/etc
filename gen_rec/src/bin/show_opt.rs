@@ -6,14 +6,9 @@
 ///   show_opt ack_worm --no-fingerprint
 ///   show_opt pred --db-max-size 10
 ///
-/// Named functions: pred, not, sgn, plus2, double, rmonus, mod2, shift,
-///   rmonus_odd, div2, div2k, dec_append, dec_append_n, bit, pop_k,
-///   ack_step, ack_loop, ack_worm, init_list, ack, omega, graham
+/// Named aliases: Pred, Not, Sgn, Add, AckWorm, Plus[2], K[3], AckDiag[1,S], ...
 use clap::Parser;
-use gen_rec::example_ack::{
-    ack, ack_loop, ack_step, ack_worm, add, bit, dec_append, dec_append_n, div2, div2k,
-    graham, init_list, mod2, not, omega, plus2, pop_k, pred, rmonus, rmonus_odd, sgn, shift,
-};
+use gen_rec::alias::AliasDb;
 use gen_rec::fingerprint::FingerprintDb;
 use gen_rec::grf::Grf;
 use gen_rec::novel_db::{fingerprint_db_from_dir, fingerprint_db_from_file};
@@ -28,10 +23,10 @@ const WRAP: usize = 72;
     long_about = "Applies optimization passes to a GRF and prints each substitution\n\
                   made, showing where in the AST it occurred and the before/after\n\
                   expression. EXPR may be a raw GRF string like \"C(S,Z1)\" or a\n\
-                  named function like \"ack_worm\"."
+                  alias name like \"Add\" or \"AckWorm\" or \"Plus[2]\"."
 )]
 struct Args {
-    /// GRF expression or named function (pred, ack_worm, ...).
+    /// GRF expression or alias name (Pred, Add, AckWorm, Plus[2], ...).
     expr: String,
 
     /// Skip the opt_inline_proj pass.
@@ -163,43 +158,12 @@ fn print_pass(title: &str, before: &Grf, after: &Grf) {
     }
 }
 
-// ── named function lookup ─────────────────────────────────────────────────────
-
-fn resolve(expr: &str) -> Result<Grf, String> {
-    let grf = match expr {
-        "pred" => pred(),
-        "not" => not(),
-        "sgn" => sgn(),
-        "plus2" => plus2(),
-        "add" => add(),
-        "rmonus" => rmonus(),
-        "mod2" => mod2(),
-        "shift" => shift(),
-        "rmonus_odd" => rmonus_odd(),
-        "div2" => div2(),
-        "div2k" => div2k(),
-        "dec_append" => dec_append(),
-        "dec_append_n" => dec_append_n(),
-        "bit" => bit(),
-        "pop_k" => pop_k(),
-        "ack_step" => ack_step(),
-        "ack_loop" => ack_loop(),
-        "ack_worm" => ack_worm(),
-        "init_list" => init_list(),
-        "ack" => ack(),
-        "omega" => omega(),
-        "graham" => graham(),
-        _ => return expr.parse::<Grf>().map_err(|e| format!("parse error: {e}")),
-    };
-    Ok(grf)
-}
-
 // ── main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
     let args = Args::parse();
 
-    let original = match resolve(&args.expr) {
+    let original = match AliasDb::default().resolve(&args.expr) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("error: {e}");

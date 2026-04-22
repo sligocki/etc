@@ -6,6 +6,7 @@
 use clap::Parser;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
+use gen_rec::alias::AliasDb;
 use gen_rec::pruning::PruningOpts;
 use gen_rec::simulate::{simulate, Num};
 use rayon::prelude::*;
@@ -195,6 +196,7 @@ fn main() {
     );
     println!("{}", "=".repeat(90));
 
+    let alias_db = AliasDb::default();
     let mut results: Vec<SizeResult> = Vec::new();
     let mut smoothed_secs_per_fn: Option<f64> = None;
     let total_start = Instant::now();
@@ -285,7 +287,8 @@ fn main() {
         const MAX_VIA: usize = 20;
         if !size_best_exprs.is_empty() {
             for expr in size_best_exprs.iter().take(MAX_VIA) {
-                println!("       via {}", expr);
+                let grf: Grf = expr.parse().unwrap();
+                println!("       via {}  [{}]", expr, alias_db.alias(&grf));
             }
             if size_best_exprs.len() > MAX_VIA {
                 println!(
@@ -357,10 +360,16 @@ fn main() {
         };
         let expr_str = if r.best_exprs.is_empty() {
             "-".to_string()
-        } else if r.best_exprs.len() == 1 {
-            r.best_exprs[0].clone()
         } else {
-            format!("{} (+{} ties)", r.best_exprs[0], r.best_exprs.len() - 1)
+            let raw = &r.best_exprs[0];
+            let named = raw.parse::<Grf>().map(|g| alias_db.alias(&g))
+                .unwrap_or_else(|_| raw.clone());
+            let suffix = if r.best_exprs.len() > 1 {
+                format!("  (+{} ties)", r.best_exprs.len() - 1)
+            } else {
+                String::new()
+            };
+            format!("{named}{suffix}")
         };
         println!(
             "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",

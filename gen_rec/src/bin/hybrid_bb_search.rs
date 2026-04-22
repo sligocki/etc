@@ -11,6 +11,7 @@
 /// where it is cheap and effective; enumerate large GRFs completely.
 use clap::Parser;
 use gen_rec::grf::Grf;
+use gen_rec::alias::AliasDb;
 use gen_rec::novel_enum::NovelEnumerator;
 use gen_rec::simulate::{simulate, Num};
 use rayon::prelude::*;
@@ -164,6 +165,7 @@ fn main() {
         args.batch_size,
     );
 
+    let alias_db = AliasDb::default();
     let mut en = NovelEnumerator::new(args.fp_inputs, args.fp_steps, args.allow_min);
 
     // Pre-build the novel memo up to the threshold.  This is the only place
@@ -294,7 +296,8 @@ fn main() {
         );
         const MAX_VIA: usize = 5;
         for expr in size_best_exprs.iter().take(MAX_VIA) {
-            println!("       via {}", expr);
+            let grf: Grf = expr.parse().unwrap();
+            println!("       via {}  [{}]", expr, alias_db.alias(&grf));
         }
         if size_best_exprs.len() > MAX_VIA {
             println!("       ... (+{} more tied)", size_best_exprs.len() - MAX_VIA);
@@ -364,10 +367,15 @@ fn main() {
         };
         let expr_str = if r.best_exprs.is_empty() {
             "-".to_string()
-        } else if r.best_exprs.len() == 1 {
-            r.best_exprs[0].clone()
         } else {
-            format!("{} (+{} ties)", r.best_exprs[0], r.best_exprs.len() - 1)
+            let raw = &r.best_exprs[0];
+            let named = raw.parse::<Grf>().map(|g| alias_db.alias(&g))
+                .unwrap_or_else(|_| raw.clone());
+            if r.best_exprs.len() > 1 {
+                format!("{named}  (+{} ties)", r.best_exprs.len() - 1)
+            } else {
+                named
+            }
         };
         println!(
             "{:>4}  {:>12}  {:>10}  {:>8}  {:>10}  {}",

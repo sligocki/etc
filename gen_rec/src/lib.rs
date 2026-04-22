@@ -4,6 +4,7 @@ pub mod example_ack;
 pub mod examples;
 pub mod fingerprint;
 pub mod grf;
+pub mod alias;
 pub mod novel_db;
 pub mod novel_enum;
 pub mod optimize;

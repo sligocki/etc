@@ -12,6 +12,7 @@ use gen_rec::example_ack::{
 };
 use gen_rec::grf::Grf;
 use gen_rec::alias::AliasDb;
+use std::io::IsTerminal;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -69,7 +70,7 @@ fn main() {
         }
     };
 
-    let db = AliasDb::new(args.max_param);
+    let db = AliasDb::new_colored(args.max_param, std::io::stdout().is_terminal());
 
     println!("raw  [arity={}, size={}]:", grf.arity(), grf.size());
     println!("  {}", grf);

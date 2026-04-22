@@ -8,7 +8,7 @@
 /// GRF of size n.  This dramatically shrinks the search space at large sizes.
 use clap::Parser;
 use gen_rec::grf::Grf;
-use gen_rec::alias::AliasDb;
+use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::novel_enum::NovelEnumerator;
 use gen_rec::simulate::{simulate, Num};
 use rayon::prelude::*;
@@ -75,7 +75,7 @@ fn main() {
     );
     println!("{}", "=".repeat(90));
 
-    let alias_db = if args.no_alias { None } else { Some(AliasDb::default()) };
+    let alias_db = alias_db_for_stdout(6, args.no_alias);
     let fmt = |expr: &str| -> String {
         match &alias_db {
             Some(db) => expr.parse::<Grf>().map(|g| db.alias(&g)).unwrap_or_else(|_| expr.to_string()),

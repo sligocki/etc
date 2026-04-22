@@ -7,7 +7,7 @@
 use clap::{Args, Parser, Subcommand};
 use gen_rec::enumerate::{count_grf, seek_stream_grf};
 use gen_rec::grf::Grf;
-use gen_rec::alias::AliasDb;
+use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::pruning::PruningOpts;
 use gen_rec::simulate::simulate;
 use serde::{Deserialize, Serialize};
@@ -752,7 +752,7 @@ fn cmd_summarize(args: SummarizeArgs) {
     print_pow2_hist("Score Histogram", score_hist);
     println!();
 
-    let alias_db = if args.no_alias { None } else { Some(AliasDb::default()) };
+    let alias_db = alias_db_for_stdout(6, args.no_alias);
     println!("Top {} GRFs:", args.top);
     for (score, expr) in &top_entries {
         let display = match &alias_db {

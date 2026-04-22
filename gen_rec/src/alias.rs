@@ -20,16 +20,26 @@ struct Entry {
     grf: Grf,
 }
 
+const ALIAS_COLOR: &str = "\x1b[1;96m"; // bold bright-cyan
+const RESET: &str = "\x1b[0m";
+
 /// A compiled catalogue of aliased GRFs for sub-expression lookup.
 pub struct AliasDb {
     entries: Vec<Entry>,
+    colored: bool,
 }
 
 impl AliasDb {
-    /// Build the catalogue.  `max_param` controls how many levels of
-    /// parameterised macros (constant, Plus[n], AckDiag, …) are expanded.
+    /// Build the catalogue without color.  `max_param` controls how many levels
+    /// of parameterised macros (constant, Plus[n], AckDiag, …) are expanded.
     /// The default is 6.
     pub fn new(max_param: usize) -> Self {
+        Self::new_colored(max_param, false)
+    }
+
+    /// Like `new`, but wraps each matched alias in ANSI bold-cyan when `colored`
+    /// is true.  Pass `std::io::stdout().is_terminal()` to auto-detect.
+    pub fn new_colored(max_param: usize, colored: bool) -> Self {
         let mut entries: Vec<Entry> = Vec::new();
 
         macro_rules! push {
@@ -106,7 +116,7 @@ impl AliasDb {
         // Largest-GRF-first: more specific (larger) aliases win over fragments.
         entries.sort_by_key(|e| Reverse(e.grf.size()));
 
-        Self { entries }
+        Self { entries, colored }
     }
 
     /// Rewrite `grf` bottom-up, substituting every matching sub-expression
@@ -119,7 +129,11 @@ impl AliasDb {
         // Exact match wins before we recurse into children.
         for entry in &self.entries {
             if *grf == entry.grf {
-                return entry.alias.clone();
+                return if self.colored {
+                    format!("{ALIAS_COLOR}{}{RESET}", entry.alias)
+                } else {
+                    entry.alias.clone()
+                };
             }
         }
         match grf {
@@ -143,6 +157,15 @@ impl Default for AliasDb {
     fn default() -> Self {
         Self::new(6)
     }
+}
+
+/// Convenience: build an `AliasDb` with color auto-detected from stdout.
+pub fn alias_db_for_stdout(max_param: usize, no_alias: bool) -> Option<AliasDb> {
+    if no_alias {
+        return None;
+    }
+    use std::io::IsTerminal;
+    Some(AliasDb::new_colored(max_param, std::io::stdout().is_terminal()))
 }
 
 #[cfg(test)]

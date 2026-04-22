@@ -161,6 +161,9 @@ pub fn ack_loop() -> Grf {
 
 /// AckWorm(x): A version of Hydra game/Goodstein sequence for linear trees
 ///             (Instead of a branching hydra, it is a linear worm)
+///
+/// AckWorm([k]) > f_ω(k-2)
+///
 ///     Equivalent to algorithm:
 ///         N = 0
 ///         while list x is not empty and not all 0s:
@@ -185,11 +188,15 @@ pub fn ack_loop() -> Grf {
 // 
 //      Guaranteed to halt on all inputs, but it grows faster than all PRF
 /// M(AckLoop)
-/// Arity: 1, Size: 86
 pub fn ack_worm() -> Grf {
     Grf::min(ack_loop())
 }
 // AckWorm([4]) = 41 2^38 - 1 = [1,1,0,0,38]
+// E_0(N) = N+1 = f_0(N)
+// E_1(N) = 2N+2 > f_1(N)
+// E_2(N) = (N+3) 2^{N+1} - 2 > 2 f_2(N)
+// E_k(N) > 2 f_k(N)
+// AckWorm([k]) = E_{k-2}^2(2)/2 > f_{k-2}^2(2) > f_{k-2}(10 {k-2} 10) > f_ω(k-2)
 
 /// InitList(n,_) := list ending in a value >= n
 /// Arity: 2, Size: 10
@@ -204,40 +211,66 @@ pub fn init_list() -> Grf {
 // InitList(1,1) = 3 2^1 - 1 = 0b101 = [1,1]
 // InitList(2,2) = 4 2^2 - 1 = 0b1111 = [4]
 // InitList(3,3) = 5 2^3 - 1 = 0b100111 = [1,0,3]
+// InitList(4,4) = 6 2^4 - 1 = 0b1011111 = [1,5]
+// InitList(5,5) = 7 2^5 - 1 = 0b11011111 = [2,5]
+// InitList(6,6) = 8 2^6 - 1 = 0b111111111 = [9]
 
 /// Ack(n,_) > AckWorm([n])
 ///     Dominates all PRF
 /// C(AckWorm, InitList)
-/// Arity: 2, Size: 97
+/// Arity: 2
 pub fn ack() -> Grf {
     Grf::comp(ack_worm(), vec![init_list()])
 }
 // Ack(1) = AckWomr([1,1]) = 3
 // Ack(2) = AckWorm([4]) = 41 2^38 - 1
 // Ack(3) = AckWorm([1,0,3]) = 16
+// Ack(4) = AckWorm([1,5]) > 10 ^^ 10^96 > f_ω(3)
+// Ack(5) = AckWorm([2,5]) > 10 ^^ 10^96 > f_ω(3)
+// Ack(6) = AckWorm([9]) > f_ω(7)
 
-/// Omega() > f_omega(10^10)
-/// Arity: 0, Size: 109
+/// Omega() > f_ω(10^13)
 pub fn omega() -> Grf {
-    // f(n,n) = ack^n(n)
+    // ack_diag(n) = ack(n,n)
     let ack_diag = Grf::comp(ack(), vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]);
+    // f(n,n) = ack_diag^n(n)
     let f = Grf::rec(Grf::Proj(1,1), ack_diag);
     // h(n) = f(n+1,n+1)
     let h = diag_succ(f);
-    // h(1) = f(2) = ack^2(2) = ack(41 2^38 - 1) >> f_omega(10^10)
+    // h(1) = f(2,2) = ack^2(2) = ack(41 2^38 - 1) > f_ω(10^13)
     Grf::comp(h, vec![constant(1, 0)])
 }
 
-/// Graham() > Graham's number
-/// Arity: 0, Size: 114
-pub fn graham() -> Grf {
-    // f(n,n) = ack^n(n+1)
-    // g(n,n) = f^n(n+1)
-    // h(n) = g(n+1,n+1)
+/// Omega3() > f_ω^3(3)
+pub fn omega3() -> Grf {
+    // f(n,n) = ack^n(n+1) > f_{ω+1}(n)
     let f = diag_rep(ack());
+    // h(n) = f(n+1,n+1)
+    let h = diag_succ(f);
+    // h(2) = f(3,3) = ack^3(4) = ack^2(10 ^^ 10^96) > f_ω^3(3)
+    Grf::comp(h, vec![constant(2, 0)])
+}
+
+/// Omega4() > f_ω^4(3)
+pub fn omega4() -> Grf {
+    // f(n,n) = ack^n(n+1) > f_{ω+1}(n)
+    let f = diag_rep(ack());
+    // h(n) = f(n+1,n+1)
+    let h = diag_succ(f);
+    // h(3) = f(4,4) = ack^4(5) = ack^3(10 ^^ 10^96) > f_ω^4(3)
+    Grf::comp(h, vec![constant(3, 0)])
+}
+
+/// Graham() > Graham's number
+pub fn graham() -> Grf {
+    // f(n,n) = ack^n(n+1) > f_{ω+1}(n)
+    let f = diag_rep(ack());
+    // g(n,n) = f^n(n+1) > f_{ω+2}(n)
     let g = diag_rep(f);
+    // h(n) = g(n+1,n+1)
     let h = diag_succ(g);
-    // h(1) = g(2) = f^2(3) = f(ack^3(4)) > f(ack^2(41 2^38 - 1)) >> f(64) > Graham
+    // h(1) = g(2) = f^2(3) = f(ack^3(4)) > f(ack^2(41 2^38 - 1))
+    //      > f_{ω+1}(f_ω^2(10^13)) >> f_{ω+1}(64) > Graham
     Grf::comp(h, vec![constant(1, 0)])
 }
 
@@ -629,5 +662,10 @@ mod tests {
         // Ack(3) = AckWorm([1,0,3]) = 16
         assert_eq!(eval(&il, &[3,3]), Some(list2int(&[1,0,3])));
         // assert_eq!(eval(&a, &[3,3]), Some(16));
+
+        // Higher levels (we can only test init_list)
+        assert_eq!(eval(&il, &[4,4]), Some(list2int(&[1,5])));
+        assert_eq!(eval(&il, &[5,5]), Some(list2int(&[2,5])));
+        assert_eq!(eval(&il, &[6,6]), Some(list2int(&[9])));
     }
 }

@@ -6,11 +6,7 @@
 ///   opt_ack --fp-max-size 8        # enable fingerprint pass too
 ///
 use clap::Parser;
-use gen_rec::example_ack::{
-    ack, ack_loop, ack_step, ack_worm, add, bit, dec_append, dec_append_n, div2, div2k,
-    graham, init_list, mod2, monus2, not, omega, plus2, pop_k, pred, rmonus, rmonus_odd, sgn,
-    shift,
-};
+use gen_rec::example_ack::*;
 use gen_rec::fingerprint::FingerprintDb;
 use gen_rec::grf::Grf;
 use gen_rec::optimize::{opt_fingerprint, opt_inline_proj};
@@ -61,6 +57,8 @@ fn main() {
         ("init_list",    init_list()),
         ("ack",          ack()),
         ("omega",        omega()),
+        ("omega3",       omega3()),
+        ("omega4",       omega4()),
         ("graham",       graham()),
     ];
 

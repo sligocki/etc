@@ -1,5 +1,6 @@
 /// Collection of example GRFs and GRF macros
 use crate::grf::Grf;
+use crate::example_ack::add;
 
 /// Macro which adds n to an existing function.
 /// plus_n_macro(n, f) = \*xs. f(*xs) + n
@@ -40,6 +41,11 @@ pub fn triangular() -> Grf {
 }
 pub fn square() -> Grf {
     polygonal(2)
+}
+
+/// ShiftS(k, x) = (x+1) 2^k
+pub fn shift_succ() -> Grf {
+    Grf::rec(Grf::Succ, Grf::comp(add(), vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]))
 }
 
 /// Iterate application of a function onto a base (incremented).

@@ -12,8 +12,23 @@ use crate::example_ack::{
     ack, ack_loop, ack_step, ack_worm, add, bit, dec_append, dec_append_n, div2, div2k, graham,
     init_list, mod2, not, omega, plus2, pop_k, pred, rmonus, rmonus_odd, sgn, shift,
 };
-use crate::examples::{ack_diag, constant, diag_rep, diag_succ, plus_n, polygonal, rep_succ};
+use crate::examples::{ack_diag, constant, diag_rep, diag_succ, plus_n, polygonal, rep_succ, triangular, square, shift_succ};
 use crate::grf::Grf;
+
+fn weaken(grf: &Grf) -> Grf {
+    match grf {
+        Grf::Zero(k) => Grf::Zero(k + 1),
+        Grf::Succ => Grf::Succ,
+        Grf::Proj(k, i) => Grf::Proj(k + 1, *i),
+        Grf::Comp(h, gs, k) => Grf::Comp(
+            Box::new(weaken(h)),
+            gs.iter().map(|g| weaken(g)).collect(),
+            k + 1,
+        ),
+        Grf::Rec(g, h) => Grf::Rec(Box::new(weaken(g)), Box::new(weaken(h))),
+        Grf::Min(f) => Grf::Min(Box::new(weaken(f))),
+    }
+}
 
 struct Entry {
     alias: String,
@@ -72,8 +87,9 @@ impl AliasDb {
         push!("Graham",      graham());
 
         // ── examples: fixed functions ────────────────────────────────────────
-        push!("Tri",    crate::examples::triangular());
-        push!("Square", crate::examples::square());
+        push!("Tri",    triangular());
+        push!("Square", square());
+        push!("ShiftS", shift_succ());
 
         // ── Plus[n]: skip n=1 (that's just S, left as-is) ───────────────────
         // plus2() from example_ack equals plus_n(2) from examples; one entry covers both.
@@ -82,7 +98,7 @@ impl AliasDb {
         }
 
         // ── Polygonal[n] ─────────────────────────────────────────────────────
-        for n in 1..=max_param {
+        for n in 3..=max_param {
             push!(format!("Polygonal[{n}]"), polygonal(n));
         }
 
@@ -98,7 +114,7 @@ impl AliasDb {
         let bases: &[(&str, Grf)] = &[
             ("S",       Grf::Succ),
             ("Plus[2]", plus2()),
-            ("Tri",     crate::examples::triangular()),
+            ("Tri",     triangular()),
         ];
         for (bname, base) in bases {
             push!(format!("RepSucc[{bname}]"),  rep_succ(base.clone()));
@@ -111,6 +127,18 @@ impl AliasDb {
             for (bname, base) in bases {
                 push!(format!("AckDiag[{n},{bname}]"), ack_diag(n, base.clone()));
             }
+        }
+
+        // ── Weakened versions: FuncName_k for 1–2 extra unused inputs ──────────
+        let base: Vec<(String, Grf)> = entries
+            .iter()
+            .map(|e| (e.alias.clone(), e.grf.clone()))
+            .collect();
+        for (alias, grf) in &base {
+            let arity = grf.arity();
+            let w1 = weaken(grf);
+            push!(format!("{alias}_{}", arity + 1), w1.clone());
+            push!(format!("{alias}_{}", arity + 2), weaken(&w1));
         }
 
         // Largest-GRF-first: more specific (larger) aliases win over fragments.

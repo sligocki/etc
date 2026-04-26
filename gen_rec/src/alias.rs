@@ -302,6 +302,7 @@ mod tests {
     fn test_constant() {
         let db = AliasDb::default();
         assert_eq!(db.alias(&constant(3, 0)), "K[3]");
-        assert_eq!(db.alias(&constant(0, 2)), "K[0]_2");
+        assert_eq!(db.alias(&constant(1, 2)), "K^2[1]");
+        assert_eq!(db.alias(&constant(0, 2)), "Z2");
     }
 }

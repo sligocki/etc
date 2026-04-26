@@ -44,11 +44,11 @@ const CONFIGS: &[(&str, PruningOpts)] = &[
 #[command(about = "Count GRFs per size under each pruning configuration")]
 struct Args {
     /// Maximum size to count.
-    #[arg(default_value_t = 20)]
+    #[arg(long, default_value_t = 20)]
     max_size: usize,
 
     /// Arity to count.  Use 0 for BBµ (0-arity = constant PRFs).
-    #[arg(default_value_t = 0)]
+    #[arg(long, default_value_t = 0)]
     arity: usize,
 
     /// Include Minimization combinator (default: PRF only).

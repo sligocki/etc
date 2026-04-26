@@ -103,10 +103,10 @@ impl AliasDb {
         }
 
         // ── K[n] constants ───────────────────────────────────────────────────
-        for n in 0..=max_param {
+        for n in 1..=max_param {
             push!(format!("K[{n}]"), constant(n, 0));
             for k in 1..=3usize {
-                push!(format!("K[{n}]_{k}"), constant(n, k));
+                push!(format!("K^{k}[{n}]"), constant(n, k));
             }
         }
 

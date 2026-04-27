@@ -1,10 +1,11 @@
 use crate::fingerprint::FingerprintDb;
 use crate::grf::Grf;
 
-/// Rewires `f` to a new arity context.
+/// Rewires `f` to inline `Proj` and `Zero` args specified in `rewiring`.
 ///
 /// `new_arity` is the arity of the resulting function.
-/// `rewiring[i-1]` gives the new 1-based index for old parameter `i`.
+/// `rewiring[i-1]` gives the new 1-based index for old parameter `i`, or `0` to
+/// indicate that parameter `i` is a constant zero (never drawn from inputs).
 /// `rewiring.len()` must equal `f.arity()`.
 ///
 /// Returns `None` if the rewiring is structurally incompatible:
@@ -25,7 +26,14 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
             }
         }
 
-        Grf::Proj(_, i) => Some(Grf::Proj(new_arity, rewiring[i - 1])),
+        Grf::Proj(_, i) => {
+            let j = rewiring[i - 1];
+            if j == 0 {
+                Some(Grf::Zero(new_arity))
+            } else {
+                Some(Grf::Proj(new_arity, j))
+            }
+        }
 
         // Each argument gi has the same outer arity as f, so apply the same rewiring.
         // The head h is fed by the outputs of gi and never sees the outer params directly.
@@ -49,12 +57,15 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
 
             // Rewiring for base case g (arity k → new_arity - 1):
             //   g's param i  =  f's param i+1  →  new index rewiring[i] - 1
-            //   "Rest" variables must map to slots >= 2 (slot 1 belongs to the counter).
+            //   "Rest" variables must map to slots >= 2 (slot 1 belongs to the counter),
+            //   or to 0 (constant zero — always safe, doesn't touch the counter slot).
             let new_arity_g = new_arity.checked_sub(1)?;
             let rewiring_for_g: Vec<usize> = (1..=k)
                 .map(|i| {
                     let j = rewiring[i];
-                    if j >= 2 {
+                    if j == 0 {
+                        Some(0) // constant zero — never conflicts with counter
+                    } else if j >= 2 {
                         Some(j - 1)
                     } else {
                         None // rest var mapped into counter slot — invalid
@@ -65,12 +76,13 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
             // Rewiring for step function h (arity k+2 → new_arity + 1):
             //   h's param 1  =  n_prev           → stays at slot 1
             //   h's param 2  =  recursive result → stays at slot 2
-            //   h's param m (m >= 3)  =  f's param m-1  →  rewiring[m-2] + 1
+            //   h's param m (m >= 3)  =  f's param m-1  →  rewiring[m-2] + 1, or 0 if zero
             //   (the +1 shift makes room for the two synthetic leading slots)
             let new_arity_h = new_arity + 1;
             let mut rewiring_for_h = vec![1usize, 2usize];
             for m in 3..=(k + 2) {
-                rewiring_for_h.push(rewiring[m - 2] + 1);
+                let j = rewiring[m - 2];
+                rewiring_for_h.push(if j == 0 { 0 } else { j + 1 });
             }
 
             let new_g = inline_proj(g, new_arity_g, &rewiring_for_g)?;
@@ -81,12 +93,12 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
         Grf::Min(inner) => {
             // f = M(inner) where inner has arity f.arity() + 1.
             // inner's param 1  =  search variable (synthetic) → stays at slot 1
-            // inner's param m (m >= 2)  =  f's param m-1  →  rewiring[m-2] + 1
+            // inner's param m (m >= 2)  =  f's param m-1  →  rewiring[m-2] + 1, or 0 if zero
             // (same +1 shift pattern as the "rest" vars in Rec's step function)
             let new_arity_inner = new_arity + 1;
             let mut rewiring_for_inner = vec![1usize];
             for &j in rewiring.iter() {
-                rewiring_for_inner.push(j + 1);
+                rewiring_for_inner.push(if j == 0 { 0 } else { j + 1 });
             }
 
             let new_inner = inline_proj(inner, new_arity_inner, &rewiring_for_inner)?;
@@ -95,9 +107,9 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
     }
 }
 
-/// Walks the GRF tree and inlines projection arguments wherever possible.
+/// Walks the GRF tree and inlines Proj and Zero arguments wherever possible.
 ///
-/// At each `Comp(h, gs, k)` node where every `gi` is a `Proj`, the composition
+/// At each `Comp(h, gs, k)` node where every `gi` is a `Proj` or `Zero`, the composition
 /// is replaced by `inline_proj(h, k, rewiring)` (which always produces a smaller
 /// result).  The walk continues recursively into the inlined result so that newly
 /// exposed opportunities are caught.
@@ -109,11 +121,13 @@ pub fn opt_inline_proj(f: Grf) -> Grf {
         Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => f,
 
         Grf::Comp(h, gs, k) => {
-            // Collect the projection indices if every argument is a Proj.
+            // Collect the rewiring if every argument is a Proj or Zero.
+            // Proj(_, i) → slot i (1-based); Zero(_) → 0 (constant zero).
             let rewiring: Option<Vec<usize>> = gs
                 .iter()
                 .map(|g| match g {
                     Grf::Proj(_, i) => Some(*i),
+                    Grf::Zero(_) => Some(0),
                     _ => None,
                 })
                 .collect();
@@ -378,6 +392,58 @@ mod tests {
             let f: Grf = s.parse().unwrap();
             assert_eq!(opt_inline_proj(f.clone()), f, "atom {s} should not change");
         }
+    }
+
+    #[test]
+    fn zero_rewiring_in_proj() {
+        // P(2,1) with rewiring [0, 2]: param 1 is zeroed → Zero(3)
+        assert_eq!(
+            inline_proj(&grf!("P(2,1)"), 3, &[0, 2]),
+            Some(grf!("Z3"))
+        );
+        // P(2,2) with rewiring [1, 0]: param 2 is zeroed → Zero(2)
+        assert_eq!(
+            inline_proj(&grf!("P(2,2)"), 2, &[1, 0]),
+            Some(grf!("Z2"))
+        );
+    }
+
+    #[test]
+    fn opt_inline_zero_arg() {
+        // C(P(2,1), Z2, P(2,2)): head picks param 1 which is always 0 → Z2
+        let before = grf!("C(P(2,1),Z2,P(2,2))");
+        let after = opt_inline_proj(before.clone());
+        assert_eq!(after, grf!("Z2"));
+        check_equiv(&before, &after, 5);
+    }
+
+    #[test]
+    fn opt_inline_zero_into_rec() {
+        // R(Z1, P(3,3)) with all-Proj args where one is Zero:
+        // C(R(Z1,P(3,3)), Z3, P(3,2)): n=0 always → always returns 0 (base case Z)
+        // Rewiring: [0, 2] (counter → 0 = always-zero → Rec counter is 0 which != 1 → inline fails)
+        // So this must NOT inline (counter must stay at slot 1).
+        let f = grf!("C(R(Z1,P(3,3)),Z3,P(3,2))");
+        // rewiring = [0, 2]; counter slot would be 0, which is rejected
+        assert_eq!(inline_proj(&grf!("R(Z1,P(3,3))"), 3, &[0, 2]), None);
+        // The opt should leave this Comp but still recurse into children
+        let after = opt_inline_proj(f.clone());
+        check_equiv(&f, &after, 4);
+    }
+
+    #[test]
+    fn opt_inline_zero_into_base_case() {
+        // R(P(1,1), C(S,P(3,2))) with counter at 1, rest-param zeroed:
+        // C(R(P(1,1),C(S,P(3,2))), P(3,1), Z3): rewiring=[1,0]
+        // new_arity=3, g=P(1,1) rewired with [0]→ Z2, h=C(S,P(3,2)) rewired with [1,2,0+1=1]?
+        // Actually rewiring_for_h for m=3: j=rewiring[1]=0 → 0. So rewiring_for_h=[1,2,0].
+        // P(3,2) in h → rewiring_for_h[1] = 2 → P(4,2). C(S,P(3,2)) → C(S,P(4,2)).
+        // g: P(1,1) rewired with [0] → Z2.
+        // Result: R(Z2, C(S,P(4,2))) which has arity 3.
+        let before = grf!("C(R(P(1,1),C(S,P(3,2))),P(3,1),Z3)");
+        let after = opt_inline_proj(before.clone());
+        assert_eq!(after, grf!("R(Z2,C(S,P(4,2)))"));
+        check_equiv(&before, &after, 5);
     }
 
     #[test]

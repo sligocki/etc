@@ -43,11 +43,31 @@ pub struct PruningOpts {
     /// The equivalent `C(g, f2, …)` is strictly smaller (by `h.size() + 1`)
     /// and will be generated independently by the enumerator.
     pub skip_rec_zero_arg: bool,
+
+    /// Skip `C(h, g1…gm)` when every `gi` is `Proj` or `Zero` and
+    /// `inline_proj(h, k, rewiring)` succeeds.
+    ///
+    /// Such a composition is always equivalent to the inlined result, which
+    /// is strictly smaller (size `h.size()` vs `h.size() + m + 1`).
+    ///
+    /// Only supported in `stream_grf` / `for_each_grf`. `count_grf` and
+    /// `seek_stream_grf` do not account for this flag; do not use it with
+    /// those functions.
+    pub skip_inline_proj: bool,
 }
 
 impl PruningOpts {
     pub const fn default() -> PruningOpts {
-        Self::all()
+        PruningOpts {
+            skip_comp_zero: true,
+            skip_comp_proj: true,
+            comp_assoc: true,
+            skip_rec_zero_base: true,
+            skip_rec_zero_arg: true,
+            // Not included: skip_inline_proj is stream_grf-only and not
+            // supported by count_grf / seek_stream_grf.
+            skip_inline_proj: false,
+        }
     }
 
     pub const fn none() -> PruningOpts {
@@ -57,6 +77,7 @@ impl PruningOpts {
             comp_assoc: false,
             skip_rec_zero_base: false,
             skip_rec_zero_arg: false,
+            skip_inline_proj: false,
         }
     }
     pub const fn all() -> PruningOpts {
@@ -66,6 +87,7 @@ impl PruningOpts {
             comp_assoc: true,
             skip_rec_zero_base: true,
             skip_rec_zero_arg: true,
+            skip_inline_proj: true,
         }
     }
 }

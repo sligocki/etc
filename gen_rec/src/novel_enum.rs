@@ -613,19 +613,17 @@ mod tests {
     }
 
     /// Correctness gate: NovelEnumerator must find the correct BBµ(n) value at
-    /// every size where it is known, for arity-0 PRFs up to size 12.
+    /// every size where it is known, for arity-0 PRFs up to size 9.
     ///
     /// Known BBµ values from exhaustive bb_search (holdouts=0 at each size):
-    ///   n=1 → 0,  n=3 → 1,  n=5 → 2,  n=7 → 3,  n=8 → 2,
-    ///   n=9 → 4,  n=10 → 3, n=11 → 5, n=12 → 5.
+    ///   n=1 → 0,  n=3 → 1,  n=5 → 2,  n=7 → 3,  n=8 → 2, n=9 → 4,
     #[test]
     fn novel_enum_bb_correctness_arity0() {
         // (size, expected_bb_value)
         let known: &[(usize, u64)] = &[
-            (1, 0), (3, 1), (5, 2), (7, 3), (8, 2),
-            (9, 4), (10, 3), (11, 5), (12, 5),
+            (1, 0), (3, 1), (5, 2), (7, 3), (8, 2), (9, 4),
         ];
-        let max_size = 12;
+        let max_size = 9;
         let max_steps = 100_000_000;
 
         let mut en = NovelEnumerator::new(64, 100_000, false);

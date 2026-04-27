@@ -1,4 +1,5 @@
 use crate::grf::Grf;
+use crate::optimize::{compute_inline_constraints, InlineConstraints};
 use crate::pruning::PruningOpts;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -71,6 +72,13 @@ fn for_each_grf(
 
                 let h_box = Box::new(h.clone());
                 let h_is_rec = matches!(h, Grf::Rec(_, _));
+                // Compute constraints once per head; O(h.size()) upfront instead of
+                // O(h.size()) per arg-tuple.
+                let inline_c: Option<InlineConstraints> = if opts.skip_inline_proj {
+                    Some(compute_inline_constraints(h))
+                } else {
+                    None
+                };
                 let mut args = Vec::with_capacity(m);
                 for_each_args(
                     gs_total,
@@ -88,6 +96,21 @@ fn for_each_grf(
                             && matches!(gs.first(), Some(Grf::Zero(_)))
                         {
                             return;
+                        }
+                        // skip_inline_proj: C(h, g1..gm) where every gi is Proj or Zero
+                        // is equivalent to inline_proj(h, k, rewiring), which is smaller.
+                        // O(m) check using precomputed constraints.
+                        if let Some(ref ic) = inline_c {
+                            let rewiring: Option<Vec<usize>> = gs.iter().map(|g| match g {
+                                Grf::Proj(_, i) => Some(*i),
+                                Grf::Zero(_) => Some(0),
+                                _ => None,
+                            }).collect();
+                            if let Some(rw) = rewiring {
+                                if ic.allows(&rw, arity) {
+                                    return;
+                                }
+                            }
                         }
                         callback(&Grf::Comp(h_box.clone(), gs.to_vec(), arity));
                     },
@@ -170,6 +193,9 @@ fn for_each_args(
 ///
 /// Uses [`count_grf`] to jump over sub-trees in O(1) per level, so the seek
 /// cost is O(size²) rather than O(start).
+///
+/// Panics if `opts.skip_inline_proj` is set — seek relies on `count_grf` for
+/// position arithmetic, which does not account for that flag.
 pub fn seek_stream_grf<F: FnMut(&Grf)>(
     size: usize,
     arity: usize,
@@ -179,6 +205,7 @@ pub fn seek_stream_grf<F: FnMut(&Grf)>(
     count: usize,
     callback: &mut F,
 ) {
+    assert!(!opts.skip_inline_proj, "seek_stream_grf does not support skip_inline_proj");
     if count == 0 {
         return;
     }
@@ -797,7 +824,11 @@ thread_local! {
 
 /// Count GRFs of given `size` and `arity` without building any GRF tree.
 /// Results are memoised in a thread-local DP table.
+///
+/// Panics if `opts.skip_inline_proj` is set — that flag is not accounted for
+/// in the DP and would produce incorrect counts.
 pub fn count_grf(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) -> usize {
+    assert!(!opts.skip_inline_proj, "count_grf does not support skip_inline_proj");
     let key = (size, arity, allow_min, opts);
     if let Some(c) = COUNT_CACHE.with(|cache| cache.borrow().get(&key).copied()) {
         return c;
@@ -1051,7 +1082,10 @@ mod tests {
         skip_rec_zero_arg: true,
         ..NO_PRUNE
     };
-    const ALL_OPTS: PruningOpts = PruningOpts::all();
+    const SKIP_INLINE_PROJ: PruningOpts = PruningOpts {
+        skip_inline_proj: true,
+        ..NO_PRUNE
+    };
 
     // --- atom counts (size=1) ---
 
@@ -1202,7 +1236,7 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=2 {
                 let st = count_grf(size, arity, false, SKIP_COMP_TRIVIAL);
-                let all = count_grf(size, arity, false, ALL_OPTS);
+                let all = count_grf(size, arity, false, PruningOpts::default());
                 assert!(
                     all <= st,
                     "ALL_OPTS produced more GRFs than SKIP_COMP_TRIVIAL at size={size} arity={arity}"
@@ -1317,6 +1351,83 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- skip_inline_proj ---
+
+    #[test]
+    fn test_skip_inline_proj_removes_specific_forms() {
+        // C(R(Z1, P(3,3)), P(4,1), P(4,4)) — all args are Proj, inlineable → R(Z3, P(5,5)).
+        let pruned = collect(6, 4, false, SKIP_INLINE_PROJ);
+        let target = "C(R(Z1,P(3,3)),P(4,1),P(4,4))".parse::<Grf>().unwrap();
+        assert!(
+            !pruned.iter().any(|g| *g == target),
+            "C(R(Z1,P(3,3)),P(4,1),P(4,4)) should be pruned"
+        );
+
+        // C(S, P(1,1)) — arity-1, single Proj arg, inlines to S.  Should be pruned.
+        let pruned3 = collect(3, 1, false, SKIP_INLINE_PROJ);
+        let target3 = "C(S,P(1,1))".parse::<Grf>().unwrap();
+        assert!(
+            !pruned3.iter().any(|g| *g == target3),
+            "C(S,P(1,1)) should be pruned (inlines to S)"
+        );
+
+        // C(S, Z1) — inline_proj(S, 1, [0]) fails (S requires rewiring [1]).
+        // This computes \x.1, not zero; correctly NOT pruned.
+        let target_z = "C(S,Z1)".parse::<Grf>().unwrap();
+        assert!(
+            pruned3.iter().any(|g| *g == target_z),
+            "C(S,Z1) should NOT be pruned (Succ can't be rewired with a zero slot)"
+        );
+
+        // C(S, P(2,1)) — arity-2, but S has arity 1 so new_arity would be 2 ≠ 1.
+        // inline_proj(S, 2, [1]) returns None → NOT pruned.
+        let pruned3_ar2 = collect(3, 2, false, SKIP_INLINE_PROJ);
+        let target_ar2 = "C(S,P(2,1))".parse::<Grf>().unwrap();
+        assert!(
+            pruned3_ar2.iter().any(|g| *g == target_ar2),
+            "C(S,P(2,1)) should NOT be pruned (Succ can't be rewired to arity 2)"
+        );
+
+        // C(R(Z1,P(3,3)), C(S,P(4,1)), P(4,4)) — first arg is not P/Z, NOT pruned.
+        let full = collect(8, 4, false, NO_PRUNE);
+        let not_pruned = "C(R(Z1,P(3,3)),C(S,P(4,1)),P(4,4))".parse::<Grf>().unwrap();
+        assert!(
+            full.iter().any(|g| *g == not_pruned),
+            "C(R(Z1,P(3,3)),C(S,P(4,1)),P(4,4)) must exist without pruning"
+        );
+        let pruned8 = collect(8, 4, false, SKIP_INLINE_PROJ);
+        assert!(
+            pruned8.iter().any(|g| *g == not_pruned),
+            "C(R(Z1,P(3,3)),C(S,P(4,1)),P(4,4)) should NOT be pruned (non-P/Z arg)"
+        );
+    }
+
+    #[test]
+    fn test_skip_inline_proj_never_more_than_full() {
+        for size in 1..=8 {
+            for arity in 0..=2 {
+                let full = collect(size, arity, false, NO_PRUNE).len();
+                let pruned = collect(size, arity, false, SKIP_INLINE_PROJ).len();
+                assert!(
+                    pruned <= full,
+                    "skip_inline_proj produced more GRFs at size={size} arity={arity}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "count_grf does not support skip_inline_proj")]
+    fn count_grf_panics_on_skip_inline_proj() {
+        count_grf(5, 1, false, PruningOpts::all());
+    }
+
+    #[test]
+    #[should_panic(expected = "seek_stream_grf does not support skip_inline_proj")]
+    fn seek_stream_grf_panics_on_skip_inline_proj() {
+        seek_stream_grf(5, 1, false, PruningOpts::all(), 0, 1, &mut |_| {});
     }
 
     // --- seek_stream_grf matches stream_grf slices ---
@@ -1437,7 +1548,7 @@ mod tests {
                         COMP_ASSOC,
                         SKIP_REC_ZERO_BASE,
                         SKIP_REC_ZERO,
-                        ALL_OPTS,
+                        PruningOpts::default(),
                     ] {
                         let total = count_grf(size, arity, allow_min, opts);
                         // Full seek matches full stream.
@@ -1477,12 +1588,12 @@ mod tests {
         const W: usize = 4;
         for size in 3..=7 {
             for arity in 0..=2 {
-                let full = collect(size, arity, false, ALL_OPTS);
+                let full = collect(size, arity, false, PruningOpts::default());
                 let mut reconstructed: Vec<Grf> = Vec::new();
                 let mut start = 0;
                 while start < full.len() {
                     let count = W.min(full.len() - start);
-                    seek_stream_grf(size, arity, false, ALL_OPTS, start, count, &mut |g| {
+                    seek_stream_grf(size, arity, false, PruningOpts::default(), start, count, &mut |g| {
                         reconstructed.push(g.clone())
                     });
                     start += count;
@@ -1510,7 +1621,7 @@ mod tests {
                         COMP_ASSOC,
                         SKIP_REC_ZERO_BASE,
                         SKIP_REC_ZERO,
-                        ALL_OPTS,
+                        PruningOpts::default(),
                     ] {
                         let actual = collect(size, arity, allow_min, opts).len();
                         let count = count_grf(size, arity, allow_min, opts);
@@ -1527,38 +1638,41 @@ mod tests {
     }
 
     // Verify seek correctness at larger sizes where the old O(g_count) iteration would hang.
-    // Sizes 8–13: use collect() as a reference (collect(13) ≈ 487K GRFs, fast enough).
-    // Sizes 14–19: self-consistency only (count=10 window vs 10 individual count=1 seeks).
     #[test]
-    fn test_seek_large_sizes_arity0() {
+    fn test_seek_mid_sizes_arity0() {
         // Reference check (collect) for sizes where the full stream is feasible.
-        for size in 8..=13 {
-            let total = count_grf(size, 0, false, ALL_OPTS);
+        for size in 8..=12 {
+            let total = count_grf(size, 0, false, PruningOpts::default());
             if total == 0 {
                 continue;
             }
-            for frac in [4usize, 2, 4] {
+            for frac in [4usize, 3, 2] {
                 let start = (total / frac).saturating_sub(1);
-                check_seek(size, 0, false, ALL_OPTS, start, 5);
+                check_seek(size, 0, false, PruningOpts::default(), start, 5);
             }
-            check_seek(size, 0, false, ALL_OPTS, total.saturating_sub(3), 5);
+            check_seek(size, 0, false, PruningOpts::default(), total.saturating_sub(3), 5);
         }
+    }
+
+    // Large sizes: self-consistency only (count=10 window vs 10 individual count=1 seeks).
+    #[test]
+    fn test_seek_large_sizes_arity0() {
         // Self-consistency check for larger sizes: a count=10 window must agree with
         // ten individual count=1 seeks at the same ranks.
-        for size in 14..=19 {
-            let total = count_grf(size, 0, false, ALL_OPTS);
+        for size in 13..=18 {
+            let total = count_grf(size, 0, false, PruningOpts::default());
             if total == 0 {
                 continue;
             }
             let start = total / 4;
             let mut batch: Vec<Grf> = Vec::new();
-            seek_stream_grf(size, 0, false, ALL_OPTS, start, 10, &mut |g| {
+            seek_stream_grf(size, 0, false, PruningOpts::default(), start, 10, &mut |g| {
                 batch.push(g.clone());
             });
             assert_eq!(batch.len(), 10);
             for (i, grf) in batch.iter().enumerate() {
                 let mut single: Vec<Grf> = Vec::new();
-                seek_stream_grf(size, 0, false, ALL_OPTS, start + i, 1, &mut |g| {
+                seek_stream_grf(size, 0, false, PruningOpts::default(), start + i, 1, &mut |g| {
                     single.push(g.clone());
                 });
                 assert_eq!(single.len(), 1);
@@ -1580,7 +1694,7 @@ mod tests {
         let size = 19;
         let start: usize = 16_300_000_000;
         let count = 10;
-        let opts = ALL_OPTS;
+        let opts = PruningOpts::default();
 
         let mut batch: Vec<Grf> = Vec::new();
         seek_stream_grf(size, 0, false, opts, start, count, &mut |g| {

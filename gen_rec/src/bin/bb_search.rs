@@ -41,6 +41,10 @@ struct Args {
     /// Show raw GRF strings instead of aliases.
     #[arg(long)]
     no_alias: bool,
+
+    /// Enable inline-proj pruning (prune C(h, P/Z...) that inline to smaller form).
+    #[arg(long)]
+    inline_proj: bool,
 }
 
 /// Aggregate result for one batch.
@@ -142,10 +146,10 @@ fn merge_batch(
 fn estimate_time(
     future_size: usize,
     allow_min: bool,
-    opts: PruningOpts,
+    count_opts: PruningOpts,
     secs_per_fn: f64,
 ) -> Option<f64> {
-    let count = count_grf(future_size, 0, allow_min, opts);
+    let count = count_grf(future_size, 0, allow_min, count_opts);
     if count == 0 || secs_per_fn <= 0.0 {
         return None;
     }
@@ -187,7 +191,11 @@ fn fmt_si_f64(n: f64) -> String {
 
 fn main() {
     let args = Args::parse();
-    let opts = PruningOpts::default();
+    let count_opts = PruningOpts::default(); // count_grf doesn't support skip_inline_proj
+    let opts = PruningOpts {
+        skip_inline_proj: args.inline_proj,
+        ..PruningOpts::default()
+    };
 
     println!(
         "BBµ search: 0-arity {}, max_size={}, max_steps={}, opts={:?}, threads={}, batch={}",
@@ -319,8 +327,8 @@ fn main() {
                 let estimates: Vec<String> = (1..=args.lookahead)
                     .filter_map(|ds| {
                         let future = size + ds;
-                        let est = estimate_time(future, args.allow_min, opts, rate)?;
-                        let count = count_grf(future, 0, args.allow_min, opts);
+                        let est = estimate_time(future, args.allow_min, count_opts, rate)?;
+                        let count = count_grf(future, 0, args.allow_min, count_opts);
                         Some(format!(
                             "n={}: ~{} ({} fns)",
                             future,

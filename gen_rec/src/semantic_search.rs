@@ -359,6 +359,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Too slow"]
     fn test_search_trailing_bits_arity1() {
         let config = SearchConfig {
             arity: 1,

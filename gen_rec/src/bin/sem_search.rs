@@ -43,9 +43,29 @@ const SPECS: &[SpecDef] = &[
         build: || Box::new(exact_spec(|a| Some(a[0].saturating_sub(1)))),
     },
     SpecDef {
+        name: "monus2", default_arity: 1,
+        description: "f(x) = max(0, x-2)",
+        build: || Box::new(exact_spec(|a| Some(a[0].saturating_sub(2)))),
+    },
+    SpecDef {
+        name: "monus3", default_arity: 1,
+        description: "f(x) = max(0, x-3)",
+        build: || Box::new(exact_spec(|a| Some(a[0].saturating_sub(3)))),
+    },
+    SpecDef {
         name: "add", default_arity: 2,
         description: "addition: f(x,y) = x+y",
         build: || Box::new(exact_spec(|a| Some(a[0] + a[1]))),
+    },
+    SpecDef {
+        name: "monus", default_arity: 2,
+        description: "saturated subtraction: f(x,y) = max(0, x-y)",
+        build: || Box::new(exact_spec(|a| Some(a[0].saturating_sub(a[1])))),
+    },
+    SpecDef {
+        name: "rmonus", default_arity: 2,
+        description: "f(x,y) = max(0, y-x)",
+        build: || Box::new(exact_spec(|a| Some(a[1].saturating_sub(a[0])))),
     },
     SpecDef {
         name: "mul", default_arity: 2,
@@ -53,9 +73,49 @@ const SPECS: &[SpecDef] = &[
         build: || Box::new(exact_spec(|a| Some(a[0] * a[1]))),
     },
     SpecDef {
+        name: "mul2", default_arity: 2,
+        description: "f(x) = 2x",
+        build: || Box::new(exact_spec(|a| Some(2*a[0]))),
+    },
+    SpecDef {
+        name: "mod2", default_arity: 1,
+        description: "parity: f(x) = x % 2",
+        build: || Box::new(exact_spec(|a| Some(a[0] % 2))),
+    },
+    SpecDef {
+        name: "nmod2", default_arity: 1,
+        description: "parity: f(x) = (x+1) % 2",
+        build: || Box::new(exact_spec(|a| Some((a[0]+1) % 2))),
+    },
+    SpecDef {
+        name: "mod3", default_arity: 1,
+        description: "f(x) = x % 3",
+        build: || Box::new(exact_spec(|a| Some(a[0] % 3))),
+    },
+    SpecDef {
+        name: "div2", default_arity: 1,
+        description: "f(x) = floor(x / 2)",
+        build: || Box::new(exact_spec(|a| Some(a[0] / 2))),
+    },
+    SpecDef {
+        name: "ceildiv2", default_arity: 1,
+        description: "f(x) = ceil(x / 2)",
+        build: || Box::new(exact_spec(|a| Some(a[0].div_ceil(2)))),
+    },
+    SpecDef {
+        name: "div3", default_arity: 1,
+        description: "f(x) = floor(x / 3)",
+        build: || Box::new(exact_spec(|a| Some(a[0] / 3))),
+    },
+    SpecDef {
         name: "pow2", default_arity: 1,
         description: "power of two: f(x) = 2^x",
         build: || Box::new(exact_spec(|a| Some(1u64 << a[0].min(63)))),
+    },
+    SpecDef {
+        name: "pow2m1", default_arity: 1,
+        description: "f(x) = 2^x - 1",
+        build: || Box::new(exact_spec(|a| Some((1u64 << a[0].min(63)) - 1))),
     },
     SpecDef {
         name: "trailing-bits", default_arity: 1,
@@ -86,7 +146,7 @@ fn spec_info(name: &str) -> Option<&'static SpecDef> {
 )]
 struct Args {
     /// Spec name (omit to list available specs).
-    #[arg(long)]
+    #[arg()]
     spec: Option<String>,
 
     /// Arity of the target GRF (overrides spec default).
@@ -94,7 +154,7 @@ struct Args {
     arity: Option<usize>,
 
     /// Stop searching after this size (inclusive).
-    #[arg(long, default_value_t = 12)]
+    #[arg(long, default_value_t = 14)]
     max_size: usize,
 
     /// Step budget per simulation call (0 = unlimited).
@@ -128,6 +188,69 @@ struct Args {
     /// Print per-candidate accept/reject trace (very verbose).
     #[arg(long)]
     trace: bool,
+
+    /// Run all specs (ignores --spec and --arity).
+    #[arg(long)]
+    all: bool,
+}
+
+// ── Search runner ─────────────────────────────────────────────────────────────
+
+fn run_search(info: &SpecDef, args: &Args) {
+    let arity = args.arity.unwrap_or(info.default_arity);
+    let confidence_inputs = args
+        .confidence_inputs
+        .unwrap_or_else(|| canonical_inputs(arity).len());
+
+    let config = SearchConfig {
+        arity,
+        allow_min: args.allow_min,
+        max_size: args.max_size,
+        max_steps: args.max_steps,
+        confidence_inputs,
+        progress: args.progress,
+        trace: args.trace,
+    };
+
+    let t0 = Instant::now();
+
+    if args.all_at_min_size {
+        let mut spec = (info.build)();
+        let results = search_all_at_min(&config, &mut *spec);
+        let elapsed = t0.elapsed();
+
+        if results.is_empty() {
+            println!(
+                "[{}] No match found for sizes 1..={} (arity={}, {:.1?})",
+                info.name, config.max_size, arity, elapsed
+            );
+        } else {
+            println!(
+                "[{}] size={} ({} match{})  [{:.1?}]",
+                info.name, results[0].size, results.len(),
+                if results.len() == 1 { "" } else { "es" },
+                elapsed
+            );
+            for r in &results {
+                println!("  {}  (verified on {} inputs)", r.grf, r.inputs_tested);
+            }
+        }
+    } else {
+        let mut spec = (info.build)();
+        let result = search_smallest(&config, &mut *spec);
+        let elapsed = t0.elapsed();
+
+        match result {
+            Some(r) => println!(
+                "[{}] size={}: {}  (arity={}, verified on {} inputs, {:.1?})",
+                info.name, r.size, r.grf, arity, r.inputs_tested, elapsed
+            ),
+            None => println!(
+                "[{}] No match found for sizes 1..={} (arity={}, {:.1?})",
+                info.name, config.max_size, arity, elapsed
+            ),
+        }
+    }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -135,7 +258,15 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    // List specs if no --spec given.
+    // ── --all mode ────────────────────────────────────────────────────────────
+    if args.all {
+        for info in SPECS {
+            run_search(info, &args);
+        }
+        return;
+    }
+
+    // ── Resolve spec ──────────────────────────────────────────────────────────
     let spec_name = match &args.spec {
         Some(s) => s.clone(),
         None => {
@@ -153,23 +284,13 @@ fn main() {
         }
     };
 
-    let arity = args.arity.unwrap_or(info.default_arity);
-    let confidence_inputs = args
-        .confidence_inputs
-        .unwrap_or_else(|| canonical_inputs(arity).len());
-
-    let config = SearchConfig {
-        arity,
-        allow_min: args.allow_min,
-        max_size: args.max_size,
-        max_steps: args.max_steps,
-        confidence_inputs,
-        progress: args.progress,
-        trace: args.trace,
-    };
-
     // ── --probe mode ──────────────────────────────────────────────────────────
     if let Some(grf_str) = &args.probe {
+        let arity = args.arity.unwrap_or(info.default_arity);
+        let confidence_inputs = args
+            .confidence_inputs
+            .unwrap_or_else(|| canonical_inputs(arity).len());
+
         let grf: gen_rec::grf::Grf = match grf_str.parse() {
             Ok(g) => g,
             Err(e) => { eprintln!("Parse error: {e}"); std::process::exit(1); }
@@ -206,50 +327,5 @@ fn main() {
     }
 
     // ── Normal search ─────────────────────────────────────────────────────────
-    let t0 = Instant::now();
-
-    if args.all_at_min_size {
-        let mut spec = (info.build)();
-        let results = search_all_at_min(&config, &mut *spec);
-        let elapsed = t0.elapsed();
-
-        if results.is_empty() {
-            println!(
-                "[search] No match found for sizes 1..={} (arity={}, {:.1?})",
-                config.max_size, arity, elapsed
-            );
-            eprintln!("Hint: try --max-size {} or --probe GRF to test a specific candidate.", config.max_size + 4);
-        } else {
-            println!(
-                "[search] size={} ({} match{})  [{:.1?}]",
-                results[0].size,
-                results.len(),
-                if results.len() == 1 { "" } else { "es" },
-                elapsed
-            );
-            for r in &results {
-                println!("  {}  (verified on {} inputs)", r.grf, r.inputs_tested);
-            }
-        }
-    } else {
-        let mut spec = (info.build)();
-        let result = search_smallest(&config, &mut *spec);
-        let elapsed = t0.elapsed();
-
-        match result {
-            Some(r) => {
-                println!(
-                    "[search] size={}: {}  (arity={}, verified on {} inputs, {:.1?})",
-                    r.size, r.grf, arity, r.inputs_tested, elapsed
-                );
-            }
-            None => {
-                println!(
-                    "[search] No match found for sizes 1..={} (arity={}, {:.1?})",
-                    config.max_size, arity, elapsed
-                );
-                eprintln!("Hint: try --max-size {} or --probe GRF to test a specific candidate.", config.max_size + 4);
-            }
-        }
-    }
+    run_search(info, &args);
 }

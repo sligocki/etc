@@ -4,6 +4,21 @@ use std::str::Chars;
 
 use crate::grf::Grf;
 
+/// A single inline spec test from a `.igrf` file.
+#[derive(Debug, Clone)]
+pub struct TestCase {
+    pub name: String,
+    pub args: Vec<u64>,
+    /// `Some(v)` = expects value v; `None` = expects divergence (⊥).
+    pub expected: Option<u64>,
+}
+
+/// Parsed `.igrf` file: resolved GRF definitions plus inline spec tests.
+pub struct IgrfFile {
+    pub defs: Vec<(String, Grf)>,
+    pub tests: Vec<TestCase>,
+}
+
 // Internal AST for igrf expressions before arity inference.
 #[derive(Debug, Clone)]
 enum Expr {
@@ -17,48 +32,84 @@ enum Expr {
     Const(u64),                 // K[n]
 }
 
-/// Parse a `.igrf` file and return each definition as `(name, Grf)` in order.
-///
-/// Definitions are resolved sequentially; each name can reference only earlier names.
-/// Bare `Z` and `Pk` have their arities inferred by a two-phase algorithm:
-/// bottom-up minimum arity, then top-down propagation.
-pub fn parse_igrf_to_grfs(content: &str) -> Result<Vec<(String, Grf)>, String> {
-    let raw = parse_file(content)?;
+/// Parse a `.igrf` file into resolved GRF definitions and inline spec tests.
+pub fn parse_igrf_file(content: &str) -> Result<IgrfFile, String> {
+    let (raw_defs, tests) = parse_file(content)?;
     let mut arities: HashMap<String, usize> = HashMap::new();
     let mut grfs: HashMap<String, Grf> = HashMap::new();
-    let mut result = Vec::new();
+    let mut defs = Vec::new();
 
-    for (name, expr) in &raw {
+    for (name, expr) in &raw_defs {
         let ar = min_arity(expr, &arities)
             .map_err(|e| format!("In definition of {}: {}", name, e))?;
         let grf = resolve(expr, ar, &grfs)
             .map_err(|e| format!("In definition of {}: {}", name, e))?;
         arities.insert(name.clone(), ar);
         grfs.insert(name.clone(), grf.clone());
-        result.push((name.clone(), grf));
+        defs.push((name.clone(), grf));
     }
-    Ok(result)
+    Ok(IgrfFile { defs, tests })
+}
+
+/// Parse a `.igrf` file and return only the GRF definitions.
+pub fn parse_igrf_to_grfs(content: &str) -> Result<Vec<(String, Grf)>, String> {
+    parse_igrf_file(content).map(|f| f.defs)
 }
 
 // ── File-level parser ─────────────────────────────────────────────────────────
 
-fn parse_file(content: &str) -> Result<Vec<(String, Expr)>, String> {
+fn parse_file(content: &str) -> Result<(Vec<(String, Expr)>, Vec<TestCase>), String> {
     let mut defs = Vec::new();
+    let mut tests = Vec::new();
     for (lineno, line) in content.lines().enumerate() {
         let line = if let Some(i) = line.find('#') { &line[..i] } else { line }.trim();
         if line.is_empty() {
             continue;
         }
-        let (name, rest) = line
-            .split_once(":=")
-            .ok_or_else(|| format!("Line {}: no ':=' found in {:?}", lineno + 1, line))?;
-        let name = name.trim().to_string();
-        let expr_str: String = rest.chars().filter(|c| !c.is_whitespace()).collect();
-        let expr = parse_expr_str(&expr_str)
-            .map_err(|e| format!("Line {}: parse error in {:?}: {}", lineno + 1, line, e))?;
-        defs.push((name, expr));
+        if line.contains("==") {
+            let tc = parse_test_line(line).ok_or_else(|| {
+                format!("Line {}: invalid test line {:?}", lineno + 1, line)
+            })?;
+            tests.push(tc);
+        } else {
+            let (name, rest) = line
+                .split_once(":=")
+                .ok_or_else(|| format!("Line {}: no ':=' found in {:?}", lineno + 1, line))?;
+            let name = name.trim().to_string();
+            let expr_str: String = rest.chars().filter(|c| !c.is_whitespace()).collect();
+            let expr = parse_expr_str(&expr_str)
+                .map_err(|e| format!("Line {}: parse error in {:?}: {}", lineno + 1, line, e))?;
+            defs.push((name, expr));
+        }
     }
-    Ok(defs)
+    Ok((defs, tests))
+}
+
+fn parse_test_line(line: &str) -> Option<TestCase> {
+    let (lhs, rhs) = line.split_once("==")?;
+    let rhs = rhs.trim();
+    let expected: Option<u64> = if rhs == "⊥" {
+        None
+    } else {
+        Some(rhs.parse().ok()?)
+    };
+    let lhs = lhs.trim();
+    let lparen = lhs.find('(')?;
+    let rparen = lhs.rfind(')')?;
+    if rparen != lhs.len() - 1 {
+        return None;
+    }
+    let name = lhs[..lparen].trim().to_string();
+    let args_str = &lhs[lparen + 1..rparen];
+    let args: Vec<u64> = if args_str.trim().is_empty() {
+        vec![]
+    } else {
+        args_str
+            .split(',')
+            .map(|s| s.trim().parse().ok())
+            .collect::<Option<Vec<_>>>()?
+    };
+    Some(TestCase { name, args, expected })
 }
 
 fn parse_expr_str(s: &str) -> Result<Expr, String> {
@@ -355,12 +406,12 @@ mod tests {
 
     #[test]
     fn test_erdos_file() {
-        let content = std::fs::read_to_string("erdos.igrf").unwrap();
-        let defs = parse_igrf_to_grfs(&content).unwrap();
-        assert!(!defs.is_empty());
-        // ErdosTernConj should be arity 0 (nullary: halts iff conjecture is false)
-        let last = defs.last().unwrap();
+        let content = include_str!("../igrf/erdos.igrf");
+        let file = parse_igrf_file(content).unwrap();
+        assert!(!file.defs.is_empty());
+        let last = file.defs.last().unwrap();
         assert_eq!(last.0, "ErdosTernConj");
         assert_eq!(last.1.arity(), 0);
     }
+
 }

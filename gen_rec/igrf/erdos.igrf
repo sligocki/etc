@@ -1,22 +1,127 @@
 Pred := R(Z, P1)
+  Pred(0) == 0
+  Pred(1) == 0
+  Pred(2) == 1
+  Pred(13) == 12
+
 Monus2 := R(Z, R(Z, P1))
+  Monus2(0) == 0
+  Monus2(1) == 0
+  Monus2(2) == 0
+  Monus2(3) == 1
+  Monus2(13) == 11
+
 Monus3 := R(Z, R(Z, R(Z, P1)))
+  Monus3(0) == 0
+  Monus3(1) == 0
+  Monus3(2) == 0
+  Monus3(3) == 0
+  Monus3(4) == 1
+  Monus3(13) == 10
+
 Add := R(P1, C(S, P2))
+  Add(0,2) == 2
+  Add(13,0) == 13
+  Add(8,13) == 21
+
 AddS := R(S, C(S, P2))
+  AddS(0,2) == 3
+  AddS(13,0) == 14
+  AddS(8,13) == 22
 
 Pow2P := R(Z, C(AddS, P2, P2))
+  Pow2P(0) == 0
+  Pow2P(1) == 1
+  Pow2P(2) == 3
+  Pow2P(3) == 7
+  Pow2P(4) == 15
+  Pow2P(5) == 31
+
 Pow2 := C(S, Pow2P)
+  Pow2(0) == 1
+  Pow2(1) == 2
+  Pow2(2) == 4
+  Pow2(3) == 8
+  Pow2(4) == 16
+  Pow2(5) == 32
 
 Mod3 := R(Z0, C(R(S, R(P(2,1), Z4)), P(2,2), P(2,2)))
+  Mod3(0) == 0
+  Mod3(1) == 1
+  Mod3(2) == 2
+  Mod3(3) == 0
+  Mod3(4) == 1
+  Mod3(5) == 2
+  Mod3(13) == 1
+  Mod3(14) == 2
+  Mod3(15) == 0
+
+# \n. n // 3
 Div3 := M(R(Monus2, C(Monus3, P2)))
+  Div3(0) == 0
+  Div3(1) == 0
+  Div3(2) == 0
+  Div3(3) == 1
+  Div3(4) == 1
+  Div3(5) == 1
+  Div3(13) == 4
+  Div3(14) == 4
+  Div3(15) == 5
+
+# \kn. n // 3^k
 Div3k := R(P1, C(Div3, P2))
+  Div3k(0, 13) == 13
+  Div3k(1, 13) == 4
+  Div3k(2, 13) == 1
+  Div3k(3, 13) == 0
+  Div3k(3, 26) == 0
+  Div3k(3, 27) == 1
 
 # \kn. k-th trit (base-3 digit) of n
 Trit := C(Mod3, Div3k)
-TritIs2 := C(Pred, Trit)
-Count2s := R(Z, C(Add, P2, C(TritIs2, P1, P3)))
-Count2sPow2 := C(Count2s, P1, Pow2)
+  Trit(0, 64) == 1
+  Trit(1, 64) == 0
+  Trit(2, 64) == 1
+  Trit(3, 64) == 2
+  Trit(4, 64) == 0
+  Trit(5, 64) == 0
 
+# \kn. if Trit(k, n) == 2 then 1 else 0
+TritIs2 := C(Pred, Trit)
+  TritIs2(0, 64) == 0
+  TritIs2(1, 64) == 0
+  TritIs2(2, 64) == 0
+  TritIs2(3, 64) == 1
+  TritIs2(4, 64) == 0
+  TritIs2(5, 64) == 0
+
+# \kn. number of 2 trits in the lowest k trits of n
+Count2s := R(Z, C(Add, P2, C(TritIs2, P1, P3)))
+  # 25 -> 221
+  Count2s(0, 25) == 0
+  Count2s(1, 25) == 0
+  Count2s(2, 25) == 1
+  Count2s(3, 25) == 2
+  Count2s(4, 25) == 2
+
+# \k. number of 2 trits in 2^k
+Count2sPow2 := C(Count2s, P1, Pow2)
+  Count2sPow2(0) == 0  # 1 -> 1
+  Count2sPow2(1) == 1  # 2 -> 2
+  Count2sPow2(2) == 0  # 4 -> 11
+  Count2sPow2(3) == 2  # 8 -> 22
+  Count2sPow2(4) == 1  # 16 -> 121
+  Count2sPow2(5) == 1  # 32 -> 1012
+  Count2sPow2(6) == 1  # 64 -> 2101
+  Count2sPow2(7) == 2  # 128 -> 11202
+
+# \k. smallest m such that no 2 trits in 2^{k+m}
 NextCounterEx := M(C(Count2sPow2, Add))
+  NextCounterEx(0) == 0
+  NextCounterEx(1) == 1
+  NextCounterEx(2) == 0
+  NextCounterEx(3) == 5
+
 # \. halts iff exists k > 8 such that no 2 trits in 2^k
-ErdosTernConj := C(NextCounterEx, K[8])
+ErdosTernConj := C(NextCounterEx, K[9])
+  ErdosTernConj() == ⊥

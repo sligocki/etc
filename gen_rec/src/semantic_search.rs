@@ -1,17 +1,17 @@
-/// Adaptive spec-matching search: find the smallest GRF satisfying a spec.
+/// Spec-matching search: find the smallest GRF satisfying a spec.
 ///
-/// Uses the canonical-subexpression strategy from `NovelEnumerator` to enumerate
-/// GRFs size-by-size, testing each candidate against a user-supplied spec closure.
-/// Exits as soon as a match is confirmed, without needing a pre-built NovelDb.
+/// Enumerates every GRF of each size (via `stream_grf`) and tests each against a
+/// user-supplied spec closure. Exits as soon as a match is confirmed.
 ///
-/// # Early-exit testing
+/// # Testing phases
 ///
 /// For each candidate the spec is tested adaptively:
 /// 1. Run the small canonical input set (~8 or ~32 points). Any counterexample
 ///    rejects the candidate immediately — fast rejection for wrong functions.
-/// 2. If all pass, expand to `confidence_inputs` total points. Once the full set
-///    passes, the candidate is verified on `verification_inputs` (broader coverage).
-/// 3. The first candidate that survives all checks is returned.
+/// 2. If all pass, expand to `confidence_inputs` total points.
+/// 3. If those pass, verify on `verification_inputs` (broader coverage) to guard
+///    against false positives.
+/// The first candidate that survives all checks is returned.
 ///
 /// # Spec signature
 ///
@@ -30,11 +30,12 @@
 /// let config = SearchConfig { arity: 1, max_size: 10, ..Default::default() };
 /// let result = search_smallest(&config, &mut spec);
 /// ```
+use crate::enumerate::stream_grf;
 use crate::fingerprint::{
     canonical_inputs, canonical_inputs_n, grid_inputs, verification_inputs,
 };
 use crate::grf::Grf;
-use crate::novel_enum::NovelEnumerator;
+use crate::pruning::PruningOpts;
 use crate::simulate::{simulate, SimResult};
 
 /// Configuration for `search_smallest`.
@@ -47,13 +48,11 @@ pub struct SearchConfig {
     pub max_size: usize,
     /// Step budget per simulation call. `0` = unlimited.
     pub max_steps: u64,
-    /// Number of inputs used both by the `NovelEnumerator` to fingerprint/deduplicate
-    /// candidates and as the confidence threshold for accepting a match.
+    /// Number of inputs used as the confidence threshold for accepting a match.
     ///
-    /// **Tuning note**: this controls two things at once:
-    /// 1. How many inputs the enumerator uses to distinguish functions — too small and
-    ///    the target GRF may be deduplicated away before the search ever sees it.
-    /// 2. How many inputs a candidate must pass before the verifier accepts it.
+    /// A candidate must pass the spec on all `confidence_inputs` inputs (after the
+    /// fast phase) before proceeding to final verification. Larger values reduce
+    /// false positives at the cost of more simulation per candidate.
     ///
     /// For arity ≥ 2, values below 32 are usually too small. The default (64) is safe
     /// for most specs; raise it if the search returns suspicious small results.
@@ -92,49 +91,79 @@ pub struct SearchResult {
 /// Find the smallest GRF of `config.arity` that satisfies `spec` on all tested
 /// inputs, searching up to `config.max_size`. Returns `None` if not found.
 ///
-/// Enumerate using canonical subexpressions (via `NovelEnumerator`), testing
-/// each candidate adaptively. The first candidate surviving all checks is returned.
+/// Streams every structurally distinct GRF size-by-size and tests each via
+/// `test_candidate`. The first candidate surviving all checks is returned.
 pub fn search_smallest(
     config: &SearchConfig,
     spec: &mut dyn FnMut(&[u64], u64) -> bool,
 ) -> Option<SearchResult> {
-    let mut enumerator = NovelEnumerator::new(config.confidence_inputs, config.max_steps, config.allow_min);
-
-    // Small canonical set for fast rejection.
+    let opts = PruningOpts::default();
     let fast_inputs = canonical_inputs(config.arity);
-    // Full confidence set (superset of fast_inputs).
     let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
-    // Verification set for final false-positive guard.
     let verify_inputs = verification_inputs(config.arity);
 
     for size in 1..=config.max_size {
-        enumerator.compute_size(config.arity, size);
-        let candidates = enumerator.candidates(config.arity, size);
+        let mut result: Option<SearchResult> = None;
+        let mut candidates_at_size: usize = 0;
 
-        for grf in candidates {
+        stream_grf(size, config.arity, config.allow_min, opts, &mut |grf: &Grf| {
+            if result.is_some() {
+                return;
+            }
+            candidates_at_size += 1;
             if let Some(inputs_tested) =
                 test_candidate(grf, &fast_inputs, &conf_inputs, &verify_inputs, config.max_steps, spec)
             {
                 if config.trace || config.progress {
                     eprintln!("[search arity={}] ACCEPTED size={} grf={}", config.arity, size, grf);
                 }
-                return Some(SearchResult {
-                    grf: grf.clone(),
-                    size,
-                    inputs_tested,
-                });
+                result = Some(SearchResult { grf: grf.clone(), size, inputs_tested });
             } else if config.trace {
                 eprintln!("[search arity={}] rejected size={} grf={}", config.arity, size, grf);
             }
+        });
+
+        if let Some(r) = result {
+            return Some(r);
         }
 
         if config.progress || config.trace {
-            let n = enumerator.candidates(config.arity, size).len();
-            eprintln!("[search arity={}] size={:>3}: {:>5} candidates", config.arity, size, n);
+            eprintln!("[search arity={}] size={:>3}: {:>5} candidates", config.arity, size, candidates_at_size);
         }
     }
 
     None
+}
+
+/// Find ALL structurally-distinct GRFs at the minimum matching size.
+///
+/// Returns an empty `Vec` if no match is found up to `config.max_size`.
+/// Slower than `search_smallest` because it tests every candidate at the minimum
+/// size rather than stopping at the first match.
+pub fn search_all_at_min(
+    config: &SearchConfig,
+    spec: &mut dyn FnMut(&[u64], u64) -> bool,
+) -> Vec<SearchResult> {
+    let min_size = match search_smallest(config, &mut *spec) {
+        Some(r) => r.size,
+        None => return vec![],
+    };
+
+    let opts = PruningOpts::default();
+    let fast_inputs = canonical_inputs(config.arity);
+    let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
+    let verify_inputs = verification_inputs(config.arity);
+
+    // Collect all matches at that size via exhaustive streaming.
+    let mut results = Vec::new();
+    stream_grf(min_size, config.arity, config.allow_min, opts, &mut |grf: &Grf| {
+        if let Some(inputs_tested) =
+            test_candidate(grf, &fast_inputs, &conf_inputs, &verify_inputs, config.max_steps, spec)
+        {
+            results.push(SearchResult { grf: grf.clone(), size: min_size, inputs_tested });
+        }
+    });
+    results
 }
 
 /// Test a single candidate GRF against the spec.
@@ -344,6 +373,45 @@ mod tests {
         let result = search_smallest(&cfg(2, 8), &mut spec).expect("should find add");
         assert_eq!(result.size, 5, "add should have size 5, got {}: {}", result.size, result.grf);
         assert_eq!(result.grf.arity(), 2);
+    }
+
+    #[test]
+    #[ignore = "Too slow"]
+    fn test_search_div2() {
+        // Div2(n) = floor(n/2)
+        let mut spec = exact_spec(|args| Some(args[0] / 2));
+        let result = search_smallest(&cfg(1, 14), &mut spec).unwrap();
+        assert_eq!(result.size, 14, "Found size {}: {}", result.size, result.grf);
+        assert_eq!(result.grf.arity(), 1);
+    }
+
+    #[test]
+    #[ignore = "Too slow"]
+    fn test_search_ceildiv2() {
+        // CeilDiv2(n) = ceil(n/2)
+        let mut spec = exact_spec(|args| Some(args[0].div_ceil(2)));
+        let result = search_smallest(&cfg(1, 14), &mut spec).unwrap();
+        assert_eq!(result.size, 14, "Found size {}: {}", result.size, result.grf);
+        assert_eq!(result.grf.arity(), 1);
+    }
+
+    #[test]
+    #[ignore = "Too slow"]
+    fn test_search_pow2() {
+        // confidence_inputs must stay ≤ 16 here: 2^x − 1 takes ~3·2^x simulation steps,
+        // so x=16 already exceeds the 100k step budget, which would drop the sub-expression
+        // R(Z0, C(R(S, C(S, P(3,2))), P(2,2), P(2,2))) from the enumerator's memo.
+        let mut spec = exact_spec(|args| Some(2u64.pow(args[0] as u32)));
+        let config = SearchConfig {
+            arity: 1,
+            max_size: 12,
+            max_steps: 100_000,
+            confidence_inputs: 12,
+            ..Default::default()
+        };
+        let result = search_smallest(&config, &mut spec).expect("should find pow2");
+        assert_eq!(result.size, 12, "Found size {}: {}", result.size, result.grf);
+        assert_eq!(result.grf.arity(), 1);
     }
 
     // Spec shared by trailing-bits tests: f(n, x) must end in at least n ones.

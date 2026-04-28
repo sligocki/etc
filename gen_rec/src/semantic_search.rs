@@ -37,6 +37,7 @@ use crate::fingerprint::{
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
 use crate::simulate::{simulate, SimResult};
+use std::time::Instant;
 
 /// Configuration for `search_smallest`.
 pub struct SearchConfig {
@@ -105,6 +106,7 @@ pub fn search_smallest(
     for size in 1..=config.max_size {
         let mut result: Option<SearchResult> = None;
         let mut candidates_at_size: usize = 0;
+        let t_size = Instant::now();
 
         stream_grf(size, config.arity, config.allow_min, opts, &mut |grf: &Grf| {
             if result.is_some() {
@@ -128,7 +130,7 @@ pub fn search_smallest(
         }
 
         if config.progress || config.trace {
-            eprintln!("[search arity={}] size={:>3}: {:>5} candidates", config.arity, size, candidates_at_size);
+            eprintln!("[search arity={}] size={:>3}: {:>5} candidates  ({:.1?})", config.arity, size, candidates_at_size, t_size.elapsed());
         }
     }
 

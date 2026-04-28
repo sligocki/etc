@@ -1,0 +1,22 @@
+Pred := R(Z, P1)
+Monus2 := R(Z, R(Z, P1))
+Monus3 := R(Z, R(Z, R(Z, P1)))
+Add := R(P1, C(S, P2))
+AddS := R(S, C(S, P2))
+
+Pow2P := R(Z, C(AddS, P2, P2))
+Pow2 := C(S, Pow2P)
+
+Mod3 := R(Z0, C(R(S, R(P(2,1), Z4)), P(2,2), P(2,2)))
+Div3 := M(R(Monus2, C(Monus3, P2)))
+Div3k := R(P1, C(Div3, P2))
+
+# \kn. k-th trit (base-3 digit) of n
+Trit := C(Mod3, Div3k)
+TritIs2 := C(Pred, Trit)
+Count2s := R(Z, C(Add, P2, C(TritIs2, P1, P3)))
+Count2sPow2 := C(Count2s, P1, Pow2)
+
+NextCounterEx := M(C(Count2sPow2, Add))
+# \. halts iff exists k > 8 such that no 2 trits in 2^k
+ErdosTernConj := C(NextCounterEx, K[8])

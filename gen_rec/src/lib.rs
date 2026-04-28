@@ -1,4 +1,5 @@
 pub mod enumerate;
+pub mod igrf;
 pub mod semantic_search;
 pub mod example_ack;
 pub mod examples;

@@ -1,3 +1,7 @@
+## Erdos Ternary Conjecture: 
+##    forall k > 8, 2^k has at least one 2 in base-3
+## https://dna.hamilton.ie/2023-07-10-DrSterin.html#:~:text=Chapter%202:%20Busy%20beaver%20problem
+
 Pred := R(Z, P1)
   Pred(0) == 0
   Pred(1) == 0

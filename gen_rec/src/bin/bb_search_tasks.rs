@@ -78,11 +78,16 @@ struct RunArgs {
 
     /// Run exactly this task ID (idempotent: skips if result already exists).
     /// Suitable for SLURM array jobs: --task-id $SLURM_ARRAY_TASK_ID
-    #[arg(long, conflicts_with = "all")]
+    #[arg(long, conflicts_with_all = ["all", "task_range"])]
     task_id: Option<usize>,
 
+    /// Run pending tasks with IDs in [START, END) (exclusive end).
+    /// Example: --task-range 0 100
+    #[arg(long, num_args = 2, value_names = ["START", "END"], conflicts_with_all = ["task_id", "all"])]
+    task_range: Option<Vec<usize>>,
+
     /// Run all pending tasks (those without a result file) in order.
-    #[arg(long, conflicts_with = "task_id")]
+    #[arg(long, conflicts_with_all = ["task_id", "task_range"])]
     all: bool,
 
     /// Rayon thread-pool size for parallel batch simulation.
@@ -484,8 +489,9 @@ fn run_task(task: &TaskEntry, config: &Config, dir: &Path, batch_size: usize) {
 fn cmd_run(args: RunArgs) {
     let config = read_config(&args.dir);
 
-    match (args.task_id, args.all) {
-        (Some(id), _) => {
+    let task_range = args.task_range;
+    match (args.task_id, args.all, task_range.is_some()) {
+        (Some(id), _, _) => {
             // Single task (SLURM / distributed mode).
             let tasks = read_manifest(&args.dir);
             let task = tasks
@@ -494,8 +500,8 @@ fn cmd_run(args: RunArgs) {
                 .unwrap_or_else(|| panic!("Task id {id} not found in manifest"));
             run_task(task, &config, &args.dir, args.batch_size);
         }
-        (_, true) => {
-            // All pending tasks — one task per worker thread.
+        (_, true, _) | (_, _, true) => {
+            // All pending tasks, or a range of pending tasks — one task per worker thread.
             let n_threads = args.threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
                     .map(|n| n.get())
@@ -504,16 +510,29 @@ fn cmd_run(args: RunArgs) {
 
             let tasks = read_manifest(&args.dir);
             let total_tasks = tasks.len();
+
+            let (range_start, range_end) = match task_range {
+                Some(v) => {
+                    let start = v[0];
+                    let end = v[1];
+                    assert!(start <= end, "--task-range START must be <= END");
+                    (start, end)
+                }
+                None => (0, total_tasks),
+            };
+
             let pending: Vec<TaskEntry> = tasks
                 .into_iter()
+                .filter(|t| t.task_id >= range_start && t.task_id < range_end)
                 .filter(|t| !result_path(&args.dir, t.task_id).exists())
                 .collect();
 
             println!(
-                "[{}] Pending tasks: {}/{}  [threads={}]",
+                "[{}] Pending tasks: {}  [range=[{}, {})  threads={}]",
                 timestamp(),
                 pending.len(),
-                total_tasks,
+                range_start,
+                range_end,
                 n_threads,
             );
 
@@ -548,7 +567,7 @@ fn cmd_run(args: RunArgs) {
             );
         }
         _ => {
-            eprintln!("Specify either --task-id N or --all");
+            eprintln!("Specify one of --task-id N, --task-range START END, or --all");
             std::process::exit(1);
         }
     }

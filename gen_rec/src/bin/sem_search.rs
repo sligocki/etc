@@ -6,7 +6,7 @@
 ///   search --spec pred --probe "R(Z0, P(2,1))"
 ///   search --spec add --progress
 use clap::Parser;
-use gen_rec::fingerprint::{canonical_inputs_n, verification_inputs};
+use gen_rec::fingerprint::{canonical_inputs, canonical_inputs_n, verification_inputs};
 use gen_rec::semantic_search::{
     exact_spec, exhaustive_probe, probe_spec, search_all_at_min, search_smallest, SearchConfig,
 };
@@ -14,21 +14,54 @@ use gen_rec::simulate::Num;
 use std::time::Instant;
 
 // ── Spec registry ────────────────────────────────────────────────────────────
+//
+// To add a new spec, add ONE entry to SPECS below.  That's it.
 
-struct SpecInfo {
+struct SpecDef {
     name: &'static str,
     default_arity: usize,
-    default_confidence_inputs: usize,
     description: &'static str,
+    build: fn() -> Box<dyn FnMut(&[Num], Num) -> bool>,
 }
 
-const SPECS: &[SpecInfo] = &[
-    SpecInfo { name: "succ",          default_arity: 1, default_confidence_inputs: 8,  description: "successor: f(x) = x+1" },
-    SpecInfo { name: "pred",          default_arity: 1, default_confidence_inputs: 8,  description: "predecessor (saturating): f(x) = max(0, x-1)" },
-    SpecInfo { name: "add",           default_arity: 2, default_confidence_inputs: 32, description: "addition: f(x,y) = x+y" },
-    SpecInfo { name: "mul",           default_arity: 2, default_confidence_inputs: 32, description: "multiplication: f(x,y) = x*y" },
-    SpecInfo { name: "pow2",          default_arity: 1, default_confidence_inputs: 12, description: "power of two: f(x) = 2^x" },
-    SpecInfo { name: "trailing-bits", default_arity: 1, default_confidence_inputs: 64, description: "trailing ones: f(n[,x]) has n trailing 1-bits (arity 1 or 2)" },
+fn trailing_bits(inputs: &[Num], output: Num) -> bool {
+    let n = inputs[0];
+    if n >= 64 { return true; }
+    let mask = (1u64 << n) - 1;
+    (output & mask) == mask
+}
+
+const SPECS: &[SpecDef] = &[
+    SpecDef {
+        name: "succ", default_arity: 1,
+        description: "successor: f(x) = x+1",
+        build: || Box::new(exact_spec(|a| Some(a[0] + 1))),
+    },
+    SpecDef {
+        name: "pred", default_arity: 1,
+        description: "predecessor (saturating): f(x) = max(0, x-1)",
+        build: || Box::new(exact_spec(|a| Some(a[0].saturating_sub(1)))),
+    },
+    SpecDef {
+        name: "add", default_arity: 2,
+        description: "addition: f(x,y) = x+y",
+        build: || Box::new(exact_spec(|a| Some(a[0] + a[1]))),
+    },
+    SpecDef {
+        name: "mul", default_arity: 2,
+        description: "multiplication: f(x,y) = x*y",
+        build: || Box::new(exact_spec(|a| Some(a[0] * a[1]))),
+    },
+    SpecDef {
+        name: "pow2", default_arity: 1,
+        description: "power of two: f(x) = 2^x",
+        build: || Box::new(exact_spec(|a| Some(1u64 << a[0].min(63)))),
+    },
+    SpecDef {
+        name: "trailing-bits", default_arity: 1,
+        description: "trailing ones: f(n[,x]) has n trailing 1-bits (arity 1 or 2)",
+        build: || Box::new(trailing_bits),
+    },
 ];
 
 fn list_specs() {
@@ -38,27 +71,8 @@ fn list_specs() {
     }
 }
 
-fn spec_info(name: &str) -> Option<&'static SpecInfo> {
+fn spec_info(name: &str) -> Option<&'static SpecDef> {
     SPECS.iter().find(|s| s.name == name)
-}
-
-fn trailing_bits_spec(inputs: &[Num], output: Num) -> bool {
-    let n = inputs[0];
-    if n >= 64 { return true; }
-    let mask = (1u64 << n) - 1;
-    (output & mask) == mask
-}
-
-fn build_spec(name: &str) -> Box<dyn FnMut(&[Num], Num) -> bool> {
-    match name {
-        "succ"          => Box::new(exact_spec(|a| Some(a[0] + 1))),
-        "pred"          => Box::new(exact_spec(|a| Some(a[0].saturating_sub(1)))),
-        "add"           => Box::new(exact_spec(|a| Some(a[0] + a[1]))),
-        "mul"           => Box::new(exact_spec(|a| Some(a[0] * a[1]))),
-        "pow2"          => Box::new(exact_spec(|a| Some(1u64 << a[0].min(63)))),
-        "trailing-bits" => Box::new(trailing_bits_spec),
-        _               => unreachable!(),
-    }
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -140,7 +154,9 @@ fn main() {
     };
 
     let arity = args.arity.unwrap_or(info.default_arity);
-    let confidence_inputs = args.confidence_inputs.unwrap_or(info.default_confidence_inputs);
+    let confidence_inputs = args
+        .confidence_inputs
+        .unwrap_or_else(|| canonical_inputs(arity).len());
 
     let config = SearchConfig {
         arity,
@@ -170,18 +186,18 @@ fn main() {
         println!("spec: {}  ({})", spec_name, info.description);
         println!();
 
-        let mut spec = build_spec(&spec_name);
+        let mut spec = (info.build)();
         let verify = verification_inputs(arity);
         let result = probe_spec(&grf, &mut *spec, &verify, args.max_steps);
         println!("verification inputs ({}): {}", verify.len(), result);
 
         if let Some(max_val) = args.exhaustive_probe {
-            let mut spec2 = build_spec(&spec_name);
+            let mut spec2 = (info.build)();
             let result2 = exhaustive_probe(&grf, &mut *spec2, max_val, args.max_steps);
             println!("exhaustive 0..={max_val}:        {}", result2);
         } else {
             let conf = canonical_inputs_n(arity, confidence_inputs);
-            let mut spec2 = build_spec(&spec_name);
+            let mut spec2 = (info.build)();
             let result2 = probe_spec(&grf, &mut *spec2, &conf, args.max_steps);
             println!("confidence inputs ({}):  {}", conf.len(), result2);
         }
@@ -193,7 +209,7 @@ fn main() {
     let t0 = Instant::now();
 
     if args.all_at_min_size {
-        let mut spec = build_spec(&spec_name);
+        let mut spec = (info.build)();
         let results = search_all_at_min(&config, &mut *spec);
         let elapsed = t0.elapsed();
 
@@ -216,7 +232,7 @@ fn main() {
             }
         }
     } else {
-        let mut spec = build_spec(&spec_name);
+        let mut spec = (info.build)();
         let result = search_smallest(&config, &mut *spec);
         let elapsed = t0.elapsed();
 

@@ -115,13 +115,15 @@ Count2sPow2 := C(Count2s, P1, Pow2)
   Count2sPow2(6) == 1  # 64 -> 2101
   Count2sPow2(7) == 2  # 128 -> 11202
 
-# \k. smallest m such that no 2 trits in 2^{k+m}
-NextCounterEx := M(C(Count2sPow2, Add))
-  NextCounterEx(0) == 0
-  NextCounterEx(1) == 1
-  NextCounterEx(2) == 0
-  NextCounterEx(3) == 5
+# \k. smallest m such that no 2 trits in 2^{k+m+1}
+NextCounterEx := M(C(Count2sPow2, AddS))
+  NextCounterEx(0) == 1
+  NextCounterEx(1) == 0
+  NextCounterEx(2) == 5
+  NextCounterEx(3) == 4
+  NextCounterEx(7) == 0
+  NextCounterEx(8) == ⊥
 
 # \. halts iff exists k > 8 such that no 2 trits in 2^k
-ErdosTernConj := C(NextCounterEx, K[9])
+ErdosTernConj := C(NextCounterEx, K[8])
   ErdosTernConj() == ⊥

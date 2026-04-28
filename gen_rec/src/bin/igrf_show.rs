@@ -107,16 +107,18 @@ fn main() {
         };
         let args_str = tc.args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
         let (result, _) = simulate(grf, &tc.args, args.max_steps);
-        let ok = match (result.into_value(), tc.expected) {
-            (Some(got), Some(exp)) => got == exp,
-            (None,      None)      => true,
-            _                      => false,
+        let got: Option<u64> = result.into_value();
+        let ok = match (got, tc.expected) {
+            (Some(g), Some(exp)) => g == exp,
+            (None,    None)      => true,
+            _                    => false,
         };
         if ok {
             passed += 1;
         } else {
+            let got_str = got.map_or("⊥".to_string(), |v| v.to_string());
             let exp_str = tc.expected.map_or("⊥".to_string(), |v| v.to_string());
-            println!("FAIL  {}({}) == {}", tc.name, args_str, exp_str);
+            println!("FAIL  {}({}) == {} -- got {}", tc.name, args_str, exp_str, got_str);
             failed += 1;
         }
     }

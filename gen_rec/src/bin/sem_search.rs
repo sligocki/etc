@@ -6,11 +6,12 @@
 ///   search --spec pred --probe "R(Z0, P(2,1))"
 ///   search --spec add --progress
 use clap::Parser;
-use gen_rec::fingerprint::{canonical_inputs, canonical_inputs_n, verification_inputs};
+use gen_rec::fingerprint::{canonical_inputs_n, verification_inputs};
 use gen_rec::semantic_search::{
     exact_spec, exhaustive_probe, probe_spec, search_all_at_min, search_smallest, SearchConfig,
 };
 use gen_rec::simulate::Num;
+use std::cmp::min;
 use std::time::Instant;
 
 // ── Spec registry ────────────────────────────────────────────────────────────
@@ -41,6 +42,16 @@ const SPECS: &[SpecDef] = &[
         name: "pred", default_arity: 1,
         description: "predecessor (saturating): f(x) = max(0, x-1)",
         build: || Box::new(exact_spec(|a| Some(a[0].saturating_sub(1)))),
+    },
+    SpecDef {
+        name: "sgn", default_arity: 1,
+        description: "f(x) = if x==0 then 0 else 1",
+        build: || Box::new(exact_spec(|a| Some(min(a[0], 1)))),
+    },
+    SpecDef {
+        name: "not", default_arity: 1,
+        description: "f(x) = if x==0 then 1 else 0",
+        build: || Box::new(exact_spec(|a| Some(1_u64.saturating_sub(a[0])))),
     },
     SpecDef {
         name: "monus2", default_arity: 1,
@@ -196,11 +207,20 @@ struct Args {
 
 // ── Search runner ─────────────────────────────────────────────────────────────
 
+fn print_partials(name: &str, partials: &[gen_rec::semantic_search::SearchResult]) {
+    if !partials.is_empty() {
+        println!("[{}] {} partial match{} (converges on some inputs, diverges on others):",
+            name, partials.len(), if partials.len() == 1 { "" } else { "es" });
+        for r in partials {
+            println!("  size={}  {}  (verified on {}, timed out on {})",
+                r.size, r.grf, r.inputs_tested, r.timed_out_inputs);
+        }
+    }
+}
+
 fn run_search(info: &SpecDef, args: &Args) {
     let arity = args.arity.unwrap_or(info.default_arity);
-    let confidence_inputs = args
-        .confidence_inputs
-        .unwrap_or_else(|| canonical_inputs(arity).len());
+    let confidence_inputs = args.confidence_inputs.unwrap_or(64);
 
     let config = SearchConfig {
         arity,
@@ -216,40 +236,45 @@ fn run_search(info: &SpecDef, args: &Args) {
 
     if args.all_at_min_size {
         let mut spec = (info.build)();
-        let results = search_all_at_min(&config, &mut *spec);
+        let output = search_all_at_min(&config, &mut *spec);
         let elapsed = t0.elapsed();
 
-        if results.is_empty() {
+        if output.guaranteed.is_empty() {
             println!(
-                "[{}] No match found for sizes 1..={} (arity={}, {:.1?})",
+                "[{}] No guaranteed match found for sizes 1..={} (arity={}, {:.1?})",
                 info.name, config.max_size, arity, elapsed
             );
+            print_partials(info.name, &output.partials);
         } else {
+            let min_size = output.guaranteed[0].size;
             println!(
-                "[{}] size={} ({} match{})  [{:.1?}]",
-                info.name, results[0].size, results.len(),
-                if results.len() == 1 { "" } else { "es" },
+                "[{}] size={} ({} guaranteed match{})  [{:.1?}]",
+                info.name, min_size, output.guaranteed.len(),
+                if output.guaranteed.len() == 1 { "" } else { "es" },
                 elapsed
             );
-            for r in &results {
+            for r in &output.guaranteed {
                 println!("  {}  (verified on {} inputs)", r.grf, r.inputs_tested);
             }
+            print_partials(info.name, &output.partials);
         }
     } else {
         let mut spec = (info.build)();
-        let result = search_smallest(&config, &mut *spec);
+        let output = search_smallest(&config, &mut *spec);
         let elapsed = t0.elapsed();
 
-        match result {
-            Some(r) => println!(
+        if let Some(r) = output.guaranteed.first() {
+            println!(
                 "[{}] size={}: {}  (arity={}, verified on {} inputs, {:.1?})",
                 info.name, r.size, r.grf, arity, r.inputs_tested, elapsed
-            ),
-            None => println!(
-                "[{}] No match found for sizes 1..={} (arity={}, {:.1?})",
+            );
+        } else {
+            println!(
+                "[{}] No guaranteed match found for sizes 1..={} (arity={}, {:.1?})",
                 info.name, config.max_size, arity, elapsed
-            ),
+            );
         }
+        print_partials(info.name, &output.partials);
     }
 }
 
@@ -287,9 +312,7 @@ fn main() {
     // ── --probe mode ──────────────────────────────────────────────────────────
     if let Some(grf_str) = &args.probe {
         let arity = args.arity.unwrap_or(info.default_arity);
-        let confidence_inputs = args
-            .confidence_inputs
-            .unwrap_or_else(|| canonical_inputs(arity).len());
+        let confidence_inputs = args.confidence_inputs.unwrap_or(64);
 
         let grf: gen_rec::grf::Grf = match grf_str.parse() {
             Ok(g) => g,

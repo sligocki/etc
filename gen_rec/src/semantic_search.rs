@@ -1,17 +1,20 @@
 /// Spec-matching search: find the smallest GRF satisfying a spec.
 ///
 /// Enumerates every GRF of each size (via `stream_grf`) and tests each against a
-/// user-supplied spec closure. Exits as soon as a match is confirmed.
+/// user-supplied spec closure.
 ///
 /// # Testing phases
 ///
 /// For each candidate the spec is tested adaptively:
 /// 1. Run the small canonical input set (~8 or ~32 points). Any counterexample
-///    rejects the candidate immediately — fast rejection for wrong functions.
+///    rejects immediately; if zero inputs converge the candidate is rejected.
 /// 2. If all pass, expand to `confidence_inputs` total points.
-/// 3. If those pass, verify on `verification_inputs` (broader coverage) to guard
-///    against false positives.
-/// The first candidate that survives all checks is returned.
+/// 3. If those pass, verify on `verification_inputs` (broader coverage).
+///
+/// A candidate is **guaranteed** if no timeouts occurred in phases 2–3.
+/// A candidate is **partial** if it passed all convergent inputs but some timed out.
+/// Guaranteed matches stop the search; partial matches are collected and the search
+/// continues until a guaranteed match is found or `max_size` is reached.
 ///
 /// # Spec signature
 ///
@@ -20,15 +23,13 @@
 /// - `output`: the value the GRF returned (already simulated).
 /// - Return `true` if this (input, output) pair satisfies the spec.
 ///
-/// If the GRF times out on an input (`OutOfSteps`), that candidate is skipped.
-///
 /// # Example
 ///
 /// ```ignore
-/// // Find the smallest GRF computing predecessor (saturating at 0).
 /// let mut spec = exact_spec(|args| Some(args[0].saturating_sub(1)));
 /// let config = SearchConfig { arity: 1, max_size: 10, ..Default::default() };
-/// let result = search_smallest(&config, &mut spec);
+/// let output = search_smallest(&config, &mut spec);
+/// if let Some(r) = output.guaranteed.first() { println!("{}", r.grf); }
 /// ```
 use crate::enumerate::stream_grf;
 use crate::fingerprint::{
@@ -37,6 +38,7 @@ use crate::fingerprint::{
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
 use crate::simulate::{simulate, SimResult};
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 /// Configuration for `search_smallest`.
@@ -45,7 +47,7 @@ pub struct SearchConfig {
     pub arity: usize,
     /// Whether to allow minimization (`Min`) operators.
     pub allow_min: bool,
-    /// Stop searching after this GRF size (inclusive). Returns `None` if not found.
+    /// Stop searching after this GRF size (inclusive).
     pub max_size: usize,
     /// Step budget per simulation call. `0` = unlimited.
     pub max_steps: u64,
@@ -58,10 +60,9 @@ pub struct SearchConfig {
     /// For arity ≥ 2, values below 32 are usually too small. The default (64) is safe
     /// for most specs; raise it if the search returns suspicious small results.
     pub confidence_inputs: usize,
-    /// Print size-by-size progress and the accepted GRF to stderr.
+    /// Print size-by-size progress and accepted GRFs to stderr.
     pub progress: bool,
-    /// Print a trace line for every candidate tested and the reason it was
-    /// accepted or rejected. Very verbose — intended for debugging failing tests.
+    /// Print a trace line for every candidate tested. Very verbose.
     pub trace: bool,
 }
 
@@ -79,54 +80,88 @@ impl Default for SearchConfig {
     }
 }
 
-/// The result of a successful search.
+/// The result for a single matching GRF.
 pub struct SearchResult {
-    /// The smallest GRF found satisfying the spec.
+    /// The GRF found.
     pub grf: Grf,
-    /// Size of the found GRF.
+    /// Size of the GRF.
     pub size: usize,
-    /// Number of inputs tested on the accepted candidate before accepting.
+    /// Number of inputs on which the GRF converged and was verified.
     pub inputs_tested: usize,
+    /// Number of inputs on which the GRF timed out (could not be verified).
+    /// Zero for guaranteed matches; positive for partial matches.
+    pub timed_out_inputs: usize,
+}
+
+/// Output of a search: guaranteed matches plus partial matches found along the way.
+pub struct SearchOutput {
+    /// GRFs that converged and matched on every tested input (no timeouts).
+    /// For `search_smallest`, has 0 or 1 entries.
+    /// For `search_all_at_min`, contains all such GRFs at the minimum matching size.
+    pub guaranteed: Vec<SearchResult>,
+    /// GRFs that passed all convergent inputs but timed out on at least one.
+    /// These may be correct but cannot be fully verified within the step budget.
+    /// At most one entry per size — the one that converged on the most inputs.
+    /// Ordered by size ascending.
+    pub partials: Vec<SearchResult>,
 }
 
 /// Find the smallest GRF of `config.arity` that satisfies `spec` on all tested
-/// inputs, searching up to `config.max_size`. Returns `None` if not found.
+/// inputs with no timeouts, searching up to `config.max_size`.
 ///
-/// Streams every structurally distinct GRF size-by-size and tests each via
-/// `test_candidate`. The first candidate surviving all checks is returned.
+/// Partial matches (pass convergent inputs, time out on others) are collected in
+/// `output.partials` and the search continues until a guaranteed match is found.
 pub fn search_smallest(
     config: &SearchConfig,
     spec: &mut dyn FnMut(&[u64], u64) -> bool,
-) -> Option<SearchResult> {
+) -> SearchOutput {
     let opts = PruningOpts::default();
     let fast_inputs = canonical_inputs(config.arity);
     let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
     let verify_inputs = verification_inputs(config.arity);
+    // best partial per size: size → SearchResult with most inputs_tested
+    let mut best_partial: BTreeMap<usize, SearchResult> = BTreeMap::new();
 
     for size in 1..=config.max_size {
-        let mut result: Option<SearchResult> = None;
+        let mut guaranteed: Option<SearchResult> = None;
         let mut candidates_at_size: usize = 0;
         let t_size = Instant::now();
 
         stream_grf(size, config.arity, config.allow_min, opts, &mut |grf: &Grf| {
-            if result.is_some() {
+            if guaranteed.is_some() {
                 return;
             }
             candidates_at_size += 1;
-            if let Some(inputs_tested) =
+            if let Some((converged, timed_out)) =
                 test_candidate(grf, &fast_inputs, &conf_inputs, &verify_inputs, config.max_steps, spec)
             {
-                if config.trace || config.progress {
-                    eprintln!("[search arity={}] ACCEPTED size={} grf={}", config.arity, size, grf);
+                let r = SearchResult { grf: grf.clone(), size, inputs_tested: converged, timed_out_inputs: timed_out };
+                if timed_out == 0 {
+                    if config.trace || config.progress {
+                        eprintln!("[search arity={}] GUARANTEED size={} grf={}", config.arity, size, grf);
+                    }
+                    guaranteed = Some(r);
+                } else {
+                    let is_new_best = best_partial.get(&size)
+                        .map_or(true, |prev| converged > prev.inputs_tested);
+                    if is_new_best {
+                        if config.trace || config.progress {
+                            eprintln!("[search arity={}] partial   size={} grf={}  ({} timeout(s))", config.arity, size, grf, timed_out);
+                        }
+                        best_partial.insert(size, r);
+                    } else if config.trace {
+                        eprintln!("[search arity={}] partial   size={} grf={}  ({} timeout(s)) [not best]", config.arity, size, grf, timed_out);
+                    }
                 }
-                result = Some(SearchResult { grf: grf.clone(), size, inputs_tested });
             } else if config.trace {
-                eprintln!("[search arity={}] rejected size={} grf={}", config.arity, size, grf);
+                eprintln!("[search arity={}] rejected  size={} grf={}", config.arity, size, grf);
             }
         });
 
-        if let Some(r) = result {
-            return Some(r);
+        if let Some(r) = guaranteed {
+            // Drop any partials at the same size — the guaranteed match supersedes them.
+            let partials = best_partial.into_iter().filter(|(s, _)| *s < size).map(|(_, v)| v).collect();
+            return SearchOutput { guaranteed: vec![r], partials };
         }
 
         if config.progress || config.trace {
@@ -134,54 +169,69 @@ pub fn search_smallest(
         }
     }
 
-    None
+    SearchOutput { guaranteed: vec![], partials: best_partial.into_values().collect() }
 }
 
-/// Find ALL structurally-distinct GRFs at the minimum matching size.
+/// Find ALL structurally-distinct guaranteed GRFs at the minimum matching size.
 ///
-/// Returns an empty `Vec` if no match is found up to `config.max_size`.
-/// Slower than `search_smallest` because it tests every candidate at the minimum
-/// size rather than stopping at the first match.
+/// Returns a `SearchOutput` where `guaranteed` holds every GRF at the minimum size
+/// that converges on all tested inputs, and `partials` holds partial matches from
+/// smaller sizes plus any at the minimum size.
 pub fn search_all_at_min(
     config: &SearchConfig,
     spec: &mut dyn FnMut(&[u64], u64) -> bool,
-) -> Vec<SearchResult> {
-    let min_size = match search_smallest(config, &mut *spec) {
+) -> SearchOutput {
+    // First pass: find the min size and collect early partials.
+    let first = search_smallest(config, &mut *spec);
+    let min_size = match first.guaranteed.first() {
         Some(r) => r.size,
-        None => return vec![],
+        None => return first,
     };
+
+    // Partials found before reaching min_size (those at min_size will be re-enumerated).
+    let early_partials: Vec<SearchResult> = first.partials.into_iter().filter(|r| r.size < min_size).collect();
 
     let opts = PruningOpts::default();
     let fast_inputs = canonical_inputs(config.arity);
     let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
     let verify_inputs = verification_inputs(config.arity);
 
-    // Collect all matches at that size via exhaustive streaming.
-    let mut results = Vec::new();
+    // Second pass: collect ALL guaranteed matches at min_size; best partial at min_size.
+    let mut all_guaranteed: Vec<SearchResult> = Vec::new();
+    let mut best_at_min: Option<SearchResult> = None;
     stream_grf(min_size, config.arity, config.allow_min, opts, &mut |grf: &Grf| {
-        if let Some(inputs_tested) =
+        if let Some((converged, timed_out)) =
             test_candidate(grf, &fast_inputs, &conf_inputs, &verify_inputs, config.max_steps, spec)
         {
-            results.push(SearchResult { grf: grf.clone(), size: min_size, inputs_tested });
+            let r = SearchResult { grf: grf.clone(), size: min_size, inputs_tested: converged, timed_out_inputs: timed_out };
+            if timed_out == 0 {
+                all_guaranteed.push(r);
+            } else {
+                let is_new_best = best_at_min.as_ref().map_or(true, |prev| converged > prev.inputs_tested);
+                if is_new_best { best_at_min = Some(r); }
+            }
         }
     });
-    results
+
+    // Only include best_at_min if no guaranteed match was found at this size.
+    let partials = if all_guaranteed.is_empty() {
+        early_partials.into_iter().chain(best_at_min).collect()
+    } else {
+        early_partials
+    };
+    SearchOutput { guaranteed: all_guaranteed, partials }
 }
 
 /// Test a single candidate GRF against the spec.
 ///
-/// Returns `Some(n_tested)` if the candidate passed all checks,
-/// or `None` if it was rejected (a counterexample found or failed verification).
+/// Returns `Some((converged, timed_out))` if the candidate passed all checks:
+/// - `converged`: inputs on which the GRF produced a value that satisfied the spec.
+/// - `timed_out`: inputs on which the GRF exceeded the step budget.
+/// Returns `None` if a counterexample was found or no fast-phase input converged.
 ///
-/// Timeout (`OutOfSteps`) on an input is treated as "unknown" and skipped, not as
-/// a rejection. The spec cannot be checked on inputs the GRF doesn't converge on
-/// within the step budget; a GRF that times out on some inputs but passes all others
-/// is still a valid candidate. Use a higher `max_steps` if false positives are a
-/// concern for slow-growing functions.
-///
-/// Exception: if the candidate times out on *every* input in the fast phase (no
-/// convergent inputs at all), it is rejected to avoid accepting trivially-divergent
-/// GRFs.
+/// A timeout is not a counterexample — the spec simply cannot be checked on inputs
+/// the GRF doesn't converge on within the step budget. Callers interpret
+/// `timed_out > 0` as a partial (unverified) result.
 fn test_candidate(
     grf: &Grf,
     fast_inputs: &[Vec<u64>],
@@ -189,13 +239,12 @@ fn test_candidate(
     verify_inputs: &[Vec<u64>],
     max_steps: u64,
     spec: &mut dyn FnMut(&[u64], u64) -> bool,
-) -> Option<usize> {
+) -> Option<(usize, usize)> {
     // Phase 1: fast rejection on canonical inputs.
-    // A spec failure is an immediate rejection; a timeout is skipped.
     let mut fast_converged = 0usize;
     for inp in fast_inputs {
         match simulate(grf, inp, max_steps).0 {
-            SimResult::OutOfSteps => {} // skip — unknown output, not a counterexample
+            SimResult::OutOfSteps => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
@@ -204,30 +253,31 @@ fn test_candidate(
             }
         }
     }
-    // Reject if the GRF didn't converge on a single fast input — it's almost certainly
-    // a diverging function, not just slow.
+    // Hard-reject if nothing converged in the fast phase — no evidence of correctness.
     if !fast_inputs.is_empty() && fast_converged == 0 {
         return None;
     }
 
     // Phase 2: confidence pass on the full input set.
-    let mut tested = 0usize;
+    let mut converged = 0usize;
     for inp in conf_inputs {
         match simulate(grf, inp, max_steps).0 {
-            SimResult::OutOfSteps => {} // skip
+            SimResult::OutOfSteps => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
                 }
-                tested += 1;
+                converged += 1;
             }
         }
     }
+    // timed_out = confidence inputs that didn't converge (counted once, not once per phase).
+    let timed_out = conf_inputs.len() - converged;
 
     // Phase 3: verification on broader grid to guard against false positives.
     for inp in verify_inputs {
         match simulate(grf, inp, max_steps).0 {
-            SimResult::OutOfSteps => {} // skip
+            SimResult::OutOfSteps => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
@@ -236,7 +286,7 @@ fn test_candidate(
         }
     }
 
-    Some(tested)
+    Some((converged, timed_out))
 }
 
 /// Build an exact-match spec from a reference function.
@@ -355,7 +405,8 @@ mod tests {
     fn test_search_succ() {
         // Successor: S, size 1.
         let mut spec = exact_spec(|args| Some(args[0] + 1));
-        let result = search_smallest(&cfg(1, 5), &mut spec).expect("should find succ");
+        let output = search_smallest(&cfg(1, 5), &mut spec);
+        let result = output.guaranteed.into_iter().next().expect("should find succ");
         assert_eq!(result.size, 1);
         assert_eq!(result.grf.arity(), 1);
     }
@@ -364,7 +415,8 @@ mod tests {
     fn test_search_pred() {
         // Predecessor (saturating): R(Z0, P(2,1)), size 3.
         let mut spec = exact_spec(|args| Some(args[0].saturating_sub(1)));
-        let result = search_smallest(&cfg(1, 6), &mut spec).expect("should find pred");
+        let output = search_smallest(&cfg(1, 6), &mut spec);
+        let result = output.guaranteed.into_iter().next().expect("should find pred");
         assert_eq!(result.size, 3, "pred should have size 3, got {}: {}", result.size, result.grf);
     }
 
@@ -372,7 +424,8 @@ mod tests {
     fn test_search_add() {
         // Addition: R(P(1,1), C(S, P(3,2))), size 5.
         let mut spec = exact_spec(|args| Some(args[0] + args[1]));
-        let result = search_smallest(&cfg(2, 8), &mut spec).expect("should find add");
+        let output = search_smallest(&cfg(2, 8), &mut spec);
+        let result = output.guaranteed.into_iter().next().expect("should find add");
         assert_eq!(result.size, 5, "add should have size 5, got {}: {}", result.size, result.grf);
         assert_eq!(result.grf.arity(), 2);
     }
@@ -380,9 +433,9 @@ mod tests {
     #[test]
     #[ignore = "Too slow"]
     fn test_search_div2() {
-        // Div2(n) = floor(n/2)
         let mut spec = exact_spec(|args| Some(args[0] / 2));
-        let result = search_smallest(&cfg(1, 14), &mut spec).unwrap();
+        let output = search_smallest(&cfg(1, 14), &mut spec);
+        let result = output.guaranteed.into_iter().next().unwrap();
         assert_eq!(result.size, 14, "Found size {}: {}", result.size, result.grf);
         assert_eq!(result.grf.arity(), 1);
     }
@@ -390,9 +443,9 @@ mod tests {
     #[test]
     #[ignore = "Too slow"]
     fn test_search_ceildiv2() {
-        // CeilDiv2(n) = ceil(n/2)
         let mut spec = exact_spec(|args| Some(args[0].div_ceil(2)));
-        let result = search_smallest(&cfg(1, 14), &mut spec).unwrap();
+        let output = search_smallest(&cfg(1, 14), &mut spec);
+        let result = output.guaranteed.into_iter().next().unwrap();
         assert_eq!(result.size, 14, "Found size {}: {}", result.size, result.grf);
         assert_eq!(result.grf.arity(), 1);
     }
@@ -401,8 +454,7 @@ mod tests {
     #[ignore = "Too slow"]
     fn test_search_pow2() {
         // confidence_inputs must stay ≤ 16 here: 2^x − 1 takes ~3·2^x simulation steps,
-        // so x=16 already exceeds the 100k step budget, which would drop the sub-expression
-        // R(Z0, C(R(S, C(S, P(3,2))), P(2,2), P(2,2))) from the enumerator's memo.
+        // so x=16 already exceeds the 100k step budget.
         let mut spec = exact_spec(|args| Some(2u64.pow(args[0] as u32)));
         let config = SearchConfig {
             arity: 1,
@@ -411,19 +463,16 @@ mod tests {
             confidence_inputs: 12,
             ..Default::default()
         };
-        let result = search_smallest(&config, &mut spec).expect("should find pow2");
+        let output = search_smallest(&config, &mut spec);
+        let result = output.guaranteed.into_iter().next().expect("should find pow2");
         assert_eq!(result.size, 12, "Found size {}: {}", result.size, result.grf);
         assert_eq!(result.grf.arity(), 1);
     }
 
     // Spec shared by trailing-bits tests: f(n, x) must end in at least n ones.
-    // Note: n=0 → mask=0 → spec passes vacuously for every output; n=0 inputs
-    // carry no discriminating power.  Keep confidence_inputs large enough that the
-    // NovelEnumerator sees inputs with n ≥ 1 so it doesn't collapse distinct
-    // functions into the same fingerprint.
     fn trailing_bits_spec(inputs: &[u64], output: u64) -> bool {
         let n = inputs[0];
-        if n >= 64 { return true; } // 2^n overflows u64; treat as vacuously satisfied // TODO false
+        if n >= 64 { return true; }
         let mask = (1u64 << n) - 1;
         (output & mask) == mask
     }
@@ -438,11 +487,10 @@ mod tests {
             confidence_inputs: 8,
             ..Default::default()
         };
-        let result = search_smallest(&config, &mut trailing_bits_spec)
-            .expect("should find a match");
+        let output = search_smallest(&config, &mut trailing_bits_spec);
+        let result = output.guaranteed.into_iter().next().expect("should find a match");
         assert_eq!(result.size, 10, "should have size 10, got {}: {}", result.size, result.grf);
         assert_eq!(result.grf.arity(), 1);
-        // R(Z0, C(R(S, C(S, P(3,2))), P(2,2), P(2,2))) = \x. 2^x - 1
         assert_eq!(result.grf, grf!("R(Z0, C(R(S, C(S, P(3,2))), P(2,2), P(2,2)))"));
     }
 
@@ -456,15 +504,11 @@ mod tests {
             confidence_inputs: 64,
             ..Default::default()
         };
-        let result = search_smallest(&config, &mut trailing_bits_spec)
-            .expect("should find a match");
+        let output = search_smallest(&config, &mut trailing_bits_spec);
+        let result = output.guaranteed.into_iter().next().expect("should find a match");
         assert_eq!(result.grf.arity(), 2);
-        assert_eq!(result.size, 10,
-            "should have size 10, got {}: {}", result.size, result.grf);
+        assert_eq!(result.size, 10, "should have size 10, got {}: {}", result.size, result.grf);
 
-        // Verify the result exhaustively on a broad input grid (n in 1..=8, x in 0..=8).
-        // We don't assert a specific GRF because multiple size-10 GRFs satisfy the spec
-        // (e.g. R(Z1, ...) = 2^n-1 and R(S, ...) = (x+2)·2^n-1 both work).
         let inputs: Vec<Vec<u64>> = (1u64..=8)
             .flat_map(|n| (0u64..=8).map(move |x| vec![n, x]))
             .collect();
@@ -477,16 +521,8 @@ mod tests {
 
     #[test]
     fn test_probe_spec_detects_false_positive() {
-        // Diagnose issue (3): low confidence_inputs allows false positives.
-        // With only 8 inputs at arity 2, n is only in {0,1} from the grid — n=0
-        // always passes vacuously, n=1 only requires odd output.  Many wrong GRFs pass.
-        // P(2,1) returns n itself: satisfies n=0 (vacuous) and n=1 (output=1, odd).
-        // But P(2,1)(2, x) = 2, and mask=3: 2 & 3 = 2 ≠ 3 — it fails for n=2.
         let grf: crate::grf::Grf = grf!("P(2,1)");
         let large_inputs = crate::fingerprint::canonical_inputs_n(2, 64);
-
-        // On 8 inputs (grid only covers n ∈ {0,1}) P(2,1) may look correct…
-        // …but on 64 inputs (grid covers n ∈ {0..4}) it fails.
         let result_large = probe_spec(&grf, &mut trailing_bits_spec, &large_inputs, 100_000);
         assert!(
             matches!(result_large, ProbeResult::SpecFailed { .. }),
@@ -496,34 +532,22 @@ mod tests {
 
     #[test]
     fn test_exhaustive_probe_expected_grf() {
-        // Diagnose issue (1): is the expected GRF correct?
-        // Exhaustively verify R(S, C(R(S, C(S,P(3,2))), P(3,2), P(3,2))) on n=1..=6, x=0..=6.
         let expected = grf!("R(S, C(R(S, C(S, P(3,2))), P(3,2), P(3,2)))");
         let result = exhaustive_probe(&expected, &mut trailing_bits_spec, 6, 0);
-        assert_eq!(
-            result,
-            ProbeResult::AllPassed(49), // 7×7 grid
-            "expected GRF failed exhaustive probe: {result}"
-        );
+        assert_eq!(result, ProbeResult::AllPassed(49), "expected GRF failed exhaustive probe: {result}");
     }
 
     #[test]
     fn test_probe_spec_timeout_detection() {
-        // Diagnose issue (2): max_steps too low.
-        // M(S) diverges. With max_steps=10 it should time out, not pass.
         let grf: crate::grf::Grf = grf!("M(S)");
-        let inputs = vec![vec![]]; // arity 0
+        let inputs = vec![vec![]];
         let result = probe_spec(&grf, &mut |_, _| true, &inputs, 10);
-        assert!(
-            matches!(result, ProbeResult::TimedOut { .. }),
-            "expected timeout, got: {result}"
-        );
+        assert!(matches!(result, ProbeResult::TimedOut { .. }), "expected timeout, got: {result}");
     }
 
     #[test]
     #[ignore]
     fn trace_trailing_bits_arity2() {
-        // Diagnostic: probe the expected GRF through all three test phases.
         let expected: Grf = grf!("R(S, C(R(S, C(S, P(3,2))), P(3,2), P(3,2)))");
         let arity = 2;
         let max_steps = 1_000_000u64;
@@ -576,24 +600,36 @@ mod tests {
     }
 
     #[test]
+    fn test_diverging_grf_not_guaranteed() {
+        // M(P(2,2)) converges only on input 0 (returning 0). With the div3 spec,
+        // that single convergence matches (div3(0)=0), so it becomes a partial match.
+        // It must NOT appear as a guaranteed match.
+        let mut spec = exact_spec(|a| Some(a[0] / 3));
+        let output = search_smallest(
+            &SearchConfig { arity: 1, allow_min: true, max_size: 2, ..Default::default() },
+            &mut spec,
+        );
+        assert!(
+            output.guaranteed.is_empty(),
+            "M(P(2,2)) should not be a guaranteed match for div3, got: {}",
+            output.guaranteed.iter().map(|r| r.grf.to_string()).collect::<Vec<_>>().join(", "),
+        );
+    }
+
+    #[test]
     fn test_search_no_match() {
-        // A spec no size-3 or smaller GRF can satisfy: must return > 100 for every input.
         let mut spec = |_inputs: &[u64], output: u64| output > 100;
-        let result = search_smallest(&SearchConfig { arity: 1, max_size: 3, ..Default::default() }, &mut spec);
-        assert!(result.is_none(), "should not find a match");
+        let output = search_smallest(&SearchConfig { arity: 1, max_size: 3, ..Default::default() }, &mut spec);
+        assert!(output.guaranteed.is_empty(), "should not find a match");
     }
 
     #[test]
     fn test_exact_spec_skips_none() {
-        // exact_spec should skip inputs where reference returns None.
         let mut spec = exact_spec(|args: &[Num]| {
             if args[0] == 0 { None } else { Some(args[0] - 1) }
         });
-        // Input 0: reference diverges -> should pass (skip).
         assert!(spec(&[0], 42));
-        // Input 5: reference = 4. GRF output matches.
         assert!(spec(&[5], 4));
-        // Input 5: reference = 4. GRF output doesn't match.
         assert!(!spec(&[5], 3));
     }
 }

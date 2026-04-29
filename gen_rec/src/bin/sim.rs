@@ -62,11 +62,15 @@ fn print_table_2d(grf: &Grf, n: u64, max_steps: u64) {
         .map(|v| fmt_result(*v).len())
         .chain((0..=n).map(|b| b.to_string().len()))
         .max().unwrap_or(1);
-    let row_w = n.to_string().len().max(1);
+    let row_label = "x0↓";
+    let row_w = n.to_string().len().max(row_label.chars().count());
 
-    // Header row
+    // Axis labels and header row
     let header: String = (0..=n).map(|b| format!("{:>cell_w$}", b)).collect::<Vec<_>>().join("  ");
-    println!("{:>row_w$}  |  {}", "", header);
+    let pad = " ".repeat(row_w);
+    println!("{}  |  x1 →", pad);
+    let corner_pad = " ".repeat(row_w - row_label.chars().count());
+    println!("{}{}  |  {}", corner_pad, row_label, header);
     println!("{}--+--{}", "-".repeat(row_w), "-".repeat(header.len()));
 
     for (a, row) in vals.iter().enumerate() {

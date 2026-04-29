@@ -201,6 +201,7 @@ fn main() {
     let count_opts = PruningOpts::default(); // count_grf doesn't support skip_inline_proj
     let opts = PruningOpts {
         skip_inline_proj: args.inline_proj,
+        skip_min_dominated: true,
         ..PruningOpts::default()
     };
 

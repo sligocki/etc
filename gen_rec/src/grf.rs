@@ -115,6 +115,18 @@ impl Grf {
     ///
     /// Used by the simulator to detect when a `Rec` step function ignores its
     /// accumulator (arg 2), enabling the fast-forward optimization.
+    /// Returns true if this GRF can provably never return 0.
+    ///
+    /// Conservative: returns false when unsure. Used by the enumerator to
+    /// prune `M(f)` when `f` is always positive (M(f) always diverges).
+    pub fn is_never_zero(&self) -> bool {
+        match self {
+            Grf::Succ => true,
+            Grf::Comp(h, _, _) => h.is_never_zero(),
+            _ => false,
+        }
+    }
+
     pub fn used_args(&self) -> BTreeSet<usize> {
         match self {
             Grf::Zero(_) => BTreeSet::new(),

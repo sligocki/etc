@@ -5,12 +5,14 @@ use crate::grf::Grf;
 pub type Num = u64;
 
 /// Result of simulating a GRF.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimResult {
     /// The function terminated with this value.
     Value(Num),
     /// The function exceeded the step budget (may or may not terminate with more steps).
     OutOfSteps,
+    /// The function will provably never terminate regardless of step budget.
+    Diverge,
 }
 
 impl SimResult {
@@ -21,14 +23,14 @@ impl SimResult {
     pub fn value(&self) -> Option<&Num> {
         match self {
             SimResult::Value(v) => Some(v),
-            SimResult::OutOfSteps => None,
+            SimResult::OutOfSteps | SimResult::Diverge => None,
         }
     }
 
     pub fn into_value(self) -> Option<Num> {
         match self {
             SimResult::Value(v) => Some(v),
-            SimResult::OutOfSteps => None,
+            SimResult::OutOfSteps | SimResult::Diverge => None,
         }
     }
 }
@@ -41,11 +43,16 @@ pub struct SimOpts {
     /// of iterating `n` times. Semantically equivalent; dramatically faster for
     /// patterns like `R(Z0, R(Z1, P(3,1)))` which would otherwise be O(n²).
     pub rec_fast_forward: bool,
+
+    /// When true (default), short-circuit `M(f)` when `f` provably ignores its
+    /// search variable (1-indexed arg 1): evaluate `f(0, args)` once and return
+    /// `Value(0)` if 0, or `Diverge` if non-zero (no i will ever satisfy f=0).
+    pub min_fast_forward: bool,
 }
 
 impl Default for SimOpts {
     fn default() -> Self {
-        SimOpts { rec_fast_forward: true }
+        SimOpts { rec_fast_forward: true, min_fast_forward: true }
     }
 }
 
@@ -149,6 +156,23 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
         }
 
         Grf::Min(f) => {
+            // Fast-forward: if f ignores its search variable (1-indexed arg 1),
+            // then f(i, args) = f(0, args) for all i.  One call decides:
+            //   f(0, args) = 0  → min is 0, return Value(0).
+            //   f(0, args) ≠ 0  → no i will satisfy f=0, return Diverge.
+            if opts.min_fast_forward && !f.used_args().contains(&1) {
+                let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
+                f_args.push(0);
+                f_args.extend_from_slice(args);
+                let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
+                steps += s;
+                return match result {
+                    SimResult::Value(0) => (SimResult::Value(0), steps),
+                    SimResult::Value(_) => (SimResult::Diverge, steps),
+                    other => (other, steps),
+                };
+            }
+
             // M(f)(args) = min{i : f(i, args...) = 0}
             let mut i: Num = 0;
             loop {
@@ -306,7 +330,11 @@ mod tests {
     // --- rec_fast_forward tests ---
 
     fn no_ff() -> SimOpts {
-        SimOpts { rec_fast_forward: false }
+        SimOpts { rec_fast_forward: false, min_fast_forward: false }
+    }
+
+    fn no_min_ff() -> SimOpts {
+        SimOpts { min_fast_forward: false, ..SimOpts::default() }
     }
 
     #[test]
@@ -375,5 +403,64 @@ mod tests {
         // Step counts must be identical since ff doesn't apply here.
         assert_eq!(steps_ff, steps_no);
         assert_eq!(steps_ff, 5);
+    }
+
+    // --- min_fast_forward tests ---
+
+    #[test]
+    fn test_min_ff_unused_search_var_zero() {
+        // M(Z1)(): Z1 ignores arg 1. f(0)=0 → Value(0).
+        let f = Grf::Min(Box::new(Grf::Zero(1)));
+        let (r, _) = simulate(&f, &[], 1_000_000);
+        assert_eq!(r, SimResult::Value(0));
+    }
+
+    #[test]
+    fn test_min_ff_proj_outer_arg_zero() {
+        // M(P(2,2))(0): P(2,2) ignores arg 1 (search var). f(0,0)=0 → Value(0).
+        let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
+        let (r, _) = simulate(&f, &[0], 1_000_000);
+        assert_eq!(r, SimResult::Value(0));
+    }
+
+    #[test]
+    fn test_min_ff_proj_outer_arg_diverges() {
+        // M(P(2,2))(3): f(0,3)=3≠0 → Diverge.
+        let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
+        let (r, _) = simulate(&f, &[3], 1_000_000);
+        assert_eq!(r, SimResult::Diverge);
+    }
+
+    #[test]
+    fn test_min_ff_diverge_vs_oos() {
+        // M(C(S,Z1))(): C(S,Z1) ignores arg 1. f(0)=1≠0 → Diverge (with ff).
+        // Without ff + small budget → OutOfSteps (budget exhausted, not proven diverge).
+        let f = Grf::Min(Box::new(Grf::comp(Grf::Succ, vec![Grf::Zero(1)])));
+        let (r_ff, _) = simulate(&f, &[], 0);  // unlimited
+        assert_eq!(r_ff, SimResult::Diverge);
+        let (r_no, _) = simulate_opts(&f, &[], Some(100), no_min_ff());
+        assert_eq!(r_no, SimResult::OutOfSteps);
+    }
+
+    #[test]
+    fn test_min_ff_not_applied_when_search_var_used() {
+        // M(S)(): S uses arg 1 (search var). Fast-forward must NOT apply.
+        // Without ff: exhausts budget. With ff: same (ff doesn't fire).
+        let f = Grf::Min(Box::new(Grf::Succ));
+        let (r_ff, _) = simulate_opts(&f, &[], Some(1000), SimOpts::default());
+        let (r_no, _) = simulate_opts(&f, &[], Some(1000), no_min_ff());
+        // Both should exhaust budget (not Diverge), since ff doesn't apply.
+        assert_eq!(r_ff, SimResult::OutOfSteps);
+        assert_eq!(r_no, SimResult::OutOfSteps);
+    }
+
+    #[test]
+    fn test_min_ff_fewer_steps() {
+        // M(C(S,Z1))() with ff uses ~3 steps; without ff exhausts budget.
+        let f = Grf::Min(Box::new(Grf::comp(Grf::Succ, vec![Grf::Zero(1)])));
+        let (_, steps_ff) = simulate(&f, &[], 0);
+        let (_, steps_no) = simulate_opts(&f, &[], Some(100), no_min_ff());
+        assert!(steps_ff < 10, "ff should use very few steps, got {steps_ff}");
+        assert!(steps_no >= 100, "no_ff should exhaust budget");
     }
 }

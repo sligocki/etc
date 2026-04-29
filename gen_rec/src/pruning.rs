@@ -44,6 +44,32 @@ pub struct PruningOpts {
     /// and will be generated independently by the enumerator.
     pub skip_rec_zero_arg: bool,
 
+    /// Skip `M(Zero(_))` and `M(Proj(_, _))` (any projection).
+    ///
+    /// All are dominated by `Z_{k-1}` (size 1 vs 2):
+    /// - `M(Zero(k+1))`: `min{i : 0 = 0} = 0 = Z_k` (exactly zero everywhere).
+    /// - `M(Proj(k+1, 1))`: `min{i : i = 0} = 0 = Z_k` (search var; exactly zero).
+    /// - `M(Proj(k+1, j≥2))`: returns 0 when `x_{j-1}=0`, diverges otherwise —
+    ///   dominated by `Z_k` which returns 0 everywhere.
+    ///
+    /// Compatible with `count_grf` and `seek_stream_grf`.
+    pub skip_min_trivial_zero: bool,
+
+    /// Skip `M(f)` dominated by a smaller total function (stream-only).
+    ///
+    /// Two cases, both dominated by `Z_{k-1}` (size 1):
+    /// - (a) f ignores its search variable (1-indexed arg 1): M(f) only returns
+    ///       0 or diverges, so Z_{k-1} (which always returns 0) generalises it.
+    /// - (b) f is provably always positive (`is_never_zero`): M(f) always
+    ///       diverges, so Z_{k-1} generalises it vacuously.
+    ///
+    /// Consequence: no `M(atom)` (size-2 Min) survives for any arity when both
+    /// `skip_min_trivial_zero` and `skip_min_dominated` are enabled.
+    ///
+    /// **Stream-only**: `count_grf` and `seek_stream_grf` do not account for
+    /// this flag. Do not use with those functions.
+    pub skip_min_dominated: bool,
+
     /// Skip `C(h, g1…gm)` when every `gi` is `Proj` or `Zero` and
     /// `inline_proj(h, k, rewiring)` succeeds.
     ///
@@ -64,8 +90,9 @@ impl PruningOpts {
             comp_assoc: true,
             skip_rec_zero_base: true,
             skip_rec_zero_arg: true,
-            // Not included: skip_inline_proj is stream_grf-only and not
-            // supported by count_grf / seek_stream_grf.
+            skip_min_trivial_zero: true,
+            // Stream-only flags: not supported by count_grf / seek_stream_grf.
+            skip_min_dominated: false,
             skip_inline_proj: false,
         }
     }
@@ -77,6 +104,8 @@ impl PruningOpts {
             comp_assoc: false,
             skip_rec_zero_base: false,
             skip_rec_zero_arg: false,
+            skip_min_trivial_zero: false,
+            skip_min_dominated: false,
             skip_inline_proj: false,
         }
     }
@@ -87,6 +116,8 @@ impl PruningOpts {
             comp_assoc: true,
             skip_rec_zero_base: true,
             skip_rec_zero_arg: true,
+            skip_min_trivial_zero: true,
+            skip_min_dominated: true,
             skip_inline_proj: true,
         }
     }

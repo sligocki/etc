@@ -8,7 +8,7 @@ use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::pruning::PruningOpts;
-use gen_rec::simulate::{simulate, Num};
+use gen_rec::simulate::{simulate, Num, SimResult};
 use rayon::prelude::*;
 use std::cell::Cell;
 use std::time::{Duration, Instant};
@@ -52,6 +52,7 @@ struct BatchResult {
     best_value: Option<Num>,
     best_exprs: Vec<String>,
     timed_out: usize,
+    diverged: usize,
     total_steps: u64,
     max_steps_single: u64,
 }
@@ -61,6 +62,7 @@ struct SizeResult {
     size: usize,
     total: usize,
     timed_out: usize,
+    diverged: usize,
     best_value: Option<Num>,
     best_exprs: Vec<String>,
     total_steps: u64,
@@ -72,25 +74,27 @@ fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
     let mut best_val: Option<Num> = None;
     let mut best_exprs: Vec<String> = Vec::new();
     let mut timed_out = 0usize;
+    let mut diverged = 0usize;
     let mut total_steps = 0u64;
     let mut max_steps_single = 0u64;
 
-    let outcomes: Vec<(Option<Num>, u64, String)> = batch
+    let outcomes: Vec<(SimResult, u64, String)> = batch
         .par_iter()
         .map(|grf| {
             let (result, steps) = simulate(grf, &[], max_steps);
-            (result.into_value(), steps, grf.to_string())
+            (result, steps, grf.to_string())
         })
         .collect();
 
-    for (value, steps, display) in outcomes {
+    for (result, steps, display) in outcomes {
         total_steps += steps;
-        if steps > max_steps_single {
-            max_steps_single = steps;
-        }
-        match value {
-            None => timed_out += 1,
-            Some(v) => {
+        match result {
+            SimResult::OutOfSteps => timed_out += 1,
+            SimResult::Diverge => diverged += 1,
+            SimResult::Value(v) => {
+                if steps > max_steps_single {
+                    max_steps_single = steps;
+                }
                 let cmp = best_val
                     .as_ref()
                     .map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
@@ -109,6 +113,7 @@ fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
         best_value: best_val,
         best_exprs,
         timed_out,
+        diverged,
         total_steps,
         max_steps_single,
     }
@@ -120,10 +125,12 @@ fn merge_batch(
     size_best_val: &mut Option<Num>,
     size_best_exprs: &mut Vec<String>,
     size_timed_out: &mut usize,
+    size_diverged: &mut usize,
     size_total_steps: &mut u64,
     size_max_steps: &mut u64,
 ) {
     *size_timed_out += br.timed_out;
+    *size_diverged += br.diverged;
     *size_total_steps += br.total_steps;
     if br.max_steps_single > *size_max_steps {
         *size_max_steps = br.max_steps_single;
@@ -224,6 +231,7 @@ fn main() {
 
         let mut total = 0usize;
         let mut size_timed_out = 0usize;
+        let mut size_diverged = 0usize;
         let mut size_best_val: Option<Num> = None;
         let mut size_best_exprs: Vec<String> = Vec::new();
         let mut size_total_steps: u64 = 0;
@@ -238,6 +246,7 @@ fn main() {
                      best_val: &mut Option<Num>,
                      best_exprs: &mut Vec<String>,
                      timed_out: &mut usize,
+                     diverged: &mut usize,
                      total_steps: &mut u64,
                      max_steps: &mut u64| {
             if batch.is_empty() {
@@ -246,7 +255,7 @@ fn main() {
             let sim_start = Instant::now();
             let br = process_batch(batch, args.max_steps);
             sim_time_cell.set(sim_time_cell.get() + sim_start.elapsed());
-            merge_batch(br, best_val, best_exprs, timed_out, total_steps, max_steps);
+            merge_batch(br, best_val, best_exprs, timed_out, diverged, total_steps, max_steps);
             batch.clear();
         };
 
@@ -259,6 +268,7 @@ fn main() {
                     &mut size_best_val,
                     &mut size_best_exprs,
                     &mut size_timed_out,
+                    &mut size_diverged,
                     &mut size_total_steps,
                     &mut size_max_steps,
                 );
@@ -269,6 +279,7 @@ fn main() {
             &mut size_best_val,
             &mut size_best_exprs,
             &mut size_timed_out,
+            &mut size_diverged,
             &mut size_total_steps,
             &mut size_max_steps,
         );
@@ -347,6 +358,7 @@ fn main() {
             size,
             total,
             timed_out: size_timed_out,
+            diverged: size_diverged,
             best_value: size_best_val,
             best_exprs: size_best_exprs,
             total_steps: size_total_steps,
@@ -357,19 +369,27 @@ fn main() {
     let total_elapsed = total_start.elapsed().as_secs_f64();
 
     println!();
-    println!("{}", "=".repeat(90));
+    let sep_width = if args.allow_min { 101 } else { 90 };
+    println!("{}", "=".repeat(sep_width));
     println!(
         "BBµ_{} summary  (opts={:?}, max_steps={})",
         if args.allow_min { "GRF" } else { "PRF" },
         opts,
         args.max_steps
     );
-    println!("{}", "=".repeat(90));
-    println!(
-        "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
-        "n", "BBµ(n) ≥", "max_steps", "holdouts", "#fns", "tot_steps", "Champion"
-    );
-    println!("{}", "-".repeat(90));
+    println!("{}", "=".repeat(sep_width));
+    if args.allow_min {
+        println!(
+            "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
+            "n", "BBµ(n) ≥", "max_steps", "holdouts", "#diverge", "#fns", "tot_steps", "Champion"
+        );
+    } else {
+        println!(
+            "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
+            "n", "BBµ(n) ≥", "max_steps", "holdouts", "#fns", "tot_steps", "Champion"
+        );
+    }
+    println!("{}", "-".repeat(sep_width));
     for r in &results {
         let max_val_str = match &r.best_value {
             Some(v) => v.to_string(),
@@ -385,17 +405,31 @@ fn main() {
                 s
             }
         };
-        println!(
-            "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
-            r.size,
-            max_val_str,
-            fmt_si(r.max_steps_single),
-            r.timed_out,
-            r.total,
-            fmt_si(r.total_steps),
-            expr_str,
-        );
+        if args.allow_min {
+            println!(
+                "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
+                r.size,
+                max_val_str,
+                fmt_si(r.max_steps_single),
+                r.timed_out,
+                r.diverged,
+                r.total,
+                fmt_si(r.total_steps),
+                expr_str,
+            );
+        } else {
+            println!(
+                "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
+                r.size,
+                max_val_str,
+                fmt_si(r.max_steps_single),
+                r.timed_out,
+                r.total,
+                fmt_si(r.total_steps),
+                expr_str,
+            );
+        }
     }
-    println!("{}", "-".repeat(90));
+    println!("{}", "-".repeat(sep_width));
     println!("Total time: {:.2}s", total_elapsed);
 }

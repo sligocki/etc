@@ -2,19 +2,33 @@
 use crate::enumerate::stream_grf;
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
-use crate::simulate::simulate;
+use crate::simulate::{simulate, SimResult};
 use std::collections::HashMap;
 
-/// A fingerprint: one entry per canonical input. None = timed-out, Some(v) = output value.
-///
-/// Two fingerprints are only meaningfully comparable when both are fully computed
-/// (no None values). A None means "did not converge within the step budget" — not
-/// "diverges" — so None cannot be equated with any value, including another None.
-pub type Fingerprint = Vec<Option<u64>>;
+/// One entry in a fingerprint: the observed outcome on a single canonical input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FpEntry {
+    /// The function terminated with this value.
+    Value(u64),
+    /// The function provably never terminates on this input (from `SimResult::Diverge`).
+    Diverge,
+    /// The function exceeded the step budget; termination is unknown.
+    Unknown,
+}
 
-/// Returns true if the fingerprint is fully computed (no timeouts).
+/// A fingerprint: one `FpEntry` per canonical input.
+///
+/// Two fingerprints are considered equal only when every entry matches exactly:
+/// `Value(k) == Value(k)`, `Diverge == Diverge`, `Unknown == Unknown`.
+/// `Diverge` and `Unknown` are distinct — one is a definitive signal, the other is not.
+pub type Fingerprint = Vec<FpEntry>;
+
+/// Returns true if the fingerprint is fully determined (no `Unknown` entries).
+///
+/// `Diverge` entries count as complete — we know definitively what happens on those
+/// inputs.  Only `Unknown` (step-budget exhausted) entries represent uncertainty.
 pub fn fp_is_complete(fp: &Fingerprint) -> bool {
-    fp.iter().all(|v| v.is_some())
+    fp.iter().all(|e| !matches!(e, FpEntry::Unknown))
 }
 
 /// Minimal linear congruential generator for deterministic pseudorandom inputs.
@@ -166,7 +180,11 @@ pub fn compute_fp(grf: &Grf, inputs: &[Vec<u64>], max_steps: u64) -> Fingerprint
         .iter()
         .map(|inp| {
             let (result, _) = simulate(grf, inp, max_steps);
-            result.into_value()
+            match result {
+                SimResult::Value(v) => FpEntry::Value(v),
+                SimResult::Diverge => FpEntry::Diverge,
+                SimResult::OutOfSteps => FpEntry::Unknown,
+            }
         })
         .collect()
 }
@@ -207,9 +225,9 @@ pub fn verification_inputs(arity: usize) -> Vec<Vec<u64>> {
 /// A database of the smallest known GRF for each fully-computed fingerprint,
 /// keyed by (arity, fingerprint).
 ///
-/// Only entries where every canonical input converged within the step budget are
-/// stored. Partial fingerprints (any None) are discarded — a None means "unknown
-/// value", not "diverges", so it cannot safely be used for equivalence matching.
+/// Only fingerprints with no `Unknown` entries are stored — an `Unknown` entry
+/// means "we ran out of budget", so we can't safely compare it for equivalence.
+/// `Diverge` entries are accepted: they are definitive signals.
 pub struct FingerprintDb {
     /// (arity, fingerprint) → smallest GRF with that fingerprint
     map: HashMap<(usize, Fingerprint), Grf>,
@@ -221,8 +239,8 @@ pub struct FingerprintDb {
 impl FingerprintDb {
     /// Build a DB of all novel GRFs up to `max_size` for arities 0..=`max_arity`.
     ///
-    /// GRFs whose fingerprint contains any None (timed out within `max_steps`) are
-    /// silently skipped — their functional identity is unknown.
+    /// GRFs whose fingerprint contains any `Unknown` entry (step budget exhausted)
+    /// are silently skipped — their functional identity is uncertain.
     pub fn build(max_size: usize, max_arity: usize, allow_min: bool, max_steps: u64) -> Self {
         let opts = PruningOpts::default();
         let mut db = FingerprintDb {

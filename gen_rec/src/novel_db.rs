@@ -3,14 +3,14 @@
 /// File format (one file per arity+allow_min combination):
 ///   Line 1: `allow_min=<bool> max_size=<usize> max_steps=<u64>`
 ///   Subsequent lines: `<size>\t<grf>\t<fingerprint>`
-///     where fingerprint is comma-separated integers / `?` for None.
+///     where fingerprint is comma-separated: integers for Value(n), `?` for Unknown, `!` for Diverge.
 ///   Timed-out lines: `<size>\t<grf>\t?`  (single `?` = no fingerprint computed)
 ///     These are GRFs that did not converge within max_steps. On reload with a
 ///     higher step budget, they are retried and may be recovered into the main map.
 ///
 /// Canonical filenames: `a{arity}_{prf|min}.db`
 use crate::enumerate::stream_grf;
-use crate::fingerprint::{canonical_inputs, compute_fp, fp_is_complete, Fingerprint, FingerprintDb};
+use crate::fingerprint::{canonical_inputs, compute_fp, fp_is_complete, Fingerprint, FingerprintDb, FpEntry};
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
 use std::collections::HashMap;
@@ -32,26 +32,33 @@ pub fn db_filename(dir: &Path, arity: usize, allow_min: bool) -> PathBuf {
     dir.join(format!("a{arity}_{suffix}.db"))
 }
 
-/// Parse a stored fingerprint string: "0,1,2,?,4" → Vec<Option<u64>>
+/// Parse a stored fingerprint string: "0,1,2,?,4,!" → Vec<FpEntry>
+///
+/// Format: integers for Value(n), "?" for Unknown (OutOfSteps), "!" for Diverge.
 fn parse_fp(s: &str) -> Option<Fingerprint> {
     s.split(',')
         .map(|v| {
             let v = v.trim();
             if v == "?" {
-                Some(None)
+                Some(FpEntry::Unknown)
+            } else if v == "!" {
+                Some(FpEntry::Diverge)
             } else {
-                v.parse::<u64>().ok().map(Some)
+                v.parse::<u64>().ok().map(FpEntry::Value)
             }
         })
         .collect()
 }
 
 /// Format a fingerprint for writing to a file.
+///
+/// Format: integers for Value(n), "?" for Unknown, "!" for Diverge.
 pub fn format_fp(fp: &Fingerprint) -> String {
     fp.iter()
         .map(|v| match v {
-            Some(n) => n.to_string(),
-            None => "?".to_string(),
+            FpEntry::Value(n) => n.to_string(),
+            FpEntry::Unknown => "?".to_string(),
+            FpEntry::Diverge => "!".to_string(),
         })
         .collect::<Vec<_>>()
         .join(",")

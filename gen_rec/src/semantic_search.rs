@@ -244,6 +244,7 @@ fn test_candidate(
     let mut fast_converged = 0usize;
     for inp in fast_inputs {
         match simulate(grf, inp, max_steps).0 {
+            SimResult::Diverge => return None,
             SimResult::OutOfSteps => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
@@ -262,6 +263,7 @@ fn test_candidate(
     let mut converged = 0usize;
     for inp in conf_inputs {
         match simulate(grf, inp, max_steps).0 {
+            SimResult::Diverge => return None,
             SimResult::OutOfSteps => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
@@ -277,6 +279,7 @@ fn test_candidate(
     // Phase 3: verification on broader grid to guard against false positives.
     for inp in verify_inputs {
         match simulate(grf, inp, max_steps).0 {
+            SimResult::Diverge => return None,
             SimResult::OutOfSteps => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
@@ -317,9 +320,14 @@ pub enum ProbeResult {
         /// The value the GRF returned.
         output: u64,
     },
-    /// The GRF exceeded the step budget on this input.
+    /// The GRF exceeded the step budget on this input (may terminate with more steps).
     TimedOut {
         /// The input tuple that caused the timeout.
+        inputs: Vec<u64>,
+    },
+    /// The GRF provably diverges on this input (will never terminate regardless of budget).
+    Diverged {
+        /// The input tuple on which divergence was detected.
         inputs: Vec<u64>,
     },
 }
@@ -332,6 +340,7 @@ impl std::fmt::Display for ProbeResult {
                 write!(f, "SpecFailed(inputs={inputs:?}, output={output})")
             }
             ProbeResult::TimedOut { inputs } => write!(f, "TimedOut(inputs={inputs:?})"),
+            ProbeResult::Diverged { inputs } => write!(f, "Diverged(inputs={inputs:?})"),
         }
     }
 }
@@ -351,6 +360,7 @@ pub fn probe_spec(
 ) -> ProbeResult {
     for inp in inputs {
         match simulate(grf, inp, max_steps).0 {
+            SimResult::Diverge => return ProbeResult::Diverged { inputs: inp.clone() },
             SimResult::OutOfSteps => return ProbeResult::TimedOut { inputs: inp.clone() },
             SimResult::Value(v) => {
                 if !spec(inp, v) {
@@ -565,6 +575,7 @@ mod tests {
                     eprintln!("  {:?} -> {} ({})", inp, v, if pass { "PASS" } else { "FAIL" });
                     pass
                 }
+                SimResult::Diverge => { eprintln!("  {:?} -> DIVERGE", inp); false }
                 SimResult::OutOfSteps => { eprintln!("  {:?} -> TIMEOUT", inp); false }
             };
             if !ok { eprintln!("  ^^^ REJECT on fast_inputs"); break; }
@@ -578,6 +589,7 @@ mod tests {
                     let pass = trailing_bits_spec(inp, v);
                     eprintln!("  {:?} -> {} ({})", inp, v, if pass { "PASS" } else { "FAIL" });
                 }
+                SimResult::Diverge => eprintln!("  {:?} -> DIVERGE", inp),
                 SimResult::OutOfSteps => eprintln!("  {:?} -> TIMEOUT", inp),
             }
         }
@@ -590,6 +602,7 @@ mod tests {
                     let pass = trailing_bits_spec(inp, v);
                     eprintln!("  {:?} -> {} ({})", inp, v, if pass { "PASS" } else { "FAIL" });
                 }
+                SimResult::Diverge => eprintln!("  {:?} -> DIVERGE", inp),
                 SimResult::OutOfSteps => eprintln!("  {:?} -> TIMEOUT", inp),
             }
         }
@@ -601,9 +614,9 @@ mod tests {
 
     #[test]
     fn test_diverging_grf_not_guaranteed() {
-        // M(P(2,2)) converges only on input 0 (returning 0). With the div3 spec,
-        // that single convergence matches (div3(0)=0), so it becomes a partial match.
-        // It must NOT appear as a guaranteed match.
+        // M(P(2,2))(x) = min{i : P(2,2)(i,x)=0} = min{i : x=0}. For x>0 this diverges
+        // (P(2,2) ignores the search var, so fast-forward fires and returns Diverge).
+        // The hard-reject on Diverge means M(P(2,2)) is rejected outright, not as partial.
         let mut spec = exact_spec(|a| Some(a[0] / 3));
         let output = search_smallest(
             &SearchConfig { arity: 1, allow_min: true, max_size: 2, ..Default::default() },

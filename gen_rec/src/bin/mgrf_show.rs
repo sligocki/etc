@@ -1,21 +1,21 @@
 /// Print sizes (raw, after opt_inline_proj, after opt_fingerprint) for all
-/// named GRFs defined in a .igrf file, then run inline spec tests.
+/// named GRFs defined in a .mgrf file, then run inline spec tests.
 ///
 /// Usage:
-///   igrf_show erdos.igrf
-///   igrf_show erdos.igrf --fp-max-size 8
+///   mgrf_show mgrf/erdos.mgrf
+///   mgrf_show mgrf/erdos.mgrf --fp-max-size 8
 use clap::Parser;
 use gen_rec::fingerprint::FingerprintDb;
-use gen_rec::igrf::parse_igrf_file;
+use gen_rec::mgrf::parse_mgrf_file;
 use gen_rec::optimize::{opt_fingerprint, opt_inline_proj};
 use gen_rec::simulate::simulate;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(about = "Print sizes for all GRFs defined in a .igrf file before and after optimization")]
+#[command(about = "Print sizes for all GRFs defined in a .mgrf file before and after optimization")]
 struct Args {
-    /// Path to the .igrf file.
+    /// Path to the .mgrf file.
     file: PathBuf,
 
     /// Max GRF size included in the fingerprint DB (0 = skip fingerprint pass).
@@ -41,7 +41,7 @@ fn main() {
     let content = std::fs::read_to_string(&args.file)
         .unwrap_or_else(|e| panic!("Cannot read {:?}: {}", args.file, e));
 
-    let file = parse_igrf_file(&content)
+    let file = parse_mgrf_file(&content)
         .unwrap_or_else(|e| panic!("Parse error: {}", e));
 
     let db = if args.fp_max_size > 0 {

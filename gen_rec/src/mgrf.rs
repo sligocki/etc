@@ -4,7 +4,7 @@ use std::str::Chars;
 
 use crate::grf::Grf;
 
-/// A single inline spec test from a `.igrf` file.
+/// A single inline spec test from a `.mgrf` file.
 #[derive(Debug, Clone)]
 pub struct TestCase {
     pub name: String,
@@ -13,13 +13,13 @@ pub struct TestCase {
     pub expected: Option<u64>,
 }
 
-/// Parsed `.igrf` file: resolved GRF definitions plus inline spec tests.
+/// Parsed `.mgrf` file: resolved GRF definitions plus inline spec tests.
 pub struct IgrfFile {
     pub defs: Vec<(String, Grf)>,
     pub tests: Vec<TestCase>,
 }
 
-// Internal AST for igrf expressions before arity inference.
+// Internal AST for mgrf expressions before arity inference.
 #[derive(Debug, Clone)]
 enum Expr {
     Zero(Option<usize>),        // Z (bare) or Zk
@@ -32,8 +32,8 @@ enum Expr {
     Const(u64),                 // K[n]
 }
 
-/// Parse a `.igrf` file into resolved GRF definitions and inline spec tests.
-pub fn parse_igrf_file(content: &str) -> Result<IgrfFile, String> {
+/// Parse a `.mgrf` file into resolved GRF definitions and inline spec tests.
+pub fn parse_mgrf_file(content: &str) -> Result<IgrfFile, String> {
     let (raw_defs, tests) = parse_file(content)?;
     let mut arities: HashMap<String, usize> = HashMap::new();
     let mut grfs: HashMap<String, Grf> = HashMap::new();
@@ -51,9 +51,9 @@ pub fn parse_igrf_file(content: &str) -> Result<IgrfFile, String> {
     Ok(IgrfFile { defs, tests })
 }
 
-/// Parse a `.igrf` file and return only the GRF definitions.
-pub fn parse_igrf_to_grfs(content: &str) -> Result<Vec<(String, Grf)>, String> {
-    parse_igrf_file(content).map(|f| f.defs)
+/// Parse a `.mgrf` file and return only the GRF definitions.
+pub fn parse_mgrf_to_grfs(content: &str) -> Result<Vec<(String, Grf)>, String> {
+    parse_mgrf_file(content).map(|f| f.defs)
 }
 
 // ── File-level parser ─────────────────────────────────────────────────────────
@@ -356,7 +356,7 @@ mod tests {
     use super::*;
 
     fn single(content: &str) -> Grf {
-        let defs = parse_igrf_to_grfs(content).unwrap();
+        let defs = parse_mgrf_to_grfs(content).unwrap();
         assert_eq!(defs.len(), 1);
         defs.into_iter().next().unwrap().1
     }
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_named_ref() {
-        let defs = parse_igrf_to_grfs("Pred := R(Z, P1)\nPow2 := C(S, Pred)").unwrap();
+        let defs = parse_mgrf_to_grfs("Pred := R(Z, P1)\nPow2 := C(S, Pred)").unwrap();
         assert_eq!(defs.len(), 2);
         // C(S, Pred) where Pred has arity 1; result has arity 1.
         assert_eq!(defs[1].1.arity(), 1);
@@ -406,8 +406,8 @@ mod tests {
 
     #[test]
     fn test_erdos_file() {
-        let content = include_str!("../igrf/erdos.igrf");
-        let file = parse_igrf_file(content).unwrap();
+        let content = include_str!("../mgrf/erdos.mgrf");
+        let file = parse_mgrf_file(content).unwrap();
         assert!(!file.defs.is_empty());
         let last = file.defs.last().unwrap();
         assert_eq!(last.0, "ErdosTernConj");

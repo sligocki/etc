@@ -88,6 +88,7 @@ const SPECS: &[SpecDef] = &[
         description: "f(x) = 2x",
         build: || Box::new(exact_spec(|a| Some(2*a[0]))),
     },
+    // Mod2: 8: R(Z0, C(R(S, Z3), P(2,2), Z2))
     SpecDef {
         name: "mod2", default_arity: 1,
         description: "parity: f(x) = x % 2",
@@ -98,6 +99,7 @@ const SPECS: &[SpecDef] = &[
         description: "parity: f(x) = (x+1) % 2",
         build: || Box::new(exact_spec(|a| Some((a[0]+1) % 2))),
     },
+    // Mod3: 10: R(Z0, C(R(S, R(P(2,1), Z4)), P(2,2), P(2,2)))
     SpecDef {
         name: "mod3", default_arity: 1,
         description: "f(x) = x % 3",

@@ -60,11 +60,16 @@ struct Args {
 // Top-K tracker
 // ---------------------------------------------------------------------------
 
-/// Track the top-K distinct scoring GRFs, retaining all exprs per score.
+/// How many example expressions to keep per score level.
+/// The total count is tracked separately so we can print "N tied" accurately.
+const MAX_EXPRS_PER_SCORE: usize = 25;
+
+/// Track the top-K distinct scoring GRFs.
+/// Per score level: exact total count + up to MAX_EXPRS_PER_SCORE examples.
 struct TopK {
     k: usize,
-    /// Ascending by score; at most `k` entries.
-    entries: Vec<(Num, Vec<String>)>,
+    /// Ascending by score; at most `k` entries: (score, total_count, examples).
+    entries: Vec<(Num, usize, Vec<String>)>,
 }
 
 impl TopK {
@@ -73,14 +78,20 @@ impl TopK {
     }
 
     fn best(&self) -> Option<Num> {
-        self.entries.last().map(|(v, _)| *v)
+        self.entries.last().map(|(v, _, _)| *v)
     }
 
     fn insert(&mut self, score: Num, expr: String) {
-        match self.entries.binary_search_by_key(&score, |(s, _)| *s) {
-            Ok(idx) => self.entries[idx].1.push(expr),
+        match self.entries.binary_search_by_key(&score, |(s, _, _)| *s) {
+            Ok(idx) => {
+                let (_, count, exprs) = &mut self.entries[idx];
+                *count += 1;
+                if exprs.len() < MAX_EXPRS_PER_SCORE {
+                    exprs.push(expr);
+                }
+            }
             Err(idx) => {
-                self.entries.insert(idx, (score, vec![expr]));
+                self.entries.insert(idx, (score, 1, vec![expr]));
                 if self.entries.len() > self.k {
                     self.entries.remove(0); // drop lowest score
                 }
@@ -89,15 +100,27 @@ impl TopK {
     }
 
     fn merge_from(&mut self, other: TopK) {
-        for (score, exprs) in other.entries {
+        for (score, count, exprs) in other.entries {
+            // Merge the example expressions.
             for expr in exprs {
                 self.insert(score, expr);
+            }
+            // Adjust the count: insert() counted each expr as +1, but the
+            // other entry may have had count > exprs.len() (if it was already
+            // capped). Add the remainder directly.
+            if let Ok(idx) = self.entries.binary_search_by_key(&score, |(s, _, _)| *s) {
+                let stored_exprs = self.entries[idx].2.len();
+                // count already in self = stored_exprs (each insert added 1)
+                // actual count from other = count
+                // we over-counted by stored_exprs, need to correct
+                let (_, self_count, _) = &mut self.entries[idx];
+                *self_count = self_count.saturating_sub(stored_exprs) + count;
             }
         }
     }
 
     /// Iterate entries from highest to lowest score.
-    fn iter_desc(&self) -> impl Iterator<Item = &(Num, Vec<String>)> {
+    fn iter_desc(&self) -> impl Iterator<Item = &(Num, usize, Vec<String>)> {
         self.entries.iter().rev()
     }
 }
@@ -125,12 +148,11 @@ struct SizeResult {
 }
 
 fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
-    let outcomes: Vec<(SimResult, u64, String)> = batch
+    // Strings are not allocated in worker threads to avoid macOS nano-zone
+    // cross-thread free errors (pointer allocated on thread W, freed on main).
+    let outcomes: Vec<(SimResult, u64)> = batch
         .par_iter()
-        .map(|grf| {
-            let (result, steps) = simulate(grf, &[], max_steps);
-            (result, steps, grf.to_string())
-        })
+        .map(|grf| simulate(grf, &[], max_steps))
         .collect();
 
     let mut top_k = TopK::new(k);
@@ -139,7 +161,7 @@ fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
     let mut total_steps = 0u64;
     let mut max_steps_single = 0u64;
 
-    for (result, steps, display) in outcomes {
+    for (idx, (result, steps)) in outcomes.into_iter().enumerate() {
         total_steps += steps;
         match result {
             SimResult::OutOfSteps => timed_out += 1,
@@ -148,7 +170,7 @@ fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
                 if steps > max_steps_single {
                     max_steps_single = steps;
                 }
-                top_k.insert(v, display);
+                top_k.insert(v, batch[idx].to_string());
             }
         }
     }
@@ -376,18 +398,17 @@ fn main() {
         );
 
         // Print top-k scores.
-        const MAX_EXPRS_PER_SCORE: usize = 5;
-        for (rank, (score, exprs)) in size_top_k.iter_desc().enumerate() {
-            let shown = exprs.len().min(MAX_EXPRS_PER_SCORE);
-            let overflow = exprs.len().saturating_sub(MAX_EXPRS_PER_SCORE);
+        const PRINT_EXPRS: usize = 5;
+        for (rank, (score, count, exprs)) in size_top_k.iter_desc().enumerate() {
             print!("  #{}: score={}", rank + 1, score);
-            if exprs.len() > 1 {
-                print!(" ({} tied)", exprs.len());
+            if *count > 1 {
+                print!(" ({} tied)", count);
             }
             println!();
-            for expr in exprs.iter().take(shown) {
+            for expr in exprs.iter().take(PRINT_EXPRS) {
                 println!("       via {}", fmt(expr));
             }
+            let overflow = count.saturating_sub(PRINT_EXPRS);
             if overflow > 0 {
                 println!("       ... (+{} more)", overflow);
             }
@@ -466,10 +487,10 @@ fn main() {
         };
         let expr_str = match r.top_k.iter_desc().next() {
             None => "-".to_string(),
-            Some((_, exprs)) => {
+            Some((_, count, exprs)) => {
                 let s = fmt(&exprs[0]);
-                if exprs.len() > 1 {
-                    format!("{s}  (+{} ties)", exprs.len() - 1)
+                if *count > 1 {
+                    format!("{s}  (+{} ties)", count - 1)
                 } else {
                     s
                 }

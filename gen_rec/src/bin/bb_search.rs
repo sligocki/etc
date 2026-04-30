@@ -1,17 +1,25 @@
-/// Enumerate all 0-arity GRFs of increasing size and track BBµ champions.
+/// Enumerate 0-arity GRFs of a given size and track BBµ champions.
 ///
-/// Enumeration is single-threaded using a fully-streaming algorithm: GRF trees
-/// are generated one at a time without materialising any Vec<Grf>, keeping peak
-/// memory at ~20 MB regardless of size.  Simulation is parallelised with Rayon.
+/// Usage examples:
+///   bb_search 8
+///   bb_search --allow-min --max-steps=300000 14
+///   bb_search --min-prf 14
+///   bb_search 14 --results-dir my_results/
 use clap::Parser;
+use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
-use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::pruning::PruningOpts;
 use gen_rec::simulate::{simulate, Num, SimResult};
 use rayon::prelude::*;
-use std::cell::Cell;
+use std::fs;
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+// ---------------------------------------------------------------------------
+// CLI args
+// ---------------------------------------------------------------------------
 
 #[derive(Parser, Debug)]
 #[command(
@@ -19,8 +27,8 @@ use std::time::{Duration, Instant};
     long_about = None
 )]
 struct Args {
-    /// Maximum size to enumerate up to.
-    max_size: usize,
+    /// Size of GRFs to enumerate.
+    size: usize,
 
     /// Maximum steps per simulation before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
@@ -31,45 +39,43 @@ struct Args {
     allow_min: bool,
 
     /// Only search M(f) where f is a PRF (arity-1, no nested Min).
-    /// Mutually exclusive with --allow-min.
     #[arg(long, conflicts_with = "allow_min")]
     min_prf: bool,
 
-    /// Batch size for parallel simulation (tune for your CPU count).
+    /// Batch size for parallel simulation.
     #[arg(long, default_value_t = 2000)]
     batch_size: usize,
 
-    /// How many future sizes to show time estimates for.
-    #[arg(long, default_value_t = 3)]
-    lookahead: usize,
-
-    /// Show raw GRF strings instead of aliases.
+    /// Show raw GRF strings instead of aliases in terminal output.
     #[arg(long)]
     no_alias: bool,
 
-    /// Enable inline-proj pruning (prune C(h, P/Z...) that inline to smaller form).
+    /// Enable inline-proj pruning.
     #[arg(long)]
     inline_proj: bool,
 
-    /// Number of distinct top scores to track and display per size.
-    #[arg(long, default_value_t = 10)]
+    /// Number of top halting GRFs to track and write to halt file.
+    #[arg(long, default_value_t = 100)]
     top_k: usize,
+
+    /// Directory for result files. Default: results/{mode}/{size}/.
+    #[arg(long)]
+    results_dir: Option<PathBuf>,
+
+    /// Seconds between progress lines (0 = disable).
+    #[arg(long, default_value_t = 30)]
+    progress_secs: u64,
 }
 
 // ---------------------------------------------------------------------------
-// Top-K tracker
+// TopK: flat ranked list of best individual halting GRFs
 // ---------------------------------------------------------------------------
 
-/// How many example expressions to keep per score level.
-/// The total count is tracked separately so we can print "N tied" accurately.
-const MAX_EXPRS_PER_SCORE: usize = 25;
-
-/// Track the top-K distinct scoring GRFs.
-/// Per score level: exact total count + up to MAX_EXPRS_PER_SCORE examples.
+/// Tracks the top-K individual halting GRFs by score.
+/// Entries are (score, steps, raw_expr) sorted ascending; best at end.
 struct TopK {
     k: usize,
-    /// Ascending by score; at most `k` entries: (score, total_count, examples).
-    entries: Vec<(Num, usize, Vec<String>)>,
+    entries: Vec<(Num, u64, String)>,
 }
 
 impl TopK {
@@ -77,51 +83,57 @@ impl TopK {
         TopK { k, entries: Vec::new() }
     }
 
-    fn best(&self) -> Option<Num> {
-        self.entries.last().map(|(v, _, _)| *v)
+    fn best_score(&self) -> Option<Num> {
+        self.entries.last().map(|(s, _, _)| *s)
     }
 
-    fn insert(&mut self, score: Num, expr: String) {
-        match self.entries.binary_search_by_key(&score, |(s, _, _)| *s) {
-            Ok(idx) => {
-                let (_, count, exprs) = &mut self.entries[idx];
-                *count += 1;
-                if exprs.len() < MAX_EXPRS_PER_SCORE {
-                    exprs.push(expr);
-                }
-            }
-            Err(idx) => {
-                self.entries.insert(idx, (score, 1, vec![expr]));
-                if self.entries.len() > self.k {
-                    self.entries.remove(0); // drop lowest score
-                }
-            }
+    fn insert(&mut self, score: Num, steps: u64, expr: String) {
+        if self.entries.len() >= self.k && score < self.entries[0].0 {
+            return;
+        }
+        let pos = self.entries.partition_point(|(s, _, _)| *s < score);
+        self.entries.insert(pos, (score, steps, expr));
+        if self.entries.len() > self.k {
+            self.entries.remove(0);
         }
     }
 
     fn merge_from(&mut self, other: TopK) {
-        for (score, count, exprs) in other.entries {
-            // Merge the example expressions.
-            for expr in exprs {
-                self.insert(score, expr);
-            }
-            // Adjust the count: insert() counted each expr as +1, but the
-            // other entry may have had count > exprs.len() (if it was already
-            // capped). Add the remainder directly.
-            if let Ok(idx) = self.entries.binary_search_by_key(&score, |(s, _, _)| *s) {
-                let stored_exprs = self.entries[idx].2.len();
-                // count already in self = stored_exprs (each insert added 1)
-                // actual count from other = count
-                // we over-counted by stored_exprs, need to correct
-                let (_, self_count, _) = &mut self.entries[idx];
-                *self_count = self_count.saturating_sub(stored_exprs) + count;
-            }
+        for (score, steps, expr) in other.entries {
+            self.insert(score, steps, expr);
         }
     }
 
-    /// Iterate entries from highest to lowest score.
-    fn iter_desc(&self) -> impl Iterator<Item = &(Num, usize, Vec<String>)> {
+    fn iter_desc(&self) -> impl Iterator<Item = &(Num, u64, String)> {
         self.entries.iter().rev()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Accumulator: mutable run state
+// ---------------------------------------------------------------------------
+
+struct Accumulator {
+    top_k: TopK,
+    total: usize,
+    holdouts: usize,
+    diverged: usize,
+    total_steps: u64,
+    max_steps_single: u64,
+    sim_nanos: u64,
+}
+
+impl Accumulator {
+    fn new(k: usize) -> Self {
+        Accumulator {
+            top_k: TopK::new(k),
+            total: 0,
+            holdouts: 0,
+            diverged: 0,
+            total_steps: 0,
+            max_steps_single: 0,
+            sim_nanos: 0,
+        }
     }
 }
 
@@ -131,114 +143,71 @@ impl TopK {
 
 struct BatchResult {
     top_k: TopK,
-    timed_out: usize,
+    holdouts: Vec<(u64, String)>,
     diverged: usize,
     total_steps: u64,
-    max_steps_single: u64,
-}
-
-struct SizeResult {
-    size: usize,
-    total: usize,
-    timed_out: usize,
-    diverged: usize,
-    top_k: TopK,
-    total_steps: u64,
-    max_steps_single: u64,
 }
 
 fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
-    // Strings are not allocated in worker threads to avoid macOS nano-zone
-    // cross-thread free errors (pointer allocated on thread W, freed on main).
+    // Strings not allocated in worker threads — avoids macOS nano-zone
+    // cross-thread free errors ("pointer being freed was not allocated").
     let outcomes: Vec<(SimResult, u64)> = batch
         .par_iter()
         .map(|grf| simulate(grf, &[], max_steps))
         .collect();
 
     let mut top_k = TopK::new(k);
-    let mut timed_out = 0usize;
+    let mut holdouts = Vec::new();
     let mut diverged = 0usize;
     let mut total_steps = 0u64;
-    let mut max_steps_single = 0u64;
 
     for (idx, (result, steps)) in outcomes.into_iter().enumerate() {
         total_steps += steps;
         match result {
-            SimResult::OutOfSteps => timed_out += 1,
+            SimResult::OutOfSteps => holdouts.push((steps, batch[idx].to_string())),
             SimResult::Diverge => diverged += 1,
-            SimResult::Value(v) => {
-                if steps > max_steps_single {
-                    max_steps_single = steps;
-                }
-                top_k.insert(v, batch[idx].to_string());
-            }
+            SimResult::Value(v) => top_k.insert(v, steps, batch[idx].to_string()),
         }
     }
-    BatchResult { top_k, timed_out, diverged, total_steps, max_steps_single }
+    BatchResult { top_k, holdouts, diverged, total_steps }
 }
 
-fn merge_batch(
-    br: BatchResult,
-    size_top_k: &mut TopK,
-    size_timed_out: &mut usize,
-    size_diverged: &mut usize,
-    size_total_steps: &mut u64,
-    size_max_steps: &mut u64,
+fn flush_batch<W: Write>(
+    batch: &mut Vec<Grf>,
+    acc: &mut Accumulator,
+    holdout_w: &mut W,
+    max_steps: u64,
+    k: usize,
 ) {
-    *size_timed_out += br.timed_out;
-    *size_diverged += br.diverged;
-    *size_total_steps += br.total_steps;
-    if br.max_steps_single > *size_max_steps {
-        *size_max_steps = br.max_steps_single;
+    if batch.is_empty() {
+        return;
     }
-    size_top_k.merge_from(br.top_k);
+    let t0 = Instant::now();
+    let br = process_batch(batch, max_steps, k);
+    acc.sim_nanos += t0.elapsed().as_nanos() as u64;
+    acc.holdouts += br.holdouts.len();
+    acc.diverged += br.diverged;
+    acc.total_steps += br.total_steps;
+    for (s, _) in &br.holdouts {
+        if *s > acc.max_steps_single {
+            acc.max_steps_single = *s;
+        }
+    }
+    for (steps, expr) in br.holdouts {
+        writeln!(holdout_w, "  {}  {}", steps, expr).unwrap();
+    }
+    acc.top_k.merge_from(br.top_k);
+    batch.clear();
 }
 
 // ---------------------------------------------------------------------------
-// Time estimation helpers
+// Formatting helpers
 // ---------------------------------------------------------------------------
-
-fn estimate_time(
-    future_size: usize,
-    allow_min: bool,
-    min_prf: bool,
-    count_opts: PruningOpts,
-    secs_per_fn: f64,
-) -> Option<f64> {
-    let count = count_at_size(future_size, allow_min, min_prf, count_opts);
-    if count == 0 || secs_per_fn <= 0.0 {
-        return None;
-    }
-    Some(count as f64 * secs_per_fn)
-}
-
-fn count_at_size(size: usize, allow_min: bool, min_prf: bool, count_opts: PruningOpts) -> usize {
-    if min_prf {
-        if size < 2 { 0 } else { count_grf(size - 1, 1, false, count_opts) }
-    } else {
-        count_grf(size, 0, allow_min, count_opts)
-    }
-}
-
-fn fmt_duration(secs: f64) -> String {
-    if secs < 60.0 {
-        format!("{:.1}s", secs)
-    } else if secs < 3600.0 {
-        format!("{:.1}m", secs / 60.0)
-    } else if secs < 86400.0 {
-        format!("{:.1}h", secs / 3600.0)
-    } else {
-        format!("{:.1}d", secs / 86400.0)
-    }
-}
 
 fn fmt_si(n: u64) -> String {
-    if n < 1_000 {
-        format!("{}", n)
-    } else {
-        fmt_si_f64(n as f64)
-    }
+    if n < 1_000 { format!("{}", n) } else { fmt_si_f64(n as f64) }
 }
+
 fn fmt_si_f64(n: f64) -> String {
     if n < 1_000.0 {
         format!("{:.1}", n)
@@ -253,274 +222,202 @@ fn fmt_si_f64(n: f64) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
 fn main() {
     let args = Args::parse();
-    let count_opts = PruningOpts::default(); // count_grf doesn't support skip_inline_proj
+
+    let count_opts = PruningOpts::default();
     let opts = PruningOpts {
         skip_inline_proj: args.inline_proj,
         skip_min_dominated: true,
         ..PruningOpts::default()
     };
 
-    let mode_str = if args.min_prf {
-        "M(PRF)"
-    } else if args.allow_min {
-        "GRF"
-    } else {
-        "PRF"
-    };
+    let mode_str = if args.min_prf { "min_prf" } else if args.allow_min { "grf" } else { "prf" };
+    let has_min = args.allow_min || args.min_prf;
+    let size = args.size;
 
-    println!(
-        "BBµ search: 0-arity {}, max_size={}, max_steps={}, opts={:?}, threads={}, batch={}",
-        mode_str,
-        args.max_size,
-        args.max_steps,
-        opts,
-        rayon::current_num_threads(),
-        args.batch_size,
-    );
-    println!("{}", "=".repeat(90));
+    // Results directory.
+    let results_dir = args.results_dir.clone().unwrap_or_else(|| {
+        PathBuf::from(format!("results/{}/{}", mode_str, size))
+    });
+    fs::create_dir_all(&results_dir).expect("failed to create results directory");
 
+    // Open holdout file for streaming writes.
+    let holdout_path = results_dir.join("holdout.txt");
+    let holdout_file = fs::File::create(&holdout_path).expect("failed to create holdout.txt");
+    let mut holdout_writer = BufWriter::new(holdout_file);
+    writeln!(holdout_writer,
+        "# BBµ holdouts: mode={mode_str}, size={size}, max_steps={}",
+        args.max_steps).unwrap();
+    writeln!(holdout_writer, "#   steps  expr").unwrap();
+
+    // Alias formatter for terminal output.
     let alias_db = alias_db_for_stdout(6, args.no_alias);
-    let fmt = |expr: &str| -> String {
+    let fmt_alias = |expr: &str| -> String {
         match &alias_db {
-            Some(db) => expr.parse::<Grf>().map(|g| db.alias(&g)).unwrap_or_else(|_| expr.to_string()),
+            Some(db) => expr.parse::<Grf>()
+                .map(|g| db.alias(&g))
+                .unwrap_or_else(|_| expr.to_string()),
             None => expr.to_string(),
         }
     };
-    let mut results: Vec<SizeResult> = Vec::new();
-    let mut smoothed_secs_per_fn: Option<f64> = None;
-    let total_start = Instant::now();
 
-    for size in 1..=args.max_size {
-        let size_start = Instant::now();
+    // Expected count (informational; count_grf doesn't account for skip_min_dominated).
+    let expected = if args.min_prf {
+        if size < 2 { 0 } else { count_grf(size - 1, 1, false, count_opts) }
+    } else {
+        count_grf(size, 0, args.allow_min, count_opts)
+    };
 
-        let mut total = 0usize;
-        let mut size_timed_out = 0usize;
-        let mut size_diverged = 0usize;
-        let mut size_top_k = TopK::new(args.top_k);
-        let mut size_total_steps: u64 = 0;
-        let mut size_max_steps: u64 = 0;
-        let mut batch: Vec<Grf> = Vec::with_capacity(args.batch_size);
+    println!(
+        "BBµ search: 0-arity {}, size={}, max_steps={}, ~{} fns, opts={:?}",
+        mode_str, size, args.max_steps, expected, opts,
+    );
+    println!("  threads={}, batch={}, top_k={}", rayon::current_num_threads(), args.batch_size, args.top_k);
+    println!("  results: {}/", results_dir.display());
+    println!("{}", "=".repeat(90));
 
-        let sim_time_cell = Cell::new(Duration::ZERO);
+    let start = Instant::now();
+    let progress_interval = Duration::from_secs(args.progress_secs);
+    let mut last_progress = start;
 
-        let flush = |batch: &mut Vec<Grf>,
-                     top_k: &mut TopK,
-                     timed_out: &mut usize,
-                     diverged: &mut usize,
-                     total_steps: &mut u64,
-                     max_steps: &mut u64| {
-            if batch.is_empty() {
-                return;
-            }
-            let sim_start = Instant::now();
-            let br = process_batch(batch, args.max_steps, args.top_k);
-            sim_time_cell.set(sim_time_cell.get() + sim_start.elapsed());
-            merge_batch(br, top_k, timed_out, diverged, total_steps, max_steps);
-            batch.clear();
-        };
+    let mut acc = Accumulator::new(args.top_k);
+    let mut batch: Vec<Grf> = Vec::with_capacity(args.batch_size);
 
-        if args.min_prf && size >= 2 {
-            // Enumerate M(f) where f is a PRF of arity 1 and size (size-1).
-            stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
-                // Apply skip_min_dominated checks (stream-only, not in count_grf).
-                if opts.skip_min_dominated {
-                    if !f.used_args().contains(&1) { return; }
-                    if f.is_never_zero() { return; }
-                }
-                total += 1;
-                batch.push(Grf::min(f.clone()));
-                if batch.len() >= args.batch_size {
-                    flush(
-                        &mut batch,
-                        &mut size_top_k,
-                        &mut size_timed_out,
-                        &mut size_diverged,
-                        &mut size_total_steps,
-                        &mut size_max_steps,
+    // Macro-like helper to flush and maybe print progress.
+    // We can't use a real closure because flush_batch already borrows acc/batch/holdout_writer.
+    // Instead, inline the progress check after each flush call site.
+    macro_rules! maybe_progress {
+        () => {
+            if args.progress_secs > 0 && last_progress.elapsed() >= progress_interval {
+                let t = start.elapsed().as_secs_f64();
+                let best_s = acc.top_k.best_score().map_or("-".to_string(), |v| v.to_string());
+                let steps_s = fmt_si(acc.total_steps);
+                let rate_s = fmt_si_f64(acc.total_steps as f64 / t.max(1e-9));
+                if has_min {
+                    println!(
+                        "[t={:.1}s] best={}  fns={}  holdouts={}  diverged={}  steps={}  ({} steps/s)",
+                        t, best_s, fmt_si(acc.total as u64), fmt_si(acc.holdouts as u64),
+                        fmt_si(acc.diverged as u64), steps_s, rate_s,
+                    );
+                } else {
+                    println!(
+                        "[t={:.1}s] best={}  fns={}  holdouts={}  steps={}  ({} steps/s)",
+                        t, best_s, fmt_si(acc.total as u64), fmt_si(acc.holdouts as u64),
+                        steps_s, rate_s,
                     );
                 }
-            });
-        } else if !args.min_prf {
-            stream_grf(size, 0, args.allow_min, opts, &mut |grf: &Grf| {
-                total += 1;
-                batch.push(grf.clone());
-                if batch.len() >= args.batch_size {
-                    flush(
-                        &mut batch,
-                        &mut size_top_k,
-                        &mut size_timed_out,
-                        &mut size_diverged,
-                        &mut size_total_steps,
-                        &mut size_max_steps,
-                    );
-                }
-            });
-        }
-        flush(
-            &mut batch,
-            &mut size_top_k,
-            &mut size_timed_out,
-            &mut size_diverged,
-            &mut size_total_steps,
-            &mut size_max_steps,
-        );
-
-        let elapsed = size_start.elapsed().as_secs_f64();
-        let sim_secs = sim_time_cell.get().as_secs_f64();
-        let enum_secs = elapsed - sim_secs;
-
-        if total > 0 {
-            let cur_rate = elapsed / total as f64;
-            smoothed_secs_per_fn = Some(match smoothed_secs_per_fn {
-                None => cur_rate,
-                Some(prev) => 0.3 * cur_rate + 0.7 * prev,
-            });
-        }
-
-        let best_str = match size_top_k.best() {
-            Some(v) => v.to_string(),
-            None => "-".to_string(),
+                last_progress = Instant::now();
+            }
         };
-
-        println!(
-            "n={}: best={}, {} holdouts, {} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
-            size,
-            best_str,
-            size_timed_out,
-            total,
-            elapsed,
-            sim_secs,
-            enum_secs,
-            fmt_si(size_total_steps),
-            fmt_si_f64(size_total_steps as f64 / elapsed.max(1e-9)),
-        );
-
-        // Print top-k scores.
-        const PRINT_EXPRS: usize = 5;
-        for (rank, (score, count, exprs)) in size_top_k.iter_desc().enumerate() {
-            print!("  #{}: score={}", rank + 1, score);
-            if *count > 1 {
-                print!(" ({} tied)", count);
-            }
-            println!();
-            for expr in exprs.iter().take(PRINT_EXPRS) {
-                println!("       via {}", fmt(expr));
-            }
-            let overflow = count.saturating_sub(PRINT_EXPRS);
-            if overflow > 0 {
-                println!("       ... (+{} more)", overflow);
-            }
-        }
-        if size_timed_out > 0 {
-            println!(
-                "       max_single={}, total_steps={}",
-                fmt_si(size_max_steps),
-                fmt_si(size_total_steps),
-            );
-        }
-
-        if size < args.max_size && args.lookahead > 0 {
-            if let Some(rate) = smoothed_secs_per_fn {
-                let estimates: Vec<String> = (1..=args.lookahead)
-                    .filter_map(|ds| {
-                        let future = size + ds;
-                        let est = estimate_time(future, args.allow_min, args.min_prf, count_opts, rate)?;
-                        let count = count_at_size(future, args.allow_min, args.min_prf, count_opts);
-                        Some(format!(
-                            "n={}: ~{} ({} fns)",
-                            future,
-                            fmt_duration(est),
-                            count
-                        ))
-                    })
-                    .collect();
-                if !estimates.is_empty() {
-                    println!("       est: {}", estimates.join("  |  "));
-                }
-            }
-        }
-
-        results.push(SizeResult {
-            size,
-            total,
-            timed_out: size_timed_out,
-            diverged: size_diverged,
-            top_k: size_top_k,
-            total_steps: size_total_steps,
-            max_steps_single: size_max_steps,
-        });
     }
 
-    let total_elapsed = total_start.elapsed().as_secs_f64();
+    if args.min_prf && size >= 2 {
+        stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
+            if opts.skip_min_dominated {
+                if !f.used_args().contains(&1) { return; }
+                if f.is_never_zero() { return; }
+            }
+            acc.total += 1;
+            batch.push(Grf::min(f.clone()));
+            if batch.len() >= args.batch_size {
+                flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
+                maybe_progress!();
+            }
+        });
+    } else if !args.min_prf {
+        stream_grf(size, 0, args.allow_min, opts, &mut |grf: &Grf| {
+            acc.total += 1;
+            batch.push(grf.clone());
+            if batch.len() >= args.batch_size {
+                flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
+                maybe_progress!();
+            }
+        });
+    }
+    flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
+    holdout_writer.flush().unwrap();
 
-    let has_min = args.allow_min || args.min_prf;
-    let sep_width = if has_min { 101 } else { 90 };
+    let elapsed = start.elapsed().as_secs_f64();
+    let sim_secs = acc.sim_nanos as f64 / 1e9;
+    let enum_secs = elapsed - sim_secs;
 
-    println!();
-    println!("{}", "=".repeat(sep_width));
-    println!(
-        "BBµ_{} summary  (opts={:?}, max_steps={})",
-        mode_str,
-        opts,
-        args.max_steps
-    );
-    println!("{}", "=".repeat(sep_width));
+    // Terminal summary.
+    let best_str = acc.top_k.best_score().map_or("-".to_string(), |v| v.to_string());
     if has_min {
         println!(
-            "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
-            "n", "BBµ(n) ≥", "max_steps", "holdouts", "#diverge", "#fns", "tot_steps", "Champion"
+            "n={}: best={}, {} holdouts, {} diverged, {} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
+            size, best_str, acc.holdouts, acc.diverged, acc.total,
+            elapsed, sim_secs, enum_secs,
+            fmt_si(acc.total_steps),
+            fmt_si_f64(acc.total_steps as f64 / elapsed.max(1e-9)),
         );
     } else {
         println!(
-            "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
-            "n", "BBµ(n) ≥", "max_steps", "holdouts", "#fns", "tot_steps", "Champion"
+            "n={}: best={}, {} holdouts, {} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
+            size, best_str, acc.holdouts, acc.total,
+            elapsed, sim_secs, enum_secs,
+            fmt_si(acc.total_steps),
+            fmt_si_f64(acc.total_steps as f64 / elapsed.max(1e-9)),
         );
     }
-    println!("{}", "-".repeat(sep_width));
-    for r in &results {
-        let best = r.top_k.best();
-        let max_val_str = match best {
-            Some(v) => v.to_string(),
-            None => "-".to_string(),
-        };
-        let expr_str = match r.top_k.iter_desc().next() {
-            None => "-".to_string(),
-            Some((_, count, exprs)) => {
-                let s = fmt(&exprs[0]);
-                if *count > 1 {
-                    format!("{s}  (+{} ties)", count - 1)
-                } else {
-                    s
-                }
-            }
-        };
-        if has_min {
-            println!(
-                "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
-                r.size,
-                max_val_str,
-                fmt_si(r.max_steps_single),
-                r.timed_out,
-                r.diverged,
-                r.total,
-                fmt_si(r.total_steps),
-                expr_str,
-            );
-        } else {
-            println!(
-                "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
-                r.size,
-                max_val_str,
-                fmt_si(r.max_steps_single),
-                r.timed_out,
-                r.total,
-                fmt_si(r.total_steps),
-                expr_str,
-            );
-        }
+    if acc.holdouts > 0 {
+        println!("  max single: {}", fmt_si(acc.max_steps_single));
     }
-    println!("{}", "-".repeat(sep_width));
-    println!("Total time: {:.2}s", total_elapsed);
+
+    const TERMINAL_DISPLAY: usize = 10;
+    for (rank, (score, steps, expr)) in acc.top_k.iter_desc().enumerate() {
+        if rank >= TERMINAL_DISPLAY { break; }
+        println!("  #{}: score={}  steps={}  {}", rank + 1, score, fmt_si(*steps), fmt_alias(expr));
+    }
+
+    // Write halt file.
+    let halt_path = results_dir.join("halt.max.txt");
+    let mut halt_w = BufWriter::new(
+        fs::File::create(&halt_path).expect("failed to create halt.max.txt")
+    );
+    writeln!(halt_w,
+        "# BBµ search: mode={mode_str}, size={size}, max_steps={}",
+        args.max_steps).unwrap();
+    writeln!(halt_w, "# top {} halting GRFs by score (raw GRF strings)", args.top_k).unwrap();
+    writeln!(halt_w, "#  {:>4}  {:>10}  {:>12}  expr", "rank", "score", "steps").unwrap();
+    for (rank, (score, steps, expr)) in acc.top_k.iter_desc().enumerate() {
+        writeln!(halt_w, "   {:>4}  {:>10}  {:>12}  {}", rank + 1, score, steps, expr).unwrap();
+    }
+    halt_w.flush().unwrap();
+
+    // Write config file.
+    let config_path = results_dir.join("config.json");
+    let mut cfg_w = BufWriter::new(
+        fs::File::create(&config_path).expect("failed to create config.json")
+    );
+    let best_json = acc.top_k.best_score()
+        .map_or("null".to_string(), |v| v.to_string());
+    writeln!(cfg_w, "{{").unwrap();
+    writeln!(cfg_w, "  \"size\": {},",            size).unwrap();
+    writeln!(cfg_w, "  \"mode\": \"{mode_str}\",").unwrap();
+    writeln!(cfg_w, "  \"max_steps\": {},",       args.max_steps).unwrap();
+    writeln!(cfg_w, "  \"batch_size\": {},",      args.batch_size).unwrap();
+    writeln!(cfg_w, "  \"top_k\": {},",           args.top_k).unwrap();
+    writeln!(cfg_w, "  \"allow_min\": {},",       args.allow_min).unwrap();
+    writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
+    writeln!(cfg_w, "  \"inline_proj\": {},",     args.inline_proj).unwrap();
+    writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
+    writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();
+    writeln!(cfg_w, "  \"total_holdouts\": {},",  acc.holdouts).unwrap();
+    writeln!(cfg_w, "  \"total_diverged\": {},",  acc.diverged).unwrap();
+    writeln!(cfg_w, "  \"elapsed_secs\": {:.3},", elapsed).unwrap();
+    writeln!(cfg_w, "  \"best_score\": {}",       best_json).unwrap();
+    writeln!(cfg_w, "}}").unwrap();
+    cfg_w.flush().unwrap();
+
+    println!();
+    println!("Results written to {}/", results_dir.display());
+    println!("  halt.max.txt: {} entries", acc.top_k.entries.len());
+    println!("  holdout.txt:  {} entries", acc.holdouts);
+    println!("  config.json");
 }

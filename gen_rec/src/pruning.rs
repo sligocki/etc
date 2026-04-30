@@ -80,6 +80,20 @@ pub struct PruningOpts {
     /// `seek_stream_grf` do not account for this flag; do not use it with
     /// those functions.
     pub skip_inline_proj: bool,
+
+    /// Skip `C(h, g1…gm)` where any `gi` at position `i ∉ h.used_args()` is
+    /// not `Zero(arity)`.
+    ///
+    /// Since `h` provably ignores argument `i` (absence from `used_args` is a
+    /// sound non-use certificate), `gi` has no effect on the output.  Every
+    /// such composition is semantically equivalent to the variant with
+    /// `Zero(arity)` at position `i`, which has size ≤ the original.  We
+    /// canonicalise to that smaller (or equal) form and skip all others.
+    ///
+    /// **Stream-only**: requires per-head `used_args()` information that cannot
+    /// be expressed as a static DP count.  Do not use with `count_grf` or
+    /// `seek_stream_grf`.
+    pub skip_unused_comp_args: bool,
 }
 
 impl PruningOpts {
@@ -94,6 +108,7 @@ impl PruningOpts {
             // Stream-only flags: not supported by count_grf / seek_stream_grf.
             skip_min_dominated: false,
             skip_inline_proj: false,
+            skip_unused_comp_args: false,
         }
     }
 
@@ -107,6 +122,7 @@ impl PruningOpts {
             skip_min_trivial_zero: false,
             skip_min_dominated: false,
             skip_inline_proj: false,
+            skip_unused_comp_args: false,
         }
     }
     pub const fn all() -> PruningOpts {
@@ -119,6 +135,7 @@ impl PruningOpts {
             skip_min_trivial_zero: true,
             skip_min_dominated: true,
             skip_inline_proj: true,
+            skip_unused_comp_args: true,
         }
     }
 }

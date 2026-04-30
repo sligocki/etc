@@ -158,6 +158,7 @@ struct SerOpts {
 impl From<PruningOpts> for SerOpts {
     fn from(o: PruningOpts) -> Self {
         assert!(!o.skip_inline_proj, "bb_search_tasks does not support skip_inline_proj");
+        assert!(!o.skip_unused_comp_args, "bb_search_tasks does not support skip_unused_comp_args");
         Self {
             skip_comp_zero: o.skip_comp_zero,
             skip_comp_proj: o.skip_comp_proj,
@@ -175,7 +176,10 @@ impl From<SerOpts> for PruningOpts {
             comp_assoc: o.comp_assoc,
             skip_rec_zero_base: o.skip_rec_zero_base,
             skip_rec_zero_arg: o.skip_rec_zero_arg,
+            skip_min_trivial_zero: false,
+            skip_min_dominated: false,
             skip_inline_proj: false,
+            skip_unused_comp_args: false,
         }
     }
 }

@@ -235,8 +235,11 @@ impl NovelEnumerator {
                 };
                 for head in heads {
                     let head_clone = head.clone();
+                    let h_used = head.used_args();
+                    let forced: Vec<bool> =
+                        (1..=m).map(|pos| !h_used.contains(&pos)).collect();
                     let mut arg_combos: Vec<Vec<Grf>> = Vec::new();
-                    self.enum_arg_combos(arity, m, gs_total, &mut Vec::new(), &mut arg_combos);
+                    self.enum_arg_combos(arity, m, gs_total, Some(&forced), &mut Vec::new(), &mut arg_combos);
                     for args in arg_combos {
                         out.push(Grf::Comp(Box::new(head_clone.clone()), args, arity));
                     }
@@ -279,12 +282,16 @@ impl NovelEnumerator {
     /// Enumerate all `count`-tuples of canonical GRFs with arity `arg_arity` and
     /// total size exactly `total_size`. Each individual GRF has size ≥ 1.
     ///
+    /// `forced`: if `Some(f)`, positions where `f[current.len()]` is `true` are
+    /// constrained to `Zero(arg_arity)` (size 1).
+    ///
     /// Results are pushed into `out`.
     fn enum_arg_combos(
         &self,
         arg_arity: usize,
         count: usize,
         total_size: usize,
+        forced: Option<&[bool]>,
         current: &mut Vec<Grf>,
         out: &mut Vec<Vec<Grf>>,
     ) {
@@ -294,14 +301,24 @@ impl NovelEnumerator {
             }
             return;
         }
-        // Each remaining arg needs at least size 1.
-        let max_this = total_size - (count - 1);
-        for s in 1..=max_this {
-            if let Some(candidates) = self.memo.get(&(arg_arity, s)) {
-                for grf in candidates {
-                    current.push(grf.clone());
-                    self.enum_arg_combos(arg_arity, count - 1, total_size - s, current, out);
-                    current.pop();
+        let pos = current.len();
+        if forced.map_or(false, |f| f[pos]) {
+            // Forced position: only Zero(arg_arity) with size 1.
+            if total_size >= count {
+                current.push(Grf::Zero(arg_arity));
+                self.enum_arg_combos(arg_arity, count - 1, total_size - 1, forced, current, out);
+                current.pop();
+            }
+        } else {
+            // Each remaining arg needs at least size 1.
+            let max_this = total_size - (count - 1);
+            for s in 1..=max_this {
+                if let Some(candidates) = self.memo.get(&(arg_arity, s)) {
+                    for grf in candidates {
+                        current.push(grf.clone());
+                        self.enum_arg_combos(arg_arity, count - 1, total_size - s, forced, current, out);
+                        current.pop();
+                    }
                 }
             }
         }

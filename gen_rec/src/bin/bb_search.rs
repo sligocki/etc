@@ -54,6 +54,10 @@ struct Args {
     #[arg(long)]
     inline_proj: bool,
 
+    /// Skip C(h,g1..gm) where any gi at position i ∉ h.used_args() is not Zero.
+    #[arg(long)]
+    unused_comp_args: bool,
+
     /// Number of top halting GRFs to track and write to halt file.
     #[arg(long, default_value_t = 100)]
     top_k: usize,
@@ -232,6 +236,7 @@ fn main() {
     let count_opts = PruningOpts::default();
     let opts = PruningOpts {
         skip_inline_proj: args.inline_proj,
+        skip_unused_comp_args: args.unused_comp_args,
         skip_min_dominated: true,
         ..PruningOpts::default()
     };
@@ -405,7 +410,8 @@ fn main() {
     writeln!(cfg_w, "  \"top_k\": {},",           args.top_k).unwrap();
     writeln!(cfg_w, "  \"allow_min\": {},",       args.allow_min).unwrap();
     writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
-    writeln!(cfg_w, "  \"inline_proj\": {},",     args.inline_proj).unwrap();
+    writeln!(cfg_w, "  \"inline_proj\": {},",       args.inline_proj).unwrap();
+    writeln!(cfg_w, "  \"unused_comp_args\": {},",  args.unused_comp_args).unwrap();
     writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
     writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();
     writeln!(cfg_w, "  \"total_holdouts\": {},",  acc.holdouts).unwrap();

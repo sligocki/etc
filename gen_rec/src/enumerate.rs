@@ -79,6 +79,14 @@ fn for_each_grf(
                 } else {
                     None
                 };
+                // skip_unused_comp_args: positions not in h.used_args() are forced to Zero.
+                let forced_vec: Option<Vec<bool>> = if opts.skip_unused_comp_args {
+                    let h_used = h.used_args();
+                    Some((1..=m).map(|pos| !h_used.contains(&pos)).collect())
+                } else {
+                    None
+                };
+                let forced: Option<&[bool]> = forced_vec.as_deref();
                 let mut args = Vec::with_capacity(m);
                 for_each_args(
                     gs_total,
@@ -86,6 +94,7 @@ fn for_each_grf(
                     arity,
                     allow_min,
                     opts,
+                    forced,
                     &mut args,
                     &mut |gs: &[Grf]| {
                         // skip_rec_zero_arg: C(R(g,h), Z(p), f2,...) ≡ C(g, f2,...)
@@ -161,12 +170,16 @@ fn for_each_grf(
 
 /// Generate all ordered `remaining_count`-tuples of `arity`-GRFs whose sizes
 /// sum to `remaining_size`, appending each element to `current` in turn.
+///
+/// `forced`: if `Some(f)`, positions where `f[current.len()]` is `true` are
+/// constrained to `Zero(arity)` (size 1); all other positions are unconstrained.
 fn for_each_args(
     remaining_size: usize,
     remaining_count: usize,
     arity: usize,
     allow_min: bool,
     opts: PruningOpts,
+    forced: Option<&[bool]>,
     current: &mut Vec<Grf>,
     callback: &mut dyn FnMut(&[Grf]),
 ) {
@@ -176,21 +189,41 @@ fn for_each_args(
         }
         return;
     }
-    let max_first = remaining_size.saturating_sub(remaining_count - 1);
-    for x in 1..=max_first {
-        for_each_grf(x, arity, allow_min, opts, &mut |g: &Grf| {
-            current.push(g.clone());
+    let pos = current.len();
+    if forced.map_or(false, |f| f[pos]) {
+        // Forced position: only Zero(arity) with size 1.
+        if remaining_size >= remaining_count {
+            current.push(Grf::Zero(arity));
             for_each_args(
-                remaining_size - x,
+                remaining_size - 1,
                 remaining_count - 1,
                 arity,
                 allow_min,
                 opts,
+                forced,
                 current,
                 callback,
             );
             current.pop();
-        });
+        }
+    } else {
+        let max_first = remaining_size.saturating_sub(remaining_count - 1);
+        for x in 1..=max_first {
+            for_each_grf(x, arity, allow_min, opts, &mut |g: &Grf| {
+                current.push(g.clone());
+                for_each_args(
+                    remaining_size - x,
+                    remaining_count - 1,
+                    arity,
+                    allow_min,
+                    opts,
+                    forced,
+                    current,
+                    callback,
+                );
+                current.pop();
+            });
+        }
     }
 }
 
@@ -204,8 +237,9 @@ fn for_each_args(
 /// Uses [`count_grf`] to jump over sub-trees in O(1) per level, so the seek
 /// cost is O(size²) rather than O(start).
 ///
-/// Panics if `opts.skip_inline_proj` is set — seek relies on `count_grf` for
-/// position arithmetic, which does not account for that flag.
+/// Panics if any stream-only flag (`skip_inline_proj`, `skip_min_dominated`,
+/// `skip_unused_comp_args`) is set — seek relies on `count_grf` for position
+/// arithmetic, which does not account for those flags.
 pub fn seek_stream_grf<F: FnMut(&Grf)>(
     size: usize,
     arity: usize,
@@ -217,6 +251,7 @@ pub fn seek_stream_grf<F: FnMut(&Grf)>(
 ) {
     assert!(!opts.skip_inline_proj, "seek_stream_grf does not support skip_inline_proj");
     assert!(!opts.skip_min_dominated, "seek_stream_grf does not support skip_min_dominated");
+    assert!(!opts.skip_unused_comp_args, "seek_stream_grf does not support skip_unused_comp_args");
     if count == 0 {
         return;
     }
@@ -1150,6 +1185,10 @@ mod tests {
         skip_min_dominated: true,
         ..NO_PRUNE
     };
+    const SKIP_UNUSED_COMP: PruningOpts = PruningOpts {
+        skip_unused_comp_args: true,
+        ..NO_PRUNE
+    };
 
     // --- atom counts (size=1) ---
 
@@ -1858,5 +1897,48 @@ mod tests {
                 i
             );
         }
+    }
+
+    // --- skip_unused_comp_args ---
+
+    #[test]
+    fn test_skip_unused_comp_args_removes_specific_forms() {
+        // R(P(2,1), P(4,2)) has arity 3 and used_args = {1, 2}:
+        //   g = P(2,1) uses {1} → Rec arg 2
+        //   h = P(4,2) uses {2} (accumulator, internal) → no external Rec arg
+        //   Plus conservative arg-1 (counter).
+        // So used_args = {1, 2}; arg 3 is unused.
+        // C(R(P(2,1),P(4,2)), g1, g2, g3) must have g3 = Z3.
+        // The variant with g3 = S (arity-1 Succ at arity 1 args): size 7 total.
+        //   C(R(P(2,1),P(4,2)), Z1, Z1, S) — g3 = S ≠ Z1 → should be pruned.
+        let full = collect(7, 1, false, NO_PRUNE);
+        let pruned = collect(7, 1, false, SKIP_UNUSED_COMP);
+        let bad = "C(R(P(2,1),P(4,2)),Z1,Z1,S)".parse::<Grf>().unwrap();
+        assert!(full.iter().any(|g| *g == bad), "must exist without pruning");
+        assert!(!pruned.iter().any(|g| *g == bad), "should be pruned (arg 3 unused, S ≠ Z1)");
+
+        // The canonical form with g3 = Z1 is NOT pruned.
+        let ok = "C(R(P(2,1),P(4,2)),Z1,Z1,Z1)".parse::<Grf>().unwrap();
+        assert!(pruned.iter().any(|g| *g == ok), "canonical form (g3=Z1) must survive");
+    }
+
+    #[test]
+    fn test_skip_unused_comp_args_never_more_than_full() {
+        for size in 1..=8 {
+            for arity in 0..=2 {
+                let full = collect(size, arity, false, NO_PRUNE).len();
+                let pruned = collect(size, arity, false, SKIP_UNUSED_COMP).len();
+                assert!(
+                    pruned <= full,
+                    "skip_unused_comp_args produced more GRFs at size={size} arity={arity}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "seek_stream_grf does not support skip_unused_comp_args")]
+    fn seek_stream_grf_panics_on_skip_unused_comp_args() {
+        seek_stream_grf(5, 1, false, SKIP_UNUSED_COMP, 0, 1, &mut |_| {});
     }
 }

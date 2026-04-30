@@ -1,4 +1,4 @@
-/// Enumerate all 0-arity PRF of increasing size and track BBµ champions.
+/// Enumerate all 0-arity GRFs of increasing size and track BBµ champions.
 ///
 /// Enumeration is single-threaded using a fully-streaming algorithm: GRF trees
 /// are generated one at a time without materialising any Vec<Grf>, keeping peak
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Parser, Debug)]
 #[command(
-    about = "Search for BBµ champions by exhaustive enumeration of 0-arity PRFs",
+    about = "Search for BBµ champions by exhaustive enumeration of 0-arity GRFs",
     long_about = None
 )]
 struct Args {
@@ -29,6 +29,11 @@ struct Args {
     /// Include Minimization combinator (default: PRF only).
     #[arg(long)]
     allow_min: bool,
+
+    /// Only search M(f) where f is a PRF (arity-1, no nested Min).
+    /// Mutually exclusive with --allow-min.
+    #[arg(long, conflicts_with = "allow_min")]
+    min_prf: bool,
 
     /// Batch size for parallel simulation (tune for your CPU count).
     #[arg(long, default_value_t = 2000)]
@@ -45,39 +50,81 @@ struct Args {
     /// Enable inline-proj pruning (prune C(h, P/Z...) that inline to smaller form).
     #[arg(long)]
     inline_proj: bool,
+
+    /// Number of distinct top scores to track and display per size.
+    #[arg(long, default_value_t = 10)]
+    top_k: usize,
 }
 
-/// Aggregate result for one batch.
+// ---------------------------------------------------------------------------
+// Top-K tracker
+// ---------------------------------------------------------------------------
+
+/// Track the top-K distinct scoring GRFs, retaining all exprs per score.
+struct TopK {
+    k: usize,
+    /// Ascending by score; at most `k` entries.
+    entries: Vec<(Num, Vec<String>)>,
+}
+
+impl TopK {
+    fn new(k: usize) -> Self {
+        TopK { k, entries: Vec::new() }
+    }
+
+    fn best(&self) -> Option<Num> {
+        self.entries.last().map(|(v, _)| *v)
+    }
+
+    fn insert(&mut self, score: Num, expr: String) {
+        match self.entries.binary_search_by_key(&score, |(s, _)| *s) {
+            Ok(idx) => self.entries[idx].1.push(expr),
+            Err(idx) => {
+                self.entries.insert(idx, (score, vec![expr]));
+                if self.entries.len() > self.k {
+                    self.entries.remove(0); // drop lowest score
+                }
+            }
+        }
+    }
+
+    fn merge_from(&mut self, other: TopK) {
+        for (score, exprs) in other.entries {
+            for expr in exprs {
+                self.insert(score, expr);
+            }
+        }
+    }
+
+    /// Iterate entries from highest to lowest score.
+    fn iter_desc(&self) -> impl Iterator<Item = &(Num, Vec<String>)> {
+        self.entries.iter().rev()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Batch processing
+// ---------------------------------------------------------------------------
+
 struct BatchResult {
-    best_value: Option<Num>,
-    best_exprs: Vec<String>,
+    top_k: TopK,
     timed_out: usize,
     diverged: usize,
     total_steps: u64,
     max_steps_single: u64,
 }
 
-/// Aggregate result for one size level.
 struct SizeResult {
     size: usize,
     total: usize,
     timed_out: usize,
     diverged: usize,
-    best_value: Option<Num>,
-    best_exprs: Vec<String>,
+    top_k: TopK,
     total_steps: u64,
     max_steps_single: u64,
 }
 
-/// Simulate a batch of GRFs in parallel and return aggregate results.
-fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
-    let mut best_val: Option<Num> = None;
-    let mut best_exprs: Vec<String> = Vec::new();
-    let mut timed_out = 0usize;
-    let mut diverged = 0usize;
-    let mut total_steps = 0u64;
-    let mut max_steps_single = 0u64;
-
+fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
     let outcomes: Vec<(SimResult, u64, String)> = batch
         .par_iter()
         .map(|grf| {
@@ -85,6 +132,12 @@ fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
             (result, steps, grf.to_string())
         })
         .collect();
+
+    let mut top_k = TopK::new(k);
+    let mut timed_out = 0usize;
+    let mut diverged = 0usize;
+    let mut total_steps = 0u64;
+    let mut max_steps_single = 0u64;
 
     for (result, steps, display) in outcomes {
         total_steps += steps;
@@ -95,35 +148,16 @@ fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
                 if steps > max_steps_single {
                     max_steps_single = steps;
                 }
-                let cmp = best_val
-                    .as_ref()
-                    .map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
-                match cmp {
-                    std::cmp::Ordering::Greater => {
-                        best_val = Some(v);
-                        best_exprs = vec![display];
-                    }
-                    std::cmp::Ordering::Equal => best_exprs.push(display),
-                    std::cmp::Ordering::Less => {}
-                }
+                top_k.insert(v, display);
             }
         }
     }
-    BatchResult {
-        best_value: best_val,
-        best_exprs,
-        timed_out,
-        diverged,
-        total_steps,
-        max_steps_single,
-    }
+    BatchResult { top_k, timed_out, diverged, total_steps, max_steps_single }
 }
 
-/// Merge a BatchResult into per-size accumulators.
 fn merge_batch(
     br: BatchResult,
-    size_best_val: &mut Option<Num>,
-    size_best_exprs: &mut Vec<String>,
+    size_top_k: &mut TopK,
     size_timed_out: &mut usize,
     size_diverged: &mut usize,
     size_total_steps: &mut u64,
@@ -135,32 +169,33 @@ fn merge_batch(
     if br.max_steps_single > *size_max_steps {
         *size_max_steps = br.max_steps_single;
     }
-    if let Some(v) = br.best_value {
-        let cmp = size_best_val
-            .as_ref()
-            .map_or(std::cmp::Ordering::Greater, |cur| v.cmp(cur));
-        match cmp {
-            std::cmp::Ordering::Greater => {
-                *size_best_val = Some(v);
-                *size_best_exprs = br.best_exprs;
-            }
-            std::cmp::Ordering::Equal => size_best_exprs.extend(br.best_exprs),
-            std::cmp::Ordering::Less => {}
-        }
-    }
+    size_top_k.merge_from(br.top_k);
 }
+
+// ---------------------------------------------------------------------------
+// Time estimation helpers
+// ---------------------------------------------------------------------------
 
 fn estimate_time(
     future_size: usize,
     allow_min: bool,
+    min_prf: bool,
     count_opts: PruningOpts,
     secs_per_fn: f64,
 ) -> Option<f64> {
-    let count = count_grf(future_size, 0, allow_min, count_opts);
+    let count = count_at_size(future_size, allow_min, min_prf, count_opts);
     if count == 0 || secs_per_fn <= 0.0 {
         return None;
     }
     Some(count as f64 * secs_per_fn)
+}
+
+fn count_at_size(size: usize, allow_min: bool, min_prf: bool, count_opts: PruningOpts) -> usize {
+    if min_prf {
+        if size < 2 { 0 } else { count_grf(size - 1, 1, false, count_opts) }
+    } else {
+        count_grf(size, 0, allow_min, count_opts)
+    }
 }
 
 fn fmt_duration(secs: f64) -> String {
@@ -205,9 +240,17 @@ fn main() {
         ..PruningOpts::default()
     };
 
+    let mode_str = if args.min_prf {
+        "M(PRF)"
+    } else if args.allow_min {
+        "GRF"
+    } else {
+        "PRF"
+    };
+
     println!(
         "BBµ search: 0-arity {}, max_size={}, max_steps={}, opts={:?}, threads={}, batch={}",
-        if args.allow_min { "GRF" } else { "PRF" },
+        mode_str,
         args.max_size,
         args.max_steps,
         opts,
@@ -233,19 +276,15 @@ fn main() {
         let mut total = 0usize;
         let mut size_timed_out = 0usize;
         let mut size_diverged = 0usize;
-        let mut size_best_val: Option<Num> = None;
-        let mut size_best_exprs: Vec<String> = Vec::new();
+        let mut size_top_k = TopK::new(args.top_k);
         let mut size_total_steps: u64 = 0;
         let mut size_max_steps: u64 = 0;
         let mut batch: Vec<Grf> = Vec::with_capacity(args.batch_size);
 
-        // Cell<Duration> gives interior mutability so the flush closure can
-        // accumulate simulation time without changing its signature.
         let sim_time_cell = Cell::new(Duration::ZERO);
 
         let flush = |batch: &mut Vec<Grf>,
-                     best_val: &mut Option<Num>,
-                     best_exprs: &mut Vec<String>,
+                     top_k: &mut TopK,
                      timed_out: &mut usize,
                      diverged: &mut usize,
                      total_steps: &mut u64,
@@ -254,31 +293,52 @@ fn main() {
                 return;
             }
             let sim_start = Instant::now();
-            let br = process_batch(batch, args.max_steps);
+            let br = process_batch(batch, args.max_steps, args.top_k);
             sim_time_cell.set(sim_time_cell.get() + sim_start.elapsed());
-            merge_batch(br, best_val, best_exprs, timed_out, diverged, total_steps, max_steps);
+            merge_batch(br, top_k, timed_out, diverged, total_steps, max_steps);
             batch.clear();
         };
 
-        stream_grf(size, 0, args.allow_min, opts, &mut |grf: &Grf| {
-            total += 1;
-            batch.push(grf.clone());
-            if batch.len() >= args.batch_size {
-                flush(
-                    &mut batch,
-                    &mut size_best_val,
-                    &mut size_best_exprs,
-                    &mut size_timed_out,
-                    &mut size_diverged,
-                    &mut size_total_steps,
-                    &mut size_max_steps,
-                );
-            }
-        });
+        if args.min_prf && size >= 2 {
+            // Enumerate M(f) where f is a PRF of arity 1 and size (size-1).
+            stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
+                // Apply skip_min_dominated checks (stream-only, not in count_grf).
+                if opts.skip_min_dominated {
+                    if !f.used_args().contains(&1) { return; }
+                    if f.is_never_zero() { return; }
+                }
+                total += 1;
+                batch.push(Grf::min(f.clone()));
+                if batch.len() >= args.batch_size {
+                    flush(
+                        &mut batch,
+                        &mut size_top_k,
+                        &mut size_timed_out,
+                        &mut size_diverged,
+                        &mut size_total_steps,
+                        &mut size_max_steps,
+                    );
+                }
+            });
+        } else if !args.min_prf {
+            stream_grf(size, 0, args.allow_min, opts, &mut |grf: &Grf| {
+                total += 1;
+                batch.push(grf.clone());
+                if batch.len() >= args.batch_size {
+                    flush(
+                        &mut batch,
+                        &mut size_top_k,
+                        &mut size_timed_out,
+                        &mut size_diverged,
+                        &mut size_total_steps,
+                        &mut size_max_steps,
+                    );
+                }
+            });
+        }
         flush(
             &mut batch,
-            &mut size_best_val,
-            &mut size_best_exprs,
+            &mut size_top_k,
             &mut size_timed_out,
             &mut size_diverged,
             &mut size_total_steps,
@@ -297,7 +357,7 @@ fn main() {
             });
         }
 
-        let best_str = match &size_best_val {
+        let best_str = match size_top_k.best() {
             Some(v) => v.to_string(),
             None => "-".to_string(),
         };
@@ -312,18 +372,24 @@ fn main() {
             sim_secs,
             enum_secs,
             fmt_si(size_total_steps),
-            fmt_si_f64(size_total_steps as f64 / elapsed),
+            fmt_si_f64(size_total_steps as f64 / elapsed.max(1e-9)),
         );
-        const MAX_VIA: usize = 20;
-        if !size_best_exprs.is_empty() {
-            for expr in size_best_exprs.iter().take(MAX_VIA) {
+
+        // Print top-k scores.
+        const MAX_EXPRS_PER_SCORE: usize = 5;
+        for (rank, (score, exprs)) in size_top_k.iter_desc().enumerate() {
+            let shown = exprs.len().min(MAX_EXPRS_PER_SCORE);
+            let overflow = exprs.len().saturating_sub(MAX_EXPRS_PER_SCORE);
+            print!("  #{}: score={}", rank + 1, score);
+            if exprs.len() > 1 {
+                print!(" ({} tied)", exprs.len());
+            }
+            println!();
+            for expr in exprs.iter().take(shown) {
                 println!("       via {}", fmt(expr));
             }
-            if size_best_exprs.len() > MAX_VIA {
-                println!(
-                    "       ... (+{} more tied expressions)",
-                    size_best_exprs.len() - MAX_VIA
-                );
+            if overflow > 0 {
+                println!("       ... (+{} more)", overflow);
             }
         }
         if size_timed_out > 0 {
@@ -339,8 +405,8 @@ fn main() {
                 let estimates: Vec<String> = (1..=args.lookahead)
                     .filter_map(|ds| {
                         let future = size + ds;
-                        let est = estimate_time(future, args.allow_min, count_opts, rate)?;
-                        let count = count_grf(future, 0, args.allow_min, count_opts);
+                        let est = estimate_time(future, args.allow_min, args.min_prf, count_opts, rate)?;
+                        let count = count_at_size(future, args.allow_min, args.min_prf, count_opts);
                         Some(format!(
                             "n={}: ~{} ({} fns)",
                             future,
@@ -360,8 +426,7 @@ fn main() {
             total,
             timed_out: size_timed_out,
             diverged: size_diverged,
-            best_value: size_best_val,
-            best_exprs: size_best_exprs,
+            top_k: size_top_k,
             total_steps: size_total_steps,
             max_steps_single: size_max_steps,
         });
@@ -369,17 +434,19 @@ fn main() {
 
     let total_elapsed = total_start.elapsed().as_secs_f64();
 
+    let has_min = args.allow_min || args.min_prf;
+    let sep_width = if has_min { 101 } else { 90 };
+
     println!();
-    let sep_width = if args.allow_min { 101 } else { 90 };
     println!("{}", "=".repeat(sep_width));
     println!(
         "BBµ_{} summary  (opts={:?}, max_steps={})",
-        if args.allow_min { "GRF" } else { "PRF" },
+        mode_str,
         opts,
         args.max_steps
     );
     println!("{}", "=".repeat(sep_width));
-    if args.allow_min {
+    if has_min {
         println!(
             "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
             "n", "BBµ(n) ≥", "max_steps", "holdouts", "#diverge", "#fns", "tot_steps", "Champion"
@@ -392,21 +459,23 @@ fn main() {
     }
     println!("{}", "-".repeat(sep_width));
     for r in &results {
-        let max_val_str = match &r.best_value {
+        let best = r.top_k.best();
+        let max_val_str = match best {
             Some(v) => v.to_string(),
             None => "-".to_string(),
         };
-        let expr_str = if r.best_exprs.is_empty() {
-            "-".to_string()
-        } else {
-            let s = fmt(&r.best_exprs[0]);
-            if r.best_exprs.len() > 1 {
-                format!("{s}  (+{} ties)", r.best_exprs.len() - 1)
-            } else {
-                s
+        let expr_str = match r.top_k.iter_desc().next() {
+            None => "-".to_string(),
+            Some((_, exprs)) => {
+                let s = fmt(&exprs[0]);
+                if exprs.len() > 1 {
+                    format!("{s}  (+{} ties)", exprs.len() - 1)
+                } else {
+                    s
+                }
             }
         };
-        if args.allow_min {
+        if has_min {
             println!(
                 "{:>4}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {}",
                 r.size,

@@ -48,8 +48,8 @@ fn fmt_result(v: Option<u64>) -> String {
 }
 
 fn print_table_1d(grf: &Grf, template: &[Option<u64>], sweep_idx: usize, n: u64, max_steps: u64) {
-    let axis = format!("x{sweep_idx}");
-    let f_hdr = format!("f(x{sweep_idx})");
+    let axis = format!("x{}", sweep_idx + 1);
+    let f_hdr = format!("f(x{})", sweep_idx + 1);
     let vals: Vec<Option<u64>> = (0..=n)
         .map(|v| sim_val(grf, template, &[(sweep_idx, v)], max_steps))
         .collect();
@@ -75,12 +75,12 @@ fn print_table_2d(grf: &Grf, template: &[Option<u64>], row_idx: usize, col_idx: 
         .chain((0..=n).map(|b| b.to_string().len()))
         .max().unwrap_or(1);
 
-    let row_label = format!("x{}↓", row_idx);
+    let row_label = format!("x{}↓", row_idx + 1);
     let row_w = n.to_string().len().max(row_label.chars().count());
 
     let header: String = (0..=n).map(|b| format!("{:>cell_w$}", b)).collect::<Vec<_>>().join("  ");
     let pad = " ".repeat(row_w);
-    println!("{}  |  x{} →", pad, col_idx);
+    println!("{}  |  x{} →", pad, col_idx + 1);
     let corner_pad = " ".repeat(row_w - row_label.chars().count());
     println!("{}{}  |  {}", corner_pad, row_label, header);
     println!("{}--+--{}", "-".repeat(row_w), "-".repeat(header.len()));
@@ -122,7 +122,7 @@ fn print_table_nd(grf: &Grf, template: &[Option<u64>], sweep_indices: &[usize], 
     let val_w = results.iter().map(|v| fmt_result(*v).len()).max().unwrap_or(1).max(6);
 
     let arg_headers: String = sweep_indices.iter()
-        .map(|i| format!("{:>arg_w$}", format!("x{i}")))
+        .map(|i| format!("{:>arg_w$}", format!("x{}", i + 1)))
         .collect::<Vec<_>>().join("  ");
     println!("{}  |  {:>val_w$}", arg_headers, "result");
     println!("{}--+--{}", "-".repeat(arg_w * sc + 2 * (sc - 1)), "-".repeat(val_w));
@@ -211,11 +211,11 @@ fn main() {
     println!("arity : {}", arity);
     println!("size  : {}", grf.size());
     let sweep_str: Vec<String> = sweep_indices.iter()
-        .map(|i| format!("x{i}=0..={}", args.max_val))
+        .map(|i| format!("x{}=0..={}", i + 1, args.max_val))
         .collect();
     let fixed_str: Vec<String> = template.iter().enumerate()
         .filter(|(_, v)| v.is_some())
-        .map(|(i, v)| format!("x{i}={}", v.unwrap()))
+        .map(|(i, v)| format!("x{}={}", i + 1, v.unwrap()))
         .collect();
     if fixed_str.is_empty() {
         println!("sweep : {}", sweep_str.join(", "));

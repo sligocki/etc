@@ -1,10 +1,4 @@
 /// Enumerate 0-arity GRFs of a given size and track BBµ champions.
-///
-/// Usage examples:
-///   bb_search 8
-///   bb_search --allow-min --max-steps=300000 14
-///   bb_search --min-prf 14
-///   bb_search 14 --results-dir my_results/
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::enumerate::{count_grf, stream_grf};
@@ -29,6 +23,9 @@ use std::time::{Duration, Instant};
 struct Args {
     /// Size of GRFs to enumerate.
     size: usize,
+
+    /// Directory for result files
+    results_dir: PathBuf,
 
     /// Maximum steps per simulation before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
@@ -59,10 +56,6 @@ struct Args {
     /// Number of top halting GRFs to track and write to halt file.
     #[arg(long, default_value_t = 100)]
     top_k: usize,
-
-    /// Directory for result files. Default: results/{mode}/{size}/.
-    #[arg(long)]
-    results_dir: Option<PathBuf>,
 
     /// Seconds between progress lines (0 = disable).
     #[arg(long, default_value_t = 30)]
@@ -246,13 +239,10 @@ fn main() {
     let size = args.size;
 
     // Results directory.
-    let results_dir = args.results_dir.clone().unwrap_or_else(|| {
-        PathBuf::from(format!("results/{}/{}", mode_str, size))
-    });
-    fs::create_dir_all(&results_dir).expect("failed to create results directory");
+    fs::create_dir_all(&args.results_dir).expect("failed to create results directory");
 
     // Open holdout file for streaming writes.
-    let holdout_path = results_dir.join("holdout.txt");
+    let holdout_path = args.results_dir.join("holdout.txt");
     let holdout_file = fs::File::create(&holdout_path).expect("failed to create holdout.txt");
     let mut holdout_writer = BufWriter::new(holdout_file);
     writeln!(holdout_writer,
@@ -283,7 +273,7 @@ fn main() {
         mode_str, size, args.max_steps, expected, opts,
     );
     println!("  threads={}, batch={}, top_k={}", rayon::current_num_threads(), args.batch_size, args.top_k);
-    println!("  results: {}/", results_dir.display());
+    println!("  results: {}/", args.results_dir.display());
     println!("{}", "=".repeat(90));
 
     let start = Instant::now();
@@ -381,7 +371,7 @@ fn main() {
     }
 
     // Write halt file.
-    let halt_path = results_dir.join("halt.max.txt");
+    let halt_path = args.results_dir.join("halt.max.txt");
     let mut halt_w = BufWriter::new(
         fs::File::create(&halt_path).expect("failed to create halt.max.txt")
     );
@@ -396,7 +386,7 @@ fn main() {
     halt_w.flush().unwrap();
 
     // Write config file.
-    let config_path = results_dir.join("config.json");
+    let config_path = args.results_dir.join("config.json");
     let mut cfg_w = BufWriter::new(
         fs::File::create(&config_path).expect("failed to create config.json")
     );
@@ -421,7 +411,7 @@ fn main() {
     cfg_w.flush().unwrap();
 
     println!();
-    println!("Results written to {}/", results_dir.display());
+    println!("Results written to {}/", args.results_dir.display());
     println!("  halt.max.txt: {} entries", acc.top_k.entries.len());
     println!("  holdout.txt:  {} entries", acc.holdouts);
     println!("  config.json");

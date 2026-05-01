@@ -79,14 +79,19 @@ const SPECS: &[SpecDef] = &[
         build: || Box::new(exact_spec(|a| Some(a[1].saturating_sub(a[0])))),
     },
     SpecDef {
-        name: "mul", default_arity: 2,
+        name: "mult", default_arity: 2,
         description: "multiplication: f(x,y) = x*y",
         build: || Box::new(exact_spec(|a| Some(a[0] * a[1]))),
     },
     SpecDef {
-        name: "mul2", default_arity: 2,
+        name: "mult2", default_arity: 1,
         description: "f(x) = 2x",
         build: || Box::new(exact_spec(|a| Some(2*a[0]))),
+    },
+    SpecDef {
+        name: "mult2s", default_arity: 1,
+        description: "f(x) = 2x+1",
+        build: || Box::new(exact_spec(|a| Some(2*a[0]+1))),
     },
     // Mod2: 8: R(Z0, C(R(S, Z3), P(2,2), Z2))
     SpecDef {
@@ -104,6 +109,13 @@ const SPECS: &[SpecDef] = &[
         name: "mod3", default_arity: 1,
         description: "f(x) = x % 3",
         build: || Box::new(exact_spec(|a| Some(a[0] % 3))),
+    },
+    SpecDef {
+        name: "mod3is2", default_arity: 1,
+        description: "f(x) = (x % 3) == 2",
+        build: || Box::new(exact_spec(|a| Some(
+            ((a[0] % 3) == 2) as u64
+        ))),
     },
     SpecDef {
         name: "div2", default_arity: 1,
@@ -129,6 +141,11 @@ const SPECS: &[SpecDef] = &[
         name: "pow2m1", default_arity: 1,
         description: "f(x) = 2^x - 1",
         build: || Box::new(exact_spec(|a| Some((1u64 << a[0].min(63)) - 1))),
+    },
+    SpecDef {
+        name: "square", default_arity: 1,
+        description: "f(x) = x^2",
+        build: || Box::new(exact_spec(|a| Some(a[0].pow(2)))),
     },
     SpecDef {
         name: "trailing-bits", default_arity: 1,

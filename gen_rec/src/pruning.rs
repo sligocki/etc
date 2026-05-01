@@ -187,12 +187,13 @@ define_pruning_flags! {
     { comp_zero,     "comp_zero",     cc=yes, rec=yes, mo=no,  "C(Z,…) → Z" },
     { rec_zero_arg,  "rec_zero_arg",  cc=yes, rec=yes, mo=no,  "C(R(g,h),Z,…) → C(g,…)" },
     { comp_assoc,    "comp_assoc",    cc=yes, rec=yes, mo=no,  "C(C(f,g),h1…) → C(f,C(g,h1…))" },
+    { comp_null_null,"comp_null_null",cc=yes, rec=yes, mo=no,  "C0(h) → h" },
+    // TODO: I'm not 100% sure it is safe to skip C(h) ... and it is only like a 1.2% savings.
+    { comp_null,     "comp_null",     cc=yes, rec=no,  mo=no,  "Ck(h) → h^k  (not 100% safe)" },
     { rec_zero_base, "rec_zero_base", cc=yes, rec=yes, mo=no,  "R(Z,Z) / R(Z,P2) → Z" },
     { min_trivial,   "min_trivial",   cc=yes, rec=yes, mo=yes, "M(Z) / M(P) → Z" },
-    // TODO: I'm not 100% sure it is safe to skip C(h) ... and it is only like a 1.5% savings.
-    { comp_null,     "comp_null",     cc=yes, rec=no, mo=no,  "C(h) — 0-arg Comp (constant lift); prune when on" },
-    { min_dom,       "min_dom",       cc=no,  rec=yes,  mo=yes, "M(f) dominated by Z_{k-1}" },
-    { inline_proj,   "inline_proj",   cc=no,  rec=yes,  mo=no,  "C(h,P/Z…) → inlined h" },
-    { comp_rnf,      "comp_rnf",      cc=no,  rec=yes,  mo=no,  "C(h,…) require h in Rewire Normal Form (all args used, canonical order)" },
+    { min_dom,       "min_dom",       cc=no,  rec=yes, mo=yes, "M(f) dominated by Z_{k-1}" },
+    { inline_proj,   "inline_proj",   cc=no,  rec=yes, mo=no,  "C(h,P/Z…) → inlined h" },
+    { comp_rnf,      "comp_rnf",      cc=no,  rec=yes, mo=no,  "C(h,…) require h in Rewire Normal Form (all args used, canonical order)" },
     { rec_step_p2,   "rec_step_p2",   cc=no,  rec=no,  mo=no,  "C(R(g,P2),h1,…) → C(g,h2,…)" },
 }

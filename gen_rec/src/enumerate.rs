@@ -53,14 +53,17 @@ fn for_each_grf(
     for hsize in 1..=n {
         let gs_total = n - hsize;
 
-        // 0-arg Comp: C(h)
+        // 0-arg Comp: Ck(h)
         if !opts.comp_null && gs_total == 0 {
-            for_each_grf(hsize, 0, allow_min, opts, &mut |h: &Grf| {
-                if opts.comp_zero && matches!(h, Grf::Zero(_)) {
-                    return;
-                }
-                callback(&Grf::Comp(Box::new(h.clone()), vec![], arity));
-            });
+            // comp_null_null: prunes C0(h)
+            if !(opts.comp_null_null && arity == 0) {
+                for_each_grf(hsize, 0, allow_min, opts, &mut |h: &Grf| {
+                    if opts.comp_zero && matches!(h, Grf::Zero(_)) {
+                        return;
+                    }
+                    callback(&Grf::Comp(Box::new(h.clone()), vec![], arity));
+                });
+            }
         }
 
         for m in 1..=gs_total {
@@ -483,15 +486,18 @@ fn seek_grfs(
 
     // ---- 0-arg Comp section (comp_null off) ----
     if !opts.comp_null && *rem > 0 {
-        let h_count_raw = count_grf(n, 0, allow_min, opts);
-        // comp_zero prunes C(Z0): Z0 is the only 0-arity size-1 form.
-        let h_count = if opts.comp_zero && n == 1 { h_count_raw.saturating_sub(1) } else { h_count_raw };
-        if *skip >= h_count {
-            *skip -= h_count;
-        } else {
-            seek_grfs(n, 0, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                callback(&Grf::Comp(Box::new(h.clone()), vec![], arity));
-            });
+        // comp_null_null: prunes C0(h)
+        if !(opts.comp_null_null && arity == 0) {
+            let h_count_raw = count_grf(n, 0, allow_min, opts);
+            // comp_zero prunes C(Z0): Z0 is the only 0-arity size-1 form.
+            let h_count = if opts.comp_zero && n == 1 { h_count_raw.saturating_sub(1) } else { h_count_raw };
+            if *skip >= h_count {
+                *skip -= h_count;
+            } else {
+                seek_grfs(n, 0, allow_min, opts, skip, rem, &mut |h: &Grf| {
+                    callback(&Grf::Comp(Box::new(h.clone()), vec![], arity));
+                });
+            }
         }
     }
 
@@ -712,14 +718,17 @@ fn seek_pre_rec_heads(
     // 0-arg Comp forms as pre-Rec heads: C_arity(h2) where h2 is 0-arity of size n.
     // These come last in the Comp section of for_each_grf (hsize=n, gs_total=0).
     if !opts.comp_null && *rem > 0 {
-        let h2_count_raw = count_grf(n, 0, allow_min, opts);
-        let h2_count = if opts.comp_zero && n == 1 { h2_count_raw.saturating_sub(1) } else { h2_count_raw };
-        if *skip >= h2_count {
-            *skip -= h2_count;
-        } else if h2_count > 0 {
-            seek_grfs(n, 0, allow_min, opts, skip, rem, &mut |h2: &Grf| {
-                callback(&Grf::Comp(Box::new(h2.clone()), vec![], arity));
-            });
+        // comp_null_null: prunes C0(h)
+        if !(opts.comp_null_null && arity == 0) {
+            let h2_count_raw = count_grf(n, 0, allow_min, opts);
+            let h2_count = if opts.comp_zero && n == 1 { h2_count_raw.saturating_sub(1) } else { h2_count_raw };
+            if *skip >= h2_count {
+                *skip -= h2_count;
+            } else if h2_count > 0 {
+                seek_grfs(n, 0, allow_min, opts, skip, rem, &mut |h2: &Grf| {
+                    callback(&Grf::Comp(Box::new(h2.clone()), vec![], arity));
+                });
+            }
         }
     }
 }
@@ -1077,9 +1086,12 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
     // C(h) 0-arg Comp: when comp_null is off, count valid 0-arity heads of size n.
     // comp_zero prunes C(Z0): Z0 is the only 0-arity size-1 form, so only adjust at n==1.
     if !opts.comp_null {
-        let h_count = count_grf(n, 0, allow_min, opts);
-        let zero_adj = if opts.comp_zero && n == 1 { 1 } else { 0 };
-        total = total.saturating_add(h_count.saturating_sub(zero_adj));
+        // comp_null_null: prunes C0(h)
+        if !(opts.comp_null_null && arity == 0) {
+            let h_count = count_grf(n, 0, allow_min, opts);
+            let zero_adj = if opts.comp_zero && n == 1 { 1 } else { 0 };
+            total = total.saturating_add(h_count.saturating_sub(zero_adj));
+        }
     }
 
     // rec_zero_arg: subtract C(R(g,h), Z(arity), f2,...,fm) for all m,g,h.

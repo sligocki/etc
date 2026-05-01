@@ -98,6 +98,17 @@ fn for_each_grf(
                     }
                 }
 
+                // rec_step_p2: C(R(g, P2), h1, ... hm) → C(g, h2, ... hm)
+                // P2 as step always returns the accumulator unchanged, so R(g,P2)
+                // ignores its first argument entirely.
+                if opts.rec_step_p2 {
+                    if let Grf::Rec(_, step) = h {
+                        if matches!(step.as_ref(), Grf::Proj(_, 2)) {
+                            return;
+                        }
+                    }
+                }
+
                 let forced: Option<&[bool]> = None;
                 let mut args = Vec::with_capacity(m);
                 for_each_args(
@@ -1829,6 +1840,75 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- rec_step_p2 ---
+
+    #[test]
+    fn test_rec_step_p2_removes_specific_form() {
+        // C(R(P(1,1),P(3,2)), P(2,1), P(2,1)): head R(P(1,1),P(3,2)) has arity 2 (m=2),
+        // step is P(3,2). Equivalent to C(P(1,1), P(2,1)) which is strictly smaller.
+        let full = collect(6, 2, false, PruningOpts::default());
+        let pruned = collect(6, 2, false, PruningOpts::default().with_flags("rec_step_p2"));
+        let target = "C(R(P(1,1),P(3,2)),P(2,1),P(2,1))".parse::<Grf>().unwrap();
+        assert!(full.iter().any(|g| *g == target), "must exist in full set");
+        assert!(
+            !pruned.iter().any(|g| *g == target),
+            "C(R(g,P2),...) with m=2 should be pruned by rec_step_p2"
+        );
+    }
+
+    #[test]
+    fn test_rec_step_p2_removes_m1_form() {
+        // C(R(Z0,P(2,2)), P(1,1)): m=1. R(Z0,P(2,2)) ignores its arg and returns 0,
+        // so the whole Comp ≡ Z1. Should be pruned.
+        let full = collect(5, 1, false, PruningOpts::default());
+        let pruned = collect(5, 1, false, PruningOpts::default().with_flags("rec_step_p2"));
+        let target = "C(R(Z0,P(2,2)),P(1,1))".parse::<Grf>().unwrap();
+        assert!(full.iter().any(|g| *g == target), "must exist in full set");
+        assert!(
+            !pruned.iter().any(|g| *g == target),
+            "C(R(g,P2), h) with m=1 should also be pruned by rec_step_p2"
+        );
+    }
+
+    #[test]
+    fn test_rec_step_p2_keeps_non_p2_step() {
+        // C(R(P(1,1),P(3,1)), P(2,1), P(2,2)): step is P(3,1) (counter), not P2. NOT pruned.
+        // R(P(1,1),P(3,1)) has arity 2, so it heads a Comp with m=2. Size = 1+1+1=3.
+        // Full Comp size = 1+3+1+1 = 6, arity 2.
+        let pruned = collect(6, 2, false, PruningOpts::default().with_flags("rec_step_p2"));
+        let target = "C(R(P(1,1),P(3,1)),P(2,1),P(2,2))".parse::<Grf>().unwrap();
+        assert!(
+            pruned.iter().any(|g| *g == target),
+            "C(R(g,P(k,1)),...) should not be pruned by rec_step_p2 (step is P1, not P2)"
+        );
+    }
+
+    #[test]
+    fn test_rec_step_p2_never_more_than_full() {
+        for size in 1..=8 {
+            for arity in 0..=3 {
+                let full = collect(size, arity, false, PruningOpts::default()).len();
+                let pruned = collect(size, arity, false, PruningOpts::default().with_flags("rec_step_p2")).len();
+                assert!(
+                    pruned <= full,
+                    "rec_step_p2 produced more GRFs at size={size} arity={arity}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "'rec_step_p2'")]
+    fn count_grf_panics_on_rec_step_p2() {
+        count_grf(5, 1, false, PruningOpts::default().with_flags("rec_step_p2"));
+    }
+
+    #[test]
+    #[should_panic(expected = "'rec_step_p2'")]
+    fn seek_stream_grf_panics_on_rec_step_p2() {
+        seek_stream_grf(5, 1, false, PruningOpts::default().with_flags("rec_step_p2"), 0, 1, &mut |_| {});
     }
 
     // Verify that seek at the exact position that previously caused a hang returns correct GRFs

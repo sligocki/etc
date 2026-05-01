@@ -1,142 +1,162 @@
-/// Options controlling which GRFs are pruned during enumeration.
-///
-/// Each flag removes a provably redundant subset of expressions: for every
-/// GRF that is skipped, an equivalent (or simpler) GRF is still generated.
-///
-/// Flags are independent and can be combined freely.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct PruningOpts {
-    /// Skip `C(Z_m, …) = Z`
-    pub skip_comp_zero: bool,
+// ---------------------------------------------------------------------------
+// Pruning option metadata
+// ---------------------------------------------------------------------------
 
-    /// Skip `C(P^m_i, g0, ... gm) = gi`
-    pub skip_comp_proj: bool,
-
-    /// Canonicalise composition via associativity.
-    ///
-    /// The identity `C(C(f, g), k) = C(f, C(g, k))` means every expression
-    /// with a single-argument Comp as its head has an equivalent form with a
-    /// "flatter" head.  We always prefer the right-associated form, so
-    /// `C(h, …)` is skipped whenever `h` is itself a single-argument Comp.
-    ///
-    /// Synergises with `skip_trivial`: in the canonical form `C(f, C(g, k))`,
-    /// if `g` is `Z` or `P` then `C(g, k)` is already pruned by
-    /// `skip_trivial`, so the whole expression disappears for free.
-    pub comp_assoc: bool,
-
-    /// Skip `R(Z(k), h)` when `h` is `Z(k+2)` or `P(k+2, 2)`.
-    ///
-    /// Both cases produce a function that is always 0 = `Z(k+1)`:
-    /// - `h = Z(k+2)`: step always returns 0, base is 0.
-    /// - `h = P(k+2, 2)`: step returns the accumulator; accumulator starts at 0
-    ///   (from the Z base) and is returned unchanged every step, so stays 0.
-    ///
-    /// The equivalent `Z(k+1)` has size 1 vs 3 for `R(Z, h)`.
-    pub skip_rec_zero_base: bool,
-
-    /// Skip `C(R(g, h), Z(p), f2, …)`.
-    ///
-    /// When the first argument to a Rec is structurally `Zero`, the recursion
-    /// counter is always 0, so only the base case fires:
-    ///   `C(R(g, h), Z(p), f2, …)(x) = R(g,h)(0, f2(x), …) = g(f2(x), …)`
-    ///               = `C(g, f2, …)(x)`
-    /// The equivalent `C(g, f2, …)` is strictly smaller (by `h.size() + 1`)
-    /// and will be generated independently by the enumerator.
-    pub skip_rec_zero_arg: bool,
-
-    /// Skip `M(Zero(_))` and `M(Proj(_, _))` (any projection).
-    ///
-    /// All are dominated by `Z_{k-1}` (size 1 vs 2):
-    /// - `M(Zero(k+1))`: `min{i : 0 = 0} = 0 = Z_k` (exactly zero everywhere).
-    /// - `M(Proj(k+1, 1))`: `min{i : i = 0} = 0 = Z_k` (search var; exactly zero).
-    /// - `M(Proj(k+1, j≥2))`: returns 0 when `x_{j-1}=0`, diverges otherwise —
-    ///   dominated by `Z_k` which returns 0 everywhere.
-    ///
-    /// Compatible with `count_grf` and `seek_stream_grf`.
-    pub skip_min_trivial_zero: bool,
-
-    /// Skip `M(f)` dominated by a smaller total function (stream-only).
-    ///
-    /// Two cases, both dominated by `Z_{k-1}` (size 1):
-    /// - (a) f ignores its search variable (1-indexed arg 1): M(f) only returns
-    ///       0 or diverges, so Z_{k-1} (which always returns 0) generalises it.
-    /// - (b) f is provably always positive (`is_never_zero`): M(f) always
-    ///       diverges, so Z_{k-1} generalises it vacuously.
-    ///
-    /// Consequence: no `M(atom)` (size-2 Min) survives for any arity when both
-    /// `skip_min_trivial_zero` and `skip_min_dominated` are enabled.
-    ///
-    /// **Stream-only**: `count_grf` and `seek_stream_grf` do not account for
-    /// this flag. Do not use with those functions.
-    pub skip_min_dominated: bool,
-
-    /// Skip `C(h, g1…gm)` when every `gi` is `Proj` or `Zero` and
-    /// `inline_proj(h, k, rewiring)` succeeds.
-    ///
-    /// Such a composition is always equivalent to the inlined result, which
-    /// is strictly smaller (size `h.size()` vs `h.size() + m + 1`).
-    ///
-    /// Only supported in `stream_grf` / `for_each_grf`. `count_grf` and
-    /// `seek_stream_grf` do not account for this flag; do not use it with
-    /// those functions.
-    pub skip_inline_proj: bool,
-
-    /// Skip `C(h, g1…gm)` when `h` is not in Rewire Normal Form (RNF).
-    ///
-    /// A GRF `h` of arity `m` is in RNF when:
-    ///   1. All args are used: `h.used_args().len() == m`.
-    ///   2. Args appear in canonical first-occurrence DFS order: the first new
-    ///      outer arg encountered in a pre-order tree walk is 1, the second is
-    ///      2, etc.
-    ///
-    /// Every non-RNF head has an equivalent form with a smaller arity (or a
-    /// permuted head) that is independently enumerated, so skipping non-RNF
-    /// heads is sound.
-    ///
-    /// **Stream-only**: do not use with `count_grf` or `seek_stream_grf`.
-    pub skip_comp_not_rnf: bool,
+/// Metadata for a single pruning flag, used for CLI parsing, config output,
+/// and building enumeration chains in tools like `count`.
+pub struct FlagMeta {
+    /// Short name used in CLI flags and config output (e.g. `"comp_rnf"`).
+    pub name: &'static str,
+    /// Human-readable description for legend output.
+    pub desc: &'static str,
+    /// `true` iff the flag is compatible with `count_grf` and `seek_stream_grf`.
+    pub count_compat: bool,
+    /// `true` iff the flag is on in `PruningOpts::recommended()`.
+    pub recommended: bool,
+    /// `true` iff the flag is only meaningful when `allow_min = true`.
+    pub min_only: bool,
+    /// Read the flag value from a `PruningOpts`.
+    pub get: fn(&PruningOpts) -> bool,
+    /// Write the flag value into a `PruningOpts`.
+    pub set: fn(&mut PruningOpts, bool),
 }
 
-impl PruningOpts {
-    pub const fn default() -> PruningOpts {
-        PruningOpts {
-            skip_comp_zero: true,
-            skip_comp_proj: true,
-            comp_assoc: true,
-            skip_rec_zero_base: true,
-            skip_rec_zero_arg: true,
-            skip_min_trivial_zero: true,
-            // Stream-only flags: not supported by count_grf / seek_stream_grf.
-            skip_min_dominated: false,
-            skip_inline_proj: false,
-            skip_comp_not_rnf: false,
-        }
-    }
+// ---------------------------------------------------------------------------
+// Code-gen macro
+// ---------------------------------------------------------------------------
 
-    pub const fn none() -> PruningOpts {
-        PruningOpts {
-            skip_comp_zero: false,
-            skip_comp_proj: false,
-            comp_assoc: false,
-            skip_rec_zero_base: false,
-            skip_rec_zero_arg: false,
-            skip_min_trivial_zero: false,
-            skip_min_dominated: false,
-            skip_inline_proj: false,
-            skip_comp_not_rnf: false,
+macro_rules! define_pruning_flags {
+    (
+        $( { $field:ident, $name:literal, cc=$cc:ident, rec=$rec:ident, mo=$mo:ident, $desc:literal } ),*
+        $(,)?
+    ) => {
+        /// Options controlling which GRFs are pruned during enumeration.
+        ///
+        /// All flags are independent and can be combined freely.  See [`FLAGS`]
+        /// for per-flag documentation and compatibility information.
+        ///
+        /// Typical usage: start from [`PruningOpts::recommended`] (the standard
+        /// preset) and optionally enable additional stream-only flags via
+        /// [`PruningOpts::with_stream_opts`].
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub struct PruningOpts {
+            $( pub $field: bool, )*
         }
-    }
-    pub const fn all() -> PruningOpts {
-        PruningOpts {
-            skip_comp_zero: true,
-            skip_comp_proj: true,
-            comp_assoc: true,
-            skip_rec_zero_base: true,
-            skip_rec_zero_arg: true,
-            skip_min_trivial_zero: true,
-            skip_min_dominated: true,
-            skip_inline_proj: true,
-            skip_comp_not_rnf: true,
+
+        /// All flags off.
+        impl Default for PruningOpts {
+            fn default() -> Self {
+                PruningOpts { $( $field: false, )* }
+            }
         }
-    }
+
+        impl PruningOpts {
+            /// All recommended (default-on) flags enabled; stream-only flags off.
+            /// Use this as the starting point for most enumerations.
+            pub fn recommended() -> Self {
+                PruningOpts { $( $field: define_pruning_flags!(@b $rec), )* }
+            }
+
+            /// All flags on.
+            pub fn all() -> Self {
+                PruningOpts { $( $field: true, )* }
+            }
+
+            /// Panic if any flag that is incompatible with `count_grf` /
+            /// `seek_stream_grf` is set.
+            pub fn assert_count_compat(&self) {
+                for meta in FLAGS {
+                    if !meta.count_compat && (meta.get)(self) {
+                        panic!(
+                            "count_grf/seek_stream_grf does not support '{}'",
+                            meta.name
+                        );
+                    }
+                }
+            }
+
+            /// Return the names of active stream-only flags.
+            pub fn stream_opt_names(&self) -> Vec<&'static str> {
+                FLAGS.iter()
+                    .filter(|m| !m.count_compat && (m.get)(self))
+                    .map(|m| m.name)
+                    .collect()
+            }
+
+            /// Enable any flags by name on top of `self`.  Panics on unknown names.
+            /// Use in tests and internal code; for CLI use [`with_stream_opts`].
+            pub fn with_flags(mut self, names: &str) -> Self {
+                for name in names.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    let meta = FLAGS.iter().find(|m| m.name == name)
+                        .unwrap_or_else(|| panic!("unknown pruning flag '{}'", name));
+                    (meta.set)(&mut self, true);
+                }
+                self
+            }
+
+            /// Enable stream-only flags by name on top of `self`.
+            ///
+            /// `names` is a comma-separated list of flag names,
+            /// e.g. `"inline_proj,comp_rnf"`.  Returns an error string if any
+            /// name is unknown or refers to an always-on flag.
+            pub fn with_stream_opts(mut self, names: &str) -> Result<Self, String> {
+                for name in names.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    let meta = FLAGS.iter().find(|m| m.name == name).ok_or_else(|| {
+                        let known: Vec<_> = FLAGS.iter()
+                            .filter(|m| !m.count_compat)
+                            .map(|m| m.name)
+                            .collect();
+                        format!(
+                            "unknown stream opt '{}'; known: {}",
+                            name,
+                            known.join(", ")
+                        )
+                    })?;
+                    if meta.count_compat {
+                        return Err(format!(
+                            "'{}' is always-on by default, not a stream opt",
+                            name
+                        ));
+                    }
+                    (meta.set)(&mut self, true);
+                }
+                Ok(self)
+            }
+        }
+
+        /// All pruning flags in canonical chain order (count-compat first, then
+        /// stream-only).  Iterate this to build enumeration tables, CLI help,
+        /// config output, or compat checks without touching individual binaries.
+        pub static FLAGS: &[FlagMeta] = &[
+            $(
+                FlagMeta {
+                    name:         $name,
+                    desc:         $desc,
+                    count_compat: define_pruning_flags!(@b $cc),
+                    recommended:  define_pruning_flags!(@b $rec),
+                    min_only:     define_pruning_flags!(@b $mo),
+                    get: |o: &PruningOpts| o.$field,
+                    set: |o: &mut PruningOpts, v: bool| { o.$field = v; },
+                },
+            )*
+        ];
+    };
+    (@b yes) => { true  };
+    (@b no)  => { false };
+}
+
+// ---------------------------------------------------------------------------
+// Flag declarations — one line per flag, in canonical chain order
+// ---------------------------------------------------------------------------
+
+define_pruning_flags! {
+    { comp_proj,     "comp_proj",     cc=yes, rec=yes, mo=no,  "C(P,…) → one of its args"                                               },
+    { comp_zero,     "comp_zero",     cc=yes, rec=yes, mo=no,  "C(Z,…) → Z"                                                             },
+    { rec_zero_arg,  "rec_zero_arg",  cc=yes, rec=yes, mo=no,  "C(R(g,h),Z,…) → C(g,…)"                                                },
+    { comp_assoc,    "comp_assoc",    cc=yes, rec=yes, mo=no,  "prefer right-associated Comp"                                           },
+    { rec_zero_base, "rec_zero_base", cc=yes, rec=yes, mo=no,  "R(Z,Z) / R(Z,P2) → Z"                                                  },
+    { min_trivial,   "min_trivial",   cc=yes, rec=yes, mo=yes, "M(Z) / M(P) → Z"                                                        },
+    { min_dom,       "min_dom",       cc=no,  rec=no,  mo=yes, "M(f) dominated by Z_{k-1}"                                              },
+    { inline_proj,   "inline_proj",   cc=no,  rec=no,  mo=no,  "C(h,P/Z…) → inlined h"                                                  },
+    { comp_rnf,      "comp_rnf",      cc=no,  rec=no,  mo=no,  "C(h,…) require h in Rewire Normal Form (all args used, canonical order)" },
 }

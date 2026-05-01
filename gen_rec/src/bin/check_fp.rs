@@ -50,7 +50,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let opts = PruningOpts::default();
+    let opts = PruningOpts::recommended();
 
     // Current defaults (used to annotate the table).
     let default_fp = |arity: usize| -> usize {

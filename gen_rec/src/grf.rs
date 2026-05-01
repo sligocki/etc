@@ -189,7 +189,7 @@ impl Grf {
     /// `self` is in canonical argument order iff the result equals
     /// `[1, 2, ..., self.arity()]`.  Combined with the all-args-used check
     /// (`self.used_args().len() == self.arity()`), this forms the full RNF
-    /// criterion used by the `skip_comp_not_rnf` pruning flag.
+    /// criterion used by the `comp_rnf` pruning flag.
     pub fn canonical_arg_order(&self) -> Vec<usize> {
         let identity: Vec<usize> = (1..=self.arity()).collect();
         let mut seen = vec![false; self.arity() + 1];

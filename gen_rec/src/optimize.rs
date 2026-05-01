@@ -424,7 +424,7 @@ mod tests {
 
         for h_size in 1..=max_size {
             for m in 0..=max_arity {
-                stream_grf(h_size, m, true, PruningOpts::none(), &mut |h| {
+                stream_grf(h_size, m, true, PruningOpts::default(), &mut |h| {
                     let ic = compute_inline_constraints(h);
                     for k in 0..=max_arity {
                         // All (k+1)^m rewirings into new_arity k.

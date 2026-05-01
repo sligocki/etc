@@ -136,50 +136,41 @@ struct SummarizeArgs {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
     allow_min: bool,
-    opts: SerOpts,
+    #[serde(with = "pruning_serde")]
+    opts: PruningOpts,
     max_steps: u64,
     save_min_score: u64,
     save_min_steps: u64,
 }
 
-/// Serialisable mirror of PruningOpts (avoids adding serde to the lib).
-/// Does not include skip_inline_proj: that flag is incompatible with
-/// count_grf / seek_stream_grf, which this binary relies on.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-#[serde(default)]
-struct SerOpts {
-    skip_comp_zero: bool,
-    skip_comp_proj: bool,
-    comp_assoc: bool,
-    skip_rec_zero_base: bool,
-    skip_rec_zero_arg: bool,
-}
+/// Serialize/deserialize PruningOpts as a JSON object of count-compatible flag
+/// names → bools, driven by the FLAGS registry.  Missing keys default to false,
+/// so old config files remain readable.
+mod pruning_serde {
+    use gen_rec::pruning::{PruningOpts, FLAGS};
+    use serde::de::Deserializer;
+    use serde::ser::Serializer;
+    use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
 
-impl From<PruningOpts> for SerOpts {
-    fn from(o: PruningOpts) -> Self {
-        assert!(!o.skip_inline_proj, "bb_search_tasks does not support skip_inline_proj");
-        Self {
-            skip_comp_zero: o.skip_comp_zero,
-            skip_comp_proj: o.skip_comp_proj,
-            comp_assoc: o.comp_assoc,
-            skip_rec_zero_base: o.skip_rec_zero_base,
-            skip_rec_zero_arg: o.skip_rec_zero_arg,
-        }
+    pub fn serialize<S: Serializer>(opts: &PruningOpts, s: S) -> Result<S::Ok, S::Error> {
+        FLAGS.iter()
+            .filter(|m| m.count_compat)
+            .map(|m| (m.name, (m.get)(opts)))
+            .collect::<BTreeMap<_, _>>()
+            .serialize(s)
     }
-}
-impl From<SerOpts> for PruningOpts {
-    fn from(o: SerOpts) -> Self {
-        Self {
-            skip_comp_zero: o.skip_comp_zero,
-            skip_comp_proj: o.skip_comp_proj,
-            comp_assoc: o.comp_assoc,
-            skip_rec_zero_base: o.skip_rec_zero_base,
-            skip_rec_zero_arg: o.skip_rec_zero_arg,
-            skip_min_trivial_zero: false,
-            skip_min_dominated: false,
-            skip_inline_proj: false,
-            skip_comp_not_rnf: false,
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PruningOpts, D::Error> {
+        let map = BTreeMap::<String, bool>::deserialize(d)?;
+        let mut opts = PruningOpts::default();
+        for meta in FLAGS.iter().filter(|m| m.count_compat) {
+            if let Some(&v) = map.get(meta.name) {
+                (meta.set)(&mut opts, v);
+            }
         }
+        opts.assert_count_compat();
+        Ok(opts)
     }
 }
 
@@ -221,7 +212,8 @@ struct TaskResult {
     count: usize,
     // Run parameters repeated for self-containment.
     allow_min: bool,
-    opts: SerOpts,
+    #[serde(with = "pruning_serde")]
+    opts: PruningOpts,
     max_steps: u64,
     save_min_score: u64,
     save_min_steps: u64,
@@ -289,7 +281,7 @@ fn cmd_gen(args: GenArgs) {
     let opts = PruningOpts::all();
     let config = Config {
         allow_min: args.allow_min,
-        opts: opts.into(),
+        opts,
         max_steps: args.max_steps,
         save_min_score: args.save_min_score,
         save_min_steps: args.save_min_steps,
@@ -411,7 +403,7 @@ fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
 
 /// Run one task and return the result.  Does NOT write to disk.
 fn execute_task(task: &TaskEntry, config: &Config, batch_size: usize) -> TaskResult {
-    let opts: PruningOpts = config.opts.into();
+    let opts = config.opts;
     let t0 = Instant::now();
     let mut acc = Acc::new();
     let mut batch: Vec<(usize, Grf)> = Vec::with_capacity(batch_size);
@@ -580,7 +572,7 @@ fn cmd_run(args: RunArgs) {
 
 fn cmd_sim(args: SimArgs) {
     let config = read_config(&args.dir);
-    let opts: PruningOpts = config.opts.into();
+    let opts = config.opts;
     let max_steps = args.max_steps.unwrap_or(config.max_steps);
 
     // Config doesn't store size; read it from the manifest.

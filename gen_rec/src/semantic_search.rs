@@ -115,7 +115,7 @@ pub fn search_smallest(
     config: &SearchConfig,
     spec: &mut dyn FnMut(&[u64], u64) -> bool,
 ) -> SearchOutput {
-    let opts = PruningOpts::default();
+    let opts = PruningOpts::recommended();
     let fast_inputs = canonical_inputs(config.arity);
     let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
     let verify_inputs = verification_inputs(config.arity);
@@ -191,7 +191,7 @@ pub fn search_all_at_min(
     // Partials found before reaching min_size (those at min_size will be re-enumerated).
     let early_partials: Vec<SearchResult> = first.partials.into_iter().filter(|r| r.size < min_size).collect();
 
-    let opts = PruningOpts::default();
+    let opts = PruningOpts::recommended();
     let fast_inputs = canonical_inputs(config.arity);
     let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
     let verify_inputs = verification_inputs(config.arity);

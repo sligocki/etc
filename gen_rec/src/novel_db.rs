@@ -294,7 +294,7 @@ pub fn extend_novel_map(
     partial: bool,
     progress: bool,
 ) -> EnumStats {
-    let opts = PruningOpts::default();
+    let opts = PruningOpts::recommended();
     let inputs = canonical_inputs(arity);
     let mut stats = EnumStats { total_tested: 0, total_new: 0, timed_out_entries: Vec::new() };
 

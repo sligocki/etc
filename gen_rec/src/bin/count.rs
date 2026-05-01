@@ -4,48 +4,23 @@
 /// pruning config, so you can see the marginal benefit of each rule.
 ///
 /// Fast (count_grf) columns cover all sizes up to --max-size.
-/// Stream-only columns (skip_inline_proj, skip_min_dominated, skip_comp_not_rnf)
-/// are counted by exhaustive enumeration and only shown up to --stream-max-size.
+/// Stream-only columns are counted by exhaustive enumeration and only shown
+/// up to --stream-max-size.
 use clap::Parser;
 use gen_rec::enumerate::{count_grf, stream_grf};
-use gen_rec::pruning::PruningOpts;
+use gen_rec::pruning::{PruningOpts, FLAGS};
 
-const NONE: PruningOpts = PruningOpts::none();
-const CP: PruningOpts = PruningOpts { skip_comp_proj: true, ..NONE };
-const CZ: PruningOpts = PruningOpts { skip_comp_zero: true, ..CP };
-const RBASE: PruningOpts = PruningOpts { skip_rec_zero_arg: true, ..CZ };
-const ASSOC: PruningOpts = PruningOpts { comp_assoc: true, ..RBASE };
-const RZZ: PruningOpts = PruningOpts { skip_rec_zero_base: true, ..ASSOC };
-
-// GRF chain (allow_min=true): +min_triv and +min_dom are meaningful.
-const MIN_TRIV: PruningOpts = PruningOpts { skip_min_trivial_zero: true, ..RZZ };
-const INLINE_PROJ: PruningOpts = PruningOpts { skip_inline_proj: true, ..MIN_TRIV };
-const MIN_DOM: PruningOpts = PruningOpts { skip_min_dominated: true, ..INLINE_PROJ };
-const RNF: PruningOpts = PruningOpts { skip_comp_not_rnf: true, ..MIN_DOM };
-
-// PRF chain (allow_min=false): min flags do nothing, so skip them.
-const INLINE_PROJ_PRF: PruningOpts = PruningOpts { skip_inline_proj: true, ..RZZ };
-const RNF_PRF: PruningOpts = PruningOpts { skip_comp_not_rnf: true, ..INLINE_PROJ_PRF };
-
-/// Build the config list for the given mode.
+/// Build the cumulative config list from the global FLAGS registry.
 /// Each entry is (label, opts, stream_only).
 fn make_configs(allow_min: bool) -> Vec<(&'static str, PruningOpts, bool)> {
-    let mut v: Vec<(&'static str, PruningOpts, bool)> = vec![
-        ("none",   NONE,  false),
-        ("+cp",    CP,    false),
-        ("+cz",    CZ,    false),
-        ("+rbase", RBASE, false),
-        ("+assoc", ASSOC, false),
-        ("+rzz",   RZZ,   false),
-    ];
-    if allow_min {
-        v.push(("+min_triv",    MIN_TRIV,    false));
-        v.push(("+inline_proj", INLINE_PROJ, true));
-        v.push(("+min_dom",     MIN_DOM,     true));
-        v.push(("+rnf",         RNF,         true));
-    } else {
-        v.push(("+inline_proj", INLINE_PROJ_PRF, true));
-        v.push(("+rnf",         RNF_PRF,         true));
+    let mut v = vec![("none", PruningOpts::default(), false)];
+    let mut acc = PruningOpts::default();
+    for meta in FLAGS {
+        if !allow_min && meta.min_only {
+            continue;
+        }
+        (meta.set)(&mut acc, true);
+        v.push((meta.name, acc, !meta.count_compat));
     }
     v
 }
@@ -202,19 +177,12 @@ fn main() {
     println!();
     println!();
     println!("Rules (cumulative left to right):");
-    println!("  +cp          skip_comp_proj       C(P,…) → one of its args");
-    println!("  +cz          skip_comp_zero        C(Z,…) → Z");
-    println!("  +rbase       skip_rec_zero_arg     C(R(g,h),Z,…) → C(g,…)");
-    println!("  +assoc       comp_assoc            prefer right-associated Comp");
-    println!("  +rzz         skip_rec_zero_base    R(Z,Z) / R(Z,P2) → Z");
-    if args.allow_min {
-        println!("  +min_triv    skip_min_trivial_zero M(Z) / M(P) → Z");
+    for meta in FLAGS {
+        if args.allow_min || !meta.min_only {
+            let note = if meta.count_compat { "" } else { "  [stream-only]" };
+            println!("  {:<15} {}{}", meta.name, meta.desc, note);
+        }
     }
-    println!("  +inline_proj skip_inline_proj      C(h,P/Z…) → inlined h  [stream-only]");
-    if args.allow_min {
-        println!("  +min_dom     skip_min_dominated    M(f) where f ignores search var  [stream-only]");
-    }
-    println!("  +rnf         skip_comp_not_rnf     C(h,…) require h in RNF (all args used, canonical order)  [stream-only]");
     println!("%red = % reduction vs the immediately preceding column.");
     if total_has_stream {
         println!("* SUM marked with * covers only sizes ≤ {} for stream-only columns.", args.stream_max_size);

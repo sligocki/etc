@@ -242,7 +242,7 @@ impl FingerprintDb {
     /// GRFs whose fingerprint contains any `Unknown` entry (step budget exhausted)
     /// are silently skipped — their functional identity is uncertain.
     pub fn build(max_size: usize, max_arity: usize, allow_min: bool, max_steps: u64) -> Self {
-        let opts = PruningOpts::default();
+        let opts = PruningOpts::recommended();
         let mut db = FingerprintDb {
             map: HashMap::new(),
             inputs: HashMap::new(),

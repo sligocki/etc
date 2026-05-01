@@ -163,7 +163,7 @@ fn grf_category(grf: &Grf) -> &'static str {
 
 fn main() {
     let args = Args::parse();
-    let opts = PruningOpts::default();
+    let opts = PruningOpts::recommended();
 
     println!(
         "Fingerprinting: max_size={}, arity={}..={}, allow_min={}, opts={:?}",

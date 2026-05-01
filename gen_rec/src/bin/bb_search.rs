@@ -50,13 +50,10 @@ struct Args {
     #[arg(long)]
     no_alias: bool,
 
-    /// Enable inline-proj pruning.
-    #[arg(long)]
-    inline_proj: bool,
-
-    /// Skip C(h,…) when h is not in Rewire Normal Form (all args used, canonical order).
-    #[arg(long)]
-    rnf: bool,
+    /// Additional stream-only pruning opts to enable (comma-separated).
+    /// Known opts: inline_proj, comp_rnf.  Example: --opts inline_proj,comp_rnf
+    #[arg(long, value_name = "OPTS")]
+    opts: Option<String>,
 
     /// Number of top halting GRFs to track and write to halt file.
     #[arg(long, default_value_t = 100)]
@@ -233,13 +230,15 @@ fn fmt_si_f64(n: f64) -> String {
 fn main() {
     let args = Args::parse();
 
-    let count_opts = PruningOpts::default();
-    let opts = PruningOpts {
-        skip_inline_proj: args.inline_proj,
-        skip_comp_not_rnf: args.rnf,
-        skip_min_dominated: true,
-        ..PruningOpts::default()
-    };
+    let count_opts = PruningOpts::recommended();
+    let mut opts = PruningOpts::recommended();
+    opts.min_dom = true;
+    if let Some(ref s) = args.opts {
+        opts = opts.with_stream_opts(s).unwrap_or_else(|e| {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        });
+    }
 
     let mode_str = if args.min_prf { "min_prf" } else if args.allow_min { "grf" } else { "prf" };
     let has_min = args.allow_min || args.min_prf;
@@ -271,7 +270,7 @@ fn main() {
         }
     };
 
-    // Expected count (informational; count_grf doesn't account for skip_min_dominated).
+    // Expected count (informational; count_grf doesn't account for min_dom).
     let expected = if args.min_prf {
         if size < 2 { 0 } else { count_grf(size - 1, 1, false, count_opts) }
     } else {
@@ -323,7 +322,7 @@ fn main() {
 
     if args.min_prf && size >= 2 {
         stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
-            if opts.skip_min_dominated {
+            if opts.min_dom {
                 if !f.used_args().contains(&1) { return; }
                 if f.is_never_zero() { return; }
             }
@@ -410,8 +409,7 @@ fn main() {
     writeln!(cfg_w, "  \"top_k\": {},",           args.top_k).unwrap();
     writeln!(cfg_w, "  \"allow_min\": {},",       args.allow_min).unwrap();
     writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
-    writeln!(cfg_w, "  \"inline_proj\": {},",       args.inline_proj).unwrap();
-    writeln!(cfg_w, "  \"rnf\": {},",               args.rnf).unwrap();
+    writeln!(cfg_w, "  \"opts\": \"{}\",",           opts.stream_opt_names().join(",")).unwrap();
     writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
     writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();
     writeln!(cfg_w, "  \"total_holdouts\": {},",  acc.holdouts).unwrap();

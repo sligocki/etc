@@ -68,14 +68,20 @@ impl Grf {
 
     /// Convenience constructor for Comp: derives and stores the arity of the args.
     ///
-    /// Panics if `args` is empty (Comp requires at least 1 argument function).
+    /// Panics if `args` is empty (use `comp0` for 0-arg Comp).
     pub fn comp(h: Self, args: Vec<Self>) -> Self {
         assert!(
             !args.is_empty(),
-            "Comp requires at least 1 argument function"
+            "Comp requires at least 1 argument function; use comp0 for 0-arg Comp"
         );
         let arity = args[0].arity();
         Grf::Comp(Box::new(h), args, arity)
+    }
+
+    /// Convenience constructor for 0-arg Comp: `Ck(h)` lifts a 0-arity `h` to
+    /// a constant function of `outer_arity` inputs.
+    pub fn comp0(h: Self, outer_arity: usize) -> Self {
+        Grf::Comp(Box::new(h), vec![], outer_arity)
     }
 
     /// Returns the arity (number of inputs) of this function.
@@ -228,6 +234,14 @@ impl Grf {
                 Ok(Grf::Proj(k, i))
             }
             'C' => {
+                // 0-arg form: Ck(h) where k is the outer arity encoded as a decimal integer.
+                if chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+                    let k = Self::parse_num(chars)?;
+                    Self::consume(chars, '(')?;
+                    let h = Self::parse_expr(chars)?;
+                    Self::consume(chars, ')')?;
+                    return Ok(Grf::Comp(Box::new(h), vec![], k));
+                }
                 Self::consume(chars, '(')?;
                 let h = Self::parse_expr(chars)?;
                 Self::consume(chars, ',')?;
@@ -358,12 +372,17 @@ impl fmt::Display for Grf {
             Grf::Zero(k) => write!(f, "Z{k}"),
             Grf::Succ => write!(f, "S"),
             Grf::Proj(k, i) => write!(f, "P({k},{i})"),
-            Grf::Comp(h, gs, _) => {
-                write!(f, "C({h}")?;
-                for g in gs {
-                    write!(f, ", {g}")?;
+            Grf::Comp(h, gs, k) => {
+                if gs.is_empty() {
+                    // 0-arg Comp: Ck(h) format encodes the outer arity for round-tripping.
+                    write!(f, "C{k}({h})")
+                } else {
+                    write!(f, "C({h}")?;
+                    for g in gs {
+                        write!(f, ", {g}")?;
+                    }
+                    write!(f, ")")
                 }
-                write!(f, ")")
             }
             Grf::Rec(g, h) => write!(f, "R({g}, {h})"),
             Grf::Min(func) => write!(f, "M({func})"),

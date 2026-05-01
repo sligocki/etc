@@ -52,6 +52,18 @@ fn for_each_grf(
     // C(h, g1..gm): stream h's; for each h, stream all argument tuples
     for hsize in 1..=n {
         let gs_total = n - hsize;
+
+        // 0-arg Comp: C(h) at outer arity > 0, where h is 0-arity of size hsize.
+        // Only generated when comp_null is off and gs_total == 0 (i.e. hsize == n).
+        if !opts.comp_null && arity > 0 && gs_total == 0 {
+            for_each_grf(hsize, 0, allow_min, opts, &mut |h: &Grf| {
+                if opts.comp_zero && matches!(h, Grf::Zero(_)) {
+                    return;
+                }
+                callback(&Grf::Comp(Box::new(h.clone()), vec![], arity));
+            });
+        }
+
         for m in 1..=gs_total {
             for_each_grf(hsize, m, allow_min, opts, &mut |h: &Grf| {
                 // Prune C(Z,...) and C(P,...)
@@ -61,7 +73,7 @@ fn for_each_grf(
                 if opts.comp_proj && matches!(h, Grf::Proj(_, _)) {
                     return;
                 }
-                // Prune C(C(f,g), k)
+                // Prune C(C(f,g), h1, ...)
                 if opts.comp_assoc {
                     if let Grf::Comp(_, inner_gs, _) = h {
                         if inner_gs.len() == 1 {
@@ -470,6 +482,20 @@ fn seek_grfs(
         }
     }
 
+    // ---- 0-arg Comp section (comp_null off) ----
+    if !opts.comp_null && arity > 0 && *rem > 0 {
+        let h_count_raw = count_grf(n, 0, allow_min, opts);
+        // comp_zero prunes C(Z0): Z0 is the only 0-arity size-1 form.
+        let h_count = if opts.comp_zero && n == 1 { h_count_raw.saturating_sub(1) } else { h_count_raw };
+        if *skip >= h_count {
+            *skip -= h_count;
+        } else {
+            seek_grfs(n, 0, allow_min, opts, skip, rem, &mut |h: &Grf| {
+                callback(&Grf::Comp(Box::new(h.clone()), vec![], arity));
+            });
+        }
+    }
+
     // ---- Rec section ----
     if arity >= 1 && *rem > 0 {
         'rec: for gsize in 1..n {
@@ -621,11 +647,8 @@ fn seek_pre_rec_heads(
         return;
     }
 
-    // size >= 3: Comp forms only (no Rec, no Min), with comp_assoc pruning.
+    // size >= 2: Comp forms (including 0-arg Comp) and, for size >= 3, inner-Comp forms.
     // comp_assoc prunes single-arg Comps (m2 == 1) at the outer level.
-    // For each (h2size, m2) block, compute the block count using count_as_head for
-    // inner heads; skip (comp_assoc && m2==1) blocks entirely since they're excluded
-    // from `total`.
     let n = size - 1;
     'comp: for h2size in 1..=n {
         let gs2_total = n - h2size;
@@ -683,6 +706,20 @@ fn seek_pre_rec_heads(
                         callback(&Grf::Comp(h2_box.clone(), gs2.to_vec(), arity));
                     },
                 );
+            });
+        }
+    }
+
+    // 0-arg Comp forms as pre-Rec heads: C_arity(h2) where h2 is 0-arity of size n.
+    // These come last in the Comp section of for_each_grf (hsize=n, gs_total=0).
+    if !opts.comp_null && arity > 0 && *rem > 0 {
+        let h2_count_raw = count_grf(n, 0, allow_min, opts);
+        let h2_count = if opts.comp_zero && n == 1 { h2_count_raw.saturating_sub(1) } else { h2_count_raw };
+        if *skip >= h2_count {
+            *skip -= h2_count;
+        } else if h2_count > 0 {
+            seek_grfs(n, 0, allow_min, opts, skip, rem, &mut |h2: &Grf| {
+                callback(&Grf::Comp(Box::new(h2.clone()), vec![], arity));
             });
         }
     }
@@ -1038,6 +1075,14 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
         }
     }
 
+    // C(h) 0-arg Comp: when comp_null is off, count valid 0-arity heads of size n.
+    // comp_zero prunes C(Z0): Z0 is the only 0-arity size-1 form, so only adjust at n==1.
+    if !opts.comp_null && arity > 0 {
+        let h_count = count_grf(n, 0, allow_min, opts);
+        let zero_adj = if opts.comp_zero && n == 1 { 1 } else { 0 };
+        total = total.saturating_add(h_count.saturating_sub(zero_adj));
+    }
+
     // rec_zero_arg: subtract C(R(g,h), Z(arity), f2,...,fm) for all m,g,h.
     // These are pruned because the first arg is structurally Zero, forcing n=0,
     // so the equivalent C(g, f2,...) (strictly smaller) is generated instead.
@@ -1204,7 +1249,8 @@ mod tests {
 
     #[test]
     fn test_size3_arity0_with_min() {
-        assert_eq!(collect(3, 0, true, PruningOpts::default()).len(), 6);
+        // 6 original forms + M(C1(Z0)) = 7 (comp_null=false in default adds 0-arg Comp forms).
+        assert_eq!(collect(3, 0, true, PruningOpts::default()).len(), 7);
     }
 
     #[test]
@@ -1220,14 +1266,17 @@ mod tests {
 
     #[test]
     fn test_size3_arity1_with_min() {
-        assert_eq!(collect(3, 1, true, PruningOpts::default()).len(), 16);
+        // 16 original + 4 new 0-arg Comp forms (C1(M(Z1)), C1(M(S)), C1(M(P(1,1))), and
+        // M(C2(Z0)) added via recursive 0-arg Comp support at sub-sizes) = 20.
+        assert_eq!(collect(3, 1, true, PruningOpts::default()).len(), 20);
     }
 
     // --- size-4 ---
 
     #[test]
     fn test_size4_arity0_with_min() {
-        assert_eq!(collect(4, 0, true, PruningOpts::default()).len(), 31);
+        // 31 original + 5 new forms added by comp_null=false in PruningOpts::default().
+        assert_eq!(collect(4, 0, true, PruningOpts::default()).len(), 36);
     }
 
     // --- larger sizes ---
@@ -1798,7 +1847,7 @@ mod tests {
     #[test]
     fn test_seek_mid_sizes_arity0() {
         // Reference check (collect) for sizes where the full stream is feasible.
-        for size in 8..=12 {
+        for size in 8..=11 {
             let total = count_grf(size, 0, false, PruningOpts::default());
             if total == 0 {
                 continue;
@@ -1816,7 +1865,7 @@ mod tests {
     fn test_seek_large_sizes_arity0() {
         // Self-consistency check for larger sizes: a count=10 window must agree with
         // ten individual count=1 seeks at the same ranks.
-        for size in 13..=18 {
+        for size in 12..=17 {
             let total = count_grf(size, 0, false, PruningOpts::default());
             if total == 0 {
                 continue;

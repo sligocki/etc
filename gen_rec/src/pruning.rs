@@ -62,6 +62,17 @@ macro_rules! define_pruning_flags {
                 PruningOpts { $( $field: true, )* }
             }
 
+            /// Return a copy with all stream-only flags cleared, safe to pass
+            /// to `count_grf` / `seek_stream_grf`.
+            pub fn for_counting(mut self) -> Self {
+                for meta in FLAGS {
+                    if !meta.count_compat {
+                        (meta.set)(&mut self, false);
+                    }
+                }
+                self
+            }
+
             /// Panic if any flag that is incompatible with `count_grf` /
             /// `seek_stream_grf` is set.
             pub fn assert_count_compat(&self) {
@@ -156,7 +167,7 @@ define_pruning_flags! {
     { comp_assoc,    "comp_assoc",    cc=yes, rec=yes, mo=no,  "prefer right-associated Comp"                                           },
     { rec_zero_base, "rec_zero_base", cc=yes, rec=yes, mo=no,  "R(Z,Z) / R(Z,P2) → Z"                                                  },
     { min_trivial,   "min_trivial",   cc=yes, rec=yes, mo=yes, "M(Z) / M(P) → Z"                                                        },
-    { min_dom,       "min_dom",       cc=no,  rec=no,  mo=yes, "M(f) dominated by Z_{k-1}"                                              },
-    { inline_proj,   "inline_proj",   cc=no,  rec=no,  mo=no,  "C(h,P/Z…) → inlined h"                                                  },
-    { comp_rnf,      "comp_rnf",      cc=no,  rec=no,  mo=no,  "C(h,…) require h in Rewire Normal Form (all args used, canonical order)" },
+    { min_dom,       "min_dom",       cc=no,  rec=yes,  mo=yes, "M(f) dominated by Z_{k-1}"                                              },
+    { inline_proj,   "inline_proj",   cc=no,  rec=yes,  mo=no,  "C(h,P/Z…) → inlined h"                                                  },
+    { comp_rnf,      "comp_rnf",      cc=no,  rec=yes,  mo=no,  "C(h,…) require h in Rewire Normal Form (all args used, canonical order)" },
 }

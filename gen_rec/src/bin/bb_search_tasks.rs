@@ -278,7 +278,7 @@ fn cmd_gen(args: GenArgs) {
     let dir = &args.dir;
     fs::create_dir_all(dir).expect("Cannot create task directory");
 
-    let opts = PruningOpts::all();
+    let opts = PruningOpts::recommended().for_counting();
     let config = Config {
         allow_min: args.allow_min,
         opts,

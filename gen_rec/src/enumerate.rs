@@ -1304,7 +1304,7 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=2 {
                 let st = count_grf(size, arity, false, PruningOpts::default().with_flags("comp_zero,comp_proj"));
-                let all = count_grf(size, arity, false, PruningOpts::recommended());
+                let all = count_grf(size, arity, false, PruningOpts::recommended().for_counting());
                 assert!(
                     all <= st,
                     "recommended opts produced more GRFs than comp_zero+comp_proj at size={size} arity={arity}"

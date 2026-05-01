@@ -230,7 +230,7 @@ fn fmt_si_f64(n: f64) -> String {
 fn main() {
     let args = Args::parse();
 
-    let count_opts = PruningOpts::recommended();
+    let count_opts = PruningOpts::recommended().for_counting();
     let mut opts = PruningOpts::recommended();
     opts.min_dom = true;
     if let Some(ref s) = args.opts {

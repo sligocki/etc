@@ -4,7 +4,7 @@
 /// pruning config, so you can see the marginal benefit of each rule.
 ///
 /// Fast (count_grf) columns cover all sizes up to --max-size.
-/// Stream-only columns (skip_inline_proj, skip_min_dominated, skip_unused_comp_args)
+/// Stream-only columns (skip_inline_proj, skip_min_dominated, skip_comp_not_rnf)
 /// are counted by exhaustive enumeration and only shown up to --stream-max-size.
 use clap::Parser;
 use gen_rec::enumerate::{count_grf, stream_grf};
@@ -21,13 +21,11 @@ const RZZ: PruningOpts = PruningOpts { skip_rec_zero_base: true, ..ASSOC };
 const MIN_TRIV: PruningOpts = PruningOpts { skip_min_trivial_zero: true, ..RZZ };
 const INLINE_PROJ: PruningOpts = PruningOpts { skip_inline_proj: true, ..MIN_TRIV };
 const MIN_DOM: PruningOpts = PruningOpts { skip_min_dominated: true, ..INLINE_PROJ };
-const UNUSED_COMP: PruningOpts = PruningOpts { skip_unused_comp_args: true, ..MIN_DOM };
-const RNF: PruningOpts = PruningOpts { skip_comp_not_rnf: true, ..UNUSED_COMP };
+const RNF: PruningOpts = PruningOpts { skip_comp_not_rnf: true, ..MIN_DOM };
 
 // PRF chain (allow_min=false): min flags do nothing, so skip them.
 const INLINE_PROJ_PRF: PruningOpts = PruningOpts { skip_inline_proj: true, ..RZZ };
-const UNUSED_COMP_PRF: PruningOpts = PruningOpts { skip_unused_comp_args: true, ..INLINE_PROJ_PRF };
-const RNF_PRF: PruningOpts = PruningOpts { skip_comp_not_rnf: true, ..UNUSED_COMP_PRF };
+const RNF_PRF: PruningOpts = PruningOpts { skip_comp_not_rnf: true, ..INLINE_PROJ_PRF };
 
 /// Build the config list for the given mode.
 /// Each entry is (label, opts, stream_only).
@@ -44,11 +42,9 @@ fn make_configs(allow_min: bool) -> Vec<(&'static str, PruningOpts, bool)> {
         v.push(("+min_triv",    MIN_TRIV,    false));
         v.push(("+inline_proj", INLINE_PROJ, true));
         v.push(("+min_dom",     MIN_DOM,     true));
-        v.push(("+unused_comp", UNUSED_COMP, true));
         v.push(("+rnf",         RNF,         true));
     } else {
         v.push(("+inline_proj", INLINE_PROJ_PRF, true));
-        v.push(("+unused_comp", UNUSED_COMP_PRF, true));
         v.push(("+rnf",         RNF_PRF,         true));
     }
     v
@@ -218,8 +214,7 @@ fn main() {
     if args.allow_min {
         println!("  +min_dom     skip_min_dominated    M(f) where f ignores search var  [stream-only]");
     }
-    println!("  +unused_comp skip_unused_comp_args C(h,…) force unused arg slots to Z  [stream-only]");
-  println!("  +rnf         skip_comp_not_rnf     C(h,…) require h in RNF (all args used, canonical order)  [stream-only]");
+    println!("  +rnf         skip_comp_not_rnf     C(h,…) require h in RNF (all args used, canonical order)  [stream-only]");
     println!("%red = % reduction vs the immediately preceding column.");
     if total_has_stream {
         println!("* SUM marked with * covers only sizes ≤ {} for stream-only columns.", args.stream_max_size);

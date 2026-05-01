@@ -81,20 +81,6 @@ pub struct PruningOpts {
     /// those functions.
     pub skip_inline_proj: bool,
 
-    /// Skip `C(h, g1…gm)` where any `gi` at position `i ∉ h.used_args()` is
-    /// not `Zero(arity)`.
-    ///
-    /// Since `h` provably ignores argument `i` (absence from `used_args` is a
-    /// sound non-use certificate), `gi` has no effect on the output.  Every
-    /// such composition is semantically equivalent to the variant with
-    /// `Zero(arity)` at position `i`, which has size ≤ the original.  We
-    /// canonicalise to that smaller (or equal) form and skip all others.
-    ///
-    /// **Stream-only**: requires per-head `used_args()` information that cannot
-    /// be expressed as a static DP count.  Do not use with `count_grf` or
-    /// `seek_stream_grf`.
-    pub skip_unused_comp_args: bool,
-
     /// Skip `C(h, g1…gm)` when `h` is not in Rewire Normal Form (RNF).
     ///
     /// A GRF `h` of arity `m` is in RNF when:
@@ -105,10 +91,9 @@ pub struct PruningOpts {
     ///
     /// Every non-RNF head has an equivalent form with a smaller arity (or a
     /// permuted head) that is independently enumerated, so skipping non-RNF
-    /// heads is sound.  Condition 1 strictly subsumes `skip_unused_comp_args`.
+    /// heads is sound.
     ///
-    /// **Stream-only**: same caveat as `skip_unused_comp_args`.  Do not use
-    /// with `count_grf` or `seek_stream_grf`.
+    /// **Stream-only**: do not use with `count_grf` or `seek_stream_grf`.
     pub skip_comp_not_rnf: bool,
 }
 
@@ -124,7 +109,6 @@ impl PruningOpts {
             // Stream-only flags: not supported by count_grf / seek_stream_grf.
             skip_min_dominated: false,
             skip_inline_proj: false,
-            skip_unused_comp_args: false,
             skip_comp_not_rnf: false,
         }
     }
@@ -139,7 +123,6 @@ impl PruningOpts {
             skip_min_trivial_zero: false,
             skip_min_dominated: false,
             skip_inline_proj: false,
-            skip_unused_comp_args: false,
             skip_comp_not_rnf: false,
         }
     }
@@ -153,7 +136,6 @@ impl PruningOpts {
             skip_min_trivial_zero: true,
             skip_min_dominated: true,
             skip_inline_proj: true,
-            skip_unused_comp_args: true,
             skip_comp_not_rnf: true,
         }
     }

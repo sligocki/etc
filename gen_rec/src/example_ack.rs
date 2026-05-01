@@ -1,4 +1,5 @@
 /// A hand-built GRF encoding of a function with Ackermann growth.
+use crate::grf;
 use crate::grf::Grf;
 use crate::examples::{constant, rep_succ, diag_rep, diag_succ};
 
@@ -49,11 +50,9 @@ pub fn rmonus() -> Grf {
 }
 
 /// Mod2(x) := x mod 2
-/// R(Z0, C(Not, P(2,2)))
-/// Smaller: R(Z0, C(R(S, Z3), P(2,2), Z2))
-/// Arity: 1, Size: 9
+/// Arity: 1, Size: 8
 pub fn mod2() -> Grf {
-    Grf::rec(Grf::Zero(0), Grf::comp(not(), vec![Grf::Proj(2, 2)]))
+    grf!("R(Z0, C(R(S, Z3), P(2,2), Z2))")
 }
 
 /// Shift(k,x) := x · 2^k
@@ -222,7 +221,7 @@ pub fn init_list() -> Grf {
 pub fn ack() -> Grf {
     Grf::comp(ack_worm(), vec![init_list()])
 }
-// Ack(1) = AckWomr([1,1]) = 3
+// Ack(1) = AckWorm([1,1]) = 3
 // Ack(2) = AckWorm([4]) = 41 2^38 - 1
 // Ack(3) = AckWorm([1,0,3]) = 16
 // Ack(4) = AckWorm([1,5]) > 10 ^^ 10^96 > f_ω(3)
@@ -241,23 +240,23 @@ pub fn omega() -> Grf {
     Grf::comp(h, vec![constant(1, 0)])
 }
 
-/// Omega3() > f_ω^3(3)
+/// Omega3() > {f_ω}^3(3)
 pub fn omega3() -> Grf {
     // f(n,n) = ack^n(n+1) > f_{ω+1}(n)
     let f = diag_rep(ack());
     // h(n) = f(n+1,n+1)
     let h = diag_succ(f);
-    // h(2) = f(3,3) = ack^3(4) = ack^2(10 ^^ 10^96) > f_ω^3(3)
+    // h(2) = f(3,3) = ack^3(4) = ack^2(10 ^^ 10^96) > {f_ω}^3(3)
     Grf::comp(h, vec![constant(2, 0)])
 }
 
-/// Omega4() > f_ω^4(3)
+/// Omega4() > {f_ω}^4(3)
 pub fn omega4() -> Grf {
     // f(n,n) = ack^n(n+1) > f_{ω+1}(n)
     let f = diag_rep(ack());
     // h(n) = f(n+1,n+1)
     let h = diag_succ(f);
-    // h(3) = f(4,4) = ack^4(5) = ack^3(10 ^^ 10^96) > f_ω^4(3)
+    // h(3) = f(4,4) = ack^4(5) = ack^3(10 ^^ 10^96) > {f_ω}^4(3)
     Grf::comp(h, vec![constant(3, 0)])
 }
 
@@ -651,7 +650,7 @@ mod tests {
         let il = init_list();
         let a = ack();
 
-        // Ack(1,1) = AckWomr([1,1]) = 3
+        // Ack(1,1) = AckWorm([1,1]) = 3
         assert_eq!(eval(&il, &[1,1]), Some(list2int(&[1,1])));
         assert_eq!(eval(&a, &[1,1]), Some(3));
 

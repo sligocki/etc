@@ -1,0 +1,227 @@
+# Common GRF
+
+# Addition
+Plus2 := C(S, S)        # Plus2(x) = x+2
+Plus3 := C(S, Plus2)    # Plus3(x) = x+3
+Add := R(P1, C(S, P2))  # Add(x,y) = x+y
+AddS := R(S, C(S, P2))  # AddS(x,y) = x+y+1
+
+# Monus: n≥m -> n∸m = n-m; n<m -> n∸m = 0
+Pred := R(Z, P1)        # Pred(x) = x∸1
+# TODO: Monus2 := R(Z, Pred)    # Monus2(x) = x∸2
+# TODO: Monus3 := R(Z, Monus2)  # Monus3(x) = x∸3
+Monus2 := R(Z, R(Z, P1))
+Monus3 := R(Z, R(Z, R(Z, P1)))
+RMonus := R(P(1,1), C(R(Z0, P(2,1)), P(3,2)))   # RMonus(x,y) = y∸x
+Monus := C(RMonus, P2, P1)   # Monus(x,y) = x∸y
+
+# Multiplication
+Mult2 := R(Z, C(Plus2, P2))   # Mult2(x) = 2x
+Mult3 := R(Z, C(Plus3, P2))   # Mult3(x) = 3x
+Mult  := R(Z, R(Add, P2))     # Mult(x,y) = x*y
+
+# Modulus
+# Mod2(x) = x%2
+Mod2 := R(Z0, C(R(S, Z3), P(2,2), Z2))
+# Mod3(x) = x%3
+Mod3 := R(Z0, C(R(S, R(P(2,1), Z4)), P(2,2), P(2,2)))
+
+# Division
+# Div2(x) = floor(x/2)
+# Alt: Div2 := M(R(Pred, C(Monus2, P2)))
+Div2 := R(Z0, C(R(P(1,1), C(R(Z0, P(2,1)), P(3,2))), P(2,2), P(2,1)))
+# CeilDiv2(x) = ceil(x/2)
+CeilDiv2 := R(Z0, C(R(S, C(R(Z0, P(2,1)), P(3,2))), P(2,2), P(2,1)))
+# Div3(x) = floor(x/3)
+# TODO: Min size unknown
+Div3 := M(R(Monus2, C(Monus3, P2)))
+
+# Exponentiation
+Pow2P := R(Z, C(AddS, P2, P2))  # Pow2P(k) = 2^k - 1
+Pow2 := C(S, Pow2P)             # Pow2(k) = 2^k
+Shift := R(P1, C(Add, P2, P2))  # Shift(k,x) = x 2^k
+ShiftS := R(S, C(Add, P2, P2))  # ShiftS(k,x) = (x+1) 2^k
+
+# Bool
+Sgn := M(R(P(1,1), Z3))     # 0 -> 0; n+1 -> 1
+Not := R(C(S, Z0), Z2)      # 0 -> 1; n+1 -> 0
+# And, Or, etc.
+
+# Polygonal functions
+Tri := R(Z, AddS)     # Tri(n) = n(n+1)/2
+TriP := R(Z, Add)     # TriP(n) = Tri(n-1) = n(n-1)/2
+Square := R(Z, R(S, C(Plus2, P2)))  # Square(n) = n^2
+
+
+# Tests
+Plus2(0) == 2
+Plus2(1) == 3
+Plus2(13) == 15
+
+Plus3(0) == 3
+Plus3(1) == 4
+Plus3(13) == 16
+
+Add(0,2) == 2
+Add(13,0) == 13
+Add(8,13) == 21
+
+AddS(0,2) == 3
+AddS(13,0) == 14
+AddS(8,13) == 22
+
+Pred(0) == 0
+Pred(1) == 0
+Pred(2) == 1
+Pred(13) == 12
+
+Monus2(0) == 0
+Monus2(1) == 0
+Monus2(2) == 0
+Monus2(3) == 1
+Monus2(13) == 11
+
+Monus3(0) == 0
+Monus3(1) == 0
+Monus3(2) == 0
+Monus3(3) == 0
+Monus3(4) == 1
+Monus3(13) == 10
+
+RMonus(0,1) == 1
+RMonus(1,0) == 0
+RMonus(8,13) == 5
+RMonus(13,8) == 0
+
+Monus(0,1) == 0
+Monus(1,0) == 1
+Monus(7,13) == 0
+Monus(13,7) == 6
+
+Mult2(0) == 0
+Mult2(1) == 2
+Mult2(2) == 4
+Mult2(13) == 26
+
+Mult3(0) == 0
+Mult3(1) == 3
+Mult3(2) == 6
+Mult3(13) == 39
+
+Mult(0,0) == 0
+Mult(0,3) == 0
+Mult(5,0) == 0
+Mult(1,3) == 3
+Mult(5,1) == 5
+Mult(3,5) == 15
+
+Mod2(0) == 0
+Mod2(1) == 1
+Mod2(2) == 0
+Mod2(3) == 1
+Mod2(13) == 1
+Mod2(14) == 0
+Mod2(15) == 1
+
+Mod3(0) == 0
+Mod3(1) == 1
+Mod3(2) == 2
+Mod3(3) == 0
+Mod3(4) == 1
+Mod3(5) == 2
+Mod3(13) == 1
+Mod3(14) == 2
+Mod3(15) == 0
+
+Div2(0) == 0
+Div2(1) == 0
+Div2(2) == 1
+Div2(3) == 1
+Div2(4) == 2
+Div2(5) == 2
+Div2(13) == 6
+Div2(14) == 7
+Div2(15) == 7
+
+CeilDiv2(0) == 0
+CeilDiv2(1) == 1
+CeilDiv2(2) == 1
+CeilDiv2(3) == 2
+CeilDiv2(4) == 2
+CeilDiv2(5) == 3
+CeilDiv2(13) == 7
+CeilDiv2(14) == 7
+CeilDiv2(15) == 8
+
+Div3(0) == 0
+Div3(1) == 0
+Div3(2) == 0
+Div3(3) == 1
+Div3(4) == 1
+Div3(5) == 1
+Div3(13) == 4
+Div3(14) == 4
+Div3(15) == 5
+
+Pow2P(0) == 0
+Pow2P(1) == 1
+Pow2P(2) == 3
+Pow2P(3) == 7
+Pow2P(4) == 15
+Pow2P(5) == 31
+
+Pow2(0) == 1
+Pow2(1) == 2
+Pow2(2) == 4
+Pow2(3) == 8
+Pow2(4) == 16
+Pow2(5) == 32
+
+# Shift(k,x) = x 2^k
+Shift(0,1) == 1
+Shift(1,3) == 6
+Shift(2,0) == 0
+Shift(3,2) == 16
+Shift(4,5) == 80
+
+# ShiftS(k,x) = (x+1) 2^k
+ShiftS(0,1) == 2
+ShiftS(1,3) == 8
+ShiftS(2,0) == 4
+ShiftS(3,2) == 24
+ShiftS(4,5) == 96
+
+Sgn(0) == 0
+Sgn(1) == 1
+Sgn(2) == 1
+Sgn(13) == 1
+
+Not(0) == 1
+Not(1) == 0
+Not(2) == 0
+Not(13) == 0
+
+Tri(0) == 0
+Tri(1) == 1
+Tri(2) == 3
+Tri(3) == 6
+Tri(4) == 10
+Tri(5) == 15
+Tri(6) == 21
+Tri(7) == 28
+
+# TriP(n+1) = Tri(n)
+TriP(0) == 0
+TriP(1) == 0
+TriP(2) == 1
+TriP(3) == 3
+TriP(4) == 6
+TriP(5) == 10
+TriP(6) == 15
+TriP(7) == 21
+
+Square(0) == 0
+Square(1) == 1
+Square(2) == 4
+Square(3) == 9
+Square(4) == 16

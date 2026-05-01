@@ -179,6 +179,25 @@ impl Grf {
         }
     }
 
+    /// Returns the outer argument indices in DFS first-occurrence order.
+    ///
+    /// A pre-order walk of the tree records each `Proj` index the first time it
+    /// is encountered, accounting for the argument remappings introduced by
+    /// `Rec` (counter fixed at slot 1, accumulator synthetic) and `Min`
+    /// (search variable synthetic).
+    ///
+    /// `self` is in canonical argument order iff the result equals
+    /// `[1, 2, ..., self.arity()]`.  Combined with the all-args-used check
+    /// (`self.used_args().len() == self.arity()`), this forms the full RNF
+    /// criterion used by the `skip_comp_not_rnf` pruning flag.
+    pub fn canonical_arg_order(&self) -> Vec<usize> {
+        let identity: Vec<usize> = (1..=self.arity()).collect();
+        let mut seen = vec![false; self.arity() + 1];
+        let mut order = Vec::new();
+        grf_outer_arg_dfs(self, &identity, &mut seen, &mut order);
+        order
+    }
+
     /// Returns true if this is a Primitive Recursive Function (no Min anywhere).
     pub fn is_prf(&self) -> bool {
         match self {
@@ -266,6 +285,70 @@ impl Grf {
             return Err("Expected a number".to_string());
         }
         num_str.parse::<usize>().map_err(|e| e.to_string())
+    }
+}
+
+/// Recursively collects outer-arg indices in DFS first-occurrence order.
+///
+/// `map[i-1]` is the outer-arg index for inner arg `i`; 0 means synthetic
+/// (not an outer arg, e.g. Rec's accumulator or Min's search variable).
+fn grf_outer_arg_dfs(
+    g: &Grf,
+    map: &[usize],
+    seen: &mut Vec<bool>,
+    order: &mut Vec<usize>,
+) {
+    match g {
+        Grf::Proj(_, i) => {
+            let outer = map[i - 1];
+            if outer > 0 && !seen[outer] {
+                seen[outer] = true;
+                order.push(outer);
+            }
+        }
+        Grf::Zero(_) => {}
+        Grf::Succ => {
+            // Succ uses its single inner arg directly (no Proj node).
+            debug_assert_eq!(map.len(), 1);
+            let outer = map[0];
+            if outer > 0 && !seen[outer] {
+                seen[outer] = true;
+                order.push(outer);
+            }
+        }
+        Grf::Comp(_, gs, _) => {
+            // Outer args flow into gs; head h only sees abstract inner positions.
+            for gi in gs {
+                grf_outer_arg_dfs(gi, map, seen, order);
+            }
+        }
+        Grf::Rec(base, step) => {
+            let k = base.arity() + 1; // outer arity of this Rec
+            // Counter = outer map[0]; always encountered first for Rec.
+            let outer_counter = map[0];
+            if outer_counter > 0 && !seen[outer_counter] {
+                seen[outer_counter] = true;
+                order.push(outer_counter);
+            }
+            // base's arg j (1-indexed) → outer map[j]  (j = 1..k-1)
+            let map_base: Vec<usize> = (1..k).map(|j| map[j]).collect();
+            grf_outer_arg_dfs(base, &map_base, seen, order);
+            // step: arg 1 → map[0] (counter), arg 2 → 0 (acc), arg j≥3 → map[j-2]
+            let mut map_step = vec![map[0], 0usize];
+            for j in 3..=(k + 1) {
+                map_step.push(map[j - 2]);
+            }
+            grf_outer_arg_dfs(step, &map_step, seen, order);
+        }
+        Grf::Min(inner) => {
+            let k = g.arity();
+            // inner: arg 1 → 0 (search var), arg j≥2 → map[j-2]
+            let mut map_inner = vec![0usize];
+            for i in 0..k {
+                map_inner.push(map[i]);
+            }
+            grf_outer_arg_dfs(inner, &map_inner, seen, order);
+        }
     }
 }
 
@@ -440,5 +523,55 @@ mod tests {
         assert_eq!(ua("M(P(1,1))"), set(&[]));
         // M(P(2,2)): f(i,x)=x, f uses {2} → Min's arg 1.
         assert_eq!(ua("M(P(2,2))"), set(&[1]));
+    }
+
+    fn cao(s: &str) -> Vec<usize> {
+        s.parse::<Grf>().unwrap().canonical_arg_order()
+    }
+
+    #[test]
+    fn test_canonical_arg_order_atoms() {
+        assert_eq!(cao("Z0"), vec![] as Vec<usize>);
+        assert_eq!(cao("S"), vec![1]);
+        assert_eq!(cao("P(1,1)"), vec![1]);
+        // P(2,1) uses only arg 1 — args appear as [1].
+        assert_eq!(cao("P(2,1)"), vec![1]);
+        // P(2,2) uses only arg 2 — first (and only) outer arg seen is 2, not 1.
+        assert_eq!(cao("P(2,2)"), vec![2]);
+    }
+
+    #[test]
+    fn test_canonical_arg_order_comp() {
+        // C(S, P(2,1)): gs=[P(2,1)], first outer arg = 1. Canonical.
+        assert_eq!(cao("C(S,P(2,1))"), vec![1]);
+        // C(S, P(2,2)): gs=[P(2,2)], first outer arg = 2. Non-canonical.
+        assert_eq!(cao("C(S,P(2,2))"), vec![2]);
+        // C(P(2,1), P(3,2), P(3,1)): gs traversed in order: P(3,2) sees 2 first,
+        // P(3,1) sees 1 second. Order = [2, 1]. Non-canonical.
+        assert_eq!(cao("C(P(2,1),P(3,2),P(3,1))"), vec![2, 1]);
+        // C(P(2,1), P(3,1), P(3,2)): gs = [P(3,1), P(3,2)]. Order = [1, 2]. Canonical.
+        assert_eq!(cao("C(P(2,1),P(3,1),P(3,2))"), vec![1, 2]);
+    }
+
+    #[test]
+    fn test_canonical_arg_order_rec() {
+        // add = R(P(1,1), C(S,P(3,2))): arity 2.
+        // Counter (outer 1) seen first. base=P(1,1): base arg 1 → outer 2.
+        // Order = [1, 2]. Canonical.
+        assert_eq!(cao("R(P(1,1),C(S,P(3,2)))"), vec![1, 2]);
+
+        // R(P(2,2), C(P(2,1),P(4,3),P(4,1))): arity 3.
+        // Counter (outer 1) first. base=P(2,2): base arg 2 → outer 3. Second = 3.
+        // step gs=[P(4,3),P(4,1)]: P(4,3) sees step arg 3 → outer 2. Third = 2.
+        // Order = [1, 3, 2]. Non-canonical.
+        assert_eq!(cao("R(P(2,2),C(P(2,1),P(4,3),P(4,1)))"), vec![1, 3, 2]);
+    }
+
+    #[test]
+    fn test_canonical_arg_order_min() {
+        // M(P(2,2)): inner=P(2,2) uses inner arg 2 → outer arg 1. Order = [1]. Canonical.
+        assert_eq!(cao("M(P(2,2))"), vec![1]);
+        // M(P(2,1)): inner=P(2,1) uses inner arg 1 (search var, synthetic). Order = [].
+        assert_eq!(cao("M(P(2,1))"), vec![] as Vec<usize>);
     }
 }

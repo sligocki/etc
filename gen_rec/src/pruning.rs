@@ -94,6 +94,22 @@ pub struct PruningOpts {
     /// be expressed as a static DP count.  Do not use with `count_grf` or
     /// `seek_stream_grf`.
     pub skip_unused_comp_args: bool,
+
+    /// Skip `C(h, g1…gm)` when `h` is not in Rewire Normal Form (RNF).
+    ///
+    /// A GRF `h` of arity `m` is in RNF when:
+    ///   1. All args are used: `h.used_args().len() == m`.
+    ///   2. Args appear in canonical first-occurrence DFS order: the first new
+    ///      outer arg encountered in a pre-order tree walk is 1, the second is
+    ///      2, etc.
+    ///
+    /// Every non-RNF head has an equivalent form with a smaller arity (or a
+    /// permuted head) that is independently enumerated, so skipping non-RNF
+    /// heads is sound.  Condition 1 strictly subsumes `skip_unused_comp_args`.
+    ///
+    /// **Stream-only**: same caveat as `skip_unused_comp_args`.  Do not use
+    /// with `count_grf` or `seek_stream_grf`.
+    pub skip_comp_not_rnf: bool,
 }
 
 impl PruningOpts {
@@ -109,6 +125,7 @@ impl PruningOpts {
             skip_min_dominated: false,
             skip_inline_proj: false,
             skip_unused_comp_args: false,
+            skip_comp_not_rnf: false,
         }
     }
 
@@ -123,6 +140,7 @@ impl PruningOpts {
             skip_min_dominated: false,
             skip_inline_proj: false,
             skip_unused_comp_args: false,
+            skip_comp_not_rnf: false,
         }
     }
     pub const fn all() -> PruningOpts {
@@ -136,6 +154,7 @@ impl PruningOpts {
             skip_min_dominated: true,
             skip_inline_proj: true,
             skip_unused_comp_args: true,
+            skip_comp_not_rnf: true,
         }
     }
 }

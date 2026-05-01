@@ -58,6 +58,10 @@ struct Args {
     #[arg(long)]
     unused_comp_args: bool,
 
+    /// Skip C(h,…) when h is not in Rewire Normal Form (all args used, canonical order).
+    #[arg(long)]
+    rnf: bool,
+
     /// Number of top halting GRFs to track and write to halt file.
     #[arg(long, default_value_t = 100)]
     top_k: usize,
@@ -237,6 +241,7 @@ fn main() {
     let opts = PruningOpts {
         skip_inline_proj: args.inline_proj,
         skip_unused_comp_args: args.unused_comp_args,
+        skip_comp_not_rnf: args.rnf,
         skip_min_dominated: true,
         ..PruningOpts::default()
     };
@@ -412,6 +417,7 @@ fn main() {
     writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
     writeln!(cfg_w, "  \"inline_proj\": {},",       args.inline_proj).unwrap();
     writeln!(cfg_w, "  \"unused_comp_args\": {},",  args.unused_comp_args).unwrap();
+    writeln!(cfg_w, "  \"rnf\": {},",               args.rnf).unwrap();
     writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
     writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();
     writeln!(cfg_w, "  \"total_holdouts\": {},",  acc.holdouts).unwrap();

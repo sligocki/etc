@@ -180,6 +180,7 @@ impl From<SerOpts> for PruningOpts {
             skip_min_dominated: false,
             skip_inline_proj: false,
             skip_unused_comp_args: false,
+            skip_comp_not_rnf: false,
         }
     }
 }

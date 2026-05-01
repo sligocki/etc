@@ -79,10 +79,37 @@ fn for_each_grf(
                 } else {
                     None
                 };
+
+                // Compute used_args once if needed by either RNF flag.
+                let h_used_opt = if opts.skip_comp_not_rnf || opts.skip_unused_comp_args {
+                    Some(h.used_args())
+                } else {
+                    None
+                };
+
+                // skip_comp_not_rnf Phase 1: skip h if it has any unused args.
+                // Every such composition is covered by an equivalent lower-arity head.
+                if opts.skip_comp_not_rnf {
+                    if h_used_opt.as_ref().map_or(false, |u| u.len() < m) {
+                        return;
+                    }
+                }
+
+                // skip_comp_not_rnf Phase 2: skip h if args appear out of canonical order.
+                // canonical_arg_order returns [1,2,...,m] iff h is in RNF; any other
+                // permutation means a smaller-lex equivalent head exists and is enumerated.
+                if opts.skip_comp_not_rnf {
+                    let order = h.canonical_arg_order();
+                    if order.iter().enumerate().any(|(i, &a)| a != i + 1) {
+                        return;
+                    }
+                }
+
                 // skip_unused_comp_args: positions not in h.used_args() are forced to Zero.
                 let forced_vec: Option<Vec<bool>> = if opts.skip_unused_comp_args {
-                    let h_used = h.used_args();
-                    Some((1..=m).map(|pos| !h_used.contains(&pos)).collect())
+                    h_used_opt.as_ref().map(|h_used| {
+                        (1..=m).map(|pos| !h_used.contains(&pos)).collect()
+                    })
                 } else {
                     None
                 };
@@ -238,8 +265,8 @@ fn for_each_args(
 /// cost is O(size²) rather than O(start).
 ///
 /// Panics if any stream-only flag (`skip_inline_proj`, `skip_min_dominated`,
-/// `skip_unused_comp_args`) is set — seek relies on `count_grf` for position
-/// arithmetic, which does not account for those flags.
+/// `skip_unused_comp_args`, `skip_comp_not_rnf`) is set — seek relies on
+/// `count_grf` for position arithmetic, which does not account for those flags.
 pub fn seek_stream_grf<F: FnMut(&Grf)>(
     size: usize,
     arity: usize,
@@ -252,6 +279,7 @@ pub fn seek_stream_grf<F: FnMut(&Grf)>(
     assert!(!opts.skip_inline_proj, "seek_stream_grf does not support skip_inline_proj");
     assert!(!opts.skip_min_dominated, "seek_stream_grf does not support skip_min_dominated");
     assert!(!opts.skip_unused_comp_args, "seek_stream_grf does not support skip_unused_comp_args");
+    assert!(!opts.skip_comp_not_rnf, "seek_stream_grf does not support skip_comp_not_rnf");
     if count == 0 {
         return;
     }
@@ -910,10 +938,11 @@ thread_local! {
 /// Count GRFs of given `size` and `arity` without building any GRF tree.
 /// Results are memoised in a thread-local DP table.
 ///
-/// Panics if `opts.skip_inline_proj` is set — that flag is not accounted for
-/// in the DP and would produce incorrect counts.
+/// Panics if `opts.skip_inline_proj` or `opts.skip_comp_not_rnf` is set — those
+/// flags are not accounted for in the DP and would produce incorrect counts.
 pub fn count_grf(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) -> usize {
     assert!(!opts.skip_inline_proj, "count_grf does not support skip_inline_proj");
+    assert!(!opts.skip_comp_not_rnf, "count_grf does not support skip_comp_not_rnf");
     let key = (size, arity, allow_min, opts);
     if let Some(c) = COUNT_CACHE.with(|cache| cache.borrow().get(&key).copied()) {
         return c;
@@ -1940,5 +1969,93 @@ mod tests {
     #[should_panic(expected = "seek_stream_grf does not support skip_unused_comp_args")]
     fn seek_stream_grf_panics_on_skip_unused_comp_args() {
         seek_stream_grf(5, 1, false, SKIP_UNUSED_COMP, 0, 1, &mut |_| {});
+    }
+
+    // --- skip_comp_not_rnf ---
+
+    const SKIP_COMP_NOT_RNF: PruningOpts = PruningOpts {
+        skip_comp_not_rnf: true,
+        ..NO_PRUNE
+    };
+
+    #[test]
+    fn test_skip_comp_not_rnf_phase1_removes_unused_arg_head() {
+        // Phase 1: C(P(2,2), h1, h2) — head P(2,2) uses only arg 2 of 2, so it's pruned.
+        // The canonical equivalent P(2,2) = P(1,1) has arity 1, enumerated as C(P(1,1), h2).
+        // C(P(2,2), Z2, Z2): size = 1+1+1+1 = 4, arity 2.
+        let full = collect(4, 2, false, NO_PRUNE);
+        let pruned = collect(4, 2, false, SKIP_COMP_NOT_RNF);
+        let bad = "C(P(2,2),Z2,Z2)".parse::<Grf>().unwrap();
+        assert!(full.iter().any(|g| *g == bad), "must exist without pruning");
+        assert!(!pruned.iter().any(|g| *g == bad), "P(2,2) as head has unused arg 1 → pruned");
+    }
+
+    #[test]
+    fn test_skip_comp_not_rnf_phase1_keeps_all_args_used() {
+        // R(P(1,1), C(S,P(3,2))) = add, arity 2, uses both args 1 and 2. Must survive.
+        let pruned = collect(8, 2, false, SKIP_COMP_NOT_RNF);
+        let add_head = "C(R(P(1,1),C(S,P(3,2))),P(2,1),P(2,2))".parse::<Grf>().unwrap();
+        assert!(
+            pruned.iter().any(|g| *g == add_head),
+            "add as Comp head (uses both args) must not be pruned"
+        );
+    }
+
+    #[test]
+    fn test_skip_comp_not_rnf_phase2_removes_noncanonical_perm() {
+        // R(P(2,2), P(4,3)): arity 3, uses all 3 args, but canonical_arg_order = [1,3,2].
+        //   Counter (outer 1) first, then base P(2,2) reveals outer 3, then step P(4,3)
+        //   reveals outer 2. Non-canonical → should be pruned as Comp head.
+        // C(R(P(2,2),P(4,3)), Z3, Z3, Z3): size = 1+3+1+1+1 = 7, arity 3.
+        let full = collect(7, 3, false, NO_PRUNE);
+        let pruned = collect(7, 3, false, SKIP_COMP_NOT_RNF);
+        let non_canon = "C(R(P(2,2),P(4,3)),Z3,Z3,Z3)".parse::<Grf>().unwrap();
+        assert!(full.iter().any(|g| *g == non_canon), "must exist without pruning");
+        assert!(
+            !pruned.iter().any(|g| *g == non_canon),
+            "non-canonical Rec head should be pruned by Phase 2"
+        );
+    }
+
+    #[test]
+    fn test_skip_comp_not_rnf_strictly_stronger_than_unused_comp_args() {
+        // skip_comp_not_rnf prunes strictly more than skip_unused_comp_args.
+        for size in 1..=8 {
+            for arity in 0..=2 {
+                let unused = collect(size, arity, false, SKIP_UNUSED_COMP).len();
+                let rnf = collect(size, arity, false, SKIP_COMP_NOT_RNF).len();
+                assert!(
+                    rnf <= unused,
+                    "skip_comp_not_rnf should prune at least as much as skip_unused_comp_args \
+                     at size={size} arity={arity}: rnf={rnf} unused={unused}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_skip_comp_not_rnf_never_more_than_full() {
+        for size in 1..=8 {
+            for arity in 0..=3 {
+                let full = collect(size, arity, false, NO_PRUNE).len();
+                let pruned = collect(size, arity, false, SKIP_COMP_NOT_RNF).len();
+                assert!(
+                    pruned <= full,
+                    "skip_comp_not_rnf produced more GRFs at size={size} arity={arity}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "count_grf does not support skip_comp_not_rnf")]
+    fn count_grf_panics_on_skip_comp_not_rnf() {
+        count_grf(5, 1, false, SKIP_COMP_NOT_RNF);
+    }
+
+    #[test]
+    #[should_panic(expected = "seek_stream_grf does not support skip_comp_not_rnf")]
+    fn seek_stream_grf_panics_on_skip_comp_not_rnf() {
+        seek_stream_grf(5, 1, false, SKIP_COMP_NOT_RNF, 0, 1, &mut |_| {});
     }
 }

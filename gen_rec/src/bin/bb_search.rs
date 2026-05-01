@@ -50,8 +50,9 @@ struct Args {
     #[arg(long)]
     no_alias: bool,
 
-    /// Additional stream-only pruning opts to enable (comma-separated).
-    /// Known opts: inline_proj, comp_rnf.  Example: --opts inline_proj,comp_rnf
+    /// Adjust pruning flags from the recommended set.
+    /// Use +flag to enable, -flag to disable, or bare flag to enable.
+    /// Example: --opts -comp_null,+comp_rnf
     #[arg(long, value_name = "OPTS")]
     opts: Option<String>,
 
@@ -230,15 +231,15 @@ fn fmt_si_f64(n: f64) -> String {
 fn main() {
     let args = Args::parse();
 
-    let count_opts = PruningOpts::recommended().for_counting();
     let mut opts = PruningOpts::recommended();
     opts.min_dom = true;
     if let Some(ref s) = args.opts {
-        opts = opts.with_stream_opts(s).unwrap_or_else(|e| {
+        opts = opts.apply_flag_adjustments(s).unwrap_or_else(|e| {
             eprintln!("error: {e}");
             std::process::exit(1);
         });
     }
+    let count_opts = opts.for_counting();
 
     let mode_str = if args.min_prf { "min_prf" } else if args.allow_min { "grf" } else { "prf" };
     let has_min = args.allow_min || args.min_prf;

@@ -105,6 +105,28 @@ macro_rules! define_pruning_flags {
                 self
             }
 
+            /// Apply `+flag` / `-flag` adjustments from a comma-separated spec.
+            ///
+            /// Each token is `+name` (enable), `-name` (disable), or bare `name` (enable).
+            /// Returns an error string if any name is unknown.
+            pub fn apply_flag_adjustments(mut self, spec: &str) -> Result<Self, String> {
+                for token in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    let (name, value) = if let Some(s) = token.strip_prefix('+') {
+                        (s, true)
+                    } else if let Some(s) = token.strip_prefix('-') {
+                        (s, false)
+                    } else {
+                        (token, true)
+                    };
+                    let meta = FLAGS.iter().find(|m| m.name == name).ok_or_else(|| {
+                        let known: Vec<_> = FLAGS.iter().map(|m| m.name).collect();
+                        format!("unknown flag '{}'; known: {}", name, known.join(", "))
+                    })?;
+                    (meta.set)(&mut self, value);
+                }
+                Ok(self)
+            }
+
             /// Enable stream-only flags by name on top of `self`.
             ///
             /// `names` is a comma-separated list of flag names,

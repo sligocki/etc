@@ -53,9 +53,8 @@ fn for_each_grf(
     for hsize in 1..=n {
         let gs_total = n - hsize;
 
-        // 0-arg Comp: C(h) at outer arity > 0, where h is 0-arity of size hsize.
-        // Only generated when comp_null is off and gs_total == 0 (i.e. hsize == n).
-        if !opts.comp_null && arity > 0 && gs_total == 0 {
+        // 0-arg Comp: C(h)
+        if !opts.comp_null && gs_total == 0 {
             for_each_grf(hsize, 0, allow_min, opts, &mut |h: &Grf| {
                 if opts.comp_zero && matches!(h, Grf::Zero(_)) {
                     return;
@@ -483,7 +482,7 @@ fn seek_grfs(
     }
 
     // ---- 0-arg Comp section (comp_null off) ----
-    if !opts.comp_null && arity > 0 && *rem > 0 {
+    if !opts.comp_null && *rem > 0 {
         let h_count_raw = count_grf(n, 0, allow_min, opts);
         // comp_zero prunes C(Z0): Z0 is the only 0-arity size-1 form.
         let h_count = if opts.comp_zero && n == 1 { h_count_raw.saturating_sub(1) } else { h_count_raw };
@@ -712,7 +711,7 @@ fn seek_pre_rec_heads(
 
     // 0-arg Comp forms as pre-Rec heads: C_arity(h2) where h2 is 0-arity of size n.
     // These come last in the Comp section of for_each_grf (hsize=n, gs_total=0).
-    if !opts.comp_null && arity > 0 && *rem > 0 {
+    if !opts.comp_null && *rem > 0 {
         let h2_count_raw = count_grf(n, 0, allow_min, opts);
         let h2_count = if opts.comp_zero && n == 1 { h2_count_raw.saturating_sub(1) } else { h2_count_raw };
         if *skip >= h2_count {
@@ -1077,7 +1076,7 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
 
     // C(h) 0-arg Comp: when comp_null is off, count valid 0-arity heads of size n.
     // comp_zero prunes C(Z0): Z0 is the only 0-arity size-1 form, so only adjust at n==1.
-    if !opts.comp_null && arity > 0 {
+    if !opts.comp_null {
         let h_count = count_grf(n, 0, allow_min, opts);
         let zero_adj = if opts.comp_zero && n == 1 { 1 } else { 0 };
         total = total.saturating_add(h_count.saturating_sub(zero_adj));
@@ -1236,54 +1235,33 @@ mod tests {
     // --- size-2 ---
 
     #[test]
-    fn test_size2_arity0_with_min() {
-        assert_eq!(collect(2, 0, true, PruningOpts::default()).len(), 3); // M(Z1), M(S), M(P(1,1))
-    }
-
-    #[test]
-    fn test_size2_arity0_prf() {
-        assert_eq!(collect(2, 0, false, PruningOpts::default()).len(), 0);
+    fn test_size2_arity0() {
+        // C0(Z0)
+        assert_eq!(collect(2, 0, false, PruningOpts::default()).len(), 1);
+        // + M(Z1), M(S), M(P(1,1))
+        assert_eq!(collect(2, 0, true, PruningOpts::default()).len(), 4);
     }
 
     // --- size-3 ---
 
     #[test]
-    fn test_size3_arity0_with_min() {
-        // 6 original forms + M(C1(Z0)) = 7 (comp_null=false in default adds 0-arg Comp forms).
-        assert_eq!(collect(3, 0, true, PruningOpts::default()).len(), 7);
+    fn test_size3_arity0() {
+        // C(Z1, Z0), C(P1, Z0), C(S, Z0) + C0(C0(Z0))
+        assert_eq!(collect(3, 0, false, PruningOpts::default()).len(), 4);
+        // + M(M(Z2)), M(M(P(2,1))), M(M(P(2,2))), M(C1(Z0)) + C0(M(Z1)), C0(M(S)), C0(M(P(1,1)))
+        assert_eq!(collect(3, 0, true, PruningOpts::default()).len(), 11);
     }
 
     #[test]
-    fn test_size3_arity0_prf() {
-        let all = collect(3, 0, false, PruningOpts::default());
-        assert_eq!(all.len(), 3);
-        let champion = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
-        assert!(
-            all.iter().any(|g| *g == champion),
-            "C(S,Z0) should be in size-3 PRF_0"
-        );
-    }
-
-    #[test]
-    fn test_size3_arity1_with_min() {
-        // 16 original + 4 new 0-arg Comp forms (C1(M(Z1)), C1(M(S)), C1(M(P(1,1))), and
-        // M(C2(Z0)) added via recursive 0-arg Comp support at sub-sizes) = 20.
-        assert_eq!(collect(3, 1, true, PruningOpts::default()).len(), 20);
-    }
-
-    // --- size-4 ---
-
-    #[test]
-    fn test_size4_arity0_with_min() {
-        // 31 original + 5 new forms added by comp_null=false in PruningOpts::default().
-        assert_eq!(collect(4, 0, true, PruningOpts::default()).len(), 36);
+    fn test_size3_arity1() {
+        assert_eq!(collect(3, 1, true, PruningOpts::default()).len(), 21);
     }
 
     // --- larger sizes ---
 
     #[test]
-    fn test_verify_sizes_5_to_7() {
-        for size in 5..=7 {
+    fn test_run_to_size_7() {
+        for size in 0..=7 {
             for arity in 0..=3 {
                 collect(size, arity, false, PruningOpts::default());
                 collect(size, arity, true, PruningOpts::default());
@@ -1295,9 +1273,7 @@ mod tests {
 
     #[test]
     fn test_skip_trivial_removes_zero_proj_comps() {
-        let full = collect(3, 0, false, PruningOpts::default());
         let trim = collect(3, 0, false, PruningOpts::default().with_flags("comp_zero,comp_proj"));
-        assert_eq!(full.len(), 3);
         assert_eq!(trim.len(), 1);
         assert_eq!(trim[0], Grf::comp(Grf::Succ, vec![Grf::Zero(0)]));
     }

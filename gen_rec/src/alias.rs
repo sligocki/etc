@@ -237,7 +237,7 @@ impl AliasDb {
 
 impl Default for AliasDb {
     fn default() -> Self {
-        Self::new(6)
+        Self::new(10)
     }
 }
 

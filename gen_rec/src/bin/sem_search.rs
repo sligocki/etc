@@ -147,6 +147,11 @@ const SPECS: &[SpecDef] = &[
         description: "f(x) = x^2",
         build: || Box::new(exact_spec(|a| Some(a[0].pow(2)))),
     },
+    // Arity 2: R(x, C(R(S, C(S, P(3,2))), P(3,2), P(3,2)))
+    //      for x in Z, P1, S
+    //  x=Z:  f(a,b) = 2^a - 1
+    //  x=P1: f(a,b) = (b+1) 2^a - 1
+    //  x=S:  f(a,b) = (b+2) 2^a - 1
     SpecDef {
         name: "trailing-bits", default_arity: 1,
         description: "trailing ones: f(n[,x]) has n trailing 1-bits (arity 1 or 2)",

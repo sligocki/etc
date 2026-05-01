@@ -133,6 +133,11 @@ const SPECS: &[SpecDef] = &[
         build: || Box::new(exact_spec(|a| Some(a[0] / 3))),
     },
     SpecDef {
+        name: "ceildiv3", default_arity: 1,
+        description: "f(x) = ceil(x / 3)",
+        build: || Box::new(exact_spec(|a| Some(a[0].div_ceil(3)))),
+    },
+    SpecDef {
         name: "pow2", default_arity: 1,
         description: "power of two: f(x) = 2^x",
         build: || Box::new(exact_spec(|a| Some(1u64 << a[0].min(63)))),
@@ -147,6 +152,7 @@ const SPECS: &[SpecDef] = &[
         description: "f(x) = x^2",
         build: || Box::new(exact_spec(|a| Some(a[0].pow(2)))),
     },
+    // Size 10
     // Arity 2: R(x, C(R(S, C(S, P(3,2))), P(3,2), P(3,2)))
     //      for x in Z, P1, S
     //  x=Z:  f(a,b) = 2^a - 1

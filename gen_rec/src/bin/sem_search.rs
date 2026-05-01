@@ -110,6 +110,23 @@ const SPECS: &[SpecDef] = &[
         description: "f(x) = x % 3",
         build: || Box::new(exact_spec(|a| Some(a[0] % 3))),
     },
+    // Mod3is0: 14: C(R(P(1,1), C(R(Z0, R(S, R(Z2, P(4,1)))), P(3,2))), P(1,1), S)
+    SpecDef {
+        name: "mod3is0", default_arity: 1,
+        description: "f(x) = (x % 3) == 0",
+        build: || Box::new(exact_spec(|a| Some(
+            ((a[0] % 3) == 0) as u64
+        ))),
+    },
+    // Mod3is1: 12: R(Z0, R(S, C(R(S, R(P(2,1), Z4)), P(3,2), P(3,2))))
+    SpecDef {
+        name: "mod3is1", default_arity: 1,
+        description: "f(x) = (x % 3) == 1",
+        build: || Box::new(exact_spec(|a| Some(
+            ((a[0] % 3) == 1) as u64
+        ))),
+    },
+    // Mod3is2: 12: R(Z0, R(P(1,1), C(R(S, R(P(2,1), Z4)), P(3,2), P(3,2))))
     SpecDef {
         name: "mod3is2", default_arity: 1,
         description: "f(x) = (x % 3) == 2",
@@ -137,15 +154,23 @@ const SPECS: &[SpecDef] = &[
         description: "f(x) = ceil(x / 3)",
         build: || Box::new(exact_spec(|a| Some(a[0].div_ceil(3)))),
     },
+    // Pow2 : 12 : C(S, Pow2P)
     SpecDef {
         name: "pow2", default_arity: 1,
         description: "power of two: f(x) = 2^x",
         build: || Box::new(exact_spec(|a| Some(1u64 << a[0].min(63)))),
     },
+    // Pow2P : 10 : R(Z0, C(R(S, C(S, P(3,2))), P(2,2), P(2,2)))
     SpecDef {
-        name: "pow2m1", default_arity: 1,
+        name: "pow2p", default_arity: 1,
         description: "f(x) = 2^x - 1",
         build: || Box::new(exact_spec(|a| Some((1u64 << a[0].min(63)) - 1))),
+    },
+    // Pow2S : 14 : C(S, Pow2)
+    SpecDef {
+        name: "pow2s", default_arity: 1,
+        description: "f(x) = 2^x + 1",
+        build: || Box::new(exact_spec(|a| Some((1u64 << a[0].min(63)) + 1))),
     },
     SpecDef {
         name: "square", default_arity: 1,

@@ -42,6 +42,7 @@ TrueDiv2 := M(R(P1, R(R(Z, R(P2, P1)), P2)))
 # Equiv: Div3 := C(Pred, M(R(S, C(Monus3, P2))))
 Div3 := M(R(Monus2, C(Monus3, P2)))
 # CeilDiv3(x) = ceil(x/3)
+# TODO: Min size unknown
 CeilDiv3 := M(R(P1, C(Monus3, P2)))
 
 # Exponentiation

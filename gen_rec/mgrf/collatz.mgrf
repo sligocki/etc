@@ -1,0 +1,59 @@
+## Collatz-like 5x+1 iteration of unknown convergence
+##
+## 5x+1 function:
+##    f(2k) = k
+##    f(x=2k+1) = 5x+1
+## Open question: Does f^k(7) = 1 for any k?
+##
+## g(x) = y  <->  f(x+1) = y+1
+## g^k(x) = z  <->  f^k(x+1) = z+1
+##    g(2k+1) = k       <--  f(2k+2) = k+1
+##    g(x=2k) = 5(x+1)  <--  f(x+1) = 5(x+1)+1
+## Open question: Does g^k(6) = 0 for any k?
+
+use base::{K, Plus, Mod2, Div2}
+
+# M5P5(x) = 5(x+1)
+M5P5 := C(R(P1, C(Plus[4], P2)), S, S)
+
+# CollStep(2k+1) = k
+# CollStep(x=2k) = 5(x+1)
+CollStep := C(R(M5P5, C(Div2, P3)), Mod2, P1)
+
+CollLoop7 := R(K[6], C(CollStep, P2))
+
+# Halts iff g^k(6) = 0 for any k
+CollConv7 := M(CollLoop7)
+
+
+# Tests
+M5P5(0) == 5
+M5P5(1) == 10
+M5P5(2) == 15
+M5P5(13) == 70
+
+CollStep(0) == 5   # 1 -> 6
+CollStep(1) == 0   # 2 -> 1
+CollStep(2) == 15  # 3 -> 16
+CollStep(3) == 1   # 4 -> 2
+CollStep(4) == 25  # 5 -> 26
+CollStep(5) == 2   # 6 -> 3
+CollStep(12) == 65 # 13 -> 66
+CollStep(13) == 6  # 14 -> 7
+
+# 7 36 18 9 46 23 116 58 29 146 73 366 183 916
+CollLoop7(1) == 35
+CollLoop7(2) == 17
+CollLoop7(3) == 8
+CollLoop7(4) == 45
+CollLoop7(5) == 22
+CollLoop7(6) == 115
+CollLoop7(7) == 57
+CollLoop7(8) == 28
+CollLoop7(9) == 145
+CollLoop7(10) == 72
+CollLoop7(11) == 365
+CollLoop7(12) == 182
+CollLoop7(13) == 915
+
+CollConv7() == ⊥

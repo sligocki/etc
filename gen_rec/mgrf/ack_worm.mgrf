@@ -5,6 +5,7 @@
 #    Ex: [1,2,3] -> 0b10110111 = 183
 
 use base::{RMonus, Mod2, Div2, Sgn, Shift}
+use func_rep::{RepSucc, DiagRep, DiagS}
 
 # Div2k(k,n) = floor(n / 2^k)
 Div2k := R(P1, C(Div2, P2))
@@ -37,8 +38,7 @@ AckWorm := M(AckLoop)
 
 # InitList(n,_) : List ending in a value ≥ n
 # InitList(n,m) = (m+2) 2^n - 1
-# TODO: InitList := DiagRep[RepS[S]]
-InitList := R(S, C(R(S, C(S, P2)), P2, P2))
+InitList := DiagRep[RepSucc[S]]
 
 # Ack(n,_) > AckWorm([n]) > f_ω(n-2)
 # Ack(2,2) = AckWorm([4]) = 41 2^38 - 1
@@ -49,8 +49,15 @@ FOmega := C(R(P1, C(Ack, P2, P2)), S, S)
 # Omega() > f_ω(10^13)
 Omega := C(FOmega, K[1])
 
-AckRep := R(S, C(Ack, P2, P2))
-AckRepRep := R(S, C(AckRep, P2, P2))
-
 # Graham() > Graham's number
-Graham := C(C(AckRepRep, S, S), K[1])
+Graham := C(DiagS[DiagRep[DiagRep[Ack]]], K[1])
+
+
+# Tests
+InitList(1,1) == 5  # 3 2^1 - 1 = [1,1]
+InitList(2,2) == 15  # 4 2^2 - 1 = [4]
+InitList(3,3) == 39  # 5 2^3 - 1 = [1,0,3]
+InitList(4,4) == 95  # 6 2^4 - 1 = [1,5]
+
+Omega() == ⊥
+Graham() == ⊥

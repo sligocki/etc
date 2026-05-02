@@ -62,7 +62,26 @@ fn main() {
         None
     };
 
+    // ── Macro table ───────────────────────────────────────────────────────────
+
+    let has_macros = !file.grf_macro_defs.is_empty() || !file.num_macro_defs.is_empty();
+    if has_macros {
+        println!("{:<22}  {:>5}  {:>6}", "macro", "kind", "info");
+        println!("{}", "-".repeat(38));
+        for (name, param_arity, body) in &file.grf_macro_defs {
+            println!("{:<22}  {:>5}  par={} body={}", name, "grf", param_arity, body.size());
+        }
+        for (name, num_cases) in &file.num_macro_defs {
+            println!("{:<22}  {:>5}  cases={}", name, "num", num_cases);
+        }
+        println!();
+    }
+
     // ── Size table ────────────────────────────────────────────────────────────
+
+    if file.defs.is_empty() {
+        return;
+    }
 
     if db.is_some() {
         println!("{:<22}  {:>4}  {:>5}  {:>5}  {:>5}", "name", "ar", "raw", "ip", "fp");

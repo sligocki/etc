@@ -9,7 +9,7 @@ use crate::grf::Grf;
 #[derive(Debug, Clone)]
 pub struct TestCase {
     pub name: String,
-    /// Resolved GRF for tests whose name is a num-macro instantiation (e.g. `Plus[3]`).
+    /// Resolved GRF for tests whose name is a macro instantiation (e.g. `Plus[3]`).
     /// `None` means look the GRF up by name at run time.
     pub grf: Option<Grf>,
     pub args: Vec<u64>,
@@ -21,6 +21,11 @@ pub struct TestCase {
 pub struct IgrfFile {
     pub defs: Vec<(String, Grf)>,
     pub tests: Vec<TestCase>,
+    /// GRF-parameterized macros: (name, param_arity, body_grf_with_proj_placeholder).
+    /// The body GRF is computed by substituting the parameter with P(param_arity, 1).
+    pub grf_macro_defs: Vec<(String, usize, Grf)>,
+    /// Num-parameterized macros: (name, num_cases).
+    pub num_macro_defs: Vec<(String, usize)>,
 }
 
 // Internal AST for mgrf expressions before arity inference.
@@ -32,10 +37,11 @@ enum Expr {
     Comp(Box<Expr>, Vec<Expr>),
     Rec(Box<Expr>, Box<Expr>),
     Min(Box<Expr>),
-    Name(String),               // named reference
+    Name(String),               // named reference (uppercase) or GRF param (lowercase)
     Const(u64),                 // K[n]
-    Lift(Box<Expr>, usize),     // explicit arity lift: Name^k
-    NumMacroApp(String, NumExpr), // Name[numexpr]: apply a num-parameterized macro
+    Lift(Box<Expr>, usize),     // explicit arity lift: Expr^k
+    NumMacroApp(String, NumExpr), // Name[numexpr]: num-parameterized macro application
+    GrfMacroApp(String, Box<Expr>), // Name[GrfExpr]: GRF-parameterized macro application
 }
 
 // ── Num-parameterized macro types ─────────────────────────────────────────────
@@ -61,6 +67,24 @@ struct NumMacroCases {
     cases: Vec<(NumPattern, Expr)>,
 }
 
+// ── GRF-parameterized macro types ─────────────────────────────────────────────
+
+// A GRF-parameterized macro: `MacroName[f^k] := body`.
+// The body may contain `Name("f")` references that are substituted at call sites.
+#[derive(Debug, Clone)]
+struct GrfMacroDef {
+    param_name: String,  // e.g. "f"
+    param_arity: usize,  // declared arity k from `f^k`
+    body: Expr,
+}
+
+// LHS bracket pattern: distinguishes num-macro cases from GRF-macro defs.
+#[derive(Debug, Clone)]
+enum MacroParam {
+    Num(NumPattern),    // Name[num_pattern] := ...
+    Grf(String, usize), // Name[f^k]        := ...
+}
+
 // A `use module::{Name, ...}` or `use module` import request.
 struct UseStatement {
     module: String,
@@ -73,10 +97,13 @@ struct UseStatement {
 /// `None` only for content that is known to have no imports.
 pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<IgrfFile, String> {
     let (use_stmts, raw_items, tests) = parse_file(content, true)?;
-    let (num_macros, raw_defs) = split_macros(raw_items);
+    let (local_grf_macros, local_num_macros, raw_defs) = split_macros(raw_items);
 
     let mut arities: HashMap<String, usize> = HashMap::new();
     let mut grfs: HashMap<String, Grf> = HashMap::new();
+    // Macro tables start empty; imports fill them first, then local defs override.
+    let mut grf_macros: HashMap<String, GrfMacroDef> = HashMap::new();
+    let mut num_macros: HashMap<String, NumMacroCases> = HashMap::new();
 
     // Process imports before local defs so imported names are in scope.
     if !use_stmts.is_empty() {
@@ -84,13 +111,17 @@ pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<IgrfFil
             "use statements require a base_dir (file path must be known)".to_string()
         })?;
         for stmt in &use_stmts {
-            load_import(stmt, dir, &mut arities, &mut grfs)?;
+            load_import(stmt, dir, &mut arities, &mut grfs, &mut grf_macros, &mut num_macros)?;
         }
     }
 
+    // Local macros override imported ones.
+    grf_macros.extend(local_grf_macros);
+    num_macros.extend(local_num_macros);
+
     let mut defs = Vec::new();
     for (name, expr) in &raw_defs {
-        let expanded = macro_expand(expr, &num_macros)
+        let expanded = macro_expand(expr, &num_macros, &grf_macros)
             .map_err(|e| format!("In macro expansion of {}: {}", name, e))?;
         let ar = min_arity(&expanded, &arities)
             .map_err(|e| format!("In definition of {}: {}", name, e))?;
@@ -101,14 +132,39 @@ pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<IgrfFil
         defs.push((name.clone(), grf));
     }
 
-    // Resolve test cases whose name is a num-macro instantiation (e.g. `Plus[3]`).
+    // Build display entries for GRF macros: resolve body with f → P(param_arity, 1).
+    let mut grf_macro_defs = Vec::new();
+    for (name, def) in &grf_macros {
+        let placeholder = Grf::Proj(def.param_arity, 1);
+        let mut ph_grfs = grfs.clone();
+        let mut ph_arities = arities.clone();
+        ph_grfs.insert(def.param_name.clone(), placeholder);
+        ph_arities.insert(def.param_name.clone(), def.param_arity);
+        if let Ok(expanded) = macro_expand(&def.body, &num_macros, &grf_macros) {
+            if let Ok(ar) = min_arity(&expanded, &ph_arities) {
+                if let Ok(grf) = resolve(&expanded, ar, &ph_grfs) {
+                    grf_macro_defs.push((name.clone(), def.param_arity, grf));
+                }
+            }
+        }
+    }
+    grf_macro_defs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Build display entries for num macros.
+    let mut num_macro_defs: Vec<(String, usize)> = num_macros
+        .iter()
+        .map(|(name, cases)| (name.clone(), cases.cases.len()))
+        .collect();
+    num_macro_defs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Resolve test cases that reference macro instantiations (e.g. `Plus[3]`, `DiagS[Add]`).
     let tests = tests
         .into_iter()
         .map(|mut tc| {
             if tc.name.contains('[') || tc.name.contains('^') {
                 let expr = parse_expr_str(&tc.name)
                     .map_err(|e| format!("In test {:?}: {}", tc.name, e))?;
-                let expanded = macro_expand(&expr, &num_macros)
+                let expanded = macro_expand(&expr, &num_macros, &grf_macros)
                     .map_err(|e| format!("In test {:?}: {}", tc.name, e))?;
                 let ar = min_arity(&expanded, &arities)
                     .map_err(|e| format!("In test {:?}: {}", tc.name, e))?;
@@ -120,7 +176,7 @@ pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<IgrfFil
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    Ok(IgrfFile { defs, tests })
+    Ok(IgrfFile { defs, tests, grf_macro_defs, num_macro_defs })
 }
 
 /// Parse a `.mgrf` file and return only the GRF definitions.
@@ -128,12 +184,15 @@ pub fn parse_mgrf_to_grfs(content: &str) -> Result<Vec<(String, Grf)>, String> {
     parse_mgrf_file(content, None).map(|f| f.defs)
 }
 
-// Load an imported module and insert the requested names into arities/grfs.
+// Load an imported module and insert requested names into arities/grfs and all macros into
+// the macro tables (macro imports ignore the names filter to handle transitive dependencies).
 fn load_import(
     stmt: &UseStatement,
     dir: &Path,
     arities: &mut HashMap<String, usize>,
     grfs: &mut HashMap<String, Grf>,
+    out_grf_macros: &mut HashMap<String, GrfMacroDef>,
+    out_num_macros: &mut HashMap<String, NumMacroCases>,
 ) -> Result<(), String> {
     let module_path = dir.join(format!("{}.mgrf", stmt.module));
     let content = std::fs::read_to_string(&module_path).map_err(|e| {
@@ -146,13 +205,13 @@ fn load_import(
     })?;
     debug_assert!(sub_uses.is_empty(), "parse_file with allow_use=false should never return uses");
 
-    let (sub_num_macros, sub_raw_defs) = split_macros(sub_items);
+    let (sub_grf_macros, sub_num_macros, sub_raw_defs) = split_macros(sub_items);
 
     // Resolve the imported module's definitions in isolation.
     let mut sub_arities: HashMap<String, usize> = HashMap::new();
     let mut sub_grfs: HashMap<String, Grf> = HashMap::new();
     for (name, expr) in &sub_raw_defs {
-        let expanded = macro_expand(expr, &sub_num_macros)
+        let expanded = macro_expand(expr, &sub_num_macros, &sub_grf_macros)
             .map_err(|e| format!("In module '{}', macro expansion of '{}': {}", stmt.module, name, e))?;
         let ar = min_arity(&expanded, &sub_arities)
             .map_err(|e| format!("In module '{}', def '{}': {}", stmt.module, name, e))?;
@@ -162,45 +221,63 @@ fn load_import(
         sub_grfs.insert(name.clone(), grf);
     }
 
-    // Import the requested names.
-    match &stmt.names {
-        None => {
-            for (name, grf) in &sub_grfs {
-                arities.insert(name.clone(), grf.arity());
-                grfs.insert(name.clone(), grf.clone());
-            }
+    let import_name = |name: &str| -> bool {
+        stmt.names.as_ref().map_or(true, |ns| ns.iter().any(|n| n == name))
+    };
+
+    // Import concrete GRFs filtered by the names list.
+    for (name, grf) in &sub_grfs {
+        if import_name(name) {
+            arities.insert(name.clone(), grf.arity());
+            grfs.insert(name.clone(), grf.clone());
         }
-        Some(names) => {
-            for req in names {
-                let grf = sub_grfs.get(req).ok_or_else(|| {
-                    format!("Name '{}' not found in module '{}'", req, stmt.module)
-                })?;
-                arities.insert(req.clone(), grf.arity());
-                grfs.insert(req.clone(), grf.clone());
+    }
+
+    // Import ALL macros unconditionally so that requested macros have their
+    // transitive dependencies (other macros they reference) available.
+    out_grf_macros.extend(sub_grf_macros);
+    out_num_macros.extend(sub_num_macros);
+
+    // Validate that each explicitly requested name exists as either a GRF or a macro.
+    if let Some(names) = &stmt.names {
+        for req in names {
+            let is_grf = sub_grfs.contains_key(req.as_str());
+            let is_grf_macro = out_grf_macros.contains_key(req.as_str());
+            let is_num_macro = out_num_macros.contains_key(req.as_str());
+            if !is_grf && !is_grf_macro && !is_num_macro {
+                return Err(format!("Name '{}' not found in module '{}'", req, stmt.module));
             }
         }
     }
+
     Ok(())
 }
 
-// Partition raw parsed items into num-macro case tables and regular definitions.
+// Partition raw parsed items into GRF macro defs, num-macro case tables, and regular definitions.
 fn split_macros(
-    items: Vec<(String, Option<NumPattern>, Expr)>,
-) -> (HashMap<String, NumMacroCases>, Vec<(String, Expr)>) {
+    items: Vec<(String, Option<MacroParam>, Expr)>,
+) -> (HashMap<String, GrfMacroDef>, HashMap<String, NumMacroCases>, Vec<(String, Expr)>) {
+    let mut grf_macros: HashMap<String, GrfMacroDef> = HashMap::new();
     let mut num_macros: HashMap<String, NumMacroCases> = HashMap::new();
     let mut regular: Vec<(String, Expr)> = Vec::new();
-    for (name, pattern_opt, expr) in items {
-        if let Some(pattern) = pattern_opt {
-            num_macros
-                .entry(name)
-                .or_default()
-                .cases
-                .push((pattern, expr));
-        } else {
-            regular.push((name, expr));
+    for (name, param_opt, expr) in items {
+        match param_opt {
+            Some(MacroParam::Num(pattern)) => {
+                num_macros
+                    .entry(name)
+                    .or_default()
+                    .cases
+                    .push((pattern, expr));
+            }
+            Some(MacroParam::Grf(param_name, param_arity)) => {
+                grf_macros.insert(name, GrfMacroDef { param_name, param_arity, body: expr });
+            }
+            None => {
+                regular.push((name, expr));
+            }
         }
     }
-    (num_macros, regular)
+    (grf_macros, num_macros, regular)
 }
 
 // ── File-level parser ─────────────────────────────────────────────────────────
@@ -208,7 +285,7 @@ fn split_macros(
 fn parse_file(
     content: &str,
     allow_use: bool,
-) -> Result<(Vec<UseStatement>, Vec<(String, Option<NumPattern>, Expr)>, Vec<TestCase>), String> {
+) -> Result<(Vec<UseStatement>, Vec<(String, Option<MacroParam>, Expr)>, Vec<TestCase>), String> {
     let mut use_stmts = Vec::new();
     let mut items = Vec::new();
     let mut tests = Vec::new();
@@ -238,29 +315,45 @@ fn parse_file(
             let (lhs, rhs) = line
                 .split_once(":=")
                 .ok_or_else(|| format!("Line {}: no ':=' found in {:?}", lineno + 1, line))?;
-            let (name, pattern) = parse_lhs(lhs)
+            let (name, param) = parse_lhs(lhs)
                 .map_err(|e| format!("Line {}: bad LHS in {:?}: {}", lineno + 1, line, e))?;
             let expr_str: String = rhs.chars().filter(|c| !c.is_whitespace()).collect();
             let expr = parse_expr_str(&expr_str)
                 .map_err(|e| format!("Line {}: parse error in {:?}: {}", lineno + 1, line, e))?;
-            items.push((name, pattern, expr));
+            items.push((name, param, expr));
         }
     }
     Ok((use_stmts, items, tests))
 }
 
-// Parse a definition LHS: either `Name` (regular def) or `Name[pattern]` (num-macro case).
-fn parse_lhs(s: &str) -> Result<(String, Option<NumPattern>), String> {
+// Parse a definition LHS: either `Name` (regular def) or `Name[pattern]` (macro case/def).
+fn parse_lhs(s: &str) -> Result<(String, Option<MacroParam>), String> {
     let s = s.trim();
     if let Some(bracket_pos) = s.find('[') {
         if !s.ends_with(']') {
             return Err(format!("Unclosed '[' in LHS {:?}", s));
         }
         let name = s[..bracket_pos].trim().to_string();
-        let pattern_str = s[bracket_pos + 1..s.len() - 1].trim();
-        let pattern = parse_num_pattern(pattern_str)
-            .map_err(|e| format!("invalid pattern {:?}: {}", pattern_str, e))?;
-        Ok((name, Some(pattern)))
+        let inner = s[bracket_pos + 1..s.len() - 1].trim();
+
+        // Detect GRF macro param: a lowercase identifier followed by `^` and a number.
+        if let Some(caret) = inner.find('^') {
+            let var = inner[..caret].trim();
+            let k_str = inner[caret + 1..].trim();
+            if !var.is_empty()
+                && var.chars().all(|c| c.is_ascii_lowercase())
+                && !k_str.is_empty()
+                && k_str.chars().all(|c| c.is_ascii_digit())
+            {
+                let k: usize = k_str.parse().unwrap();
+                return Ok((name, Some(MacroParam::Grf(var.to_string(), k))));
+            }
+        }
+
+        // Otherwise parse as a num-macro pattern.
+        let pattern = parse_num_pattern(inner)
+            .map_err(|e| format!("invalid pattern {:?}: {}", inner, e))?;
+        Ok((name, Some(MacroParam::Num(pattern))))
     } else {
         Ok((s.to_string(), None))
     }
@@ -356,8 +449,9 @@ fn parse_expr_str(s: &str) -> Result<Expr, String> {
 
 // ── Expression parser ─────────────────────────────────────────────────────────
 
-// After reading an uppercase name, handle any combination of `^k` (explicit lift)
-// and `[numexpr]` (num-macro application).  `^` must come before `[`.
+// After reading a name, handle any combination of `^k` (explicit lift),
+// `[numexpr]` (num-macro application), and `[GrfExpr]` (GRF-macro application).
+// `^k` must come before `[...]`.
 fn name_or_suffixes(name: String, chars: &mut Peekable<Chars>) -> Result<Expr, String> {
     // Optional explicit arity lift.
     let lift_k = if chars.peek() == Some(&'^') {
@@ -366,12 +460,41 @@ fn name_or_suffixes(name: String, chars: &mut Peekable<Chars>) -> Result<Expr, S
     } else {
         None
     };
-    // Optional num-macro application.
+    // Optional macro application.
     let base = if chars.peek() == Some(&'[') {
         chars.next();
-        let num_arg = parse_num_expr(chars)?;
-        eat(chars, ']')?;
-        Expr::NumMacroApp(name, num_arg)
+        match chars.peek() {
+            Some(&c) if c.is_ascii_digit() => {
+                // Numeric literal → num-macro application.
+                let n = read_digits(chars).unwrap();
+                eat(chars, ']')?;
+                Expr::NumMacroApp(name, NumExpr::Literal(n))
+            }
+            Some(&c) if c.is_ascii_lowercase() => {
+                // Lowercase: either a num-macro variable, or a GRF-param ref if followed by `^`.
+                let var = read_lower_alnum(chars);
+                if chars.peek() == Some(&'^') {
+                    chars.next();
+                    let k = read_digits(chars)
+                        .ok_or_else(|| format!("Expected arity after '^' in [{}^...]", var))?;
+                    eat(chars, ']')?;
+                    // GRF-macro application: pass the GRF parameter (with explicit lift) as arg.
+                    Expr::GrfMacroApp(
+                        name,
+                        Box::new(Expr::Lift(Box::new(Expr::Name(var)), k)),
+                    )
+                } else {
+                    eat(chars, ']')?;
+                    Expr::NumMacroApp(name, NumExpr::Variable(var))
+                }
+            }
+            _ => {
+                // GRF expression → GRF-macro application.
+                let arg = parse_expr(chars)?;
+                eat(chars, ']')?;
+                Expr::GrfMacroApp(name, Box::new(arg))
+            }
+        }
     } else {
         Expr::Name(name)
     };
@@ -379,22 +502,6 @@ fn name_or_suffixes(name: String, chars: &mut Peekable<Chars>) -> Result<Expr, S
         Some(k) => Expr::Lift(Box::new(base), k),
         None => base,
     })
-}
-
-// Parse a numeric argument inside `[...]`: either a decimal literal or a
-// lowercase variable name.
-fn parse_num_expr(chars: &mut Peekable<Chars>) -> Result<NumExpr, String> {
-    if chars.peek().map_or(false, |c| c.is_ascii_digit()) {
-        let n = read_digits(chars).unwrap();
-        Ok(NumExpr::Literal(n))
-    } else if chars.peek().map_or(false, |c| c.is_ascii_lowercase()) {
-        Ok(NumExpr::Variable(read_lower_alnum(chars)))
-    } else {
-        Err(format!(
-            "Expected number or lowercase variable in [...], got {:?}",
-            chars.peek()
-        ))
-    }
 }
 
 fn parse_expr(chars: &mut Peekable<Chars>) -> Result<Expr, String> {
@@ -489,6 +596,11 @@ fn parse_expr(chars: &mut Peekable<Chars>) -> Result<Expr, String> {
         c if c.is_ascii_uppercase() => {
             name_or_suffixes(format!("{}{}", c, read_alnum(chars)), chars)
         }
+        // Lowercase identifier: a GRF parameter reference inside a macro body.
+        c if c.is_ascii_lowercase() => {
+            let name = format!("{}{}", c, read_lower_alnum(chars));
+            name_or_suffixes(name, chars)
+        }
         other => Err(format!("Unexpected character: {:?}", other)),
     }
 }
@@ -525,53 +637,83 @@ fn eat(chars: &mut Peekable<Chars>, expected: char) -> Result<(), String> {
     }
 }
 
-// ── Num-macro expansion ───────────────────────────────────────────────────────
+// ── Macro expansion ───────────────────────────────────────────────────────────
 
-// Expand all NumMacroApp nodes in `expr` to concrete Expr trees.
+// Expand all NumMacroApp and GrfMacroApp nodes in `expr` to concrete Expr trees.
 // Must be called before min_arity / resolve.
 fn macro_expand(
     expr: &Expr,
-    macros: &HashMap<String, NumMacroCases>,
+    num_macros: &HashMap<String, NumMacroCases>,
+    grf_macros: &HashMap<String, GrfMacroDef>,
 ) -> Result<Expr, String> {
-    macro_expand_inner(expr, macros, &HashMap::new(), 0)
+    macro_expand_inner(expr, num_macros, grf_macros, &HashMap::new(), &HashMap::new(), 0)
 }
 
 fn macro_expand_inner(
     expr: &Expr,
-    macros: &HashMap<String, NumMacroCases>,
-    env: &HashMap<String, usize>, // num-variable bindings from the enclosing macro body
+    num_macros: &HashMap<String, NumMacroCases>,
+    grf_macros: &HashMap<String, GrfMacroDef>,
+    num_env: &HashMap<String, usize>, // num-variable bindings from an enclosing num-macro
+    grf_env: &HashMap<String, Expr>,  // GRF-parameter substitutions from an enclosing GRF-macro
     depth: usize,
 ) -> Result<Expr, String> {
     const MAX_DEPTH: usize = 4096;
     if depth > MAX_DEPTH {
         return Err(format!(
-            "Num-macro expansion depth exceeded (limit {}); possible unbounded recursion",
+            "Macro expansion depth exceeded (limit {}); possible unbounded recursion",
             MAX_DEPTH
         ));
     }
     match expr {
         Expr::NumMacroApp(name, num_arg) => {
-            let n = eval_num_expr(num_arg, env)?;
-            expand_num_macro(name, n, macros, depth + 1)
+            let n = eval_num_expr(num_arg, num_env)?;
+            expand_num_macro(name, n, num_macros, grf_macros, depth + 1)
+        }
+        Expr::GrfMacroApp(name, arg) => {
+            // Expand the argument expression first (handles nested macros in the arg).
+            let expanded_arg =
+                macro_expand_inner(arg, num_macros, grf_macros, num_env, grf_env, depth + 1)?;
+            // Look up the GRF macro definition.
+            let def = grf_macros.get(name.as_str()).ok_or_else(|| {
+                format!(
+                    "Unknown GRF macro {:?} — define it with `{}[f^k] := ...`",
+                    name, name
+                )
+            })?;
+            // Expand the body with the parameter substituted.
+            let mut new_grf_env = HashMap::new();
+            new_grf_env.insert(def.param_name.clone(), expanded_arg);
+            macro_expand_inner(
+                &def.body, num_macros, grf_macros,
+                num_env, &new_grf_env, depth + 1,
+            )
+        }
+        Expr::Name(n) => {
+            // Substitute GRF parameter if present; otherwise keep as a global reference.
+            if let Some(substituted) = grf_env.get(n.as_str()) {
+                Ok(substituted.clone())
+            } else {
+                Ok(expr.clone())
+            }
         }
         Expr::Lift(inner, k) => Ok(Expr::Lift(
-            Box::new(macro_expand_inner(inner, macros, env, depth)?),
+            Box::new(macro_expand_inner(inner, num_macros, grf_macros, num_env, grf_env, depth)?),
             *k,
         )),
         Expr::Comp(h, gs) => {
-            let eh = macro_expand_inner(h, macros, env, depth)?;
+            let eh = macro_expand_inner(h, num_macros, grf_macros, num_env, grf_env, depth)?;
             let egs = gs
                 .iter()
-                .map(|g| macro_expand_inner(g, macros, env, depth))
+                .map(|g| macro_expand_inner(g, num_macros, grf_macros, num_env, grf_env, depth))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expr::Comp(Box::new(eh), egs))
         }
         Expr::Rec(g, h) => Ok(Expr::Rec(
-            Box::new(macro_expand_inner(g, macros, env, depth)?),
-            Box::new(macro_expand_inner(h, macros, env, depth)?),
+            Box::new(macro_expand_inner(g, num_macros, grf_macros, num_env, grf_env, depth)?),
+            Box::new(macro_expand_inner(h, num_macros, grf_macros, num_env, grf_env, depth)?),
         )),
         Expr::Min(f) => Ok(Expr::Min(Box::new(macro_expand_inner(
-            f, macros, env, depth,
+            f, num_macros, grf_macros, num_env, grf_env, depth,
         )?))),
         // All other nodes are leaf-like — return unchanged.
         _ => Ok(expr.clone()),
@@ -591,10 +733,11 @@ fn eval_num_expr(arg: &NumExpr, env: &HashMap<String, usize>) -> Result<usize, S
 fn expand_num_macro(
     name: &str,
     n: usize,
-    macros: &HashMap<String, NumMacroCases>,
+    num_macros: &HashMap<String, NumMacroCases>,
+    grf_macros: &HashMap<String, GrfMacroDef>,
     depth: usize,
 ) -> Result<Expr, String> {
-    let cases = macros.get(name).ok_or_else(|| {
+    let cases = num_macros.get(name).ok_or_else(|| {
         format!(
             "Unknown num-macro {:?} — define it with `{}[pattern] := ...`",
             name, name
@@ -603,18 +746,17 @@ fn expand_num_macro(
     for (pattern, body) in &cases.cases {
         match pattern {
             NumPattern::Literal(k) if *k == n => {
-                // No num-variables in scope; literal case body is fully concrete.
-                return macro_expand_inner(body, macros, &HashMap::new(), depth);
+                return macro_expand_inner(body, num_macros, grf_macros, &HashMap::new(), &HashMap::new(), depth);
             }
             NumPattern::Succ(var) if n >= 1 => {
                 let mut env = HashMap::new();
-                env.insert(var.clone(), n - 1); // bind var to predecessor
-                return macro_expand_inner(body, macros, &env, depth);
+                env.insert(var.clone(), n - 1);
+                return macro_expand_inner(body, num_macros, grf_macros, &env, &HashMap::new(), depth);
             }
             NumPattern::Var(var) => {
                 let mut env = HashMap::new();
                 env.insert(var.clone(), n);
-                return macro_expand_inner(body, macros, &env, depth);
+                return macro_expand_inner(body, num_macros, grf_macros, &env, &HashMap::new(), depth);
             }
             _ => continue,
         }
@@ -652,8 +794,13 @@ fn min_arity(expr: &Expr, known: &HashMap<String, usize>) -> Result<usize, Strin
         Expr::Lift(_, k) => *k,
         Expr::NumMacroApp(name, _) => {
             return Err(format!(
-                "Unexpanded num-macro {:?} reached arity inference; \
-                 this is an internal error",
+                "Unexpanded num-macro {:?} reached arity inference; this is an internal error",
+                name
+            ));
+        }
+        Expr::GrfMacroApp(name, _) => {
+            return Err(format!(
+                "Unexpanded GRF macro {:?} reached arity inference; this is an internal error",
                 name
             ));
         }
@@ -785,6 +932,10 @@ fn resolve(expr: &Expr, target: usize, known: &HashMap<String, Grf>) -> Result<G
         }
         Expr::NumMacroApp(name, _) => Err(format!(
             "Unexpanded num-macro {:?} reached resolution; this is an internal error",
+            name
+        )),
+        Expr::GrfMacroApp(name, _) => Err(format!(
+            "Unexpanded GRF macro {:?} reached resolution; this is an internal error",
             name
         )),
     }
@@ -986,10 +1137,8 @@ Mult[n] := R(Z, C(Plus[n], P2))
         use crate::simulate::simulate;
         let content = format!("{}\nPlus3 := Plus[3]\nPlus5 := Plus[5]", NUM_EXAMPLES);
         let defs = parse_defs(&content);
-        // Plus[3](7) = 10
         let (r, _) = simulate(&defs["Plus3"], &[7], 10_000);
         assert_eq!(r.into_value(), Some(10));
-        // Plus[5](0) = 5
         let (r, _) = simulate(&defs["Plus5"], &[0], 10_000);
         assert_eq!(r.into_value(), Some(5));
     }
@@ -999,12 +1148,10 @@ Mult[n] := R(Z, C(Plus[n], P2))
         use crate::simulate::simulate;
         let content = format!("{}\nM1 := Monus[1]\nM3 := Monus[3]", NUM_EXAMPLES);
         let defs = parse_defs(&content);
-        // Monus[1] = Pred: Pred(5) = 4, Pred(0) = 0
         let (r, _) = simulate(&defs["M1"], &[5], 10_000);
         assert_eq!(r.into_value(), Some(4));
         let (r, _) = simulate(&defs["M1"], &[0], 10_000);
         assert_eq!(r.into_value(), Some(0));
-        // Monus[3](5) = 2, Monus[3](2) = 0
         let (r, _) = simulate(&defs["M3"], &[5], 10_000);
         assert_eq!(r.into_value(), Some(2));
         let (r, _) = simulate(&defs["M3"], &[2], 10_000);
@@ -1016,20 +1163,10 @@ Mult[n] := R(Z, C(Plus[n], P2))
         use crate::simulate::simulate;
         let content = format!("{}\nMult3 := Mult[3]\nMult5 := Mult[5]", NUM_EXAMPLES);
         let defs = parse_defs(&content);
-        // Mult[3](4) = 12
         let (r, _) = simulate(&defs["Mult3"], &[4], 100_000);
         assert_eq!(r.into_value(), Some(12));
-        // Mult[5](3) = 15
         let (r, _) = simulate(&defs["Mult5"], &[3], 100_000);
         assert_eq!(r.into_value(), Some(15));
-    }
-
-    #[test]
-    fn test_num_macro_no_matching_case() {
-        // Plus[n] has no case for n=0, so Plus[0] must error at expansion time.
-        let content = format!("{}\nBad := Plus[0]", NUM_EXAMPLES);
-        let result = parse_mgrf_to_grfs(&content);
-        assert!(result.is_err(), "Expected error: no case for Plus[0]");
     }
 
     #[test]
@@ -1046,11 +1183,133 @@ Mult[n] := R(Z, C(Plus[n], P2))
     }
 
     #[test]
+    fn test_num_macro_no_matching_case() {
+        let content = format!("{}\nBad := Plus[0]", NUM_EXAMPLES);
+        let result = parse_mgrf_to_grfs(&content);
+        assert!(result.is_err(), "Expected error: no case for Plus[0]");
+    }
+
+    #[test]
     fn test_num_macro_variable_unbound_outside_body() {
-        // 'n' is a num-variable; it must not be usable at top level.
-        // Parsing Plus[n] at top level (n not bound) should fail at expansion.
         let content = format!("{}\nBad := Plus[n]", NUM_EXAMPLES);
         let result = parse_mgrf_to_grfs(&content);
         assert!(result.is_err(), "Expected error: 'n' unbound at top level");
+    }
+
+    // ── Feature 3: GRF-parameterized macros ──────────────────────────────────
+
+    // The user's examples verbatim.
+    const GRF_EXAMPLES: &str = "
+Add := R(P1, C(S, P2))
+RepSucc[f^1] := R(S, C(f, P2))
+DiagRep[f^2] := R(S, C(f, P(3,2), P(3,2)))
+DiagS[f^2] := C(f, S, S)
+";
+
+    #[test]
+    fn test_grf_macro_diags_arity() {
+        // DiagS[f^2] := C(f, S, S) — substituting Add (arity 2) gives C(Add, S, S) arity 1
+        let content = format!("{}\nResult := DiagS[Add]", GRF_EXAMPLES);
+        let defs = parse_defs(&content);
+        assert_eq!(defs["Result"].arity(), 1);
+    }
+
+    #[test]
+    fn test_grf_macro_diags_simulation() {
+        use crate::simulate::simulate;
+        // DiagS[Add](x) = Add(S(x), S(x)) = (x+1)+(x+1) = 2x+2
+        let content = format!("{}\nResult := DiagS[Add]", GRF_EXAMPLES);
+        let defs = parse_defs(&content);
+        let (r, _) = simulate(&defs["Result"], &[3], 10_000);
+        assert_eq!(r.into_value(), Some(8)); // 2*3+2 = 8
+        let (r, _) = simulate(&defs["Result"], &[0], 10_000);
+        assert_eq!(r.into_value(), Some(2)); // 2*0+2 = 2
+    }
+
+    #[test]
+    fn test_grf_macro_repsucc_simulation() {
+        use crate::simulate::simulate;
+        // RepSucc[S](n, x) = R(S, C(S, P2))(n, x) = x + n + 1
+        let content = format!("{}\nResult := RepSucc[S]", GRF_EXAMPLES);
+        let defs = parse_defs(&content);
+        let (r, _) = simulate(&defs["Result"], &[3, 5], 10_000);
+        assert_eq!(r.into_value(), Some(9)); // 5 + 3 + 1 = 9
+        let (r, _) = simulate(&defs["Result"], &[0, 0], 10_000);
+        assert_eq!(r.into_value(), Some(1)); // 0 + 0 + 1 = 1
+    }
+
+    #[test]
+    fn test_grf_macro_diagrep_simulation() {
+        use crate::simulate::simulate;
+        // DiagRep[RepSucc[S]](n, x):
+        //   = R(S, C(RepSucc[S], P(3,2), P(3,2)))(n, x)
+        //   where RepSucc[S](k,y) = y + k + 1
+        //   step: RepSucc[S](x, acc) = acc + x + 1 ... but P(3,2) extracts the accumulator
+        //   Actually: C(RepSucc[S], P(3,2), P(3,2))(i, acc, x) = RepSucc[S](acc, acc) = acc + acc + 1 = 2*acc+1
+        //   base: x+1 (from S); step: 2*acc+1
+        //   DiagRep[RepSucc[S]](0, x) = x+1
+        //   DiagRep[RepSucc[S]](1, x) = 2*(x+1)+1 = 2x+3
+        //   DiagRep[RepSucc[S]](2, x) = 2*(2x+3)+1 = 4x+7
+        let content = format!("{}\nResult := DiagRep[RepSucc[S]]", GRF_EXAMPLES);
+        let defs = parse_defs(&content);
+        let (r, _) = simulate(&defs["Result"], &[0, 0], 10_000);
+        assert_eq!(r.into_value(), Some(1)); // x+1 = 1
+        let (r, _) = simulate(&defs["Result"], &[1, 0], 10_000);
+        assert_eq!(r.into_value(), Some(3)); // 2*0+3 = 3
+        let (r, _) = simulate(&defs["Result"], &[2, 0], 10_000);
+        assert_eq!(r.into_value(), Some(7)); // 4*0+7 = 7
+    }
+
+    #[test]
+    fn test_grf_macro_with_num_macro_arg() {
+        // DiagS[Plus[3]] := C(Plus[3], S, S)
+        // DiagS[Plus[3]](x) = Plus[3](x+1, x+1) -- wait, Plus[3](y) = y+3 (arity 1)
+        // But DiagS needs f^2 (arity 2). Plus[3] has arity 1. This should error.
+        let content = format!(
+            "{}\n{}\nBad := DiagS[Plus[3]]",
+            NUM_EXAMPLES, GRF_EXAMPLES
+        );
+        let result = parse_mgrf_to_grfs(&content);
+        assert!(result.is_err(), "Plus[3] has arity 1, DiagS needs f^2");
+    }
+
+    #[test]
+    fn test_grf_macro_with_num_macro_matching_arity() {
+        use crate::simulate::simulate;
+        // Mult (arity 2) used with DiagS[f^2]: DiagS[Mult](x) = Mult(x+1, x+1) = (x+1)^2
+        let content = format!("{}\nMult := R(Z, R(Add, P2))\nResult := DiagS[Mult]", GRF_EXAMPLES);
+        let defs = parse_defs(&content);
+        let (r, _) = simulate(&defs["Result"], &[3], 10_000);
+        assert_eq!(r.into_value(), Some(16)); // (3+1)^2 = 16
+        let (r, _) = simulate(&defs["Result"], &[0], 10_000);
+        assert_eq!(r.into_value(), Some(1)); // 1^2 = 1
+    }
+
+    #[test]
+    fn test_grf_macro_test_case() {
+        // Test that GRF macro instantiations work in inline test cases.
+        let content = format!(
+            "{}\nDiagS[Add](3) == 8\nRepSucc[S](3, 5) == 9",
+            GRF_EXAMPLES
+        );
+        let file = parse_mgrf_file(&content, None).unwrap();
+        assert_eq!(file.tests.len(), 2);
+        for tc in &file.tests {
+            assert!(tc.grf.is_some(), "test {:?} should have a resolved grf", tc.name);
+        }
+    }
+
+    #[test]
+    fn test_grf_param_passed_via_caret_syntax() {
+        use crate::simulate::simulate;
+        // Twice[f^1] := C(f, f) where f is a GRF-param.
+        // Twice[RepSucc[S]^2]: pass RepSucc[S] (arity 2) but declared as f^1 — should error
+        //   because Twice expects f^1 but RepSucc[S] has arity 2.
+        // Instead test Twice[S^1] = C(S, S) — S has arity 1 ✓.
+        let content = "Twice[f^1] := C(f, f)\nResult := Twice[S]";
+        let defs = parse_defs(content);
+        // C(S, S)(x) = S(S(x)) = x+2
+        let (r, _) = simulate(&defs["Result"], &[5], 10_000);
+        assert_eq!(r.into_value(), Some(7));
     }
 }

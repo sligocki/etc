@@ -146,6 +146,13 @@ const SPECS: &[SpecDef] = &[
         build: || Box::new(exact_spec(|a| Some(a[0].div_ceil(2)))),
     },
     SpecDef {
+        name: "truediv2", default_arity: 1,
+        description: "f(2k) = k",
+        build: || Box::new(exact_spec(
+            |a| if (a[0] % 2) == 0 { Some(a[0] / 2) } else { None }
+        )),
+    },
+    SpecDef {
         name: "div3", default_arity: 1,
         description: "f(x) = floor(x / 3)",
         build: || Box::new(exact_spec(|a| Some(a[0] / 3))),

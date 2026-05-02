@@ -60,6 +60,10 @@ struct Args {
     /// Seconds between progress lines (0 = disable).
     #[arg(long, default_value_t = 30)]
     progress_secs: u64,
+
+    /// Restrict enumeration to a range: --seek START COUNT.
+    #[arg(long, num_args = 2, value_names = ["START", "COUNT"])]
+    seek: Option<Vec<usize>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -268,9 +272,18 @@ fn main() {
         count_grf(size, 0, args.allow_min, count_opts)
     };
 
+    let (seek_start, seek_count, range_str) = match args.seek {
+        Some(ref v) => {
+            let (s, c) = (v[0], v[1]);
+            let end = s.saturating_add(c);
+            (s, c, format!(" [{}..{})", s, end))
+        }
+        None => (0, usize::MAX, String::new()),
+    };
+
     println!(
-        "BBµ search: 0-arity {}, size={}, max_steps={}, ~{} fns, opts={:?}",
-        mode_str, size, args.max_steps, expected, opts,
+        "BBµ search: 0-arity {}, size={}, max_steps={}, ~{} fns{}, opts={:?}",
+        mode_str, size, args.max_steps, expected, range_str, opts,
     );
     println!("  threads={}, batch={}, top_k={}", rayon::current_num_threads(), args.batch_size, args.top_k);
     println!("  results: {}/", args.results_dir.display());
@@ -311,12 +324,17 @@ fn main() {
         };
     }
 
+    let mut idx = 0usize;
+
     if args.min_prf && size >= 2 {
         stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
             if opts.min_dom {
                 if !f.used_args().contains(&1) { return; }
                 if f.is_never_zero() { return; }
             }
+            let cur = idx;
+            idx += 1;
+            if cur < seek_start || cur >= seek_start + seek_count { return; }
             acc.total += 1;
             batch.push(Grf::min(f.clone()));
             if batch.len() >= args.batch_size {
@@ -326,6 +344,9 @@ fn main() {
         });
     } else if !args.min_prf {
         stream_grf(size, 0, args.allow_min, opts, &mut |grf: &Grf| {
+            let cur = idx;
+            idx += 1;
+            if cur < seek_start || cur >= seek_start + seek_count { return; }
             acc.total += 1;
             batch.push(grf.clone());
             if batch.len() >= args.batch_size {

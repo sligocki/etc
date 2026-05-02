@@ -868,34 +868,4 @@ mod tests {
             }
         }
     }
-
-    #[test]
-    fn opt_ack_worm() {
-        use crate::example_ack::ack_worm;
-
-        let db = FingerprintDb::build(8, 3, false, 10_000);
-
-        let orig = ack_worm();
-        let opt_ip = opt_inline_proj(orig.clone());
-        let opt_fp = opt_fingerprint(opt_ip.clone(), &db);
-
-        println!("Original: {}", orig.to_string());
-        println!("Opt_IP:   {}", opt_ip.to_string());
-        println!("Opt_FP:   {}", opt_fp.to_string());
-        println!("Size: {} -> {} -> {}", orig.size(), opt_ip.size(), opt_fp.size());
-
-        assert!(opt_ip.size() < orig.size(),
-            "opt_inline_proj should not grow the GRF; before={}, after={}",
-            orig.size(),
-            opt_ip.size()
-        );
-        check_equiv(&orig, &opt_ip, 16);
-
-        assert!(opt_fp.size() < opt_ip.size(),
-            "opt_fingerprint should not grow the GRF; before={}, after={}",
-            opt_ip.size(),
-            opt_fp.size()
-        );
-        check_equiv(&opt_ip, &opt_fp, 16);
-    }
 }

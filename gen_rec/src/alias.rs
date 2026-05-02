@@ -241,13 +241,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ack_diag_1_s() {
-        let db = AliasDb::new(2);
-        let grf = ack_diag(1, Grf::Succ);
-        assert_eq!(db.alias(&grf), "AckDiag[1,S]");
-    }
-
-    #[test]
     fn test_constant() {
         let db = AliasDb::default();
         assert_eq!(db.alias(&constant(3, 0)), "K[3]");

@@ -98,7 +98,8 @@ fn main() {
     let mut failed = 0usize;
 
     for tc in &file.tests {
-        let grf = match grf_map.get(tc.name.as_str()) {
+        let args_str = tc.args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
+        let grf = match tc.grf.as_ref().or_else(|| grf_map.get(tc.name.as_str()).copied()) {
             Some(g) => g,
             None => {
                 println!("FAIL  {} -- undefined GRF", tc.name);
@@ -106,7 +107,6 @@ fn main() {
                 continue;
             }
         };
-        let args_str = tc.args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
         let (result, _) = simulate(grf, &tc.args, args.max_steps);
         let got: Option<u64> = result.into_value();
         let ok = match (got, tc.expected) {

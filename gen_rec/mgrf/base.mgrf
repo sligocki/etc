@@ -1,21 +1,27 @@
 # Common GRF
 
 # Addition
-Plus2 := C(S, S)        # Plus2(x) = x+2
-Plus3 := C(S, Plus2)    # Plus3(x) = x+3
+# Plus[n](x) = x+n
+Plus[1] := S
+Plus[n+1] := C(S, Plus[n])
+
 Add := R(P1, C(S, P2))  # Add(x,y) = x+y
 AddS := R(S, C(S, P2))  # AddS(x,y) = x+y+1
 
 # Monus: n≥m -> n∸m = n-m; n<m -> n∸m = 0
-Pred := R(Z, P1)        # Pred(x) = x∸1
-Monus2 := R(Z, Pred)    # Monus2(x) = x∸2
-Monus3 := R(Z, Monus2)  # Monus3(x) = x∸3
-RMonus := R(P(1,1), C(R(Z0, P(2,1)), P(3,2)))   # RMonus(x,y) = y∸x
+# Monus[n](x) = x∸n
+Monus[0] := P1
+Monus[n+1] := R(Z, Monus[n])
+Pred := Monus[1]
+
+# RMonus(x,y) = y∸x
+RMonus := R(P(1,1), C(R(Z0, P(2,1)), P(3,2)))
 
 # Multiplication
-Mult2 := R(Z, C(Plus2, P2))   # Mult2(x) = 2x
-Mult3 := R(Z, C(Plus3, P2))   # Mult3(x) = 3x
-Mult  := R(Z, R(Add, P2))     # Mult(x,y) = x*y
+# Mult[n](x) = n*x
+Mult[n] := R(Z, C(Plus[n], P2))
+# Mult(x,y) = x*y
+Mult  := R(Z, R(Add, P2))
 
 # Modulus
 # Mod2(x) = x%2
@@ -25,7 +31,7 @@ Mod3 := R(Z0, C(R(S, R(P(2,1), Z4)), P(2,2), P(2,2)))
 
 # Division
 # Div2(x) = floor(x/2)
-# Alt: Div2 := M(R(Pred, C(Monus2, P2)))
+# Alt: Div2 := M(R(Pred, C(Monus[2], P2)))
 Div2 := R(Z0, C(R(P(1,1), C(R(Z0, P(2,1)), P(3,2))), P(2,2), P(2,1)))
 # CeilDiv2(x) = ceil(x/2)
 CeilDiv2 := R(Z0, C(R(S, C(R(Z0, P(2,1)), P(3,2))), P(2,2), P(2,1)))
@@ -36,11 +42,11 @@ TrueDiv2 := M(R(P1, R(R(Z, R(P2, P1)), P2)))
 
 # Div3(x) = floor(x/3)
 # TODO: Min size unknown
-# Equiv: Div3 := C(Pred, M(R(S, C(Monus3, P2))))
-Div3 := M(R(Monus2, C(Monus3, P2)))
+# Equiv: Div3 := C(Pred, M(R(S, C(Monus[3], P2))))
+Div3 := M(R(Monus[2], C(Monus[3], P2)))
 # CeilDiv3(x) = ceil(x/3)
 # TODO: Min size unknown
-CeilDiv3 := M(R(P1, C(Monus3, P2)))
+CeilDiv3 := M(R(P1, C(Monus[3], P2)))
 
 # Exponentiation
 Pow2P := R(Z, C(AddS, P2, P2))  # Pow2P(k) = 2^k - 1
@@ -56,17 +62,17 @@ Not := R(C(S, Z0), Z2)      # 0 -> 1; n+1 -> 0
 # Polygonal functions
 Tri := R(Z, AddS)     # Tri(n) = n(n+1)/2
 TriP := R(Z, Add)     # TriP(n) = Tri(n-1) = n(n-1)/2
-Square := R(Z, R(S, C(Plus2, P2)))  # Square(n) = n^2
+Square := R(Z, R(S, C(Plus[2], P2)))  # Square(n) = n^2
 
 
 # Tests
-Plus2(0) == 2
-Plus2(1) == 3
-Plus2(13) == 15
+Plus[2](0) == 2
+Plus[2](1) == 3
+Plus[2](13) == 15
 
-Plus3(0) == 3
-Plus3(1) == 4
-Plus3(13) == 16
+Plus[3](0) == 3
+Plus[3](1) == 4
+Plus[3](13) == 16
 
 Add(0,2) == 2
 Add(13,0) == 13
@@ -81,33 +87,33 @@ Pred(1) == 0
 Pred(2) == 1
 Pred(13) == 12
 
-Monus2(0) == 0
-Monus2(1) == 0
-Monus2(2) == 0
-Monus2(3) == 1
-Monus2(13) == 11
+Monus[2](0) == 0
+Monus[2](1) == 0
+Monus[2](2) == 0
+Monus[2](3) == 1
+Monus[2](13) == 11
 
-Monus3(0) == 0
-Monus3(1) == 0
-Monus3(2) == 0
-Monus3(3) == 0
-Monus3(4) == 1
-Monus3(13) == 10
+Monus[3](0) == 0
+Monus[3](1) == 0
+Monus[3](2) == 0
+Monus[3](3) == 0
+Monus[3](4) == 1
+Monus[3](13) == 10
 
 RMonus(0,1) == 1
 RMonus(1,0) == 0
 RMonus(8,13) == 5
 RMonus(13,8) == 0
 
-Mult2(0) == 0
-Mult2(1) == 2
-Mult2(2) == 4
-Mult2(13) == 26
+Mult[2](0) == 0
+Mult[2](1) == 2
+Mult[2](2) == 4
+Mult[2](13) == 26
 
-Mult3(0) == 0
-Mult3(1) == 3
-Mult3(2) == 6
-Mult3(13) == 39
+Mult[3](0) == 0
+Mult[3](1) == 3
+Mult[3](2) == 6
+Mult[3](13) == 39
 
 Mult(0,0) == 0
 Mult(0,3) == 0

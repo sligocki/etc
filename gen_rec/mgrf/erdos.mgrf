@@ -1,16 +1,8 @@
-## Erdos Ternary Conjecture: 
+## Erdos Ternary Conjecture:
 ##    forall k > 8, 2^k has at least one 2 in base-3
 ## https://dna.hamilton.ie/2023-07-10-DrSterin.html#:~:text=Chapter%202:%20Busy%20beaver%20problem
 
-# TODO: from base import Add, AddS, Pred, Div3, Mod3
-Pred := R(Z, P1)
-Monus2 := R(Z, R(Z, P1))
-Monus3 := R(Z, R(Z, R(Z, P1)))
-Add := R(P1, C(S, P2))
-AddS := R(S, C(S, P2))
-Pow2P := R(Z, C(AddS, P2, P2))
-Pow2 := C(S, Pow2P)
-Div3 := M(R(Monus2, C(Monus3, P2)))
+use base::{Add, AddS, Div3, Pow2}
 
 # \kn. n // 3^k
 Div3k := R(P1, C(Div3, P2))

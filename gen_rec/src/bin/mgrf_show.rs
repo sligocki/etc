@@ -41,7 +41,8 @@ fn main() {
     let content = std::fs::read_to_string(&args.file)
         .unwrap_or_else(|e| panic!("Cannot read {:?}: {}", args.file, e));
 
-    let file = parse_mgrf_file(&content)
+    let base_dir = args.file.parent();
+    let file = parse_mgrf_file(&content, base_dir)
         .unwrap_or_else(|e| panic!("Parse error: {}", e));
 
     let db = if args.fp_max_size > 0 {

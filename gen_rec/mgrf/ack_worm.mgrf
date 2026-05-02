@@ -1,16 +1,10 @@
 ## GRF with Ackermann growth and beating Graham's number
-##
-## List <-> Integer encoding:
-##    We encode a list of Nat into a Nat by using run lengths of 1s in binary encoding.
-##    Ex: [1,2,3] -> 0b10110111 = 183
 
-# TODO: from base import RMonus, Mod2, Div2, Sgn, Shift
-RMonus := R(P(1,1), C(R(Z0, P(2,1)), P(3,2)))
-Mod2 := R(Z0, C(R(S, Z3), P(2,2), Z2))
-Div2 := R(Z0, C(R(P(1,1), C(R(Z0, P(2,1)), P(3,2))), P(2,2), P(2,1)))
-Sgn := M(R(P(1,1), Z3))
-Add := R(P1, C(S, P2))
-Shift := R(P1, C(Add, P2, P2))
+# For this function we use a custom List <-> Integer encoding:
+#    We encode a list of Nat into a Nat by using run lengths of 1s in binary encoding.
+#    Ex: [1,2,3] -> 0b10110111 = 183
+
+use base::{RMonus, Mod2, Div2, Sgn, Shift}
 
 # Div2k(k,n) = floor(n / 2^k)
 Div2k := R(P1, C(Div2, P2))
@@ -24,8 +18,7 @@ PopK := M(Bit)
 # DecAppend(k,x) = Decrement last value of list x and append k
 #                  [..., a] -> [..., a-1, k]
 #                  (Assumes last value of x is ≥ 1)
-# TODO: DecAppend := C(RMonus, Sgn^2, Shift)
-DecAppend := C(RMonus, C(Sgn, P1), Shift)
+DecAppend := C(RMonus, Sgn^2, Shift)
 
 # DecAppendN(n,k,x) : [...] + [k] -> [...] + [k-1]*n + [k]
 DecAppendN := R(P2, C(DecAppend, P3, P2))
@@ -35,8 +28,7 @@ DecAppendN := R(P2, C(DecAppend, P3, P2))
 #     * Pop last element of list x -> k
 #     * if k > 0: Append n+1 copies of k-1 to list x
 AckStep := C(Div2, C(DecAppendN, P1, C(PopK, P2), P2))
-# TODO: AckLoop := R(P1, AckStep^3)
-AckLoop := R(P1, C(AckStep, P1, P2))
+AckLoop := R(P1, AckStep^3)
 # AckWorm(x) : A version of Hydra game/Goodstein sequence for linear trees
 #              (Instead of a branching hydra, it is a linear worm)
 #   Starting from list x, repeat AckStep until the list is empty/all 0s.

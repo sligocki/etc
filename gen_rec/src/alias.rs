@@ -6,14 +6,15 @@
 /// let db = AliasDb::default();
 /// println!("{}", db.alias(&grf));
 /// ```
+use std::collections::HashMap;
 use std::cmp::Reverse;
 
-use crate::example_ack::{
-    ack, ack_loop, ack_step, ack_worm, add, bit, dec_append, dec_append_n, div2, div2k, graham,
-    init_list, mod2, not, omega, plus2, pop_k, pred, rmonus, rmonus_odd, sgn, shift,
-};
-use crate::examples::{ack_diag, constant, diag_rep, diag_succ, plus_n, polygonal, rep_succ, triangular, square, shift_succ};
 use crate::grf::Grf;
+use crate::mgrf::{parse_mgrf_with_modules, MgrfFile};
+
+const BASE_MGRF:     &str = include_str!("../mgrf/base.mgrf");
+const FUNC_REP_MGRF: &str = include_str!("../mgrf/func_rep.mgrf");
+const ACK_WORM_MGRF: &str = include_str!("../mgrf/ack_worm.mgrf");
 
 fn weaken(grf: &Grf) -> Grf {
     match grf {
@@ -42,6 +43,8 @@ const RESET: &str = "\x1b[0m";
 pub struct AliasDb {
     entries: Vec<Entry>,
     colored: bool,
+    base_file: MgrfFile,
+    ack_file: MgrfFile,
 }
 
 impl AliasDb {
@@ -63,71 +66,51 @@ impl AliasDb {
             };
         }
 
-        // ── example_ack named functions ──────────────────────────────────────
-        push!("Pred",        pred());
-        push!("Not",         not());
-        push!("Sgn",         sgn());
-        push!("Add",         add());
-        push!("RMonus",      rmonus());
-        push!("Mod2",        mod2());
-        push!("Shift",       shift());
-        push!("RMonusOdd",   rmonus_odd());
-        push!("Div2",        div2());
-        push!("Div2k",       div2k());
-        push!("DecAppend",   dec_append());
-        push!("DecAppendN",  dec_append_n());
-        push!("Bit",         bit());
-        push!("PopK",        pop_k());
-        push!("AckStep",     ack_step());
-        push!("AckLoop",     ack_loop());
-        push!("AckWorm",     ack_worm());
-        push!("InitList",    init_list());
-        push!("Ack",         ack());
-        push!("Omega",       omega());
-        push!("Graham",      graham());
+        // Load GRF definitions from embedded .mgrf files.
+        let modules: HashMap<String, String> = [
+            ("base".to_string(),     BASE_MGRF.to_string()),
+            ("func_rep".to_string(), FUNC_REP_MGRF.to_string()),
+        ].into();
+        let base_file = parse_mgrf_with_modules(BASE_MGRF, &modules)
+            .expect("embedded base.mgrf should always parse");
+        let ack_file = parse_mgrf_with_modules(ACK_WORM_MGRF, &modules)
+            .expect("embedded ack_worm.mgrf should always parse");
 
-        // ── examples: fixed functions ────────────────────────────────────────
-        push!("Tri",    triangular());
-        push!("Square", square());
-        push!("ShiftS", shift_succ());
-
-        // ── Plus[n]: skip n=1 (that's just S, left as-is) ───────────────────
-        // plus2() from example_ack equals plus_n(2) from examples; one entry covers both.
-        for n in 2..=max_param {
-            push!(format!("Plus[{n}]"), plus_n(n));
+        // ── All named GRFs from base.mgrf (Add, Pred, Div2, Pow2, Tri, …) ───
+        for (name, grf) in &base_file.defs {
+            push!(name.clone(), grf.clone());
         }
 
-        // ── Polygonal[n] ─────────────────────────────────────────────────────
-        for n in 3..=max_param {
-            push!(format!("Polygonal[{n}]"), polygonal(n));
+        // ── All named GRFs from ack_worm.mgrf (AckWorm, Graham, …) ──────────
+        for (name, grf) in &ack_file.defs {
+            push!(name.clone(), grf.clone());
         }
 
-        // ── K[n] constants ───────────────────────────────────────────────────
+        // ── K[n], Plus[n], Monus[n], Mult[n] num-macro families ────────────────────
         for n in 1..=max_param {
-            push!(format!("K[{n}]"), constant(n, 0));
-            for k in 1..=3usize {
-                push!(format!("K^{k}[{n}]"), constant(n, k));
+            // Skip K[0] -> Z
+            if let Ok(g) = base_file.eval_expr(&format!("K[{n}]")) {
+                push!(format!("K[{n}]"), g);
+            }
+        }
+        for n in 2..=max_param {
+            // Skip Plus[1] -> S
+            if let Ok(g) = base_file.eval_expr(&format!("Plus[{n}]")) {
+                push!(format!("Plus[{n}]"), g);
+            }
+            // Skip Monus[0] -> P1 & Monus[1] -> Pred
+            if let Ok(g) = base_file.eval_expr(&format!("Monus[{n}]")) {
+                push!(format!("Monus[{n}]"), g);
+            }
+            // Skip Mult[1] (trivial)
+            if let Ok(g) = base_file.eval_expr(&format!("Mult[{n}]")) {
+                push!(format!("Mult[{n}]"), g);
             }
         }
 
-        // ── RepSucc / DiagRep / DiagSucc applied to small bases ──────────────
-        let bases: &[(&str, Grf)] = &[
-            ("S",       Grf::Succ),
-            ("Plus[2]", plus2()),
-            ("Tri",     triangular()),
-        ];
-        for (bname, base) in bases {
-            push!(format!("RepSucc[{bname}]"),  rep_succ(base.clone()));
-            push!(format!("DiagRep[{bname}]"),  diag_rep(base.clone()));
-            push!(format!("DiagSucc[{bname}]"), diag_succ(base.clone()));
-        }
-
-        // ── AckDiag[n, base] ─────────────────────────────────────────────────
-        for n in 0..=max_param {
-            for (bname, base) in bases {
-                push!(format!("AckDiag[{n},{bname}]"), ack_diag(n, base.clone()));
-            }
-        }
+        // TODO: GRF-macro aliases (RepSucc[f], DiagRep[f], DiagS[f]) require structural
+        // sub-expression matching — not yet supported. Concrete instantiations (AckWorm,
+        // Graham, etc.) are already covered by the named defs loaded above.
 
         // ── Weakened versions: FuncName_k for 1–2 extra unused inputs ──────────
         let base: Vec<(String, Grf)> = entries
@@ -144,61 +127,24 @@ impl AliasDb {
         // Largest-GRF-first: more specific (larger) aliases win over fragments.
         entries.sort_by_key(|e| Reverse(e.grf.size()));
 
-        Self { entries, colored }
+        Self { entries, colored, base_file, ack_file }
     }
 
-    /// Look up a GRF by alias name, or parse a raw GRF expression string.
+    /// Parse a mgrf expression, resolving alias names and macro families.
     ///
-    /// Alias names embedded inside a larger expression are also substituted
-    /// before parsing, so `C(ShiftS, S, S)` and `R(Add, K[2])` work too.
-    /// Name matching is case-insensitive.  Returns `Err` if parsing fails.
+    /// Accepts full mgrf expression syntax: `R(Z, P1)`, `C(Add, S)`, named
+    /// GRFs (`Add`, `AckWorm`), num-macros (`Plus[7]`, `Monus[3]`, `K^2[4]`),
+    /// and standard raw-GRF atoms (`Z0`, `S`, `P(2,1)`).  Returns `Err` if
+    /// the expression cannot be parsed or resolved.
     pub fn resolve(&self, expr: &str) -> Result<Grf, String> {
-        self.preprocess(expr.trim())
-            .parse::<Grf>()
-            .map_err(|e| format!("parse error: {e}"))
-    }
-
-    /// Replace every alias token in `expr` with its raw GRF string.
-    ///
-    /// Tokens are maximal runs of `[A-Za-z0-9_]` optionally followed by a
-    /// `[…]` suffix (e.g. `Plus[2]`, `AckDiag[1,S]`).  Tokens that match an
-    /// alias name (case-insensitive) are replaced with the corresponding raw
-    /// GRF string; everything else is passed through unchanged.
-    fn preprocess(&self, expr: &str) -> String {
-        let bytes = expr.as_bytes();
-        let n = bytes.len();
-        let mut out = String::with_capacity(n);
-        let mut i = 0;
-        while i < n {
-            if bytes[i].is_ascii_alphabetic() {
-                let start = i;
-                // scan word chars
-                while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
-                }
-                // scan optional [...] suffix
-                if i < n && bytes[i] == b'[' {
-                    i += 1;
-                    while i < n && bytes[i] != b']' {
-                        i += 1;
-                    }
-                    if i < n {
-                        i += 1; // consume ']'
-                    }
-                }
-                let token = &expr[start..i];
-                let lower = token.to_ascii_lowercase();
-                if let Some(entry) = self.entries.iter().find(|e| e.alias.to_ascii_lowercase() == lower) {
-                    out.push_str(&entry.grf.to_string());
-                } else {
-                    out.push_str(token);
-                }
-            } else {
-                out.push(bytes[i] as char);
-                i += 1;
-            }
-        }
-        out
+        let expr = expr.trim();
+        self.base_file.eval_expr(expr)
+            .or_else(|_| self.ack_file.eval_expr(expr))
+            .map_err(|_| {
+                // Re-run base_file to surface a useful parse/resolve error.
+                self.base_file.eval_expr(expr)
+                    .unwrap_err()
+            })
     }
 
     /// Rewrite `grf` bottom-up, substituting every matching sub-expression
@@ -253,6 +199,8 @@ pub fn alias_db_for_stdout(max_param: usize, no_alias: bool) -> Option<AliasDb> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::example_ack::{pred, add, plus2};
+    use crate::examples::{shift_succ, constant};
     use crate::grf::Grf;
 
     #[test]
@@ -260,7 +208,8 @@ mod tests {
         let db = AliasDb::default();
         assert_eq!(db.alias(&pred()), "Pred");
         assert_eq!(db.alias(&add()), "Add");
-        assert_eq!(db.alias(&ack_worm()), "AckWorm");
+        // AckWorm from the mgrf file (Rust's ack_worm() is structurally different).
+        assert_eq!(db.alias(&db.resolve("AckWorm").unwrap()), "AckWorm");
     }
 
     #[test]
@@ -302,7 +251,7 @@ mod tests {
     fn test_constant() {
         let db = AliasDb::default();
         assert_eq!(db.alias(&constant(3, 0)), "K[3]");
-        assert_eq!(db.alias(&constant(1, 2)), "K^2[1]");
+        assert_eq!(db.alias(&constant(1, 2)), "K[1]^2");
         assert_eq!(db.alias(&constant(0, 2)), "Z2");
     }
 }

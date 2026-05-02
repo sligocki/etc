@@ -6,6 +6,7 @@
 ///   search --spec pred --probe "R(Z0, P(2,1))"
 ///   search --spec add --progress
 use clap::Parser;
+use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::fingerprint::{canonical_inputs_n, verification_inputs};
 use gen_rec::semantic_search::{
     exact_spec, exhaustive_probe, probe_spec, search_all_at_min, search_smallest, SearchConfig,
@@ -258,6 +259,10 @@ struct Args {
     /// Run all specs (ignores --spec and --arity).
     #[arg(long)]
     all: bool,
+
+    /// Disable alias resolution for --probe input (accept only raw GRF strings).
+    #[arg(long)]
+    no_alias: bool,
 }
 
 // ── Search runner ─────────────────────────────────────────────────────────────
@@ -369,9 +374,14 @@ fn main() {
         let arity = args.arity.unwrap_or(info.default_arity);
         let confidence_inputs = args.confidence_inputs.unwrap_or(64);
 
-        let grf: gen_rec::grf::Grf = match grf_str.parse() {
+        let alias_db = alias_db_for_stdout(10, args.no_alias);
+        let grf: gen_rec::grf::Grf = match alias_db
+            .as_ref()
+            .map(|db| db.resolve(grf_str))
+            .unwrap_or_else(|| grf_str.parse().map_err(|e| format!("parse error: {e}")))
+        {
             Ok(g) => g,
-            Err(e) => { eprintln!("Parse error: {e}"); std::process::exit(1); }
+            Err(e) => { eprintln!("{e}"); std::process::exit(1); }
         };
         if grf.arity() != arity {
             eprintln!(

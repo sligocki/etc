@@ -18,7 +18,7 @@ pub struct TestCase {
 }
 
 /// Parsed `.mgrf` file: resolved GRF definitions plus inline spec tests.
-pub struct IgrfFile {
+pub struct MgrfFile {
     pub defs: Vec<(String, Grf)>,
     pub tests: Vec<TestCase>,
     /// GRF-parameterized macros: (name, param_arity, body_grf_with_proj_placeholder).
@@ -26,6 +26,25 @@ pub struct IgrfFile {
     pub grf_macro_defs: Vec<(String, usize, Grf)>,
     /// Num-parameterized macros: (name, num_cases).
     pub num_macro_defs: Vec<(String, usize)>,
+    // Private context for eval_expr — holds the resolved GRF/arity tables plus macro tables.
+    grfs_ctx: HashMap<String, Grf>,
+    arities_ctx: HashMap<String, usize>,
+    num_macros_ctx: HashMap<String, NumMacroCases>,
+    grf_macros_ctx: HashMap<String, GrfMacroDef>,
+}
+
+impl MgrfFile {
+    /// Evaluate a mgrf expression in this file's resolved context.
+    ///
+    /// Macro applications are expanded using this file's macro tables, and name
+    /// references are looked up in the resolved GRF table.  Example uses:
+    ///   `file.eval_expr("Plus[3]")`, `file.eval_expr("K[4]")`, `file.eval_expr("K^2[1]")`
+    pub fn eval_expr(&self, expr: &str) -> Result<Grf, String> {
+        let parsed = parse_expr_str(expr)?;
+        let expanded = macro_expand(&parsed, &self.num_macros_ctx, &self.grf_macros_ctx)?;
+        let ar = min_arity(&expanded, &self.arities_ctx)?;
+        resolve(&expanded, ar, &self.grfs_ctx)
+    }
 }
 
 // Internal AST for mgrf expressions before arity inference.
@@ -38,7 +57,6 @@ enum Expr {
     Rec(Box<Expr>, Box<Expr>),
     Min(Box<Expr>),
     Name(String),               // named reference (uppercase) or GRF param (lowercase)
-    Const(u64),                 // K[n]
     Lift(Box<Expr>, usize),     // explicit arity lift: Expr^k
     NumMacroApp(String, NumExpr), // Name[numexpr]: num-parameterized macro application
     GrfMacroApp(String, Box<Expr>), // Name[GrfExpr]: GRF-parameterized macro application
@@ -91,11 +109,48 @@ struct UseStatement {
     names: Option<Vec<String>>, // None = import everything
 }
 
+// Resolves `use` statement content — either from the filesystem or an in-memory map.
+enum ImportResolver<'a> {
+    Dir(&'a Path),
+    Map(&'a HashMap<String, String>),
+}
+
+impl ImportResolver<'_> {
+    fn load(&self, module: &str) -> Result<String, String> {
+        match self {
+            ImportResolver::Dir(dir) => {
+                let path = dir.join(format!("{}.mgrf", module));
+                std::fs::read_to_string(&path).map_err(|e| {
+                    format!("Cannot load module '{}' ({}): {}", module, path.display(), e)
+                })
+            }
+            ImportResolver::Map(map) => map
+                .get(module)
+                .cloned()
+                .ok_or_else(|| format!("Module '{}' not found in embedded module map", module)),
+        }
+    }
+}
+
 /// Parse a `.mgrf` file into resolved GRF definitions and inline spec tests.
 ///
 /// `base_dir` is required when the file contains `use` statements; pass
 /// `None` only for content that is known to have no imports.
-pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<IgrfFile, String> {
+pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<MgrfFile, String> {
+    let resolver = base_dir.map(ImportResolver::Dir);
+    parse_mgrf_impl(content, resolver.as_ref())
+}
+
+/// Like `parse_mgrf_file` but resolves `use` imports from the provided in-memory map
+/// (module name → file content) rather than the filesystem.
+pub fn parse_mgrf_with_modules(
+    content: &str,
+    modules: &HashMap<String, String>,
+) -> Result<MgrfFile, String> {
+    parse_mgrf_impl(content, Some(&ImportResolver::Map(modules)))
+}
+
+fn parse_mgrf_impl(content: &str, resolver: Option<&ImportResolver<'_>>) -> Result<MgrfFile, String> {
     let (use_stmts, raw_items, tests) = parse_file(content, true)?;
     let (local_grf_macros, local_num_macros, raw_defs) = split_macros(raw_items);
 
@@ -107,11 +162,11 @@ pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<IgrfFil
 
     // Process imports before local defs so imported names are in scope.
     if !use_stmts.is_empty() {
-        let dir = base_dir.ok_or_else(|| {
-            "use statements require a base_dir (file path must be known)".to_string()
+        let res = resolver.ok_or_else(|| {
+            "use statements require a base_dir or module map (file path must be known)".to_string()
         })?;
         for stmt in &use_stmts {
-            load_import(stmt, dir, &mut arities, &mut grfs, &mut grf_macros, &mut num_macros)?;
+            load_import(stmt, res, &mut arities, &mut grfs, &mut grf_macros, &mut num_macros)?;
         }
     }
 
@@ -158,7 +213,7 @@ pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<IgrfFil
     num_macro_defs.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Resolve test cases that reference macro instantiations (e.g. `Plus[3]`, `DiagS[Add]`).
-    let tests = tests
+    let resolved_tests = tests
         .into_iter()
         .map(|mut tc| {
             if tc.name.contains('[') || tc.name.contains('^') {
@@ -176,7 +231,16 @@ pub fn parse_mgrf_file(content: &str, base_dir: Option<&Path>) -> Result<IgrfFil
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    Ok(IgrfFile { defs, tests, grf_macro_defs, num_macro_defs })
+    Ok(MgrfFile {
+        defs,
+        tests: resolved_tests,
+        grf_macro_defs,
+        num_macro_defs,
+        grfs_ctx: grfs,
+        arities_ctx: arities,
+        num_macros_ctx: num_macros,
+        grf_macros_ctx: grf_macros,
+    })
 }
 
 /// Parse a `.mgrf` file and return only the GRF definitions.
@@ -188,16 +252,13 @@ pub fn parse_mgrf_to_grfs(content: &str) -> Result<Vec<(String, Grf)>, String> {
 // the macro tables (macro imports ignore the names filter to handle transitive dependencies).
 fn load_import(
     stmt: &UseStatement,
-    dir: &Path,
+    resolver: &ImportResolver<'_>,
     arities: &mut HashMap<String, usize>,
     grfs: &mut HashMap<String, Grf>,
     out_grf_macros: &mut HashMap<String, GrfMacroDef>,
     out_num_macros: &mut HashMap<String, NumMacroCases>,
 ) -> Result<(), String> {
-    let module_path = dir.join(format!("{}.mgrf", stmt.module));
-    let content = std::fs::read_to_string(&module_path).map_err(|e| {
-        format!("Cannot load module '{}' ({}): {}", stmt.module, module_path.display(), e)
-    })?;
+    let content = resolver.load(&stmt.module)?;
 
     // allow_use=false: transitive imports are not permitted.
     let (sub_uses, sub_items, _) = parse_file(&content, false).map_err(|e| {
@@ -439,7 +500,8 @@ fn parse_test_line(line: &str) -> Option<TestCase> {
 }
 
 fn parse_expr_str(s: &str) -> Result<Expr, String> {
-    let mut chars = s.chars().peekable();
+    let stripped: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut chars = stripped.chars().peekable();
     let e = parse_expr(&mut chars)?;
     if chars.peek().is_some() {
         return Err(format!("Trailing chars: {:?}", chars.collect::<String>()));
@@ -465,7 +527,6 @@ fn name_or_suffixes(name: String, chars: &mut Peekable<Chars>) -> Result<Expr, S
         chars.next();
         match chars.peek() {
             Some(&c) if c.is_ascii_digit() => {
-                // Numeric literal → num-macro application.
                 let n = read_digits(chars).unwrap();
                 eat(chars, ']')?;
                 Expr::NumMacroApp(name, NumExpr::Literal(n))
@@ -581,16 +642,6 @@ fn parse_expr(chars: &mut Peekable<Chars>) -> Result<Expr, String> {
                 Ok(Expr::Min(Box::new(f)))
             } else {
                 name_or_suffixes(format!("M{}", read_alnum(chars)), chars)
-            }
-        }
-        'K' => {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                let n = read_digits(chars).ok_or("Expected n in K[n]")?;
-                eat(chars, ']')?;
-                Ok(Expr::Const(n as u64))
-            } else {
-                name_or_suffixes(format!("K{}", read_alnum(chars)), chars)
             }
         }
         c if c.is_ascii_uppercase() => {
@@ -790,7 +841,6 @@ fn min_arity(expr: &Expr, known: &HashMap<String, usize>) -> Result<usize, Strin
         Expr::Name(n) => *known
             .get(n)
             .ok_or_else(|| format!("Undefined name {:?}", n))?,
-        Expr::Const(_) => 0,
         Expr::Lift(_, k) => *k,
         Expr::NumMacroApp(name, _) => {
             return Err(format!(
@@ -914,7 +964,6 @@ fn resolve(expr: &Expr, target: usize, known: &HashMap<String, Grf>) -> Result<G
                 ))
             }
         }
-        Expr::Const(val) => Ok(make_const(*val, target)),
         Expr::Lift(inner, k) => {
             if *k != target {
                 return Err(format!(
@@ -941,13 +990,6 @@ fn resolve(expr: &Expr, target: usize, known: &HashMap<String, Grf>) -> Result<G
     }
 }
 
-fn make_const(n: u64, arity: usize) -> Grf {
-    if n == 0 {
-        Grf::Zero(arity)
-    } else {
-        Grf::comp(Grf::Succ, vec![make_const(n - 1, arity)])
-    }
-}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -1001,7 +1043,7 @@ mod tests {
 
     #[test]
     fn test_const() {
-        let g = single("F := C(S, K[3])");
+        let g = single("K[0] := Z\nK[n+1] := C(S, K[n])\nF := C(S, K[3])");
         assert_eq!(g.arity(), 0);
     }
 

@@ -294,10 +294,18 @@ fn load_import(
         }
     }
 
-    // Import ALL macros unconditionally so that requested macros have their
-    // transitive dependencies (other macros they reference) available.
-    out_grf_macros.extend(sub_grf_macros);
-    out_num_macros.extend(sub_num_macros);
+    // Import only the macros explicitly listed in the use statement.
+    // If names is None (bare `use module`), import everything.
+    for (name, def) in sub_grf_macros {
+        if import_name(&name) {
+            out_grf_macros.insert(name, def);
+        }
+    }
+    for (name, cases) in sub_num_macros {
+        if import_name(&name) {
+            out_num_macros.insert(name, cases);
+        }
+    }
 
     // Validate that each explicitly requested name exists as either a GRF or a macro.
     if let Some(names) = &stmt.names {
@@ -859,7 +867,7 @@ fn min_arity(expr: &Expr, known: &HashMap<String, usize>) -> Result<usize, Strin
 
 // ── Structural arity lifting ──────────────────────────────────────────────────
 
-fn lift_grf(grf: &Grf, target: usize) -> Result<Grf, String> {
+pub fn lift_grf(grf: &Grf, target: usize) -> Result<Grf, String> {
     let current = grf.arity();
     if current == target {
         return Ok(grf.clone());

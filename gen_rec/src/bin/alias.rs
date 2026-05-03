@@ -1,10 +1,4 @@
 /// Substitute named sub-expressions into a GRF for readability.
-///
-/// Usage examples:
-///   name "R(Z0, P(2,1))"
-///   name "C(R(P(1,1), C(S, P(3,2))), C(S,S))"
-///   name ack_worm
-///   name --max-param 8 'C(R(S, C(R(S, ...), P(3,2), P(3,2))), S, S)'
 use clap::Parser;
 use gen_rec::alias::AliasDb;
 use std::io::IsTerminal;
@@ -17,11 +11,11 @@ use std::io::IsTerminal;
                   EXPR may be a raw GRF string or an alias name like \"Add\" or \"AckWorm\"."
 )]
 struct Args {
-    /// GRF expression or alias name (Pred, Add, AckWorm, Plus[2], ...).
+    /// GRF expression or alias name (Pred, Add, Plus[2], ...).
     expr: String,
 
     /// Maximum n for parameterised macros (constant, plus_n, AckDiag, ...).
-    #[arg(long, default_value_t = 6)]
+    #[arg(long, default_value_t = 10)]
     max_param: usize,
 }
 

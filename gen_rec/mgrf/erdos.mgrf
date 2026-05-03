@@ -2,7 +2,7 @@
 ##    forall k > 8, 2^k has at least one 2 in base-3
 ## https://dna.hamilton.ie/2023-07-10-DrSterin.html#:~:text=Chapter%202:%20Busy%20beaver%20problem
 
-use base::{Add, AddS, Div3, Pow2}
+use base::{Add, AddS, Div3, Pow2, K}
 
 # \kn. n // 3^k
 Div3k := R(P1, C(Div3, P2))

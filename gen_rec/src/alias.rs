@@ -10,26 +10,12 @@ use std::collections::HashMap;
 use std::cmp::Reverse;
 
 use crate::grf::Grf;
-use crate::mgrf::{parse_mgrf_with_modules, MgrfFile};
+use crate::mgrf::{lift_grf, parse_mgrf_with_modules, MgrfFile};
 
 const BASE_MGRF:     &str = include_str!("../mgrf/base.mgrf");
 const FUNC_REP_MGRF: &str = include_str!("../mgrf/func_rep.mgrf");
 const ACK_WORM_MGRF: &str = include_str!("../mgrf/ack_worm.mgrf");
 
-fn weaken(grf: &Grf) -> Grf {
-    match grf {
-        Grf::Zero(k) => Grf::Zero(k + 1),
-        Grf::Succ => Grf::Succ,
-        Grf::Proj(k, i) => Grf::Proj(k + 1, *i),
-        Grf::Comp(h, gs, k) => Grf::Comp(
-            Box::new(weaken(h)),
-            gs.iter().map(|g| weaken(g)).collect(),
-            k + 1,
-        ),
-        Grf::Rec(g, h) => Grf::Rec(Box::new(weaken(g)), Box::new(weaken(h))),
-        Grf::Min(f) => Grf::Min(Box::new(weaken(f))),
-    }
-}
 
 struct Entry {
     alias: String,
@@ -86,25 +72,17 @@ impl AliasDb {
             push!(name.clone(), grf.clone());
         }
 
-        // ── K[n], Plus[n], Monus[n], Mult[n] num-macro families ────────────────────
-        for n in 1..=max_param {
-            // Skip K[0] -> Z
-            if let Ok(g) = base_file.eval_expr(&format!("K[{n}]")) {
-                push!(format!("K[{n}]"), g);
-            }
-        }
-        for n in 2..=max_param {
-            // Skip Plus[1] -> S
-            if let Ok(g) = base_file.eval_expr(&format!("Plus[{n}]")) {
-                push!(format!("Plus[{n}]"), g);
-            }
-            // Skip Monus[0] -> P1 & Monus[1] -> Pred
-            if let Ok(g) = base_file.eval_expr(&format!("Monus[{n}]")) {
-                push!(format!("Monus[{n}]"), g);
-            }
-            // Skip Mult[1] (trivial)
-            if let Ok(g) = base_file.eval_expr(&format!("Mult[{n}]")) {
-                push!(format!("Mult[{n}]"), g);
+        // ── All num-macro families from base.mgrf (K, Plus, Monus, Mult, …) ────
+        // Named GRFs (pushed above) take precedence for equal-size entries via
+        // stable sort; atoms (Succ, Zero, Proj) are rendered directly in alias_node
+        // and must never be overridden by a macro entry.
+        for (macro_name, _) in &base_file.num_macro_defs {
+            for n in 0..=max_param {
+                if let Ok(g) = base_file.eval_expr(&format!("{macro_name}[{n}]")) {
+                    if !matches!(g, Grf::Succ | Grf::Zero(_) | Grf::Proj(_, _)) {
+                        push!(format!("{macro_name}[{n}]"), g);
+                    }
+                }
             }
         }
 
@@ -112,16 +90,20 @@ impl AliasDb {
         // sub-expression matching — not yet supported. Concrete instantiations (AckWorm,
         // Graham, etc.) are already covered by the named defs loaded above.
 
-        // ── Weakened versions: FuncName_k for 1–2 extra unused inputs ──────────
+        // ── Lifted versions: FuncName^k for 1–4 extra unused inputs ────────────
+        // lift_grf fails for GRFs that cannot be lifted (e.g. S); those are skipped.
         let base: Vec<(String, Grf)> = entries
             .iter()
             .map(|e| (e.alias.clone(), e.grf.clone()))
             .collect();
         for (alias, grf) in &base {
-            let arity = grf.arity();
-            let w1 = weaken(grf);
-            push!(format!("{alias}^{}", arity + 1), w1.clone());
-            push!(format!("{alias}^{}", arity + 2), weaken(&w1));
+            let ar = grf.arity();
+            for ar_inc in 1..=4 {
+                let new_ar = ar + ar_inc;
+                if let Ok(w) = lift_grf(grf, new_ar) {
+                    push!(format!("{alias}^{}", new_ar), w);
+                }
+            }
         }
 
         // Largest-GRF-first: more specific (larger) aliases win over fragments.
@@ -216,6 +198,18 @@ mod tests {
     fn test_succ_not_aliased() {
         let db = AliasDb::default();
         // S stays as S, not Plus[1]
+        assert_eq!(db.alias(&Grf::Succ), "S");
+    }
+
+    #[test]
+    fn test_succ_lift_skipped() {
+        use crate::mgrf::lift_grf;
+        // lift_grf correctly rejects lifting S to arity 2.
+        // The old weaken() returned S unchanged, which would have added a spurious
+        // "Plus[1]^2" -> S (arity 1) entry if Plus[1]=S entered the catalog.
+        assert!(lift_grf(&Grf::Succ, 2).is_err());
+        // Confirm S still aliases correctly and no spurious "S^k" entry overrides it.
+        let db = AliasDb::default();
         assert_eq!(db.alias(&Grf::Succ), "S");
     }
 

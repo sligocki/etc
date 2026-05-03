@@ -131,6 +131,9 @@ fn process_file(path: &PathBuf, args: &Args) {
             continue;
         }
 
+        // Skip trivial stuff
+        if inner.is_never_zero() { continue; }
+
         let vals: Vec<Option<u64>> = (args.min_val..args.max_val)
             .map(|n| simulate(&inner, &[n], budget).0.into_value())
             .collect();

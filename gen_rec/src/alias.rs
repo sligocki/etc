@@ -181,9 +181,28 @@ pub fn alias_db_for_stdout(max_param: usize, no_alias: bool) -> Option<AliasDb> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::example_ack::{pred, add, plus2};
-    use crate::examples::{shift_succ, constant};
     use crate::grf::Grf;
+
+    fn pred() -> Grf {
+        Grf::rec(Grf::Zero(0), Grf::Proj(2, 1))
+    }
+    fn plus2() -> Grf {
+        Grf::comp(Grf::Succ, vec![Grf::Succ])
+    }
+    fn add() -> Grf {
+        Grf::rec(Grf::Proj(1,1), Grf::comp(Grf::Succ, vec![Grf::Proj(3,2)]))
+    }
+    fn shift() -> Grf {
+        Grf::rec(Grf::Proj(1, 1),
+                 Grf::comp(add(), vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]))
+    }
+    fn constant(n: usize, arity: usize) -> Grf {
+        let mut f = Grf::Zero(arity);
+        for _ in 0..n {
+            f = Grf::comp(Grf::Succ, vec![f]);
+        }
+        f
+    }
 
     #[test]
     fn test_exact_atoms() {
@@ -222,8 +241,8 @@ mod tests {
     #[test]
     fn test_resolve_embedded_alias() {
         let db = AliasDb::default();
-        let direct = db.resolve("C(ShiftS, S, S)").unwrap();
-        let raw = db.resolve(&format!("C({}, S, S)", shift_succ())).unwrap();
+        let direct = db.resolve("C(Shift, S, S)").unwrap();
+        let raw = db.resolve(&format!("C({}, S, S)", shift())).unwrap();
         assert_eq!(direct, raw);
     }
 

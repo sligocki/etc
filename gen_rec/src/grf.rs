@@ -127,12 +127,27 @@ impl Grf {
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
         match self {
-            Grf::Succ => true,
-            Grf::Rec(g, h) => g.is_never_zero() && h.is_never_zero(),
+            Grf::Succ => { return true; }
+            Grf::Rec(g, h) => {
+                if g.is_never_zero() {
+                    // R(+, +) -> +
+                    if h.is_never_zero() {
+                        return true;
+                    }
+                    // R(+, P2) -> +
+                    // h = Proj(_, 2) returns the accumulator unchanged every step,
+                    // so R(g, h)(n, rest) = g(rest); never zero when g is.
+                    if matches!(h.as_ref(), Grf::Proj(_, 2)) {
+                        return true;
+                    }
+                }
+            }
             Grf::Comp(h, gs, _) => {
+                // C(+, ...) -> +
                 if h.is_never_zero() {
                     return true;
                 }
+                // C(R(_, +), +, _, ...) -> +
                 // C(R(_, h_step), gs) -> + when h_step and all gs are always positive:
                 // gs[0] is never zero so the counter n >= 1, meaning R always steps at
                 // least once; since h_step is never zero the result is always positive.
@@ -141,10 +156,10 @@ impl Grf {
                         return true;
                     }
                 }
-                false
             }
-            _ => false,
+            _ => {}
         }
+        return false;
     }
 
     pub fn used_args(&self) -> BTreeSet<usize> {

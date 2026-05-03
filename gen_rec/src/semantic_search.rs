@@ -549,7 +549,10 @@ mod tests {
 
     #[test]
     fn test_probe_spec_timeout_detection() {
-        let grf: crate::grf::Grf = grf!("M(S)");
+        // C(R(C(S,Z0),P(2,2)),P(1,1))(i) = 1 always (Rec keeps acc=1 via P(2,2)),
+        // but P(2,2).is_never_zero()=false so Rec and Comp checks don't fire.
+        // Uses arg 1 so min_ff doesn't apply. M of it diverges → TimedOut.
+        let grf: crate::grf::Grf = grf!("M(C(R(C(S,Z0),P(2,2)),P(1,1)))");
         let inputs = vec![vec![]];
         let result = probe_spec(&grf, &mut |_, _| true, &inputs, 10);
         assert!(matches!(result, ProbeResult::TimedOut { .. }), "expected timeout, got: {result}");

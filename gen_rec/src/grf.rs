@@ -128,7 +128,21 @@ impl Grf {
     pub fn is_never_zero(&self) -> bool {
         match self {
             Grf::Succ => true,
-            Grf::Comp(h, _, _) => h.is_never_zero(),
+            Grf::Rec(g, h) => g.is_never_zero() && h.is_never_zero(),
+            Grf::Comp(h, gs, _) => {
+                if h.is_never_zero() {
+                    return true;
+                }
+                // C(R(_, h_step), gs) -> + when h_step and all gs are always positive:
+                // gs[0] is never zero so the counter n >= 1, meaning R always steps at
+                // least once; since h_step is never zero the result is always positive.
+                if let Grf::Rec(_, h_step) = h.as_ref() {
+                    if h_step.is_never_zero() && gs.first().map_or(false, |g| g.is_never_zero()) {
+                        return true;
+                    }
+                }
+                false
+            }
             _ => false,
         }
     }

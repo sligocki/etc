@@ -10,7 +10,7 @@
 use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::grf::Grf;
-use gen_rec::simulate::simulate;
+use gen_rec::simulate::{simulate, SimResult};
 
 #[derive(Parser, Debug)]
 #[command(about = "Simulate a single GRF expression")]
@@ -196,9 +196,10 @@ fn main() {
         }
         println!("---");
         let (result, steps) = simulate(&grf, &concrete, args.max_steps);
-        match result.into_value() {
-            Some(v) => println!("result: {}  ({} steps)", v, steps),
-            None => {
+        match result {
+            SimResult::Value(v) => println!("result: {}  ({} steps)", v, steps),
+            SimResult::Diverge => println!("result: diverges  ({} steps)", steps),
+            SimResult::OutOfSteps => {
                 let limit = if args.max_steps == 0 { "unlimited".to_string() } else { args.max_steps.to_string() };
                 println!("result: timed out after {} steps (limit: {})", steps, limit);
             }

@@ -156,6 +156,10 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
         }
 
         Grf::Min(f) => {
+            if f.is_never_zero() {
+                return (SimResult::Diverge, steps);
+            }
+
             // Fast-forward: if f ignores its search variable (1-indexed arg 1),
             // then f(i, args) = f(0, args) for all i.  One call decides:
             //   f(0, args) = 0  → min is 0, return Value(0).
@@ -285,11 +289,11 @@ mod tests {
 
     #[test]
     fn test_min_succ_diverges() {
-        // M(S)() = min{i : S(i) = 0} = diverges
+        // M(S)() = min{i : S(i) = 0} = diverges; caught cheaply by is_never_zero.
         let f = Grf::Min(Box::new(Grf::Succ));
         let (result, steps) = simulate(&f, &[], 1000);
-        assert!(result.value().is_none());
-        assert!(steps >= 1000);
+        assert_eq!(result, SimResult::Diverge);
+        assert!(steps < 10, "is_never_zero should short-circuit, got {steps} steps");
     }
 
     #[test]
@@ -433,33 +437,35 @@ mod tests {
 
     #[test]
     fn test_min_ff_diverge_vs_oos() {
-        // M(C(S,Z1))(): C(S,Z1) ignores arg 1. f(0)=1≠0 → Diverge (with ff).
+        // M(P(2,2))(3): P(2,2) ignores arg 1. f(0,3)=3≠0 → Diverge (with ff).
         // Without ff + small budget → OutOfSteps (budget exhausted, not proven diverge).
-        let f = Grf::Min(Box::new(Grf::comp(Grf::Succ, vec![Grf::Zero(1)])));
-        let (r_ff, _) = simulate(&f, &[], 0);  // unlimited
+        // P(2,2).is_never_zero() is false so the is_never_zero short-circuit doesn't fire.
+        let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
+        let (r_ff, _) = simulate(&f, &[3], 0);  // unlimited
         assert_eq!(r_ff, SimResult::Diverge);
-        let (r_no, _) = simulate_opts(&f, &[], Some(100), no_min_ff());
+        let (r_no, _) = simulate_opts(&f, &[3], Some(100), no_min_ff());
         assert_eq!(r_no, SimResult::OutOfSteps);
     }
 
     #[test]
     fn test_min_ff_not_applied_when_search_var_used() {
-        // M(S)(): S uses arg 1 (search var). Fast-forward must NOT apply.
-        // Without ff: exhausts budget. With ff: same (ff doesn't fire).
+        // M(S)(): S uses arg 1 (search var) so the fast-forward (which relies on
+        // the search var being ignored) must NOT apply.  However, S.is_never_zero()
+        // so the never-zero short-circuit fires first and returns Diverge cheaply.
         let f = Grf::Min(Box::new(Grf::Succ));
         let (r_ff, _) = simulate_opts(&f, &[], Some(1000), SimOpts::default());
         let (r_no, _) = simulate_opts(&f, &[], Some(1000), no_min_ff());
-        // Both should exhaust budget (not Diverge), since ff doesn't apply.
-        assert_eq!(r_ff, SimResult::OutOfSteps);
-        assert_eq!(r_no, SimResult::OutOfSteps);
+        assert_eq!(r_ff, SimResult::Diverge);
+        assert_eq!(r_no, SimResult::Diverge);
     }
 
     #[test]
     fn test_min_ff_fewer_steps() {
-        // M(C(S,Z1))() with ff uses ~3 steps; without ff exhausts budget.
-        let f = Grf::Min(Box::new(Grf::comp(Grf::Succ, vec![Grf::Zero(1)])));
-        let (_, steps_ff) = simulate(&f, &[], 0);
-        let (_, steps_no) = simulate_opts(&f, &[], Some(100), no_min_ff());
+        // M(P(2,2))(3): ff detects divergence in one eval; without ff exhausts budget.
+        // P(2,2).is_never_zero() is false so is_never_zero doesn't short-circuit.
+        let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
+        let (_, steps_ff) = simulate(&f, &[3], 0);
+        let (_, steps_no) = simulate_opts(&f, &[3], Some(100), no_min_ff());
         assert!(steps_ff < 10, "ff should use very few steps, got {steps_ff}");
         assert!(steps_no >= 100, "no_ff should exhaust budget");
     }

@@ -118,17 +118,30 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
             let n = args[0];
             let rest = &args[1..];
 
-            // Fast-forward: if h ignores its accumulator (arg 2), every iteration
-            // h(i, acc, rest) = h(i, _, rest) is independent of acc.  The final
-            // result is therefore h(n-1, 0, rest), computable in O(1).
-            if opts.rec_fast_forward && n > 0 && !h.used_args().contains(&2) {
-                let mut h_args: Vec<Num> = Vec::with_capacity(rest.len() + 2);
-                h_args.push(n - 1);
-                h_args.push(0); // accumulator: ignored by h, value is arbitrary
-                h_args.extend_from_slice(rest);
-                let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps), opts);
-                steps += s;
-                return (result, steps);
+            // Fast-forward two different (opposite cases):
+            //      * h ignores accumulator (arg 2)
+            //      * h echos the accumulator with no change
+            if opts.rec_fast_forward {
+                // If h ignores its accumulator (arg 2), every iteration
+                // h(i, acc, rest) = h(i, _, rest) is independent of acc.  The final
+                // result is therefore h(n-1, 0, rest), computable in O(1).
+                if n > 0 && !h.used_args().contains(&2) {
+                    let mut h_args: Vec<Num> = Vec::with_capacity(rest.len() + 2);
+                    h_args.push(n - 1);
+                    h_args.push(0); // accumulator: ignored by h, value is arbitrary
+                    h_args.extend_from_slice(rest);
+                    let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps), opts);
+                    steps += s;
+                    return (result, steps);
+                }
+
+                // If h = Proj(_, 2), every iteration returns the
+                // accumulator unchanged, so R(g, Proj(_, 2))(n, rest) = g(rest).
+                if let Grf::Proj(_, 2) = h.as_ref() {
+                    let (result, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps), opts);
+                    steps += s;
+                    return (result, steps);
+                }
             }
 
             let (base, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps), opts);
@@ -310,14 +323,14 @@ mod tests {
 
     #[test]
     fn test_rec_steps() {
-        // R(Z0, P(2,2))(3): simulate_opts(R)=1, simulate_opts(Z0)=1, then 3 evals of h → 5 steps
+        // R(Z0, P(2,2))(3): h = P(2,2) is Proj(_, 2), so the identity ff fires:
+        // result = g(rest) = Z0() = 0 in steps: 1 (Rec) + 1 (Z0) = 2.
         let g = Grf::Zero(0);
         let h = Grf::Proj(2, 2);
         let r = Grf::Rec(Box::new(g), Box::new(h));
         let (val, steps) = simulate(&r, &[3], 1_000_000);
         assert_eq!(val.into_value(), Some(0));
-        // steps: 1 (Rec) + 1 (Z0) + 3 (P(2,2) called 3 times) = 5
-        assert_eq!(steps, 5);
+        assert_eq!(steps, 2);
     }
 
     #[test]
@@ -394,19 +407,50 @@ mod tests {
     }
 
     #[test]
-    fn test_rec_ff_not_applied_when_acc_used() {
-        // R(Z0, P(2,2)): step uses acc (arg 2). Fast-forward must NOT apply.
-        // Without ff: steps = 1(Rec) + 1(Z0) + 3*1(P) = 5
-        // With ff (if mistakenly applied): steps would differ.
-        let g = Grf::Zero(0);
-        let h = Grf::Proj(2, 2);
-        let r = Grf::Rec(Box::new(g), Box::new(h));
-        let (val_ff, steps_ff) = simulate(&r, &[3], 1_000_000);
-        let (val_no, steps_no) = simulate_opts(&r, &[3], Some(1_000_000), no_ff());
-        assert_eq!(val_ff.into_value(), val_no.into_value());
-        // Step counts must be identical since ff doesn't apply here.
-        assert_eq!(steps_ff, steps_no);
-        assert_eq!(steps_ff, 5);
+    fn test_rec_ff_proj_acc_identity() {
+        // R(Z0, P(2,2)): h is Proj(_, 2) so the new ff fires: result = g(rest) = Z0() = 0.
+        // With ff:    steps = 1(Rec) + 1(Z0) = 2.
+        // Without ff: steps = 1(Rec) + 1(Z0) + 3*1(P) = 5.
+        let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 2));
+        for n in 0u64..=10 {
+            let (v_ff, _) = simulate(&r, &[n], 1_000_000);
+            let (v_no, _) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
+            assert_eq!(v_ff.into_value(), Some(0), "ff wrong at n={n}");
+            assert_eq!(v_no.into_value(), Some(0), "no_ff wrong at n={n}");
+        }
+        let (_, steps_ff) = simulate(&r, &[3], 1_000_000);
+        let (_, steps_no) = simulate_opts(&r, &[3], Some(1_000_000), no_ff());
+        assert_eq!(steps_ff, 2, "ff should skip the loop");
+        assert_eq!(steps_no, 5);
+    }
+
+    #[test]
+    fn test_rec_ff_proj_acc_identity_arity2() {
+        // R(P(1,1), P(3,2))(n, m): h = P(3,2) returns acc; result = P(1,1)(m) = m for all n.
+        let r = Grf::rec(Grf::Proj(1, 1), Grf::Proj(3, 2));
+        for n in 0u64..=5 {
+            for m in 0u64..=5 {
+                let (v_ff, _) = simulate(&r, &[n, m], 1_000_000);
+                let (v_no, _) = simulate_opts(&r, &[n, m], Some(1_000_000), no_ff());
+                assert_eq!(v_ff.into_value(), Some(m), "ff wrong at n={n} m={m}");
+                assert_eq!(v_no.into_value(), Some(m), "no_ff wrong at n={n} m={m}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_rec_ff_not_applied_when_acc_used_nontrivially() {
+        // R(Z0, C(S, P(2,2))): h adds 1 to acc each step → R(g,h)(n) = n.
+        // h uses acc (arg 2) and is not Proj(_, 2), so neither ff applies.
+        let h = Grf::comp(Grf::Succ, vec![Grf::Proj(2, 2)]);
+        let r = Grf::rec(Grf::Zero(0), h);
+        for n in 0u64..=10 {
+            let (v_ff, steps_ff) = simulate(&r, &[n], 1_000_000);
+            let (v_no, steps_no) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
+            assert_eq!(v_ff.into_value(), Some(n), "ff wrong at n={n}");
+            assert_eq!(v_no.into_value(), Some(n), "no_ff wrong at n={n}");
+            assert_eq!(steps_ff, steps_no, "neither ff should fire at n={n}");
+        }
     }
 
     // --- min_fast_forward tests ---

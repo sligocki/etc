@@ -7,10 +7,13 @@
 ///   sim "R(P(1,1), C(S, P(3,2)))" --max-val 20
 ///   sim "R(P(1,1), C(S, P(3,2)))" _ 3       # fix x1=3, sweep x0
 ///   sim --max-steps 1000 "M(S)"
+use std::time::{Duration, Instant};
+
+use chrono::Local;
 use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::grf::Grf;
-use gen_rec::simulate::{simulate, SimResult};
+use gen_rec::simulate::{simulate, simulate_opts, SimOpts, SimResult};
 
 #[derive(Parser, Debug)]
 #[command(about = "Simulate a single GRF expression")]
@@ -133,6 +136,79 @@ fn print_table_nd(grf: &Grf, template: &[Option<u64>], sweep_indices: &[usize], 
     }
 }
 
+/// Run `M(f)(outer_args)` with periodic stderr progress lines.
+///
+/// Mirrors the minimization logic in `simulate_opts` but prints a status line
+/// to stderr every `progress_interval` showing the current search index, f's
+/// value at that index, the wall-clock time, and elapsed time.
+fn run_min_with_progress(
+    f: &Grf,
+    outer_args: &[u64],
+    max_steps: u64,
+    progress_interval: Duration,
+) -> (SimResult, u64) {
+    let step_budget: Option<u64> = if max_steps == 0 { None } else { Some(max_steps) };
+    let mut total_steps: u64 = 1; // cost of the Min node itself
+
+    if f.is_never_zero() {
+        return (SimResult::Diverge, total_steps);
+    }
+
+    // If f ignores its search variable (arg 1), one evaluation decides.
+    if !f.used_args().contains(&1) {
+        let mut f_args: Vec<u64> = Vec::with_capacity(outer_args.len() + 1);
+        f_args.push(0);
+        f_args.extend_from_slice(outer_args);
+        let (result, s) = simulate_opts(f, &f_args, step_budget, SimOpts::default());
+        total_steps += s;
+        return match result {
+            SimResult::Value(0) => (SimResult::Value(0), total_steps),
+            SimResult::Value(_) => (SimResult::Diverge, total_steps),
+            other => (other, total_steps),
+        };
+    }
+
+    let start = Instant::now();
+    let mut last_progress = Instant::now();
+    let mut i: u64 = 0;
+
+    loop {
+        let remaining = step_budget.map(|b| b.saturating_sub(total_steps));
+        if remaining == Some(0) {
+            return (SimResult::OutOfSteps, total_steps);
+        }
+
+        let mut f_args: Vec<u64> = Vec::with_capacity(outer_args.len() + 1);
+        f_args.push(i);
+        f_args.extend_from_slice(outer_args);
+
+        let (result, s) = simulate_opts(f, &f_args, remaining, SimOpts::default());
+        total_steps += s;
+
+        if last_progress.elapsed() >= progress_interval {
+            let f_val = match &result {
+                SimResult::Value(v) => v.to_string(),
+                SimResult::Diverge => "Diverge".to_string(),
+                SimResult::OutOfSteps => "?".to_string(),
+            };
+            eprintln!(
+                "[{}] elapsed={:.1}s  n={}  f(n)={}",
+                Local::now().format("%H:%M:%S"),
+                start.elapsed().as_secs_f64(),
+                i,
+                f_val,
+            );
+            last_progress = Instant::now();
+        }
+
+        match result {
+            SimResult::Value(0) => return (SimResult::Value(i), total_steps),
+            SimResult::Value(_) => i += 1,
+            other => return (other, total_steps),
+        }
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -195,7 +271,11 @@ fn main() {
             println!("inputs: {}", input_str.join(", "));
         }
         println!("---");
-        let (result, steps) = simulate(&grf, &concrete, args.max_steps);
+        let (result, steps) = if let Grf::Min(f) = &grf {
+            run_min_with_progress(f, &concrete, args.max_steps, Duration::from_secs(5))
+        } else {
+            simulate(&grf, &concrete, args.max_steps)
+        };
         match result {
             SimResult::Value(v) => println!("result: {}  ({} steps)", v, steps),
             SimResult::Diverge => println!("result: diverges  ({} steps)", steps),

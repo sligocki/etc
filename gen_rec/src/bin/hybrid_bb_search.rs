@@ -220,7 +220,6 @@ fn main() {
         best_value: Option<Num>,
         best_exprs: Vec<String>,
         total_steps: u64,
-        max_steps_single: u64,
     }
 
     let mut results: Vec<SizeResult> = Vec::new();
@@ -348,7 +347,6 @@ fn main() {
             best_value: size_best_val,
             best_exprs: size_best_exprs,
             total_steps: size_total_steps,
-            max_steps_single: size_max_steps,
         });
     }
 

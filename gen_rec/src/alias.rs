@@ -1,11 +1,4 @@
 /// GRF alias catalogue: substitutes known sub-expressions with readable names.
-///
-/// Usage:
-/// ```
-/// use gen_rec::alias::AliasDb;
-/// let db = AliasDb::default();
-/// println!("{}", db.alias(&grf));
-/// ```
 use std::collections::HashMap;
 use std::cmp::Reverse;
 

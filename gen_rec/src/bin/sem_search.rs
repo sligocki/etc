@@ -3,13 +3,13 @@
 /// Usage examples:
 ///   search --spec pow2
 ///   search --spec trailing-bits --arity 2 --all-at-min-size
-///   search --spec pred --probe "R(Z0, P(2,1))"
+///   search --spec pred --probe "R(Z, P1)"
 ///   search --spec add --progress
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::fingerprint::{canonical_inputs_n, verification_inputs};
 use gen_rec::semantic_search::{
-    exact_spec, exhaustive_probe, probe_spec, search_all_at_min, search_smallest, SearchConfig,
+    bool_spec, exact_spec, exhaustive_probe, probe_spec, search_all_at_min, search_smallest, SearchConfig,
 };
 use gen_rec::simulate::Num;
 use std::cmp::min;
@@ -24,6 +24,10 @@ struct SpecDef {
     default_arity: usize,
     description: &'static str,
     build: fn() -> Box<dyn FnMut(&[Num], Num) -> bool>,
+}
+
+fn plus_8p(inputs: &[Num], output: Num) -> bool {
+    output >= inputs[0] + 8
 }
 
 fn trailing_bits(inputs: &[Num], output: Num) -> bool {
@@ -94,7 +98,7 @@ const SPECS: &[SpecDef] = &[
         description: "f(x) = 2x+1",
         build: || Box::new(exact_spec(|a| Some(2*a[0]+1))),
     },
-    // Mod2: 8: R(Z0, C(R(S, Z3), P(2,2), Z2))
+    // Mod2: 8: R(Z, C(R(S, Z), P2, Z))
     SpecDef {
         name: "mod2", default_arity: 1,
         description: "parity: f(x) = x % 2",
@@ -105,13 +109,13 @@ const SPECS: &[SpecDef] = &[
         description: "parity: f(x) = (x+1) % 2",
         build: || Box::new(exact_spec(|a| Some((a[0]+1) % 2))),
     },
-    // Mod3: 10: R(Z0, C(R(S, R(P(2,1), Z4)), P(2,2), P(2,2)))
+    // Mod3: 10: R(Z, C(R(S, R(P1, Z)), P2, P2))
     SpecDef {
         name: "mod3", default_arity: 1,
         description: "f(x) = x % 3",
         build: || Box::new(exact_spec(|a| Some(a[0] % 3))),
     },
-    // Mod3is0: 14: C(R(P(1,1), C(R(Z0, R(S, R(Z2, P(4,1)))), P(3,2))), P(1,1), S)
+    // Mod3is0: 14: C(R(P1, C(R(Z, R(S, R(Z, P1))), P2)), P1, S)
     SpecDef {
         name: "mod3is0", default_arity: 1,
         description: "f(x) = (x % 3) == 0",
@@ -119,7 +123,7 @@ const SPECS: &[SpecDef] = &[
             ((a[0] % 3) == 0) as u64
         ))),
     },
-    // Mod3is1: 12: R(Z0, R(S, C(R(S, R(P(2,1), Z4)), P(3,2), P(3,2))))
+    // Mod3is1: 12: R(Z, R(S, C(R(S, R(P1, Z)), P2, P2)))
     SpecDef {
         name: "mod3is1", default_arity: 1,
         description: "f(x) = (x % 3) == 1",
@@ -127,7 +131,7 @@ const SPECS: &[SpecDef] = &[
             ((a[0] % 3) == 1) as u64
         ))),
     },
-    // Mod3is2: 12: R(Z0, R(P(1,1), C(R(S, R(P(2,1), Z4)), P(3,2), P(3,2))))
+    // Mod3is2: 12: R(Z, R(P1, C(R(S, R(P1, Z)), P2, P2)))
     SpecDef {
         name: "mod3is2", default_arity: 1,
         description: "f(x) = (x % 3) == 2",
@@ -168,7 +172,7 @@ const SPECS: &[SpecDef] = &[
         description: "power of two: f(x) = 2^x",
         build: || Box::new(exact_spec(|a| Some(1u64 << a[0].min(63)))),
     },
-    // Pow2P : 10 : R(Z0, C(R(S, C(S, P(3,2))), P(2,2), P(2,2)))
+    // Pow2P : 10 : R(Z, C(R(S, C(S, P2)), P2, P2))
     SpecDef {
         name: "pow2p", default_arity: 1,
         description: "f(x) = 2^x - 1",
@@ -185,8 +189,46 @@ const SPECS: &[SpecDef] = &[
         description: "f(x) = x^2",
         build: || Box::new(exact_spec(|a| Some(a[0].pow(2)))),
     },
+    // Equals : GRF:13 : C(R(Z, R(S, Z)), R(S, C(R(Z, P1), P2)))
+    SpecDef {
+        name: "equals", default_arity: 2,
+        description: "f(x,y) = if x==y then 1 else 0",
+        build: || Box::new(exact_spec(|a| Some(
+            (a[0] == a[1]) as u64
+        ))),
+    },
+    // ZEquals : GRF:11 : C(R(P1, R(R(P2, P1), P2)), P1, P2, P1)
+    SpecDef {
+        name: "z_equals", default_arity: 2,
+        description: "f(x,y) = if x==y then 0 else (>0)",
+        build: || Box::new(bool_spec(|a| a[0] == a[1])),
+    },
+    // ZSquare : PRF:18 : C(R(P1, R(Pred, C(R(P1, R(P3, P1)), P2, P3, P2))), P1, P1)
+    SpecDef {
+        name: "z_square", default_arity: 1,
+        description: "f(x) = if x==k^2 then 0 else (>0)",
+        build: || Box::new(bool_spec(|a| {
+            let n = a[0];
+            let root_n = (n as f64).sqrt() as u64;
+            n == root_n*root_n
+        })),
+    },
+    SpecDef {
+        name: "z_square_s", default_arity: 1,
+        description: "f(x) = if x+1==k^2 then 0 else (>0)",
+        build: || Box::new(bool_spec(|a| {
+            let n = a[0] + 1;
+            let root_n = (n as f64).sqrt() as u64;
+            n == root_n*root_n
+        })),
+    },
+    SpecDef {
+        name: "plus_8p", default_arity: 1,
+        description: "f(x) ≥ x+8",
+        build: || Box::new(plus_8p),
+    },
     // Size 10
-    // Arity 2: R(x, C(R(S, C(S, P(3,2))), P(3,2), P(3,2)))
+    // Arity 2: R(x, C(R(S, C(S, P2)), P2, P2))
     //      for x in Z, P1, S
     //  x=Z:  f(a,b) = 2^a - 1
     //  x=P1: f(a,b) = (b+1) 2^a - 1

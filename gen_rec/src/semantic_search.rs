@@ -306,6 +306,19 @@ where
     }
 }
 
+/// Build a spec from a boolean function where true -> 0 and false -> >0.
+///
+/// Useful in M(f) to define a halting condition.
+pub fn bool_spec<F>(mut f: F) -> impl FnMut(&[u64], u64) -> bool
+where
+    F: FnMut(&[u64]) -> bool,
+{
+    move |inputs: &[u64], output: u64| match f(inputs) {
+        true => output == 0,
+        false => output > 0,
+    }
+}
+
 // ── Diagnostic tools ────────────────────────────────────────────────────────
 
 /// Result of probing a GRF against a spec on a set of inputs.

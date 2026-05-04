@@ -21,11 +21,11 @@ struct Args {
     files: Vec<PathBuf>,
 
     /// Evaluate inner PRF on inputs min_val..max_val.
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 12)]
     min_val: u64,
 
     /// Evaluate inner PRF on inputs min_val..max_val.
-    #[arg(long, default_value_t = 40)]
+    #[arg(long, default_value_t = 42)]
     max_val: u64,
 
     /// Step budget per individual inner-PRF call (0 = unlimited).
@@ -166,7 +166,8 @@ fn process_file(path: &PathBuf, args: &Args) {
             .collect();
 
         let class = classify(&vals);
-        let class = if class == Class::Decreasing && !all_strides_have_decrease(&vals, args.max_stride) {
+        let has_timeouts = vals.iter().any(|v| v.is_none());
+        let class = if class == Class::Decreasing && !has_timeouts && !all_strides_have_decrease(&vals, args.max_stride) {
             Class::Alternating
         } else {
             class
@@ -218,7 +219,8 @@ mod tests {
 
     fn classify_full(vals: &[Option<u64>], max_stride: usize) -> Class {
         let class = classify(vals);
-        if class == Class::Decreasing && !all_strides_have_decrease(vals, max_stride) {
+        let has_timeouts = vals.iter().any(|v| v.is_none());
+        if class == Class::Decreasing && !has_timeouts && !all_strides_have_decrease(vals, max_stride) {
             Class::Alternating
         } else {
             class
@@ -287,6 +289,14 @@ mod tests {
     #[test]
     fn classify_genuine_decrease_is_decreasing() {
         assert_eq!(classify_full(&sv(&[100,90,80,70,60,50,40,30,20,10,9,8]), 5), Class::Decreasing);
+    }
+
+    #[test]
+    fn classify_decrease_with_timeouts_not_filtered() {
+        // Stride filter must be skipped when data is incomplete: the missing values
+        // could be the ones that would show the stride-k decrease.
+        let vals: Vec<Option<u64>> = vec![Some(10), None, Some(5), None, Some(8), None, Some(3)];
+        assert_eq!(classify_full(&vals, 5), Class::Decreasing);
     }
 }
 

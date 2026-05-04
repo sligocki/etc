@@ -1,0 +1,54 @@
+# Brocard's problem:
+#   Does there exist (n, m) with n > 7 so n! + 1 = m^2?
+
+use base::{Plus, Fact, Pred}
+
+# ZIsSquare(x) := if x==k^2 then 0 else 1
+ZIsSquare := C(R(P1, R(Pred, C(R(P1, R(P3, P1)), P2, P3, P2))), P1, P1)
+# ZIsSquareS(x) := if x+1==k^2 then 0 else 1
+ZIsSquareS := C(R(P1, R(Pred, C(R(P1, R(P3, P1)), P2, P3, P2))), S, S)
+
+# FactSIsSquare(n) = if n!+1 == k^2 then 0 else 1
+FactSIsSquare := C(ZIsSquareS, Fact)
+
+# Brocard() halts iff exists n ≥ 8 with n! + 1 a perfect square
+Brocard := M(C(FactSIsSquare, Plus[8]))
+
+
+# Test
+ZIsSquare(0) == 0
+ZIsSquare(1) == 0
+ZIsSquare(2) == 1
+ZIsSquare(3) == 1
+ZIsSquare(4) == 0
+ZIsSquare(5) == 1
+ZIsSquare(9) == 0
+ZIsSquare(13) == 1
+ZIsSquare(16) == 0
+
+ZIsSquareS(0) == 0
+ZIsSquareS(1) == 1
+ZIsSquareS(2) == 1
+ZIsSquareS(3) == 0
+ZIsSquareS(4) == 1
+ZIsSquareS(5) == 1
+ZIsSquareS(7) == 1
+ZIsSquareS(8) == 0
+ZIsSquareS(9) == 1
+ZIsSquareS(13) == 1
+ZIsSquareS(15) == 0
+ZIsSquareS(24) == 0
+
+FactSIsSquare(0) == 1   # 2
+FactSIsSquare(1) == 1   # 2
+FactSIsSquare(2) == 1   # 3
+FactSIsSquare(3) == 1   # 7
+FactSIsSquare(4) == 0   # 25 = 5^2
+FactSIsSquare(5) == 0   # 121 = 11^2
+
+# These timeout
+# FactSIsSquare(6) == 1   # 721
+# FactSIsSquare(7) == 0   # 5041 = 71^2
+# FactSIsSquare(8) == 1   # 40321
+
+Brocard() == ⊥

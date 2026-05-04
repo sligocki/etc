@@ -163,8 +163,10 @@ fn process_file(path: &PathBuf, args: &Args) {
             continue;
         }
 
-        // Skip trivial stuff
-        if inner.is_never_zero() { continue; }
+        // Skip if provably always positive: is_never_zero covers all inputs;
+        // is_positive_for_pos_arg(1) covers n >= 1 (the entire min_val..max_val range
+        // when min_val >= 1, which is the default 12).
+        if inner.is_never_zero() || inner.is_positive_for_pos_arg(1) { continue; }
 
         let vals: Vec<Option<u64>> = (args.min_val..args.max_val)
             .map(|n| simulate(&inner, &[n], budget).0.into_value())

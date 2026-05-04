@@ -192,7 +192,7 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
 
             // Fast-forward: if f(i, args) > 0 whenever i > 0, then i = 0 is the only
             // candidate.  Evaluate once: 0 → return Value(0), else → Diverge.
-            if opts.min_fast_forward && f.is_positive_for_pos_arg1() {
+            if opts.min_fast_forward && f.is_positive_for_pos_arg(1) {
                 let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
                 f_args.push(0);
                 f_args.extend_from_slice(args);

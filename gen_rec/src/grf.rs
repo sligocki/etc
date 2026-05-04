@@ -129,17 +129,10 @@ impl Grf {
         match self {
             Grf::Succ => { return true; }
             Grf::Rec(g, h) => {
-                if g.is_never_zero() {
-                    // R(+, +) -> +
-                    if h.is_never_zero() {
-                        return true;
-                    }
-                    // R(+, P2) -> +
-                    // h = Proj(_, 2) returns the accumulator unchanged every step,
-                    // so R(g, h)(n, rest) = g(rest); never zero when g is.
-                    if matches!(h.as_ref(), Grf::Proj(_, 2)) {
-                        return true;
-                    }
+                // R(g, h)(n, rest): base g(rest), then h applies n times accumulating.
+                // Positive for all n iff: g never zero AND h positive when accumulator positive.
+                if g.is_never_zero() && h.is_positive_for_pos_arg(2) {
+                    return true;
                 }
             }
             Grf::Comp(h, gs, _) => {
@@ -162,27 +155,42 @@ impl Grf {
         return false;
     }
 
-    /// Returns true if `f(i, args…) > 0` whenever `i > 0` (arg 1 is the search counter).
+    /// Returns true if `f(args…) > 0` whenever arg `j` > 0, regardless of other args.
     ///
-    /// Conservative: returns false when unsure. Used by the Min fast-forward to declare
-    /// Diverge after observing f(0, args) > 0, since no later i can produce 0 either.
-    pub fn is_positive_for_pos_arg1(&self) -> bool {
+    /// Conservative: returns false when unsure. For the Min fast-forward (j=1, the search
+    /// counter): if this holds and f(0, args) > 0, then Min diverges since no later i
+    /// can produce 0.
+    pub fn is_positive_for_pos_arg(&self, j: usize) -> bool {
+        if self.is_never_zero() {
+            return true;
+        }
         match self {
-            Grf::Succ => true,
-            Grf::Proj(_, 1) => true,
-            Grf::Rec(_, h) => h.is_never_zero(),
-            Grf::Comp(h, gs, _) => {
-                if h.is_never_zero() {
-                    return true;
+            Grf::Proj(_, i) => *i == j,
+            Grf::Rec(g, h) => {
+                if j == 1 {
+                    // Counter positive (n ≥ 1): h fires at least once. If h always
+                    // returns positive, done. The g.is_never_zero() + h.is_positive_for_pos_arg(2)
+                    // case is already covered by is_never_zero() above (which was extended
+                    // to include that pattern), so here we only need h.is_never_zero().
+                    h.is_never_zero()
+                } else {
+                    // Rec's outer arg j (j ≥ 2) maps to g's arg (j-1).
+                    // Base (n=0): g positive when g's arg (j-1) positive.
+                    // Steps: h positive when accumulator (arg 2) positive, by induction.
+                    g.is_positive_for_pos_arg(j - 1) && h.is_positive_for_pos_arg(2)
                 }
-                if h.is_positive_for_pos_arg1()
-                    && gs.first().map_or(false, |g| g.is_positive_for_pos_arg1())
+            }
+            Grf::Comp(h, gs, _) => {
+                // h positive when h's arg 1 positive, gs[0] positive when comp's arg j positive
+                if h.is_positive_for_pos_arg(1)
+                    && gs.first().map_or(false, |g| g.is_positive_for_pos_arg(j))
                 {
                     return true;
                 }
-                if let Grf::Proj(_, j) = h.as_ref() {
-                    if let Some(gj) = gs.get(j - 1) {
-                        return gj.is_positive_for_pos_arg1();
+                // h = Proj to position p: output = gs[p-1], delegate
+                if let Grf::Proj(_, p) = h.as_ref() {
+                    if let Some(gp) = gs.get(p - 1) {
+                        return gp.is_positive_for_pos_arg(j);
                     }
                 }
                 false
@@ -533,32 +541,45 @@ mod tests {
     }
 
     #[test]
-    fn test_is_positive_for_pos_arg1() {
+    fn test_is_positive_for_pos_arg() {
         // Atoms
-        assert!(grf!("S").is_positive_for_pos_arg1());        // Succ always positive
-        assert!(grf!("P(1,1)").is_positive_for_pos_arg1());   // Proj to arg1 (search var)
-        assert!(!grf!("Z0").is_positive_for_pos_arg1());       // always 0
-        assert!(!grf!("P(2,2)").is_positive_for_pos_arg1());  // returns outer arg, not arg1
+        assert!(grf!("S").is_positive_for_pos_arg(1));        // Succ always positive
+        assert!(grf!("P(1,1)").is_positive_for_pos_arg(1));   // Proj to arg1
+        assert!(grf!("P(2,2)").is_positive_for_pos_arg(2));   // Proj to arg2
+        assert!(!grf!("Z0").is_positive_for_pos_arg(1));       // always 0
+        assert!(!grf!("P(2,2)").is_positive_for_pos_arg(1));  // returns arg2, not arg1
 
-        // Rec: true iff step is never_zero
-        assert!(grf!("R(Z0, S)").is_positive_for_pos_arg1()); // step=S is never_zero
-        assert!(grf!("R(P(1,1), C(S,P(3,2)))").is_positive_for_pos_arg1()); // step C(S,...) never_zero
-        assert!(!grf!("R(S, P(3,2))").is_positive_for_pos_arg1()); // step=P(3,2) not never_zero
+        // Rec j=1: true iff step is never_zero (counter > 0 → h fires once)
+        assert!(grf!("R(Z0, S)").is_positive_for_pos_arg(1));  // step=S never_zero
+        assert!(grf!("R(P(1,1), C(S,P(3,2)))").is_positive_for_pos_arg(1)); // step C(S,...) never_zero
+        assert!(!grf!("R(P(1,1), P(3,2))").is_positive_for_pos_arg(1)); // step P(3,2) not never_zero, g not never_zero
+        // R(S, P(3,2)): is_never_zero (P2 echoes acc which started at S(x)≥1), so positive for any j
+        assert!(grf!("R(S, P(3,2))").is_positive_for_pos_arg(1));
+        // R(S, P(3,3)): step returns outer arg (not acc), so NOT always positive even for n≥1
+        assert!(!grf!("R(S, P(3,3))").is_positive_for_pos_arg(1));
 
-        // Comp with never-zero head
-        assert!(grf!("C(S, P(2,2))").is_positive_for_pos_arg1()); // head S never_zero
+        // Rec j=2: g positive for arg1, h positive for arg2 (acc)
+        // R(P(2,1), C(S,P(4,1))): g=P(2,1) pos for arg1, h=C(S,...) never_zero → pos for arg2
+        assert!(grf!("R(P(2,1), C(S,P(4,1)))").is_positive_for_pos_arg(2));
+        // g=Z(1) not pos for arg1 → false
+        assert!(!grf!("R(Z1, C(S,P(3,2)))").is_positive_for_pos_arg(2));
 
-        // Comp: h positive-for-pos-arg1, gs[0] positive-for-pos-arg1
-        // C(R(Z0,S), P(1,1)): head R(Z0,S) pos-for-pos-arg1, gs[0]=P(1,1) pos-for-pos-arg1
-        assert!(grf!("C(R(Z0,S), P(1,1))").is_positive_for_pos_arg1());
-        // gs[0] not positive for pos arg1 → false
-        assert!(!grf!("C(R(Z0,S), P(2,2))").is_positive_for_pos_arg1());
+        // is_never_zero implies is_positive_for_pos_arg for any j
+        assert!(grf!("S").is_positive_for_pos_arg(99));
+        assert!(grf!("C(S, Z0)").is_positive_for_pos_arg(1));
 
-        // Comp: h = Proj(j), delegate to gs[j-1]
-        // C(P(2,1), R(Z0,S), Z0): h=P(2,1) means output = gs[0] = R(Z0,S); pos-for-pos-arg1
-        assert!(grf!("C(P(2,1), R(Z0,S), Z0)").is_positive_for_pos_arg1());
-        // C(P(2,2), R(Z0,S), Z0): output = gs[1] = Z0; not positive
-        assert!(!grf!("C(P(2,2), R(Z0,S), Z0)").is_positive_for_pos_arg1());
+        // The motivating example: R(S, R(P(2,1), C(S,P(4,1)))) is now never_zero,
+        // which implies is_positive_for_pos_arg for any j.
+        assert!(grf!("R(S, R(P(2,1), C(S,P(4,1))))").is_never_zero());
+        assert!(grf!("R(S, R(P(2,1), C(S,P(4,1))))").is_positive_for_pos_arg(1));
+
+        // Comp: h positive for arg1, gs[0] positive for arg j
+        assert!(grf!("C(R(Z0,S), P(1,1))").is_positive_for_pos_arg(1));
+        assert!(!grf!("C(R(Z0,S), P(2,2))").is_positive_for_pos_arg(1));
+
+        // Comp: h = Proj to position p, delegate to gs[p-1]
+        assert!(grf!("C(P(2,1), R(Z0,S), Z0)").is_positive_for_pos_arg(1));
+        assert!(!grf!("C(P(2,2), R(Z0,S), Z0)").is_positive_for_pos_arg(1));
     }
 
     #[test]

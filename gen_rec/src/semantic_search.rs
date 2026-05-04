@@ -562,15 +562,14 @@ mod tests {
 
     #[test]
     fn test_probe_spec_timeout_detection() {
-        // C(R(C(S,Z0),C(P(2,2),P(2,1),P(2,2))),P(1,1))(i) = 1 always:
-        // C(P(2,2),P(2,1),P(2,2)) semantically returns the accumulator
-        // (same as P(2,2)) so Rec keeps acc=1, but it is not syntactically
-        // Proj(_, 2), so is_never_zero doesn't detect it.
-        // Uses arg 1 so min_ff doesn't apply. M of it diverges → TimedOut.
+        // C(R(C(S,Z0),C(P(2,2),P(2,1),P(2,2))),P(1,1))(i) = 1 always.
+        // C(P(2,2),P(2,1),P(2,2)) is the accumulator-echo (semantically Proj(_, 2)),
+        // so is_positive_for_pos_arg(2) detects it and is_never_zero fires.
+        // M of a never-zero body → Diverged (detected statically, no timeout needed).
         let grf: crate::grf::Grf = grf!("M(C(R(C(S,Z0),C(P(2,2),P(2,1),P(2,2))),P(1,1)))");
         let inputs = vec![vec![]];
         let result = probe_spec(&grf, &mut |_, _| true, &inputs, 10);
-        assert!(matches!(result, ProbeResult::TimedOut { .. }), "expected timeout, got: {result}");
+        assert!(matches!(result, ProbeResult::Diverged { .. }), "expected diverged, got: {result}");
     }
 
     #[test]

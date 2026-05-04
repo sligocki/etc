@@ -190,6 +190,21 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
                 };
             }
 
+            // Fast-forward: if f(i, args) > 0 whenever i > 0, then i = 0 is the only
+            // candidate.  Evaluate once: 0 → return Value(0), else → Diverge.
+            if opts.min_fast_forward && f.is_positive_for_pos_arg1() {
+                let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
+                f_args.push(0);
+                f_args.extend_from_slice(args);
+                let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
+                steps += s;
+                return match result {
+                    SimResult::Value(0) => (SimResult::Value(0), steps),
+                    SimResult::Value(_) => (SimResult::Diverge, steps),
+                    other => (other, steps),
+                };
+            }
+
             // M(f)(args) = min{i : f(i, args...) = 0}
             let mut i: Num = 0;
             loop {
@@ -215,6 +230,7 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
 mod tests {
     use super::*;
     use crate::grf::Grf;
+    use crate::grf;
 
     fn eval_helper(grf: &Grf, args: &[Num]) -> Option<Num> {
         let (result, _steps) = simulate(grf, args, 1_000_000);
@@ -511,6 +527,39 @@ mod tests {
         let (_, steps_ff) = simulate(&f, &[3], 0);
         let (_, steps_no) = simulate_opts(&f, &[3], Some(100), no_min_ff());
         assert!(steps_ff < 10, "ff should use very few steps, got {steps_ff}");
+        assert!(steps_no >= 100, "no_ff should exhaust budget");
+    }
+
+    #[test]
+    fn test_min_pos_arg1_rec_step_diverges() {
+        // M(R(P(1,1), C(S, P(3,2)))): body = add(i, x) = i+x.
+        // is_never_zero() = false (base P(1,1) can be 0).
+        // is_positive_for_pos_arg1() = true (Rec with never-zero step C(S,...)).
+        // f(0, 5) = 5 > 0, and f(i≥1, x) ≥ 1 always, so Min diverges.
+        let grf = grf!("M(R(P(1,1), C(S, P(3,2))))");
+        assert_eq!(simulate(&grf, &[5], 10_000).0, SimResult::Diverge);
+        assert_eq!(simulate(&grf, &[3], 10_000).0, SimResult::Diverge);
+    }
+
+    #[test]
+    fn test_min_pos_arg1_no_false_positive() {
+        // M(P(1,1)): body returns the search counter i, which is 0 at i=0.
+        // is_positive_for_pos_arg1() = true (Proj(1,1)) but f(0) = 0, so Min = 0.
+        let grf = grf!("M(P(1,1))");
+        assert_eq!(simulate(&grf, &[], 100).0, SimResult::Value(0));
+        // M(R(P(1,1), C(S, P(3,2))))(0): f(0,0)=0, so Min=0, not Diverge.
+        let grf2 = grf!("M(R(P(1,1), C(S, P(3,2))))");
+        assert_eq!(simulate(&grf2, &[0], 100).0, SimResult::Value(0));
+    }
+
+    #[test]
+    fn test_min_pos_arg1_fewer_steps() {
+        // Without the fast-forward, M(R(P(1,1),C(S,P(3,2))))(5) exhausts step budget.
+        // The body is add(i,5)=i+5, so the loop needs many Rec evaluations.
+        let grf = grf!("M(R(P(1,1), C(S, P(3,2))))");
+        let (_, steps_ff) = simulate(&grf, &[5], 0);
+        let (_, steps_no) = simulate_opts(&grf, &[5], Some(100), no_min_ff());
+        assert!(steps_ff < 20, "ff should resolve quickly, got {steps_ff}");
         assert!(steps_no >= 100, "no_ff should exhaust budget");
     }
 }

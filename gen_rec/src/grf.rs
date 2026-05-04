@@ -162,6 +162,35 @@ impl Grf {
         return false;
     }
 
+    /// Returns true if `f(i, args…) > 0` whenever `i > 0` (arg 1 is the search counter).
+    ///
+    /// Conservative: returns false when unsure. Used by the Min fast-forward to declare
+    /// Diverge after observing f(0, args) > 0, since no later i can produce 0 either.
+    pub fn is_positive_for_pos_arg1(&self) -> bool {
+        match self {
+            Grf::Succ => true,
+            Grf::Proj(_, 1) => true,
+            Grf::Rec(_, h) => h.is_never_zero(),
+            Grf::Comp(h, gs, _) => {
+                if h.is_never_zero() {
+                    return true;
+                }
+                if h.is_positive_for_pos_arg1()
+                    && gs.first().map_or(false, |g| g.is_positive_for_pos_arg1())
+                {
+                    return true;
+                }
+                if let Grf::Proj(_, j) = h.as_ref() {
+                    if let Some(gj) = gs.get(j - 1) {
+                        return gj.is_positive_for_pos_arg1();
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     pub fn used_args(&self) -> BTreeSet<usize> {
         match self {
             Grf::Zero(_) => BTreeSet::new(),
@@ -501,6 +530,35 @@ mod tests {
 
         let h = grf!("R(Z0, P(2,1))");
         assert_eq!(h.to_string(), "R(Z0, P(2,1))");
+    }
+
+    #[test]
+    fn test_is_positive_for_pos_arg1() {
+        // Atoms
+        assert!(grf!("S").is_positive_for_pos_arg1());        // Succ always positive
+        assert!(grf!("P(1,1)").is_positive_for_pos_arg1());   // Proj to arg1 (search var)
+        assert!(!grf!("Z0").is_positive_for_pos_arg1());       // always 0
+        assert!(!grf!("P(2,2)").is_positive_for_pos_arg1());  // returns outer arg, not arg1
+
+        // Rec: true iff step is never_zero
+        assert!(grf!("R(Z0, S)").is_positive_for_pos_arg1()); // step=S is never_zero
+        assert!(grf!("R(P(1,1), C(S,P(3,2)))").is_positive_for_pos_arg1()); // step C(S,...) never_zero
+        assert!(!grf!("R(S, P(3,2))").is_positive_for_pos_arg1()); // step=P(3,2) not never_zero
+
+        // Comp with never-zero head
+        assert!(grf!("C(S, P(2,2))").is_positive_for_pos_arg1()); // head S never_zero
+
+        // Comp: h positive-for-pos-arg1, gs[0] positive-for-pos-arg1
+        // C(R(Z0,S), P(1,1)): head R(Z0,S) pos-for-pos-arg1, gs[0]=P(1,1) pos-for-pos-arg1
+        assert!(grf!("C(R(Z0,S), P(1,1))").is_positive_for_pos_arg1());
+        // gs[0] not positive for pos arg1 → false
+        assert!(!grf!("C(R(Z0,S), P(2,2))").is_positive_for_pos_arg1());
+
+        // Comp: h = Proj(j), delegate to gs[j-1]
+        // C(P(2,1), R(Z0,S), Z0): h=P(2,1) means output = gs[0] = R(Z0,S); pos-for-pos-arg1
+        assert!(grf!("C(P(2,1), R(Z0,S), Z0)").is_positive_for_pos_arg1());
+        // C(P(2,2), R(Z0,S), Z0): output = gs[1] = Z0; not positive
+        assert!(!grf!("C(P(2,2), R(Z0,S), Z0)").is_positive_for_pos_arg1());
     }
 
     #[test]

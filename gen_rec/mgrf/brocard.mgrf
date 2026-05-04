@@ -38,6 +38,14 @@ ZIsSquareS(9) == 1
 ZIsSquareS(13) == 1
 ZIsSquareS(15) == 0
 ZIsSquareS(24) == 0
+ZIsSquareS(35) == 0
+ZIsSquareS(48) == 0
+ZIsSquareS(63) == 0
+ZIsSquareS(80) == 0
+ZIsSquareS(99) == 0
+ZIsSquareS(119) == 1
+ZIsSquareS(120) == 0
+ZIsSquareS(121) == 1
 
 FactSIsSquare(0) == 1   # 2
 FactSIsSquare(1) == 1   # 2

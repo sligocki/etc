@@ -10,6 +10,7 @@
 ///   monotone_heuristic --max-val 20 --max-steps 100000 holdout.txt
 use clap::Parser;
 use gen_rec::grf::Grf;
+use gen_rec::mgrf::parse_mgrf_to_grfs;
 use gen_rec::simulate::simulate;
 use std::fs;
 use std::path::PathBuf;
@@ -43,6 +44,10 @@ struct Args {
     /// Include timeout entries in output (deferred to end of file).
     #[arg(long)]
     timeout: bool,
+
+    /// Probe a single GRF expression and show detailed stride analysis.
+    #[arg(long)]
+    probe: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -209,6 +214,80 @@ fn process_file(path: &PathBuf, args: &Args) {
     println!();
 }
 
+fn parse_mgrf_expr(expr: &str) -> Result<Grf, String> {
+    let content = format!("Probe := {}", expr);
+    parse_mgrf_to_grfs(&content)?
+        .into_iter()
+        .next()
+        .map(|(_, g)| g)
+        .ok_or_else(|| "no definition produced".to_string())
+}
+
+fn probe_grf(expr: &str, args: &Args) {
+    let grf: Grf = match parse_mgrf_expr(expr) {
+        Ok(g) => g,
+        Err(e) => { eprintln!("parse error: {}", e); return; }
+    };
+
+    let inner = match &grf {
+        Grf::Min(f) => f.as_ref().clone(),
+        _ => grf.clone(),
+    };
+
+    println!("probe : {}", expr);
+    if matches!(grf, Grf::Min(_)) {
+        println!("inner : {}", inner);
+    }
+    println!("arity : {}", inner.arity());
+
+    if inner.arity() != 1 {
+        eprintln!("inner arity {} != 1, cannot probe", inner.arity());
+        return;
+    }
+
+    let budget = if args.max_steps == 0 { u64::MAX } else { args.max_steps };
+    let vals: Vec<Option<u64>> = (args.min_val..args.max_val)
+        .map(|n| simulate(&inner, &[n], budget).0.into_value())
+        .collect();
+
+    println!("range : {}..{}", args.min_val, args.max_val);
+    println!("values: [{}]", fmt_vals(&vals));
+
+    let has_timeouts = vals.iter().any(|v| v.is_none());
+    let base_class = classify(&vals);
+    println!("stride 1 (classify): {}{}", base_class,
+        if has_timeouts { "  [has timeouts — stride filter skipped]" } else { "" });
+
+    if base_class == Class::Decreasing && !has_timeouts {
+        println!();
+        let mut all_pass = true;
+        for stride in 2..=args.max_stride {
+            let witness = (0..vals.len().saturating_sub(stride))
+                .find(|&i| matches!((vals[i], vals[i + stride]), (Some(a), Some(b)) if b < a));
+            if let Some(i) = witness {
+                let n = args.min_val + i as u64;
+                println!("  stride {:2}: decrease at f({})={} > f({})={}",
+                    stride, n, vals[i].unwrap(), n + stride as u64, vals[i + stride].unwrap());
+            } else {
+                all_pass = false;
+                println!("  stride {:2}: NO decrease — residue classes mod {}:", stride, stride);
+                for r in 0..stride {
+                    let class_vals: Vec<String> = (r..vals.len())
+                        .step_by(stride)
+                        .map(|i| match vals[i] { Some(v) => v.to_string(), None => "?".to_string() })
+                        .collect();
+                    println!("    [mod {} = {}]: {}", stride, r, class_vals.join(" "));
+                }
+            }
+        }
+        let final_class = if all_pass { Class::Decreasing } else { Class::Alternating };
+        println!();
+        println!("final : {}", final_class);
+    } else {
+        println!("final : {}", base_class);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,8 +382,16 @@ mod tests {
 fn main() {
     let args = Args::parse();
 
+    if let Some(expr) = &args.probe {
+        probe_grf(expr, &args);
+        if args.files.is_empty() {
+            return;
+        }
+        println!();
+    }
+
     if args.files.is_empty() {
-        eprintln!("error: no holdout files given");
+        eprintln!("error: no holdout files given (use --probe EXPR or pass a holdout file)");
         std::process::exit(1);
     }
 

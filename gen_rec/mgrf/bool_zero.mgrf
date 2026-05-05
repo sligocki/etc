@@ -1,0 +1,89 @@
+## Boolean Logic w/ 0 -> True
+##
+## Uses encoding 0 -> True, >0 -> False
+## This convension is convenient for M(f) so that it runs until the f(n) == True
+
+use base::{K}
+
+# Bool atoms
+True := Z
+False := K[1]
+False1 := S
+
+# Enforce False -> 1
+Sgn := M(R(P1, Z))    # 0 -> 0; n+1 -> 1
+
+# Unary bool function
+Not := R(False, True)  # 0 -> 1; n+1 -> 0
+Not2 := R(False1, True)
+
+# Binary bool functions
+Or := R(Z, P3)
+And := R(P1, False)
+Xor := R(Not, P3)
+Iff := R(P1, R(R(S, Z), P3))
+
+# Integer equality
+Equals := C(R(P1, R(R(P2, P1), P2)), P1, P2, P1)
+
+
+# Tests
+True() == 0
+False() == 1
+False1(0) == 1
+
+Sgn(0) == 0
+Sgn(1) == 1
+Sgn(2) == 1
+Sgn(13) == 1
+
+Not(0) == 1
+Not(1) == 0
+Not(2) == 0
+Not(13) == 0
+
+Or(0, 0) == 0
+Or(0, 1) == 0
+Or(1, 0) == 0
+Or(1, 1) == 1
+Or(0, 13) == 0
+Or(13, 0) == 0
+Or(42, 1) == 1
+Or(5, 8) == 8   # != 0
+
+And(0, 0) == 0
+And(0, 1) == 1
+And(1, 0) == 1
+And(1, 1) == 1
+And(0, 13) == 13  # != 0
+And(13, 0) == 1
+And(42, 1) == 1
+And(5, 8) == 1
+
+Xor(0, 0) == 1
+Xor(0, 1) == 0
+Xor(1, 0) == 0
+Xor(1, 1) == 1
+Xor(0, 13) == 0
+Xor(13, 0) == 0
+Xor(42, 1) == 1
+Xor(5, 8) == 8
+
+Iff(0, 0) == 0
+Iff(0, 1) == 1
+Iff(1, 0) == 1
+Iff(1, 1) == 0
+Iff(0, 13) == 13  # != 0
+Iff(13, 0) == 1
+Iff(42, 1) == 0
+Iff(5, 8) == 0
+
+Equals(0,0) == 0
+Equals(1,1) == 0
+Equals(2,2) == 0
+Equals(3,3) == 0
+Equals(13,13) == 0
+Equals(0,1) == 1
+Equals(1,0) == 1
+Equals(13,5) == 6     # != 0
+Equals(42,29) == 30   # != 0

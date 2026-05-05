@@ -1,13 +1,19 @@
 /// GRF alias catalogue: substitutes known sub-expressions with readable names.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::cmp::Reverse;
 
 use crate::grf::Grf;
 use crate::mgrf::{lift_grf, parse_mgrf_with_modules, MgrfFile};
 
-const BASE_MGRF:     &str = include_str!("../mgrf/base.mgrf");
-const FUNC_REP_MGRF: &str = include_str!("../mgrf/func_rep.mgrf");
-const ACK_WORM_MGRF: &str = include_str!("../mgrf/ack_worm.mgrf");
+// Ordered list of embedded mgrf files. Earlier files take precedence for
+// deduplication: a macro name present in both base.mgrf and bool_zero.mgrf
+// (via `use base:{K}`) is only emitted from base.mgrf.
+const MGRF_FILES: &[(&str, &str)] = &[
+    ("base",     include_str!("../mgrf/base.mgrf")),
+    ("bool_zero", include_str!("../mgrf/bool_zero.mgrf")),
+    ("func_rep", include_str!("../mgrf/func_rep.mgrf")),
+    ("ack_worm", include_str!("../mgrf/ack_worm.mgrf")),
+];
 
 
 struct Entry {
@@ -22,8 +28,7 @@ const RESET: &str = "\x1b[0m";
 pub struct AliasDb {
     entries: Vec<Entry>,
     colored: bool,
-    base_file: MgrfFile,
-    ack_file: MgrfFile,
+    files: Vec<MgrfFile>,
 }
 
 impl AliasDb {
@@ -38,6 +43,8 @@ impl AliasDb {
     /// is true.  Pass `std::io::stdout().is_terminal()` to auto-detect.
     pub fn new_colored(max_param: usize, colored: bool) -> Self {
         let mut entries: Vec<Entry> = Vec::new();
+        let mut seen_defs: HashSet<String> = HashSet::new();
+        let mut seen_macros: HashSet<String> = HashSet::new();
 
         macro_rules! push {
             ($alias:expr, $grf:expr) => {
@@ -45,38 +52,42 @@ impl AliasDb {
             };
         }
 
-        // Load GRF definitions from embedded .mgrf files.
-        let modules: HashMap<String, String> = [
-            ("base".to_string(),     BASE_MGRF.to_string()),
-            ("func_rep".to_string(), FUNC_REP_MGRF.to_string()),
-        ].into();
-        let base_file = parse_mgrf_with_modules(BASE_MGRF, &modules)
-            .expect("embedded base.mgrf should always parse");
-        let ack_file = parse_mgrf_with_modules(ACK_WORM_MGRF, &modules)
-            .expect("embedded ack_worm.mgrf should always parse");
+        // All embedded files are available as modules so cross-file `use` resolves.
+        let modules: HashMap<String, String> = MGRF_FILES.iter()
+            .map(|(name, content)| (name.to_string(), content.to_string()))
+            .collect();
 
-        // ── All named GRFs from base.mgrf (Add, Pred, Div2, Pow2, Tri, …) ───
-        for (name, grf) in &base_file.defs {
-            push!(name.clone(), grf.clone());
-        }
+        let mut files: Vec<MgrfFile> = Vec::new();
+        for (_, content) in MGRF_FILES {
+            let file = parse_mgrf_with_modules(content, &modules)
+                .expect("embedded .mgrf should always parse");
 
-        // ── All named GRFs from ack_worm.mgrf (AckWorm, Graham, …) ──────────
-        for (name, grf) in &ack_file.defs {
-            push!(name.clone(), grf.clone());
-        }
+            // Named GRFs — first file wins (no duplicates across files).
+            for (name, grf) in &file.defs {
+                if seen_defs.insert(name.clone()) {
+                    push!(name.clone(), grf.clone());
+                }
+            }
 
-        // ── All num-macro families from base.mgrf (K, Plus, Monus, Mult, …) ────
-        // Named GRFs (pushed above) take precedence for equal-size entries via
-        // stable sort; atoms (Succ, Zero, Proj) are rendered directly in alias_node
-        // and must never be overridden by a macro entry.
-        for (macro_name, _) in &base_file.num_macro_defs {
-            for n in 0..=max_param {
-                if let Ok(g) = base_file.eval_expr(&format!("{macro_name}[{n}]")) {
-                    if !matches!(g, Grf::Succ | Grf::Zero(_) | Grf::Proj(_, _)) {
-                        push!(format!("{macro_name}[{n}]"), g);
+            // Num-macro families — first file wins.
+            // num_macro_defs includes imported macros (e.g. ack_worm inherits K from
+            // base via `use base:{K}`), so the seen_macros guard prevents double-emit.
+            // Named GRFs (pushed above) take precedence for equal-size entries via
+            // stable sort; atoms (Succ, Zero, Proj) are rendered directly in
+            // alias_node and must never be overridden by a macro entry.
+            for (macro_name, _) in &file.num_macro_defs {
+                if seen_macros.insert(macro_name.clone()) {
+                    for n in 0..=max_param {
+                        if let Ok(g) = file.eval_expr(&format!("{macro_name}[{n}]")) {
+                            if !matches!(g, Grf::Succ | Grf::Zero(_) | Grf::Proj(_, _)) {
+                                push!(format!("{macro_name}[{n}]"), g);
+                            }
+                        }
                     }
                 }
             }
+
+            files.push(file);
         }
 
         // TODO: GRF-macro aliases (RepSucc[f], DiagRep[f], DiagS[f]) require structural
@@ -102,7 +113,7 @@ impl AliasDb {
         // Largest-GRF-first: more specific (larger) aliases win over fragments.
         entries.sort_by_key(|e| Reverse(e.grf.size()));
 
-        Self { entries, colored, base_file, ack_file }
+        Self { entries, colored, files }
     }
 
     /// Parse a mgrf expression, resolving alias names and macro families.
@@ -113,13 +124,13 @@ impl AliasDb {
     /// the expression cannot be parsed or resolved.
     pub fn resolve(&self, expr: &str) -> Result<Grf, String> {
         let expr = expr.trim();
-        self.base_file.eval_expr(expr)
-            .or_else(|_| self.ack_file.eval_expr(expr))
-            .map_err(|_| {
-                // Re-run base_file to surface a useful parse/resolve error.
-                self.base_file.eval_expr(expr)
-                    .unwrap_err()
-            })
+        for file in &self.files {
+            if let Ok(g) = file.eval_expr(expr) {
+                return Ok(g);
+            }
+        }
+        // Re-run first file to surface a useful parse/resolve error.
+        Err(self.files[0].eval_expr(expr).unwrap_err())
     }
 
     /// Rewrite `grf` bottom-up, substituting every matching sub-expression

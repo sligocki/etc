@@ -62,10 +62,8 @@ Pow2 := C(S, Pow2P)             # Pow2(k) = 2^k
 Shift := R(P1, C(Add, P2, P2))  # Shift(k,x) = x 2^k
 ShiftS := R(S, C(Add, P2, P2))  # ShiftS(k,x) = (x+1) 2^k
 
-# Bool
-Sgn := M(R(P(1,1), Z3))     # 0 -> 0; n+1 -> 1
-Not := R(C(S, Z0), Z2)      # 0 -> 1; n+1 -> 0
-# And, Or, etc.
+Pow := R(K[1], R(Mult, P2))     # Pow(k,b) = b^k
+PowS := R(P1, R(Mult, P2))      # PowS(k,b) = b^{k+1}
 
 # Polygonal functions
 Poly[n] := R(Z, R(S, C(Plus[n], P2)))
@@ -233,15 +231,26 @@ ShiftS(2,0) == 4
 ShiftS(3,2) == 24
 ShiftS(4,5) == 96
 
-Sgn(0) == 0
-Sgn(1) == 1
-Sgn(2) == 1
-Sgn(13) == 1
+Pow(0, 13) == 1
+Pow(1, 13) == 13
+Pow(2, 13) == 169
+Pow(3, 8) == 512
+Pow(4, 3) == 81
+Pow(5, 3) == 243
+Pow(6, 2) == 64
+Pow(7, 2) == 128
+Pow(8, 2) == 256
+Pow(9, 2) == 512
 
-Not(0) == 1
-Not(1) == 0
-Not(2) == 0
-Not(13) == 0
+PowS(0, 13) == 13
+PowS(1, 13) == 169
+PowS(2, 8) == 512
+PowS(3, 3) == 81
+PowS(4, 3) == 243
+PowS(5, 2) == 64
+PowS(6, 2) == 128
+PowS(7, 2) == 256
+PowS(8, 2) == 512
 
 Tri(0) == 0
 Tri(1) == 1

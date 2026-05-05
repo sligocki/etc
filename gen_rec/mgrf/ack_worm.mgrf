@@ -4,7 +4,8 @@
 #    We encode a list of Nat into a Nat by using run lengths of 1s in binary encoding.
 #    Ex: [1,2,3] -> 0b10110111 = 183
 
-use base::{RMonus, Mod2, Div2, Sgn, Shift, K}
+use base::{RMonus, Mod2, Div2, Shift, K}
+use bool_zero::{Sgn}
 use func_rep::{RepSucc, DiagRep, DiagS}
 
 # Div2k(k,n) = floor(n / 2^k)

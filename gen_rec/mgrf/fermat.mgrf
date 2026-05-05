@@ -1,15 +1,7 @@
 ## Fermat's Last Theorem
 
-use base::{K, Plus, Add, Mult}
-
-# Logic with true == 0, false > 0 convension
-True := Z
-False := K[1]
-Or := R(Z, P3)
-Equals := C(R(P1, R(R(P2, P1), P2)), P1, P2, P1)
-
-# PowS(k,b) = b^{k+1}
-PowS := R(P1, R(Mult, P2))
+use base::{K, Plus, Add, PowS}
+use bool_zero::{False, Or, Equals}
 
 # IsFermat(k,a,b,c) = (a^{k+1} + b^{k+1} == c^{k+1})
 IsFermat := C(Equals, C(PowS, P1, P4), C(Add, C(PowS, P1, P2), C(PowS, P1, P3)))
@@ -29,35 +21,6 @@ FermatLast := M(FermatK)
 
 
 # Tests
-Or(0, 0) == 0
-Or(0, 1) == 0
-Or(1, 0) == 0
-Or(1, 1) == 1
-Or(0, 13) == 0
-Or(13, 0) == 0
-Or(42, 1) == 1
-Or(5, 8) == 8   # != 0
-
-Equals(0,0) == 0
-Equals(1,1) == 0
-Equals(2,2) == 0
-Equals(3,3) == 0
-Equals(13,13) == 0
-Equals(0,1) == 1
-Equals(1,0) == 1
-Equals(13,5) == 6     # != 0
-Equals(42,29) == 30   # != 0
-
-PowS(0, 13) == 13
-PowS(1, 13) == 169
-PowS(2, 8) == 512
-PowS(3, 3) == 81
-PowS(4, 3) == 243
-PowS(5, 2) == 64
-PowS(6, 2) == 128
-PowS(7, 2) == 256
-PowS(8, 2) == 512
-
 IsFermat(0,3,4,7) == 0
 IsFermat(1,3,4,5) == 0
 IsFermat(1,12,5,13) == 0

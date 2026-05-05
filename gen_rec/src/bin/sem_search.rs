@@ -184,6 +184,24 @@ const SPECS: &[SpecDef] = &[
         description: "f(x) = 2^x + 1",
         build: || Box::new(exact_spec(|a| Some((1u64 << a[0].min(63)) + 1))),
     },
+    // Pow : PRF15 : R(K[1], R(Mult, P2))
+    SpecDef {
+        name: "pow", default_arity: 2,
+        description: "f(k,b) = b^k",
+        build: || Box::new(exact_spec(|a| Some(a[1].pow(a[0] as u32)))),
+    },
+    // PowS : PRF13 : R(P1, R(Mult, P2))
+    SpecDef {
+        name: "pow_s", default_arity: 2,
+        description: "f(k,b) = b^{k+1}",
+        build: || Box::new(exact_spec(|a| Some(a[1].pow((a[0]+1) as u32)))),
+    },
+    // PowSS : PRF? : C(PowS, C(S, P1), P2)
+    SpecDef {
+        name: "pow_ss", default_arity: 2,
+        description: "f(k,b) = b^{k+2}",
+        build: || Box::new(exact_spec(|a| Some(a[1].pow((a[0]+2) as u32)))),
+    },
     SpecDef {
         name: "square", default_arity: 1,
         description: "f(x) = x^2",
@@ -202,6 +220,24 @@ const SPECS: &[SpecDef] = &[
         name: "z_equals", default_arity: 2,
         description: "f(x,y) = if x==y then 0 else (>0)",
         build: || Box::new(bool_spec(|a| a[0] == a[1])),
+    },
+    // ZOr : GRF:3 : R(Z, P3)
+    SpecDef {
+        name: "z_or", default_arity: 2,
+        description: "",
+        build: || Box::new(bool_spec(|a| a[0]==0 || a[1]==0)),
+    },
+    // ZAnd : GRF:5 : R(P1, K[1])
+    SpecDef {
+        name: "z_and", default_arity: 2,
+        description: "",
+        build: || Box::new(bool_spec(|a| a[0]==0 && a[1]==0)),
+    },
+    // ZIff : GRF:7 : R(P1, R(R(S, Z), P3))
+    SpecDef {
+        name: "z_iff", default_arity: 2,
+        description: "",
+        build: || Box::new(bool_spec(|a| (a[0]==0) == (a[1]==0))),
     },
     // ZIsTri : PRF:17 : C(R(P1, C(PredDef, RMonus^3, P2)), P1, P1)
     SpecDef {

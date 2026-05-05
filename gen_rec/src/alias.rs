@@ -63,8 +63,12 @@ impl AliasDb {
                 .expect("embedded .mgrf should always parse");
 
             // Named GRFs — first file wins (no duplicates across files).
+            // Skip atoms: S, Z_k, P^k_i are always rendered directly in alias_node
+            // and must not be overridden (e.g. bool_zero defines True := Z and False1 := S).
             for (name, grf) in &file.defs {
-                if seen_defs.insert(name.clone()) {
+                if seen_defs.insert(name.clone())
+                    && !matches!(grf, Grf::Succ | Grf::Zero(_) | Grf::Proj(_, _))
+                {
                     push!(name.clone(), grf.clone());
                 }
             }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
 use std::path::Path;
 use std::str::Chars;
@@ -260,17 +260,34 @@ fn load_import(
 ) -> Result<(), String> {
     let content = resolver.load(&stmt.module)?;
 
-    // allow_use=false: transitive imports are not permitted.
-    let (sub_uses, sub_items, _) = parse_file(&content, false).map_err(|e| {
+    // allow_use=true: transitive imports are supported.
+    // Rule: if A imports B and B imports C, A gets B's locally-defined names only —
+    // C's names are available inside B for resolution but are not re-exported to A.
+    let (sub_uses, sub_items, _) = parse_file(&content, true).map_err(|e| {
         format!("In module '{}': {}", stmt.module, e)
     })?;
-    debug_assert!(sub_uses.is_empty(), "parse_file with allow_use=false should never return uses");
 
-    let (sub_grf_macros, sub_num_macros, sub_raw_defs) = split_macros(sub_items);
+    let (sub_grf_macros_local, sub_num_macros_local, sub_raw_defs) = split_macros(sub_items);
 
-    // Resolve the imported module's definitions in isolation.
+    // Collect locally-defined names before moving the maps.
+    let local_def_names: HashSet<&str> = sub_raw_defs.iter().map(|(n, _)| n.as_str()).collect();
+    let local_grf_macro_names: HashSet<String> = sub_grf_macros_local.keys().cloned().collect();
+    let local_num_macro_names: HashSet<String> = sub_num_macros_local.keys().cloned().collect();
+
+    // Internal context: transitive imports first, then locals override.
+    let mut sub_grf_macros: HashMap<String, GrfMacroDef> = HashMap::new();
+    let mut sub_num_macros: HashMap<String, NumMacroCases> = HashMap::new();
     let mut sub_arities: HashMap<String, usize> = HashMap::new();
     let mut sub_grfs: HashMap<String, Grf> = HashMap::new();
+
+    for sub_stmt in &sub_uses {
+        load_import(sub_stmt, resolver, &mut sub_arities, &mut sub_grfs,
+                    &mut sub_grf_macros, &mut sub_num_macros)?;
+    }
+    sub_grf_macros.extend(sub_grf_macros_local);
+    sub_num_macros.extend(sub_num_macros_local);
+
+    // Resolve locally-defined GRFs using the full internal context.
     for (name, expr) in &sub_raw_defs {
         let expanded = macro_expand(expr, &sub_num_macros, &sub_grf_macros)
             .map_err(|e| format!("In module '{}', macro expansion of '{}': {}", stmt.module, name, e))?;
@@ -286,34 +303,33 @@ fn load_import(
         stmt.names.as_ref().map_or(true, |ns| ns.iter().any(|n| n == name))
     };
 
-    // Import concrete GRFs filtered by the names list.
+    // Export only locally-defined GRFs — not names that came in via transitive imports.
     for (name, grf) in &sub_grfs {
-        if import_name(name) {
+        if import_name(name) && local_def_names.contains(name.as_str()) {
             arities.insert(name.clone(), grf.arity());
             grfs.insert(name.clone(), grf.clone());
         }
     }
 
-    // Import only the macros explicitly listed in the use statement.
-    // If names is None (bare `use module`), import everything.
+    // Export only locally-defined macros.
     for (name, def) in sub_grf_macros {
-        if import_name(&name) {
+        if import_name(&name) && local_grf_macro_names.contains(&name) {
             out_grf_macros.insert(name, def);
         }
     }
     for (name, cases) in sub_num_macros {
-        if import_name(&name) {
+        if import_name(&name) && local_num_macro_names.contains(&name) {
             out_num_macros.insert(name, cases);
         }
     }
 
-    // Validate that each explicitly requested name exists as either a GRF or a macro.
+    // Validate that each explicitly requested name is locally defined in the module.
     if let Some(names) = &stmt.names {
         for req in names {
-            let is_grf = sub_grfs.contains_key(req.as_str());
+            let is_local_grf = local_def_names.contains(req.as_str());
             let is_grf_macro = out_grf_macros.contains_key(req.as_str());
             let is_num_macro = out_num_macros.contains_key(req.as_str());
-            if !is_grf && !is_grf_macro && !is_num_macro {
+            if !is_local_grf && !is_grf_macro && !is_num_macro {
                 return Err(format!("Name '{}' not found in module '{}'", req, stmt.module));
             }
         }

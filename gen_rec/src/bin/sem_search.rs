@@ -196,11 +196,21 @@ const SPECS: &[SpecDef] = &[
         description: "f(k,b) = b^{k+1}",
         build: || Box::new(exact_spec(|a| Some(a[1].pow((a[0]+1) as u32)))),
     },
-    // PowSS : PRF? : C(PowS, C(S, P1), P2)
+    // PowSS : PRF13 : R(S, R(MultIS, P2))
     SpecDef {
         name: "pow_ss", default_arity: 2,
-        description: "f(k,b) = b^{k+2}",
-        build: || Box::new(exact_spec(|a| Some(a[1].pow((a[0]+2) as u32)))),
+        description: "f(k,b) = (b+1)^{k+1}",
+        build: || Box::new(exact_spec(|a| Some(
+            (a[1]+1).pow((a[0]+1) as u32)
+        ))),
+    },
+    // SumPowS : C(Add, C(PowS, P1, P2), C(PowS, P1, P3))
+    SpecDef {
+        name: "sum_pow_s", default_arity: 3,
+        description: "f(k,a,b) = a^{k+1} + b^{k+1}",
+        build: || Box::new(exact_spec(|a| Some(
+            a[1].pow((a[0]+1) as u32) + a[2].pow((a[0]+1) as u32)
+        ))),
     },
     SpecDef {
         name: "square", default_arity: 1,

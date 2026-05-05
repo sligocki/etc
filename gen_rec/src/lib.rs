@@ -3,6 +3,7 @@ pub mod chaos_score;
 pub mod enumerate;
 pub mod fingerprint;
 pub mod grf;
+pub mod io_table;
 pub mod mgrf;
 pub mod novel_db;
 pub mod novel_enum;

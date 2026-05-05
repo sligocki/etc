@@ -1378,4 +1378,81 @@ DiagS[f^2] := C(f, S, S)
         let (r, _) = simulate(&defs["Result"], &[5], 10_000);
         assert_eq!(r.into_value(), Some(7));
     }
+
+    // ── Inline spec tests from each .mgrf file ────────────────────────────────
+
+    fn mgrf_modules() -> HashMap<String, String> {
+        [
+            ("base",      include_str!("../mgrf/base.mgrf")),
+            ("bool_zero", include_str!("../mgrf/bool_zero.mgrf")),
+            ("func_rep",  include_str!("../mgrf/func_rep.mgrf")),
+            ("ack_worm",  include_str!("../mgrf/ack_worm.mgrf")),
+            ("brocard",   include_str!("../mgrf/brocard.mgrf")),
+            ("collatz",   include_str!("../mgrf/collatz.mgrf")),
+            ("erdos",     include_str!("../mgrf/erdos.mgrf")),
+            ("fermat",    include_str!("../mgrf/fermat.mgrf")),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+    }
+
+    fn run_mgrf_tests(file: &MgrfFile) {
+        use crate::simulate::simulate;
+        const BUDGET: u64 = 1_000_000;
+        let grf_map: HashMap<&str, &Grf> =
+            file.defs.iter().map(|(n, g)| (n.as_str(), g)).collect();
+        for tc in &file.tests {
+            let grf = tc.grf.as_ref()
+                .or_else(|| grf_map.get(tc.name.as_str()).copied())
+                .unwrap_or_else(|| panic!("undefined GRF in test: {}", tc.name));
+            let (result, _) = simulate(grf, &tc.args, BUDGET);
+            let got = result.into_value();
+            let args_str = tc.args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
+            assert_eq!(got, tc.expected, "{}({}) expected {:?}, got {:?}",
+                tc.name, args_str, tc.expected, got);
+        }
+    }
+
+    #[test]
+    fn test_mgrf_base() {
+        let m = mgrf_modules();
+        run_mgrf_tests(&parse_mgrf_with_modules(include_str!("../mgrf/base.mgrf"), &m).unwrap());
+    }
+
+    #[test]
+    fn test_mgrf_bool_zero() {
+        let m = mgrf_modules();
+        run_mgrf_tests(&parse_mgrf_with_modules(include_str!("../mgrf/bool_zero.mgrf"), &m).unwrap());
+    }
+
+    #[test]
+    fn test_mgrf_ack_worm() {
+        let m = mgrf_modules();
+        run_mgrf_tests(&parse_mgrf_with_modules(include_str!("../mgrf/ack_worm.mgrf"), &m).unwrap());
+    }
+
+    #[test]
+    fn test_mgrf_brocard() {
+        let m = mgrf_modules();
+        run_mgrf_tests(&parse_mgrf_with_modules(include_str!("../mgrf/brocard.mgrf"), &m).unwrap());
+    }
+
+    #[test]
+    fn test_mgrf_collatz() {
+        let m = mgrf_modules();
+        run_mgrf_tests(&parse_mgrf_with_modules(include_str!("../mgrf/collatz.mgrf"), &m).unwrap());
+    }
+
+    #[test]
+    fn test_mgrf_erdos() {
+        let m = mgrf_modules();
+        run_mgrf_tests(&parse_mgrf_with_modules(include_str!("../mgrf/erdos.mgrf"), &m).unwrap());
+    }
+
+    #[test]
+    fn test_mgrf_fermat() {
+        let m = mgrf_modules();
+        run_mgrf_tests(&parse_mgrf_with_modules(include_str!("../mgrf/fermat.mgrf"), &m).unwrap());
+    }
 }

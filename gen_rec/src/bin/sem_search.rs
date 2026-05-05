@@ -203,21 +203,29 @@ const SPECS: &[SpecDef] = &[
         description: "f(x,y) = if x==y then 0 else (>0)",
         build: || Box::new(bool_spec(|a| a[0] == a[1])),
     },
-    // ZSquare : PRF:18 : C(R(P1, R(Pred, C(R(P1, R(P3, P1)), P2, P3, P2))), P1, P1)
+    // ZIsTri : PRF:17 : C(R(P1, C(PredDef, RMonus^3, P2)), P1, P1)
     SpecDef {
-        name: "z_square", default_arity: 1,
+        name: "z_is_tri", default_arity: 1,
+        description: "f(x) = if x == Tri(k) then 0 else (>0)",
+        build: || Box::new(bool_spec(|a| {
+            let mut n = a[0] as i64;
+            for k in 0..n+1 {
+                n -= k;
+                if n == 0 {
+                    return true;
+                } else if n < 0 {
+                    return false;
+                }
+            }
+            panic!()
+        })),
+    },
+    // ZIsSquare : PRF:18 : C(R(P1, R(Pred, C(R(P1, R(P3, P1)), P2, P3, P2))), P1, P1)
+    SpecDef {
+        name: "z_is_square", default_arity: 1,
         description: "f(x) = if x==k^2 then 0 else (>0)",
         build: || Box::new(bool_spec(|a| {
             let n = a[0];
-            let root_n = (n as f64).sqrt() as u64;
-            n == root_n*root_n
-        })),
-    },
-    SpecDef {
-        name: "z_square_s", default_arity: 1,
-        description: "f(x) = if x+1==k^2 then 0 else (>0)",
-        build: || Box::new(bool_spec(|a| {
-            let n = a[0] + 1;
             let root_n = (n as f64).sqrt() as u64;
             n == root_n*root_n
         })),

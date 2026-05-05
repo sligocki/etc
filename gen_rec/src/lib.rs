@@ -1,4 +1,5 @@
 pub mod alias;
+pub mod chaos_score;
 pub mod enumerate;
 pub mod fingerprint;
 pub mod grf;

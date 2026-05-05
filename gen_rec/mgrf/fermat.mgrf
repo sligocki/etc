@@ -23,6 +23,8 @@ FermatA := C(R(False, C(Or, C(FermatB, P3, P4, C(S, P1)), P2)), P1, P1, P2)
 # FermatK(n) := exists k,a,b,c<n, ((a+1)^{k+3} + (b+1)^{k+3} == (c+1)^{k+3})
 FermatK := C(R(False, C(Or, C(FermatA, P3, C(Plus[2], P1)), P2)), P1, P1)
 
+# FermatLast() = min { n : exists k,a,b,c<n, ((a+1)^{k+3} + (b+1)^{k+3} == (c+1)^{k+3}) }
+#   Never halts if no such combination exists
 FermatLast := M(FermatK)
 
 

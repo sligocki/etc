@@ -196,4 +196,5 @@ define_pruning_flags! {
     { inline_proj,   "inline_proj",   cc=no,  rec=yes, mo=no,  "C(h,P/Z…) → inlined h" },
     { comp_rnf,      "comp_rnf",      cc=no,  rec=yes, mo=no,  "C(h,…) require h in Rewire Normal Form (all args used, canonical order)" },
     { rec_step_p2,   "rec_step_p2",   cc=no,  rec=yes, mo=no,  "C(R(g,P2),h1,…) → C(g,h2,…)" },
+    { rec_proj_base, "rec_proj_base", cc=no,  rec=yes, mo=no,  "R(P_i,P2) / R(P_i,P_{i+2}) → P_{i+1}" },
 }

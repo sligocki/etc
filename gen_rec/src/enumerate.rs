@@ -181,6 +181,15 @@ fn for_each_grf(
                     {
                         return;
                     }
+                    // rec_proj_base: R(P(k-1,i), P(k+1,2))   ≡ P(k,i+1)  (h echoes acc, result = base)
+                    //                R(P(k-1,i), P(k+1,i+2)) ≡ P(k,i+1)  (h returns xᵢ = base)
+                    if opts.rec_proj_base {
+                        if let (Grf::Proj(_, i), Grf::Proj(_, j)) = (g, h) {
+                            if *j == 2 || *j == i + 2 {
+                                return;
+                            }
+                        }
+                    }
                     callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
                 });
             });
@@ -1940,6 +1949,53 @@ mod tests {
     #[should_panic(expected = "'rec_step_p2'")]
     fn count_grf_panics_on_rec_step_p2() {
         count_grf(5, 1, false, PruningOpts::default().with_flags("rec_step_p2"));
+    }
+
+    // --- rec_proj_base ---
+
+    #[test]
+    fn test_rec_proj_base_removes_p2_step() {
+        // R(P(1,1), P(3,2)): h = P(3,2) echoes acc → result = base = x₁ ≡ P(2,2).
+        let full = collect(3, 2, false, PruningOpts::default());
+        let pruned = collect(3, 2, false, PruningOpts::default().with_flags("rec_proj_base"));
+        let target = "R(P(1,1),P(3,2))".parse::<Grf>().unwrap();
+        assert!(full.iter().any(|g| *g == target), "must exist in full set");
+        assert!(!pruned.iter().any(|g| *g == target), "R(P_i,P2) should be pruned");
+    }
+
+    #[test]
+    fn test_rec_proj_base_removes_base_echo() {
+        // R(P(1,1), P(3,3)): h = P(3,3) returns x₁ = base ≡ P(2,2).
+        let full = collect(3, 2, false, PruningOpts::default());
+        let pruned = collect(3, 2, false, PruningOpts::default().with_flags("rec_proj_base"));
+        let target = "R(P(1,1),P(3,3))".parse::<Grf>().unwrap();
+        assert!(full.iter().any(|g| *g == target), "must exist in full set");
+        assert!(!pruned.iter().any(|g| *g == target), "R(P_i,P_{{i+2}}) should be pruned");
+    }
+
+    #[test]
+    fn test_rec_proj_base_keeps_non_matching() {
+        // R(P(1,1), P(3,1)): h = P(3,1) returns the counter, not acc or base. NOT pruned.
+        let pruned = collect(3, 2, false, PruningOpts::default().with_flags("rec_proj_base"));
+        let target = "R(P(1,1),P(3,1))".parse::<Grf>().unwrap();
+        assert!(pruned.iter().any(|g| *g == target), "R(P,P1) should not be pruned");
+    }
+
+    #[test]
+    fn test_rec_proj_base_never_more_than_full() {
+        for size in 1..=8 {
+            for arity in 0..=3 {
+                let full = collect(size, arity, false, PruningOpts::default()).len();
+                let pruned = collect(size, arity, false, PruningOpts::default().with_flags("rec_proj_base")).len();
+                assert!(pruned <= full, "rec_proj_base produced more GRFs at size={size} arity={arity}");
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "'rec_proj_base'")]
+    fn count_grf_panics_on_rec_proj_base() {
+        count_grf(5, 1, false, PruningOpts::default().with_flags("rec_proj_base"));
     }
 
     #[test]

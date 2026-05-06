@@ -83,7 +83,7 @@ fn main() {
         ),
     ).unwrap();
 
-    let budget = if args.steps == 0 { u64::MAX } else { args.steps };
+    let max_steps = if args.steps == 0 { u64::MAX } else { args.steps };
 
     let start = Instant::now();
     let mut last_progress = start;
@@ -119,7 +119,7 @@ fn main() {
             continue;
         }
 
-        let (result, steps_taken) = simulate(&grf, &[], budget);
+        let (result, steps_taken) = simulate(&grf, &[], max_steps);
         total_steps += steps_taken;
         n_total += 1;
 

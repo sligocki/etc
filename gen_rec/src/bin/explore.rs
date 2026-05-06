@@ -18,11 +18,11 @@ struct Args {
     expr: String,
 
     /// Simulation step budget per evaluation (0 = unlimited).
-    #[arg(long, default_value_t = 10_000)]
+    #[arg(long, default_value_t = 100_000)]
     max_steps: u64,
 
     /// Inclusive maximum input value for I/O tables.
-    #[arg(long, default_value_t = 6)]
+    #[arg(long, default_value_t = 10)]
     grid: u64,
 
     /// Skip I/O tables; show structural info only.

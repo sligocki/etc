@@ -12,13 +12,17 @@ use gen_rec::pruning::{PruningOpts, FLAGS};
 
 /// Build the cumulative config list from the global FLAGS registry.
 /// Each entry is (label, opts, stream_only).
+///
+/// Count-compat flags are shown first (cumulatively), then stream-only flags on
+/// top — regardless of their order in FLAGS. This ensures no count_grf call ever
+/// has a stream-only flag set, which would panic.
 fn make_configs(allow_min: bool) -> Vec<(&'static str, PruningOpts, bool)> {
     let mut v = vec![("none", PruningOpts::default(), false)];
     let mut acc = PruningOpts::default();
-    for meta in FLAGS {
-        if !allow_min && meta.min_only {
-            continue;
-        }
+    let applicable: Vec<_> = FLAGS.iter().filter(|m| allow_min || !m.min_only).collect();
+    let ordered = applicable.iter().filter(|m| m.count_compat)
+        .chain(applicable.iter().filter(|m| !m.count_compat));
+    for meta in ordered {
         (meta.set)(&mut acc, true);
         v.push((meta.name, acc, !meta.count_compat));
     }

@@ -181,11 +181,18 @@ macro_rules! define_pruning_flags {
 // ---------------------------------------------------------------------------
 // Flag declarations — one line per flag, in canonical chain order
 // ---------------------------------------------------------------------------
+//
+// Ordering note: the `count` binary builds its cumulative config table by
+// partitioning flags into cc=yes first, then cc=no — so inter-group ordering
+// doesn't cause panics.  Within each group, the order here determines how
+// flags are applied cumulatively (and thus which column shows their marginal
+// benefit), so keep related rules together.
 
 define_pruning_flags! {
     { comp_proj,     "comp_proj",     cc=yes, rec=yes, mo=no,  "C(P,…) → one of its args" },
     { comp_zero,     "comp_zero",     cc=yes, rec=yes, mo=no,  "C(Z,…) → Z" },
     { rec_zero_arg,  "rec_zero_arg",  cc=yes, rec=yes, mo=no,  "C(R(g,h),Z,…) → C(g,…)" },
+    { rec_proj_base, "rec_proj_base", cc=yes, rec=yes, mo=no,  "R(P_i,P2) / R(P_i,P_{i+2}) → P_{i+1}" },
     { comp_assoc,    "comp_assoc",    cc=yes, rec=yes, mo=no,  "C(C(f,g),h1…) → C(f,C(g,h1…))" },
     { comp_null_null,"comp_null_null",cc=yes, rec=yes, mo=no,  "C0(h) → h" },
     // TODO: I'm not 100% sure it is safe to skip C(h) ... and it is only like a 1.2% savings.
@@ -196,5 +203,4 @@ define_pruning_flags! {
     { inline_proj,   "inline_proj",   cc=no,  rec=yes, mo=no,  "C(h,P/Z…) → inlined h" },
     { comp_rnf,      "comp_rnf",      cc=no,  rec=yes, mo=no,  "C(h,…) require h in Rewire Normal Form (all args used, canonical order)" },
     { rec_step_p2,   "rec_step_p2",   cc=no,  rec=yes, mo=no,  "C(R(g,P2),h1,…) → C(g,h2,…)" },
-    { rec_proj_base, "rec_proj_base", cc=no,  rec=yes, mo=no,  "R(P_i,P2) / R(P_i,P_{i+2}) → P_{i+1}" },
 }

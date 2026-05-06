@@ -520,12 +520,9 @@ fn seek_grfs(
 
             let g_total = count_grf(gsize, arity - 1, allow_min, opts);
             let h_total = count_grf(hsize, arity + 1, allow_min, opts);
-            // skip_rec_zero_base prunes exactly 2 pairs at n==2 across ALL g's.
-            let pruned_in_block = if opts.rec_zero_base && n == 2 {
-                2usize
-            } else {
-                0
-            };
+            // At n==2 (size=3), both g and h are atoms, and per-g pruning applies.
+            let pruned_in_block = (if opts.rec_zero_base && n == 2 { 2 } else { 0 })
+                + (if opts.rec_proj_base && n == 2 { 2 * (arity - 1) } else { 0 });
             let gsize_block = g_total
                 .saturating_mul(h_total)
                 .saturating_sub(pruned_in_block);
@@ -536,15 +533,23 @@ fn seek_grfs(
             }
 
             if n == 2 {
-                // n==2: at most ~4 g's (size-1 atoms) and h_count may vary per g
-                // (skip_rec_zero_base prunes 2 h's when g is Zero).  Keep sequential.
+                // n==2: at most ~4 g's (size-1 atoms); h_count varies per g.
+                // rec_zero_base prunes 2 h's when g=Zero; rec_proj_base prunes 2 h's
+                // when g=Proj(_, i) (skipping P(ar1,2) and P(ar1,i+2)).
                 for_each_grf(gsize, arity - 1, allow_min, opts, &mut |g: &Grf| {
                     if *rem == 0 {
                         return;
                     }
                     let g_box = Box::new(g.clone());
                     let g_is_zero = matches!(g, Grf::Zero(_));
-                    let pruned_h = if opts.rec_zero_base && g_is_zero { 2usize } else { 0 };
+                    let g_proj_idx: Option<usize> = if opts.rec_proj_base {
+                        if let Grf::Proj(_, i) = g { Some(*i) } else { None }
+                    } else {
+                        None
+                    };
+                    let pruned_h = if opts.rec_zero_base && g_is_zero { 2 }
+                        else if g_proj_idx.is_some() { 2 }
+                        else { 0 };
                     let h_count = h_total.saturating_sub(pruned_h);
                     if *skip >= h_count {
                         *skip -= h_count;
@@ -555,11 +560,22 @@ fn seek_grfs(
                             callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
                         });
                     } else {
-                        // n==2, g_is_zero, hsize==1.  Pruned: Zero(arity+1) and Proj(arity+1,2).
                         let ar1 = arity + 1;
-                        let valid_hs: Vec<Grf> = std::iter::once(Grf::Proj(ar1, 1))
-                            .chain((3..=ar1).map(|i| Grf::Proj(ar1, i)))
-                            .collect();
+                        let valid_hs: Vec<Grf> = if opts.rec_zero_base && g_is_zero {
+                            // Pruned from h: Z(ar1) and P(ar1,2)
+                            std::iter::once(Grf::Proj(ar1, 1))
+                                .chain((3..=ar1).map(|j| Grf::Proj(ar1, j)))
+                                .collect()
+                        } else {
+                            // g=Proj(_, gi): prune P(ar1,2) and P(ar1,gi+2)
+                            let gi = g_proj_idx.unwrap();
+                            std::iter::once(Grf::Zero(ar1))
+                                .chain((1..=ar1).filter_map(move |j| {
+                                    if j == 2 || j == gi + 2 { None }
+                                    else { Some(Grf::Proj(ar1, j)) }
+                                }))
+                                .collect()
+                        };
                         for h in &valid_hs {
                             if *rem == 0 {
                                 return;
@@ -769,7 +785,8 @@ fn seek_rec_only(
         let hsize = n - gsize;
         let g_total = count_grf(gsize, arity - 1, allow_min, opts);
         let h_total = count_grf(hsize, arity + 1, allow_min, opts);
-        let pruned_in_block = if opts.rec_zero_base && n == 2 { 2usize } else { 0 };
+        let pruned_in_block = (if opts.rec_zero_base && n == 2 { 2 } else { 0 })
+            + (if opts.rec_proj_base && n == 2 { 2 * (arity - 1) } else { 0 });
         let block = g_total.saturating_mul(h_total).saturating_sub(pruned_in_block);
         if *skip >= block {
             *skip -= block;
@@ -781,7 +798,14 @@ fn seek_rec_only(
                 if *rem == 0 { return; }
                 let g_box = Box::new(g.clone());
                 let g_is_zero = matches!(g, Grf::Zero(_));
-                let pruned_h = if opts.rec_zero_base && g_is_zero { 2usize } else { 0 };
+                let g_proj_idx: Option<usize> = if opts.rec_proj_base {
+                    if let Grf::Proj(_, i) = g { Some(*i) } else { None }
+                } else {
+                    None
+                };
+                let pruned_h = if opts.rec_zero_base && g_is_zero { 2 }
+                    else if g_proj_idx.is_some() { 2 }
+                    else { 0 };
                 let h_count = h_total.saturating_sub(pruned_h);
                 if *skip >= h_count { *skip -= h_count; return; }
                 if pruned_h == 0 {
@@ -790,9 +814,19 @@ fn seek_rec_only(
                     });
                 } else {
                     let ar1 = arity + 1;
-                    let valid_hs: Vec<Grf> = std::iter::once(Grf::Proj(ar1, 1))
-                        .chain((3..=ar1).map(|i| Grf::Proj(ar1, i)))
-                        .collect();
+                    let valid_hs: Vec<Grf> = if opts.rec_zero_base && g_is_zero {
+                        std::iter::once(Grf::Proj(ar1, 1))
+                            .chain((3..=ar1).map(|j| Grf::Proj(ar1, j)))
+                            .collect()
+                    } else {
+                        let gi = g_proj_idx.unwrap();
+                        std::iter::once(Grf::Zero(ar1))
+                            .chain((1..=ar1).filter_map(move |j| {
+                                if j == 2 || j == gi + 2 { None }
+                                else { Some(Grf::Proj(ar1, j)) }
+                            }))
+                            .collect()
+                    };
                     for h in &valid_hs {
                         if *rem == 0 { return; }
                         if *skip > 0 { *skip -= 1; continue; }
@@ -1139,8 +1173,15 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
         }
         // rec_zero_base: at size=3 (n=2), prune R(Z(arity-1), Z(arity+1)) and
         // R(Z(arity-1), P(arity+1,2)) — 2 expressions, both always ≡ Z(arity).
-        if opts.rec_zero_base && n == 2 {
-            total = total.saturating_sub(2);
+        // rec_proj_base: at size=3 (n=2), prune R(P(arity-1,i), P(arity+1,2)) and
+        // R(P(arity-1,i), P(arity+1,i+2)) for each i in 1..=arity-1 — 2*(arity-1) expressions.
+        if n == 2 {
+            if opts.rec_zero_base {
+                total = total.saturating_sub(2);
+            }
+            if opts.rec_proj_base {
+                total = total.saturating_sub(2 * (arity - 1));
+            }
         }
     }
 
@@ -1175,10 +1216,13 @@ fn count_rec_only(size: usize, arity: usize, allow_min: bool, opts: PruningOpts)
             )),
         );
     }
-    // rec_zero_base: R(Z(arity-1), Z(arity+1)) and R(Z(arity-1), P(arity+1,2))
-    // are pruned — exactly 2 expressions at size=3 for each arity ≥ 1.
-    if opts.rec_zero_base && size == 3 {
-        total = total.saturating_sub(2);
+    if size == 3 {
+        if opts.rec_zero_base {
+            total = total.saturating_sub(2);
+        }
+        if opts.rec_proj_base {
+            total = total.saturating_sub(2 * (arity - 1));
+        }
     }
     total
 }
@@ -1993,9 +2037,16 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "'rec_proj_base'")]
-    fn count_grf_panics_on_rec_proj_base() {
-        count_grf(5, 1, false, PruningOpts::default().with_flags("rec_proj_base"));
+    fn test_rec_proj_base_count_matches_stream() {
+        let opts = PruningOpts::default().with_flags("rec_proj_base");
+        for size in 1..=9 {
+            for arity in 0..=3 {
+                let streamed = collect(size, arity, false, opts).len();
+                let counted = count_grf(size, arity, false, opts);
+                assert_eq!(counted, streamed,
+                    "count/stream mismatch with rec_proj_base at size={size} arity={arity}");
+            }
+        }
     }
 
     #[test]

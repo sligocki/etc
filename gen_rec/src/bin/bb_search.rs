@@ -3,6 +3,7 @@ use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
+use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
 use gen_rec::simulate::{simulate, Num, SimResult};
 use rayon::prelude::*;
@@ -193,7 +194,9 @@ fn flush_batch<W: Write>(
         }
     }
     for (steps, expr) in br.holdouts {
-        writeln!(holdout_w, "  {}  {}", steps, expr).unwrap();
+        io_grl::write_grf_entry(holdout_w, &GrfEntry {
+            expr, status: Some(Status::Unknown), steps: Some(steps), score: None,
+        }).unwrap();
     }
     acc.top_k.merge_from(br.top_k);
     batch.clear();
@@ -246,13 +249,11 @@ fn main() {
     fs::create_dir_all(&args.results_dir).expect("failed to create results directory");
 
     // Open holdout file for streaming writes.
-    let holdout_path = args.results_dir.join("holdout.txt");
-    let holdout_file = fs::File::create(&holdout_path).expect("failed to create holdout.txt");
+    let holdout_path = args.results_dir.join("holdout.grl");
+    let holdout_file = fs::File::create(&holdout_path).expect("failed to create holdout.grl");
     let mut holdout_writer = BufWriter::new(holdout_file);
-    writeln!(holdout_writer,
-        "# BBµ holdouts: mode={mode_str}, size={size}, max_steps={}",
-        args.max_steps).unwrap();
-    writeln!(holdout_writer, "#   steps  expr").unwrap();
+    io_grl::write_grl_header(&mut holdout_writer,
+        &format!("BBµ holdouts: mode={mode_str}, size={size}, budget={}", args.max_steps)).unwrap();
 
     // Alias formatter for terminal output.
     let alias_db = alias_db_for_stdout(6, args.no_alias);
@@ -392,17 +393,17 @@ fn main() {
     }
 
     // Write halt file.
-    let halt_path = args.results_dir.join("halt.max.txt");
+    let halt_path = args.results_dir.join("halt.max.grl");
     let mut halt_w = BufWriter::new(
-        fs::File::create(&halt_path).expect("failed to create halt.max.txt")
+        fs::File::create(&halt_path).expect("failed to create halt.max.grl")
     );
-    writeln!(halt_w,
-        "# BBµ search: mode={mode_str}, size={size}, max_steps={}",
-        args.max_steps).unwrap();
-    writeln!(halt_w, "# top {} halting GRFs by score (raw GRF strings)", args.top_k).unwrap();
-    writeln!(halt_w, "#  {:>4}  {:>10}  {:>12}  expr", "rank", "score", "steps").unwrap();
-    for (rank, (score, steps, expr)) in acc.top_k.iter_desc().enumerate() {
-        writeln!(halt_w, "   {:>4}  {:>10}  {:>12}  {}", rank + 1, score, steps, expr).unwrap();
+    io_grl::write_grl_header(&mut halt_w,
+        &format!("BBµ search: mode={mode_str}, size={size}, budget={}, top-k={}",
+                 args.max_steps, args.top_k)).unwrap();
+    for (score, steps, expr) in acc.top_k.iter_desc() {
+        io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
+            expr: expr.clone(), status: Some(Status::Halt), steps: Some(*steps), score: Some(*score),
+        }).unwrap();
     }
     halt_w.flush().unwrap();
 
@@ -433,7 +434,7 @@ fn main() {
 
     println!();
     println!("Results written to {}/", args.results_dir.display());
-    println!("  halt.max.txt: {} entries", acc.top_k.entries.len());
-    println!("  holdout.txt:  {} entries", acc.holdouts);
+    println!("  halt.max.grl: {} entries", acc.top_k.entries.len());
+    println!("  holdout.grl:  {} entries", acc.holdouts);
     println!("  config.json");
 }

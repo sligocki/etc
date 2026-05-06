@@ -10,9 +10,11 @@
 ///   monotone_heuristic --max-val 20 --max-steps 100000 holdout.txt
 use clap::Parser;
 use gen_rec::grf::Grf;
+use gen_rec::io_grl::{self, GrfEntry};
 use gen_rec::mgrf::parse_mgrf_to_grfs;
 use gen_rec::simulate::simulate;
 use std::fs;
+use std::io::BufWriter;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -48,6 +50,10 @@ struct Args {
     /// Probe a single GRF expression and show detailed stride analysis.
     #[arg(long)]
     probe: Option<String>,
+
+    /// Write candidate (decreasing / hits-zero) GRFs to this file in .grl format.
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -124,6 +130,17 @@ fn process_file(path: &PathBuf, args: &Args) {
 
     let budget = if args.max_steps == 0 { u64::MAX } else { args.max_steps };
 
+    let mut out_writer: Option<BufWriter<fs::File>> = args.output.as_ref().map(|p| {
+        let f = fs::File::create(p).unwrap_or_else(|e| {
+            eprintln!("error creating output {}: {}", p.display(), e);
+            std::process::exit(1);
+        });
+        let mut w = BufWriter::new(f);
+        io_grl::write_grl_header(&mut w,
+            &format!("monotone_heuristic candidates from {}", path.display())).ok();
+        w
+    });
+
     let mut total        = 0usize;
     let mut n_hits_zero   = 0usize;
     let mut n_decreasing  = 0usize;
@@ -134,19 +151,8 @@ fn process_file(path: &PathBuf, args: &Args) {
 
     println!("=== {} ===", path.display());
 
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        // Line format: "STEPS  EXPR"
-        let mut parts = line.splitn(2, |c: char| c.is_whitespace());
-        let _steps = parts.next().unwrap_or("").trim();
-        let expr = match parts.next() {
-            Some(e) => e.trim(),
-            None => continue,
-        };
+    for entry in io_grl::parse_grf_entries(&content) {
+        let expr = &entry.expr;
 
         let grf: Grf = match expr.parse() {
             Ok(g) => g,
@@ -197,6 +203,16 @@ fn process_file(path: &PathBuf, args: &Args) {
                 timeout_lines.push(formatted);
             } else {
                 println!("{}", formatted);
+            }
+        }
+        if matches!(class, Class::HitsZero | Class::Decreasing) {
+            if let Some(ref mut w) = out_writer {
+                io_grl::write_grf_entry(w, &GrfEntry {
+                    expr: expr.to_string(),
+                    status: None,
+                    steps: entry.steps,
+                    score: None,
+                }).ok();
             }
         }
     }

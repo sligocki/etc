@@ -14,6 +14,7 @@
 use clap::Parser;
 use gen_rec::chaos_score::chaos_score;
 use gen_rec::grf::Grf;
+use gen_rec::io_grl;
 use gen_rec::mgrf::parse_mgrf_to_grfs;
 use gen_rec::simulate::simulate;
 use std::fs;
@@ -149,24 +150,8 @@ fn process_file(path: &PathBuf, args: &Args) {
     let mut entries: Vec<Entry> = Vec::new();
     let mut skipped = 0usize;
 
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        // Support two line formats:
-        //   "STEPS  M(expr)"  — holdout files with a leading step count
-        //   "M(expr)"         — plain expression-per-line (e.g. monotone-heuristic output)
-        let mut parts = line.splitn(2, |c: char| c.is_whitespace());
-        let first = parts.next().unwrap_or("").trim();
-        let expr = if first.parse::<u64>().is_ok() {
-            match parts.next() {
-                Some(e) => e.trim(),
-                None => continue,
-            }
-        } else {
-            line
-        };
+    for entry in io_grl::parse_grf_entries(&content) {
+        let expr = &entry.expr;
 
         let grf: Grf = match expr.parse() {
             Ok(g) => g,

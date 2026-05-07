@@ -45,6 +45,35 @@ impl MgrfFile {
         let ar = min_arity(&expanded, &self.arities_ctx)?;
         resolve(&expanded, ar, &self.grfs_ctx)
     }
+
+    /// Merge the evaluation contexts of all provided files into one `MgrfFile`.
+    ///
+    /// Later files win on name conflicts, so callers should pass files in
+    /// increasing-priority order.  The resulting file's `eval_expr` has all
+    /// named GRFs, num-macros, and GRF-macros from every input in scope at once.
+    pub fn merge(files: &[&MgrfFile]) -> MgrfFile {
+        let mut merged = MgrfFile {
+            defs:           Vec::new(),
+            tests:          Vec::new(),
+            grf_macro_defs: Vec::new(),
+            num_macro_defs: Vec::new(),
+            grfs_ctx:       HashMap::new(),
+            arities_ctx:    HashMap::new(),
+            num_macros_ctx: HashMap::new(),
+            grf_macros_ctx: HashMap::new(),
+        };
+        for f in files {
+            merged.defs.extend(f.defs.iter().cloned());
+            merged.tests.extend(f.tests.iter().cloned());
+            merged.grf_macro_defs.extend(f.grf_macro_defs.iter().cloned());
+            merged.num_macro_defs.extend(f.num_macro_defs.iter().cloned());
+            merged.grfs_ctx.extend(f.grfs_ctx.iter().map(|(k, v)| (k.clone(), v.clone())));
+            merged.arities_ctx.extend(f.arities_ctx.iter().map(|(k, v)| (k.clone(), *v)));
+            merged.num_macros_ctx.extend(f.num_macros_ctx.iter().map(|(k, v)| (k.clone(), v.clone())));
+            merged.grf_macros_ctx.extend(f.grf_macros_ctx.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        merged
+    }
 }
 
 // Internal AST for mgrf expressions before arity inference.
@@ -80,7 +109,7 @@ enum NumPattern {
 }
 
 // All cases for one num-macro name, tried top-to-bottom.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct NumMacroCases {
     cases: Vec<(NumPattern, Expr)>,
 }

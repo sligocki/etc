@@ -29,6 +29,7 @@ pub struct AliasDb {
     entries: Vec<Entry>,
     colored: bool,
     files: Vec<MgrfFile>,
+    merged: MgrfFile,
 }
 
 impl AliasDb {
@@ -117,7 +118,8 @@ impl AliasDb {
         // Largest-GRF-first: more specific (larger) aliases win over fragments.
         entries.sort_by_key(|e| Reverse(e.grf.size()));
 
-        Self { entries, colored, files }
+        let merged = MgrfFile::merge(&files.iter().collect::<Vec<_>>());
+        Self { entries, colored, files, merged }
     }
 
     /// Parse a mgrf expression, resolving alias names and macro families.
@@ -128,13 +130,18 @@ impl AliasDb {
     /// the expression cannot be parsed or resolved.
     pub fn resolve(&self, expr: &str) -> Result<Grf, String> {
         let expr = expr.trim();
+        // Try the merged context first so expressions that span multiple files
+        // (e.g. DiagS[RepSucc[Tri]] — macros from func_rep, names from base) work.
+        if let Ok(g) = self.merged.eval_expr(expr) {
+            return Ok(g);
+        }
         for file in &self.files {
             if let Ok(g) = file.eval_expr(expr) {
                 return Ok(g);
             }
         }
-        // Re-run first file to surface a useful parse/resolve error.
-        Err(self.files[0].eval_expr(expr).unwrap_err())
+        // Re-run merged to surface a useful error.
+        Err(self.merged.eval_expr(expr).unwrap_err())
     }
 
     /// Rewrite `grf` bottom-up, substituting every matching sub-expression

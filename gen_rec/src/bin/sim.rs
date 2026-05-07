@@ -91,11 +91,12 @@ fn run_min_with_progress(
                 SimResult::OutOfSteps => "?".to_string(),
             };
             eprintln!(
-                "[{}] elapsed={:.1}s  n={}  f(n)={}",
+                "[{}] elapsed={:.1}s  n={}  f(n)={}  steps={}",
                 Local::now().format("%H:%M:%S"),
                 start.elapsed().as_secs_f64(),
                 i,
                 f_val,
+                total_steps,
             );
             last_progress = Instant::now();
         }

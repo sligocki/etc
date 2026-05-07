@@ -48,11 +48,16 @@ pub struct SimOpts {
     /// search variable (1-indexed arg 1): evaluate `f(0, args)` once and return
     /// `Value(0)` if 0, or `Diverge` if non-zero (no i will ever satisfy f=0).
     pub min_fast_forward: bool,
+
+    /// When true (default), fuse `M(R(g,h))` into a single forward pass:
+    /// evaluate `acc=g(args)` once, then repeatedly apply `h(k,acc,args)`
+    /// until `acc=0`. Reduces O(n²) Min+Rec to O(n).
+    pub min_rec_fuse: bool,
 }
 
 impl Default for SimOpts {
     fn default() -> Self {
-        SimOpts { rec_fast_forward: true, min_fast_forward: true }
+        SimOpts { rec_fast_forward: true, min_fast_forward: true, min_rec_fuse: true }
     }
 }
 
@@ -74,6 +79,49 @@ impl Default for SimOpts {
 pub fn simulate(grf: &Grf, args: &[Num], max_steps: Num) -> (SimResult, Num) {
     let step_budget = if max_steps == 0 { None } else { Some(max_steps) };
     simulate_opts(grf, args, step_budget, SimOpts::default())
+}
+
+/// Evaluate `M(R(g,h))(args)` in a single forward pass.
+///
+/// Computes `acc = g(args)` once, then iterates `acc = h(k, acc, args)` until
+/// `acc = 0`, returning `Value(k+1)`. Returns `Value(0)` if the base case is
+/// already 0. `budget` is the remaining step allowance for this sub-computation.
+fn sim_min_rec_fuse(
+    rec_g: &Grf,
+    rec_h: &Grf,
+    args: &[Num],
+    budget: Option<Num>,
+    opts: SimOpts,
+) -> (SimResult, Num) {
+    let mut steps: Num = 0;
+
+    let (base, s) = simulate_opts(rec_g, args, budget, opts);
+    steps += s;
+    let mut acc = match base {
+        SimResult::Value(v) => v,
+        other => return (other, steps),
+    };
+
+    if acc == 0 {
+        return (SimResult::Value(0), steps);
+    }
+
+    let mut k: Num = 0;
+    loop {
+        let mut h_args: Vec<Num> = Vec::with_capacity(args.len() + 2);
+        h_args.push(k);
+        h_args.push(acc);
+        h_args.extend_from_slice(args);
+
+        let (result, s) = simulate_opts(rec_h, &h_args, budget.map(|b| b - steps), opts);
+        steps += s;
+        acc = match result {
+            SimResult::Value(0) => return (SimResult::Value(k + 1), steps),
+            SimResult::Value(v) => v,
+            other => return (other, steps),
+        };
+        k += 1;
+    }
 }
 
 /// Simulate with explicit options. See `SimOpts` and `simulate`.
@@ -203,6 +251,16 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
                     SimResult::Value(_) => (SimResult::Diverge, steps),
                     other => (other, steps),
                 };
+            }
+
+            // Fused M(R(g,h)): carry accumulator forward instead of restarting
+            // the recursion from scratch for each Min candidate.
+            if opts.min_rec_fuse {
+                if let Grf::Rec(rec_g, rec_h) = f.as_ref() {
+                    let (result, s) = sim_min_rec_fuse(rec_g, rec_h, args, step_budget.map(|b| b - steps), opts);
+                    steps += s;
+                    return (result, steps);
+                }
             }
 
             // M(f)(args) = min{i : f(i, args...) = 0}
@@ -363,7 +421,7 @@ mod tests {
     // --- rec_fast_forward tests ---
 
     fn no_ff() -> SimOpts {
-        SimOpts { rec_fast_forward: false, min_fast_forward: false }
+        SimOpts { rec_fast_forward: false, min_fast_forward: false, min_rec_fuse: false }
     }
 
     fn no_min_ff() -> SimOpts {
@@ -561,5 +619,56 @@ mod tests {
         let (_, steps_no) = simulate_opts(&grf, &[5], Some(100), no_min_ff());
         assert!(steps_ff < 20, "ff should resolve quickly, got {steps_ff}");
         assert!(steps_no >= 100, "no_ff should exhaust budget");
+    }
+
+    // --- min_rec_fuse tests ---
+
+    fn no_rec_fuse() -> SimOpts {
+        SimOpts { min_rec_fuse: false, ..SimOpts::default() }
+    }
+
+    #[test]
+    fn test_min_rec_fuse_base_zero() {
+        // M(R(Z0, Z2))(): g=Z0 (arity 0), h=Z2 (arity 2).
+        // Base: Z0()=0 → fuse detects immediately, returns Value(0).
+        let grf = grf!("M(R(Z0, Z2))");
+        assert_eq!(simulate(&grf, &[], 1_000_000).0, SimResult::Value(0));
+        assert_eq!(simulate_opts(&grf, &[], Some(1_000_000), no_rec_fuse()).0, SimResult::Value(0));
+    }
+
+    #[test]
+    fn test_min_rec_fuse_step_zero() {
+        // M(R(C(S,Z0), Z2))(): base=1, h=Z2 always returns 0.
+        // Fuse: acc=1 ≠ 0, k=0: h(0,1)=0 → return Value(1).
+        let grf = grf!("M(R(C(S,Z0), Z2))");
+        assert_eq!(simulate(&grf, &[], 1_000_000).0, SimResult::Value(1));
+        assert_eq!(simulate_opts(&grf, &[], Some(1_000_000), no_rec_fuse()).0, SimResult::Value(1));
+    }
+
+    #[test]
+    fn test_min_rec_fuse_correctness() {
+        // M(R(P(1,1), C(R(Z0,P(2,1)), P(3,2))))(x) = x.
+        // R counts down: base=x, step=pred(acc), reaches 0 at iteration x.
+        let grf = grf!("M(R(P(1,1), C(R(Z0,P(2,1)),P(3,2))))");
+        for x in 0u64..=10 {
+            let (r_fuse, _) = simulate(&grf, &[x], 1_000_000);
+            let (r_no, _) = simulate_opts(&grf, &[x], Some(1_000_000), no_rec_fuse());
+            assert_eq!(r_fuse, SimResult::Value(x), "fuse wrong at x={x}");
+            assert_eq!(r_no, SimResult::Value(x), "no_fuse wrong at x={x}");
+        }
+    }
+
+    #[test]
+    fn test_min_rec_fuse_fewer_steps() {
+        // Same GRF as above with x=50: naive is O(x²), fused is O(x).
+        let grf = grf!("M(R(P(1,1), C(R(Z0,P(2,1)),P(3,2))))");
+        let (r_fuse, steps_fuse) = simulate(&grf, &[50], 0);
+        let (r_no, steps_no) = simulate_opts(&grf, &[50], None, no_rec_fuse());
+        assert_eq!(r_fuse, SimResult::Value(50));
+        assert_eq!(r_no, SimResult::Value(50));
+        assert!(
+            steps_fuse * 10 < steps_no,
+            "fuse should use far fewer steps: fuse={steps_fuse}, no_fuse={steps_no}"
+        );
     }
 }

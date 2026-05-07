@@ -119,7 +119,8 @@ fn main() {
             continue;
         }
 
-        let (result, steps_taken) = simulate(&grf, &[], max_steps);
+        let (result, sim_steps) = simulate(&grf, &[], max_steps);
+        let steps_taken = sim_steps.sim;
         total_steps += steps_taken;
         n_total += 1;
 

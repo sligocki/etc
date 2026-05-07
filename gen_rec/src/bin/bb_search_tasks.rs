@@ -356,7 +356,8 @@ impl Acc {
 fn flush_batch(batch: &mut Vec<(usize, Grf)>, config: &Config, acc: &mut Acc) {
     for (rank, grf) in batch.drain(..) {
         let expr = grf.to_string();
-        let (sim_result, steps) = simulate(&grf, &[], config.max_steps);
+        let (sim_result, sim_steps) = simulate(&grf, &[], config.max_steps);
+        let steps = sim_steps.sim;
         let score = sim_result.into_value();
 
         acc.total_grfs += 1;
@@ -597,7 +598,8 @@ fn cmd_sim(args: SimArgs) {
         args.count,
         &mut |grf: &Grf| {
             let expr = grf.to_string();
-            let (sim_result, steps) = simulate(grf, &[], max_steps);
+            let (sim_result, sim_steps) = simulate(grf, &[], max_steps);
+            let steps = sim_steps.sim;
             match sim_result.into_value() {
                 None => println!("rank={rank:>12}  unknown(over_steps)  steps={steps}  {expr}"),
                 Some(s) => println!("rank={rank:>12}  halted  score={s}  steps={steps}  {expr}"),

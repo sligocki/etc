@@ -35,6 +35,37 @@ impl SimResult {
     }
 }
 
+/// Step counts returned by simulation functions.
+///
+/// `sim` is the number of evaluation steps actually taken (with all enabled optimizations).
+/// `base_approx` approximates what `no_ff` (unoptimized) simulation would have counted;
+/// it is exact for most code paths and an approximation for the acc-ignored `rec_fast_forward`
+/// case (which skips re-evaluating g, so its exact base cost would require re-doing the
+/// full loop and defeating the optimization).
+///
+/// **Invariant:** for any run with `no_ff()`, `sim == base_approx`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimSteps {
+    pub sim: Num,
+    pub base_approx: Num,
+}
+
+impl SimSteps {
+    fn zero() -> Self {
+        SimSteps { sim: 0, base_approx: 0 }
+    }
+    fn one() -> Self {
+        SimSteps { sim: 1, base_approx: 1 }
+    }
+}
+
+impl std::ops::AddAssign<SimSteps> for SimSteps {
+    fn add_assign(&mut self, rhs: SimSteps) {
+        self.sim += rhs.sim;
+        self.base_approx += rhs.base_approx;
+    }
+}
+
 /// Options controlling simulation behavior.
 #[derive(Clone, Copy, Debug)]
 pub struct SimOpts {
@@ -76,7 +107,7 @@ impl Default for SimOpts {
 ///
 /// Uses `SimOpts::default()` (rec_fast_forward enabled). Use `simulate_opts` to
 /// disable the optimization, e.g. for benchmarking or step-count tests.
-pub fn simulate(grf: &Grf, args: &[Num], max_steps: Num) -> (SimResult, Num) {
+pub fn simulate(grf: &Grf, args: &[Num], max_steps: Num) -> (SimResult, SimSteps) {
     let step_budget = if max_steps == 0 { None } else { Some(max_steps) };
     simulate_opts(grf, args, step_budget, SimOpts::default())
 }
@@ -96,14 +127,14 @@ pub fn simulate_min<F>(
     step_budget: Option<Num>,
     opts: SimOpts,
     on_iter: &mut F,
-) -> (SimResult, Num)
+) -> (SimResult, SimSteps)
 where
-    F: FnMut(Num, &SimResult, Num),
+    F: FnMut(Num, &SimResult, SimSteps),
 {
     if step_budget == Some(0) {
-        return (SimResult::OutOfSteps, 0);
+        return (SimResult::OutOfSteps, SimSteps::zero());
     }
-    let mut steps: Num = 1; // cost of the Min node
+    let mut steps = SimSteps::one(); // cost of the Min node
 
     if f.is_never_zero() {
         return (SimResult::Diverge, steps);
@@ -114,8 +145,9 @@ where
         let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
         f_args.push(0);
         f_args.extend_from_slice(args);
-        let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
+        let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps.sim), opts);
         steps += s;
+        // base_approx: base loop also evaluates f(0, args) first; no extra steps.
         return match result {
             SimResult::Value(0) => (SimResult::Value(0), steps),
             SimResult::Value(_) => (SimResult::Diverge, steps),
@@ -128,8 +160,9 @@ where
         let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
         f_args.push(0);
         f_args.extend_from_slice(args);
-        let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
+        let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps.sim), opts);
         steps += s;
+        // base_approx: base loop also evaluates f(0, args) first; no extra steps.
         return match result {
             SimResult::Value(0) => (SimResult::Value(0), steps),
             SimResult::Value(_) => (SimResult::Diverge, steps),
@@ -141,30 +174,48 @@ where
     // the recursion from scratch for each Min candidate.
     if opts.min_rec_fuse {
         if let Grf::Rec(rec_g, rec_h) = f {
-            let (base, s) = simulate_opts(rec_g, args, step_budget.map(|b| b - steps), opts);
-            steps += s;
+            let (base, s_g) = simulate_opts(rec_g, args, step_budget.map(|b| b - steps.sim), opts);
+            let sg = s_g.base_approx;
+            steps += s_g;
             let mut acc = match base {
                 SimResult::Value(v) => v,
                 other => return (other, steps),
             };
 
             if acc == 0 {
+                // Unoptimized would evaluate R(g,h)(0,args) = 1(Rec) + g(args).
+                // Fused only evaluated g(args), so base_extra = 1 (skipped Rec node).
+                steps.base_approx += 1;
                 return (SimResult::Value(0), steps);
             }
 
             let mut k: Num = 0;
+            let mut sum_h: Num = 0;   // Σ sh_k.base_approx
+            let mut k_sum_h: Num = 0; // Σ k * sh_k.base_approx
+
             loop {
                 let mut h_args: Vec<Num> = Vec::with_capacity(args.len() + 2);
                 h_args.push(k);
                 h_args.push(acc);
                 h_args.extend_from_slice(args);
 
-                let (result, s) = simulate_opts(rec_h, &h_args, step_budget.map(|b| b - steps), opts);
-                steps += s;
+                let (result, s_h) = simulate_opts(rec_h, &h_args, step_budget.map(|b| b - steps.sim), opts);
+                let sh_base = s_h.base_approx;
+                steps += s_h;
+                sum_h += sh_base;
+                k_sum_h += k * sh_base;
+
                 match result {
                     SimResult::Value(v) => {
                         on_iter(k + 1, &SimResult::Value(v), steps);
                         if v == 0 {
+                            let n = k + 1;
+                            // Exact base_extra derivation:
+                            //   unoptimized M(R(g,h)) at result n = 1 + Σᵢ₌₀ⁿ (1+sg + Σⱼ<ᵢ shⱼ)
+                            // formula: (n+1) + n*sg + (n-1)*sum_h - k_sum_h
+                            // rewritten to avoid u64 underflow: (n+1) + n*(sg+sum_h) - sum_h - k_sum_h
+                            let base_extra = (n + 1) + n * (sg + sum_h) - sum_h - k_sum_h;
+                            steps.base_approx += base_extra;
                             return (SimResult::Value(k + 1), steps);
                         }
                         acc = v;
@@ -179,7 +230,7 @@ where
     // General loop: M(f)(args) = min{i : f(i, args...) = 0}
     let mut i: Num = 0;
     loop {
-        let remaining = step_budget.map(|b| b.saturating_sub(steps));
+        let remaining = step_budget.map(|b| b.saturating_sub(steps.sim));
         if remaining == Some(0) {
             return (SimResult::OutOfSteps, steps);
         }
@@ -203,11 +254,11 @@ where
 /// `step_budget` is the total number of steps available for this call and all
 /// its sub-calls. `None` means unlimited. The returned step count is how many
 /// steps were consumed.
-pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: SimOpts) -> (SimResult, Num) {
+pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: SimOpts) -> (SimResult, SimSteps) {
     if step_budget == Some(0) {
-        return (SimResult::OutOfSteps, 0);
+        return (SimResult::OutOfSteps, SimSteps::zero());
     }
-    let mut steps: Num = 1; // cost of this call
+    let mut steps = SimSteps::one(); // cost of this call
 
     let result = match grf {
         Grf::Zero(_) => SimResult::Value(0),
@@ -220,14 +271,14 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
             // Evaluate each gi(args), collecting results as new arg list for h.
             let mut h_args: Vec<Num> = Vec::with_capacity(gs.len());
             for g in gs.iter() {
-                let (result, s) = simulate_opts(g, args, step_budget.map(|b| b - steps), opts);
+                let (result, s) = simulate_opts(g, args, step_budget.map(|b| b - steps.sim), opts);
                 steps += s;
                 match result {
                     SimResult::Value(v) => h_args.push(v),
                     other => return (other, steps),
                 }
             }
-            let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps), opts);
+            let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps.sim), opts);
             steps += s;
             result
         }
@@ -252,21 +303,27 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
                     h_args.push(n - 1);
                     h_args.push(0); // accumulator: ignored by h, value is arbitrary
                     h_args.extend_from_slice(rest);
-                    let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps), opts);
+                    let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps.sim), opts);
+                    let sh_base = s.base_approx;
                     steps += s;
+                    // Lower bound: unoptimized does g(rest) + (n-1) more h calls.
+                    // Missing: cost of g (sg). Underestimates by sg.
+                    steps.base_approx += (n - 1) * sh_base;
                     return (result, steps);
                 }
 
                 // If h = Proj(_, 2), every iteration returns the
                 // accumulator unchanged, so R(g, Proj(_, 2))(n, rest) = g(rest).
                 if let Grf::Proj(_, 2) = h.as_ref() {
-                    let (result, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps), opts);
+                    let (result, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps.sim), opts);
                     steps += s;
+                    // Exact: unoptimized would do n additional Proj calls (each cost 1).
+                    steps.base_approx += n;
                     return (result, steps);
                 }
             }
 
-            let (base, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps), opts);
+            let (base, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps.sim), opts);
             steps += s;
             let mut acc = match base {
                 SimResult::Value(v) => v,
@@ -279,7 +336,7 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
                 h_args.push(acc);
                 h_args.extend_from_slice(rest);
 
-                let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps), opts);
+                let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps.sim), opts);
                 steps += s;
                 acc = match result {
                     SimResult::Value(v) => v,
@@ -394,19 +451,19 @@ mod tests {
         let f = Grf::Min(Box::new(Grf::Succ));
         let (result, steps) = simulate(&f, &[], 1000);
         assert_eq!(result, SimResult::Diverge);
-        assert!(steps < 10, "is_never_zero should short-circuit, got {steps} steps");
+        assert!(steps.sim < 10, "is_never_zero should short-circuit, got {} steps", steps.sim);
     }
 
     #[test]
     fn test_step_counting() {
         // Z0(): 1 step
         let (_, steps) = simulate(&Grf::Zero(0), &[], 1_000_000);
-        assert_eq!(steps, 1);
+        assert_eq!(steps.sim, 1);
 
         // C(S, Z0)(): simulate_opts(C) = 1, simulate_opts(Z0) = 1, simulate_opts(S) = 1 → 3 steps
         let f = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
         let (_, steps) = simulate(&f, &[], 1_000_000);
-        assert_eq!(steps, 3);
+        assert_eq!(steps.sim, 3);
     }
 
     #[test]
@@ -418,7 +475,7 @@ mod tests {
         let r = Grf::Rec(Box::new(g), Box::new(h));
         let (val, steps) = simulate(&r, &[3], 1_000_000);
         assert_eq!(val.into_value(), Some(0));
-        assert_eq!(steps, 2);
+        assert_eq!(steps.sim, 2);
     }
 
     #[test]
@@ -429,7 +486,7 @@ mod tests {
         let r = Grf::Rec(Box::new(g), Box::new(h));
         let (result, steps) = simulate(&r, &[1_000_000], 100);
         assert!(matches!(result, SimResult::OutOfSteps));
-        assert!(steps >= 100);
+        assert!(steps.sim >= 100);
     }
 
     // --- rec_fast_forward tests ---
@@ -489,8 +546,8 @@ mod tests {
         // Without fast-forward: O(n^2). With: O(1). Confirm dramatically fewer steps.
         // Difference is really 3 vs 501502 !
         assert!(
-            steps_ff < steps_no / n,
-            "expected fast-forward to use far fewer steps: ff={steps_ff}, no_ff={steps_no}"
+            steps_ff.sim < steps_no.sim / n,
+            "expected fast-forward to use far fewer steps: ff={}, no_ff={}", steps_ff.sim, steps_no.sim
         );
     }
 
@@ -508,8 +565,9 @@ mod tests {
         }
         let (_, steps_ff) = simulate(&r, &[3], 1_000_000);
         let (_, steps_no) = simulate_opts(&r, &[3], Some(1_000_000), no_ff());
-        assert_eq!(steps_ff, 2, "ff should skip the loop");
-        assert_eq!(steps_no, 5);
+        assert_eq!(steps_ff.sim, 2, "ff should skip the loop");
+        assert_eq!(steps_no.sim, 5);
+        assert_eq!(steps_ff.base_approx, steps_no.base_approx);
     }
 
     #[test]
@@ -537,7 +595,7 @@ mod tests {
             let (v_no, steps_no) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
             assert_eq!(v_ff.into_value(), Some(n), "ff wrong at n={n}");
             assert_eq!(v_no.into_value(), Some(n), "no_ff wrong at n={n}");
-            assert_eq!(steps_ff, steps_no, "neither ff should fire at n={n}");
+            assert_eq!(steps_ff.sim, steps_no.sim, "neither ff should fire at n={n}");
         }
     }
 
@@ -598,8 +656,8 @@ mod tests {
         let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
         let (_, steps_ff) = simulate(&f, &[3], 0);
         let (_, steps_no) = simulate_opts(&f, &[3], Some(100), no_min_ff());
-        assert!(steps_ff < 10, "ff should use very few steps, got {steps_ff}");
-        assert!(steps_no >= 100, "no_ff should exhaust budget");
+        assert!(steps_ff.sim < 10, "ff should use very few steps, got {}", steps_ff.sim);
+        assert!(steps_no.sim >= 100, "no_ff should exhaust budget");
     }
 
     #[test]
@@ -626,13 +684,14 @@ mod tests {
 
     #[test]
     fn test_min_pos_arg1_fewer_steps() {
+        // Divergent result
         // Without the fast-forward, M(R(P(1,1),C(S,P(3,2))))(5) exhausts step budget.
         // The body is add(i,5)=i+5, so the loop needs many Rec evaluations.
         let grf = grf!("M(R(P(1,1), C(S, P(3,2))))");
         let (_, steps_ff) = simulate(&grf, &[5], 0);
         let (_, steps_no) = simulate_opts(&grf, &[5], Some(100), no_min_ff());
-        assert!(steps_ff < 20, "ff should resolve quickly, got {steps_ff}");
-        assert!(steps_no >= 100, "no_ff should exhaust budget");
+        assert!(steps_ff.sim < 20, "ff should resolve quickly, got {}", steps_ff.sim);
+        assert!(steps_no.sim >= 100, "no_ff should exhaust budget");
     }
 
     // --- min_rec_fuse tests ---
@@ -665,10 +724,12 @@ mod tests {
         // R counts down: base=x, step=pred(acc), reaches 0 at iteration x.
         let grf = grf!("M(R(P(1,1), C(R(Z0,P(2,1)),P(3,2))))");
         for x in 0u64..=10 {
-            let (r_fuse, _) = simulate(&grf, &[x], 1_000_000);
-            let (r_no, _) = simulate_opts(&grf, &[x], Some(1_000_000), no_rec_fuse());
+            let (r_fuse, steps_fuse) = simulate(&grf, &[x], 1_000_000);
+            let (r_no, steps_no) = simulate_opts(&grf, &[x], Some(1_000_000), no_rec_fuse());
             assert_eq!(r_fuse, SimResult::Value(x), "fuse wrong at x={x}");
             assert_eq!(r_no, SimResult::Value(x), "no_fuse wrong at x={x}");
+            assert!(steps_fuse.sim < steps_no.sim);
+            assert_eq!(steps_fuse.base_approx, steps_no.base_approx);
         }
     }
 
@@ -681,8 +742,74 @@ mod tests {
         assert_eq!(r_fuse, SimResult::Value(50));
         assert_eq!(r_no, SimResult::Value(50));
         assert!(
-            steps_fuse * 10 < steps_no,
-            "fuse should use far fewer steps: fuse={steps_fuse}, no_fuse={steps_no}"
+            steps_fuse.sim * 10 < steps_no.sim,
+            "fuse should use far fewer steps: fuse={}, no_fuse={}", steps_fuse.sim, steps_no.sim
         );
+        assert_eq!(steps_fuse.base_approx, steps_no.base_approx);
+    }
+
+    // --- base_approx tests ---
+
+    #[test]
+    fn test_base_approx_no_ff_invariant() {
+        // With no_ff(), sim == base_approx for any GRF (no optimizations fire).
+        let (_, s) = simulate_opts(&grf!("R(Z0,C(S,P(3,2)))"), &[5], None, no_ff());
+        assert_eq!(s.sim, s.base_approx, "R: sim={} base={}", s.sim, s.base_approx);
+        let (_, s) = simulate_opts(&grf!("M(R(P(1,1),C(R(Z0,P(2,1)),P(3,2))))"), &[5], None, no_ff());
+        assert_eq!(s.sim, s.base_approx, "M(R): sim={} base={}", s.sim, s.base_approx);
+    }
+
+    #[test]
+    fn test_base_approx_proj_identity_rec() {
+        // R(Z0, P(2,2))(3): Proj-identity ff fires → sim=2, base_approx=5 (2 + 3 Proj calls).
+        let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 2));
+        let (_, s) = simulate(&r, &[3], 0);
+        assert_eq!(s.sim, 2, "sim steps");
+        assert_eq!(s.base_approx, 5, "base_approx steps");
+        let (_, s_noff) = simulate_opts(&r, &[3], None, no_ff());
+        assert_eq!(s.base_approx, s_noff.sim, "base_approx should match no_ff sim");
+    }
+
+    #[test]
+    fn test_base_approx_min_rec_fuse_exact() {
+        // M(R(C(S,Z0), Z2))(): g()=1, h(k,acc)=0 (atom, no inner Rec → base_approx exact).
+        // Fused: acc=1, k=0: h returns 0 → result=1. One loop iteration.
+        let grf_0 = grf!("M(R(C(S,Z0), Z2))");
+        let (_, s) = simulate(&grf_0, &[], 0);
+        let (_, s_noff) = simulate_opts(&grf_0, &[], None, no_ff());
+        assert_eq!(s.base_approx, s_noff.sim, "M(R(C(S,Z0),Z2)): base_approx={} no_ff={}", s.base_approx, s_noff.sim);
+
+        // M(R(Z0, Z2))(): g()=0 → base case, acc=0 immediately, result=0.
+        // base_extra = 1 (skipped Rec node for i=0).
+        let grf_base = grf!("M(R(Z0, Z2))");
+        let (_, s2) = simulate(&grf_base, &[], 0);
+        let (_, s2_noff) = simulate_opts(&grf_base, &[], None, no_ff());
+        assert_eq!(s2.base_approx, s2_noff.sim, "M(R(Z0,Z2)) base case: base_approx={} no_ff={}", s2.base_approx, s2_noff.sim);
+
+        // For the GRF from the plan M(R(P(1,1),C(R(Z0,P(2,1)),P(3,2)))):
+        // x=0 is exact (acc=0 base case, inner h never evaluated).
+        // x>0 is a lower bound because h contains acc-ignored rec_ff inside R(Z0,P(2,1)).
+        let grf_plan = grf!("M(R(P(1,1),C(R(Z0,P(2,1)),P(3,2))))");
+        let (_, s3) = simulate(&grf_plan, &[0], 0);
+        let (_, s3_noff) = simulate_opts(&grf_plan, &[0], None, no_ff());
+        assert_eq!(s3.base_approx, s3_noff.sim, "x=0 exact: base_approx={} no_ff={}", s3.base_approx, s3_noff.sim);
+        for x in 1u64..=10 {
+            let (_, sx) = simulate(&grf_plan, &[x], 0);
+            let (_, sx_noff) = simulate_opts(&grf_plan, &[x], None, no_ff());
+            assert!(sx.base_approx >= sx.sim, "x={x}: base_approx must be >= sim");
+            assert!(sx.base_approx <= sx_noff.sim, "x={x}: base_approx={} must be <= no_ff={}", sx.base_approx, sx_noff.sim);
+        }
+    }
+
+    #[test]
+    fn test_base_approx_rec_acc_ignored_lower_bound() {
+        // R(Z0, P(2,1))(5): acc-ignored ff fires.
+        // sim is small; base_approx >= sim; base_approx < no_ff.sim (missing sg).
+        let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 1));
+        let (_, s) = simulate(&r, &[5], 0);
+        let (_, s_noff) = simulate_opts(&r, &[5], None, no_ff());
+        assert!(s.base_approx >= s.sim, "base_approx must be >= sim");
+        assert!(s.base_approx < s_noff.sim,
+            "base_approx={} should be < no_ff.sim={} (lower bound)", s.base_approx, s_noff.sim);
     }
 }

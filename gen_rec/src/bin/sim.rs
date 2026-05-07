@@ -14,7 +14,7 @@ use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::grf::Grf;
 use gen_rec::io_table::print_sweep_table;
-use gen_rec::simulate::{simulate, simulate_min, SimOpts, SimResult};
+use gen_rec::simulate::{simulate, simulate_min, SimOpts, SimResult, SimSteps};
 
 #[derive(Parser, Debug)]
 #[command(about = "Simulate a single GRF expression")]
@@ -101,7 +101,7 @@ fn main() {
             let step_budget = if args.max_steps == 0 { None } else { Some(args.max_steps) };
             let start = Instant::now();
             let mut last_progress = Instant::now();
-            simulate_min(f, &concrete, step_budget, SimOpts::default(), &mut |n, result, total_steps| {
+            simulate_min(f, &concrete, step_budget, SimOpts::default(), &mut |n, result, total_steps: SimSteps| {
                 if last_progress.elapsed() >= Duration::from_secs(5) {
                     let f_val = match result {
                         SimResult::Value(v) => v.to_string(),
@@ -109,12 +109,13 @@ fn main() {
                         SimResult::OutOfSteps => "?".to_string(),
                     };
                     eprintln!(
-                        "[{}] elapsed={:.1}s  n={}  f(n)={}  steps={}",
+                        "[{}] elapsed={:.1}s  n={}  f(n)={}  steps={}  base={}",
                         Local::now().format("%H:%M:%S"),
                         start.elapsed().as_secs_f64(),
                         n,
                         f_val,
-                        total_steps,
+                        total_steps.sim,
+                        total_steps.base_approx,
                     );
                     last_progress = Instant::now();
                 }
@@ -123,11 +124,11 @@ fn main() {
             simulate(&grf, &concrete, args.max_steps)
         };
         match result {
-            SimResult::Value(v) => println!("result: {}  ({} steps)", v, steps),
-            SimResult::Diverge => println!("result: diverges  ({} steps)", steps),
+            SimResult::Value(v) => println!("result: {}  ({} steps, {} base)", v, steps.sim, steps.base_approx),
+            SimResult::Diverge => println!("result: diverges  ({} steps)", steps.sim),
             SimResult::OutOfSteps => {
                 let limit = if args.max_steps == 0 { "unlimited".to_string() } else { args.max_steps.to_string() };
-                println!("result: timed out after {} steps (limit: {})", steps, limit);
+                println!("result: timed out after {} steps (limit: {})", steps.sim, limit);
             }
         }
         return;

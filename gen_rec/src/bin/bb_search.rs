@@ -5,7 +5,7 @@ use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
-use gen_rec::simulate::{simulate, Num, SimResult};
+use gen_rec::simulate::{simulate, Num, SimResult, SimSteps};
 use rayon::prelude::*;
 use std::fs;
 use std::io::{BufWriter, Write};
@@ -151,7 +151,7 @@ struct BatchResult {
 fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
     // Strings not allocated in worker threads — avoids macOS nano-zone
     // cross-thread free errors ("pointer being freed was not allocated").
-    let outcomes: Vec<(SimResult, u64)> = batch
+    let outcomes: Vec<(SimResult, SimSteps)> = batch
         .par_iter()
         .map(|grf| simulate(grf, &[], max_steps))
         .collect();
@@ -161,7 +161,8 @@ fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
     let mut diverged = 0usize;
     let mut total_steps = 0u64;
 
-    for (idx, (result, steps)) in outcomes.into_iter().enumerate() {
+    for (idx, (result, sim_steps)) in outcomes.into_iter().enumerate() {
+        let steps = sim_steps.sim;
         total_steps += steps;
         match result {
             SimResult::OutOfSteps => holdouts.push((steps, batch[idx].to_string())),

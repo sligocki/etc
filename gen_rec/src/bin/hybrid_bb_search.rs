@@ -76,8 +76,8 @@ fn process_batch(batch: &[Grf], max_steps: u64) -> BatchResult {
     let outcomes: Vec<(Option<Num>, u64, String)> = batch
         .par_iter()
         .map(|grf| {
-            let (result, steps) = simulate(grf, &[], max_steps);
-            (result.into_value(), steps, grf.to_string())
+            let (result, sim_steps) = simulate(grf, &[], max_steps);
+            (result.into_value(), sim_steps.sim, grf.to_string())
         })
         .collect();
 

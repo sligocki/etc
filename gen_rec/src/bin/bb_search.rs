@@ -72,10 +72,10 @@ struct Args {
 // ---------------------------------------------------------------------------
 
 /// Tracks the top-K individual halting GRFs by score.
-/// Entries are (score, steps, raw_expr) sorted ascending; best at end.
+/// Entries are (score, steps, base_steps, raw_expr) sorted ascending; best at end.
 struct TopK {
     k: usize,
-    entries: Vec<(Num, u64, String)>,
+    entries: Vec<(Num, u64, u64, String)>,
 }
 
 impl TopK {
@@ -84,27 +84,27 @@ impl TopK {
     }
 
     fn best_score(&self) -> Option<Num> {
-        self.entries.last().map(|(s, _, _)| *s)
+        self.entries.last().map(|(s, _, _, _)| *s)
     }
 
-    fn insert(&mut self, score: Num, steps: u64, expr: String) {
+    fn insert(&mut self, score: Num, steps: u64, base_steps: u64, expr: String) {
         if self.entries.len() >= self.k && score < self.entries[0].0 {
             return;
         }
-        let pos = self.entries.partition_point(|(s, _, _)| *s < score);
-        self.entries.insert(pos, (score, steps, expr));
+        let pos = self.entries.partition_point(|(s, _, _, _)| *s < score);
+        self.entries.insert(pos, (score, steps, base_steps, expr));
         if self.entries.len() > self.k {
             self.entries.remove(0);
         }
     }
 
     fn merge_from(&mut self, other: TopK) {
-        for (score, steps, expr) in other.entries {
-            self.insert(score, steps, expr);
+        for (score, steps, base_steps, expr) in other.entries {
+            self.insert(score, steps, base_steps, expr);
         }
     }
 
-    fn iter_desc(&self) -> impl Iterator<Item = &(Num, u64, String)> {
+    fn iter_desc(&self) -> impl Iterator<Item = &(Num, u64, u64, String)> {
         self.entries.iter().rev()
     }
 }
@@ -167,7 +167,7 @@ fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
         match result {
             SimResult::OutOfSteps => holdouts.push((steps, batch[idx].to_string())),
             SimResult::Diverge => diverged += 1,
-            SimResult::Value(v) => top_k.insert(v, steps, batch[idx].to_string()),
+            SimResult::Value(v) => top_k.insert(v, steps, sim_steps.base_approx, batch[idx].to_string()),
         }
     }
     BatchResult { top_k, holdouts, diverged, total_steps }
@@ -196,7 +196,7 @@ fn flush_batch<W: Write>(
     }
     for (steps, expr) in br.holdouts {
         io_grl::write_grf_entry(holdout_w, &GrfEntry {
-            expr, status: Some(Status::Unknown), steps: Some(steps), score: None,
+            expr, status: Some(Status::Unknown), steps: Some(steps), base_steps: None, score: None,
         }).unwrap();
     }
     acc.top_k.merge_from(br.top_k);
@@ -388,7 +388,7 @@ fn main() {
     }
 
     const TERMINAL_DISPLAY: usize = 10;
-    for (rank, (score, steps, expr)) in acc.top_k.iter_desc().enumerate() {
+    for (rank, (score, steps, _base_steps, expr)) in acc.top_k.iter_desc().enumerate() {
         if rank >= TERMINAL_DISPLAY { break; }
         println!("  #{}: score={}  steps={}  {}", rank + 1, score, fmt_si(*steps), fmt_alias(expr));
     }
@@ -401,9 +401,10 @@ fn main() {
     io_grl::write_grl_header(&mut halt_w,
         &format!("BBµ search: mode={mode_str}, size={size}, budget={}, top-k={}",
                  args.max_steps, args.top_k)).unwrap();
-    for (score, steps, expr) in acc.top_k.iter_desc() {
+    for (score, steps, base_steps, expr) in acc.top_k.iter_desc() {
         io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
-            expr: expr.clone(), status: Some(Status::Halt), steps: Some(*steps), score: Some(*score),
+            expr: expr.clone(), status: Some(Status::Halt),
+            steps: Some(*steps), base_steps: Some(*base_steps), score: Some(*score),
         }).unwrap();
     }
     halt_w.flush().unwrap();

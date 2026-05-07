@@ -10,9 +10,9 @@
 ///   monotone_heuristic --max-val 20 --max-steps 100000 holdout.txt
 use clap::Parser;
 use gen_rec::grf::Grf;
-use gen_rec::io_grl::{self, GrfEntry};
+use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::mgrf::parse_mgrf_to_grfs;
-use gen_rec::simulate::simulate;
+use gen_rec::simulate::{simulate, SimResult};
 use std::fs;
 use std::io::BufWriter;
 use std::path::PathBuf;
@@ -211,6 +211,7 @@ fn process_file(path: &PathBuf, args: &Args) {
                     expr: expr.to_string(),
                     status: None,
                     steps: entry.steps,
+                    base_steps: None,
                     score: None,
                 }).ok();
             }

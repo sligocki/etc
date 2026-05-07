@@ -124,28 +124,29 @@ fn main() {
         total_steps += steps_taken;
         n_total += 1;
 
-        let (out_status, out_score) = match result {
+        let (out_status, out_score, out_base_steps) = match result {
             gen_rec::simulate::SimResult::Value(v) => {
                 n_halted += 1;
                 if v > max_score { max_score = v; }
                 if steps_taken > max_halt_steps { max_halt_steps = steps_taken; }
-                (Status::Halt, Some(v))
+                (Status::Halt, Some(v), Some(sim_steps.base_approx))
             }
             gen_rec::simulate::SimResult::Diverge => {
                 n_diverged += 1;
-                (Status::Diverge, None)
+                (Status::Diverge, None, None)
             }
             gen_rec::simulate::SimResult::OutOfSteps => {
                 n_holdouts += 1;
-                (Status::Unknown, None)
+                (Status::Unknown, None, None)
             }
         };
 
         io_grl::write_grf_entry(&mut out, &GrfEntry {
-            expr:   entry.expr,
-            status: Some(out_status),
-            steps:  Some(steps_taken),
-            score:  out_score,
+            expr:       entry.expr,
+            status:     Some(out_status),
+            steps:      Some(steps_taken),
+            base_steps: out_base_steps,
+            score:      out_score,
         }).unwrap();
 
         // Progress report.

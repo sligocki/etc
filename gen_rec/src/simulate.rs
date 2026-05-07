@@ -81,46 +81,120 @@ pub fn simulate(grf: &Grf, args: &[Num], max_steps: Num) -> (SimResult, Num) {
     simulate_opts(grf, args, step_budget, SimOpts::default())
 }
 
-/// Evaluate `M(R(g,h))(args)` in a single forward pass.
+/// Simulate `M(f)(args)`, applying all Min optimizations, calling `on_iter`
+/// after each candidate evaluation in the general or fused loop.
 ///
-/// Computes `acc = g(args)` once, then iterates `acc = h(k, acc, args)` until
-/// `acc = 0`, returning `Value(k+1)`. Returns `Value(0)` if the base case is
-/// already 0. `budget` is the remaining step allowance for this sub-computation.
-fn sim_min_rec_fuse(
-    rec_g: &Grf,
-    rec_h: &Grf,
+/// `on_iter(n, result, steps_so_far)` fires after evaluating `f` at search
+/// index `n` (or its fused-Rec equivalent). Fast-forward paths that return
+/// without iterating do not fire `on_iter`. Suitable for progress-reporting
+/// wrappers; pass `&mut |_, _, _| {}` for the no-op case.
+///
+/// `step_budget` and `opts` follow the same semantics as [`simulate_opts`].
+pub fn simulate_min<F>(
+    f: &Grf,
     args: &[Num],
-    budget: Option<Num>,
+    step_budget: Option<Num>,
     opts: SimOpts,
-) -> (SimResult, Num) {
-    let mut steps: Num = 0;
+    on_iter: &mut F,
+) -> (SimResult, Num)
+where
+    F: FnMut(Num, &SimResult, Num),
+{
+    if step_budget == Some(0) {
+        return (SimResult::OutOfSteps, 0);
+    }
+    let mut steps: Num = 1; // cost of the Min node
 
-    let (base, s) = simulate_opts(rec_g, args, budget, opts);
-    steps += s;
-    let mut acc = match base {
-        SimResult::Value(v) => v,
-        other => return (other, steps),
-    };
-
-    if acc == 0 {
-        return (SimResult::Value(0), steps);
+    if f.is_never_zero() {
+        return (SimResult::Diverge, steps);
     }
 
-    let mut k: Num = 0;
-    loop {
-        let mut h_args: Vec<Num> = Vec::with_capacity(args.len() + 2);
-        h_args.push(k);
-        h_args.push(acc);
-        h_args.extend_from_slice(args);
-
-        let (result, s) = simulate_opts(rec_h, &h_args, budget.map(|b| b - steps), opts);
+    // Fast-forward: f ignores its search variable (1-indexed arg 1).
+    if opts.min_fast_forward && !f.used_args().contains(&1) {
+        let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
+        f_args.push(0);
+        f_args.extend_from_slice(args);
+        let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
         steps += s;
-        acc = match result {
-            SimResult::Value(0) => return (SimResult::Value(k + 1), steps),
-            SimResult::Value(v) => v,
-            other => return (other, steps),
+        return match result {
+            SimResult::Value(0) => (SimResult::Value(0), steps),
+            SimResult::Value(_) => (SimResult::Diverge, steps),
+            other => (other, steps),
         };
-        k += 1;
+    }
+
+    // Fast-forward: f(i, args) > 0 whenever i > 0, so only i=0 is a candidate.
+    if opts.min_fast_forward && f.is_positive_for_pos_arg(1) {
+        let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
+        f_args.push(0);
+        f_args.extend_from_slice(args);
+        let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
+        steps += s;
+        return match result {
+            SimResult::Value(0) => (SimResult::Value(0), steps),
+            SimResult::Value(_) => (SimResult::Diverge, steps),
+            other => (other, steps),
+        };
+    }
+
+    // Fused M(R(g,h)): carry accumulator forward instead of restarting
+    // the recursion from scratch for each Min candidate.
+    if opts.min_rec_fuse {
+        if let Grf::Rec(rec_g, rec_h) = f {
+            let (base, s) = simulate_opts(rec_g, args, step_budget.map(|b| b - steps), opts);
+            steps += s;
+            let mut acc = match base {
+                SimResult::Value(v) => v,
+                other => return (other, steps),
+            };
+
+            if acc == 0 {
+                return (SimResult::Value(0), steps);
+            }
+
+            let mut k: Num = 0;
+            loop {
+                let mut h_args: Vec<Num> = Vec::with_capacity(args.len() + 2);
+                h_args.push(k);
+                h_args.push(acc);
+                h_args.extend_from_slice(args);
+
+                let (result, s) = simulate_opts(rec_h, &h_args, step_budget.map(|b| b - steps), opts);
+                steps += s;
+                match result {
+                    SimResult::Value(v) => {
+                        on_iter(k + 1, &SimResult::Value(v), steps);
+                        if v == 0 {
+                            return (SimResult::Value(k + 1), steps);
+                        }
+                        acc = v;
+                    }
+                    other => return (other, steps),
+                }
+                k += 1;
+            }
+        }
+    }
+
+    // General loop: M(f)(args) = min{i : f(i, args...) = 0}
+    let mut i: Num = 0;
+    loop {
+        let remaining = step_budget.map(|b| b.saturating_sub(steps));
+        if remaining == Some(0) {
+            return (SimResult::OutOfSteps, steps);
+        }
+        let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
+        f_args.push(i);
+        f_args.extend_from_slice(args);
+
+        let (result, s) = simulate_opts(f, &f_args, remaining, opts);
+        steps += s;
+        on_iter(i, &result, steps);
+        match result {
+            SimResult::Value(0) => return (SimResult::Value(i), steps),
+            SimResult::Value(_) => i += 1,
+            other => return (other, steps),
+        }
     }
 }
 
@@ -217,67 +291,7 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
         }
 
         Grf::Min(f) => {
-            if f.is_never_zero() {
-                return (SimResult::Diverge, steps);
-            }
-
-            // Fast-forward: if f ignores its search variable (1-indexed arg 1),
-            // then f(i, args) = f(0, args) for all i.  One call decides:
-            //   f(0, args) = 0  → min is 0, return Value(0).
-            //   f(0, args) ≠ 0  → no i will satisfy f=0, return Diverge.
-            if opts.min_fast_forward && !f.used_args().contains(&1) {
-                let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
-                f_args.push(0);
-                f_args.extend_from_slice(args);
-                let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
-                steps += s;
-                return match result {
-                    SimResult::Value(0) => (SimResult::Value(0), steps),
-                    SimResult::Value(_) => (SimResult::Diverge, steps),
-                    other => (other, steps),
-                };
-            }
-
-            // Fast-forward: if f(i, args) > 0 whenever i > 0, then i = 0 is the only
-            // candidate.  Evaluate once: 0 → return Value(0), else → Diverge.
-            if opts.min_fast_forward && f.is_positive_for_pos_arg(1) {
-                let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
-                f_args.push(0);
-                f_args.extend_from_slice(args);
-                let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
-                steps += s;
-                return match result {
-                    SimResult::Value(0) => (SimResult::Value(0), steps),
-                    SimResult::Value(_) => (SimResult::Diverge, steps),
-                    other => (other, steps),
-                };
-            }
-
-            // Fused M(R(g,h)): carry accumulator forward instead of restarting
-            // the recursion from scratch for each Min candidate.
-            if opts.min_rec_fuse {
-                if let Grf::Rec(rec_g, rec_h) = f.as_ref() {
-                    let (result, s) = sim_min_rec_fuse(rec_g, rec_h, args, step_budget.map(|b| b - steps), opts);
-                    steps += s;
-                    return (result, steps);
-                }
-            }
-
-            // M(f)(args) = min{i : f(i, args...) = 0}
-            let mut i: Num = 0;
-            loop {
-                let mut f_args: Vec<Num> = Vec::with_capacity(args.len() + 1);
-                f_args.push(i);
-                f_args.extend_from_slice(args);
-
-                let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps), opts);
-                steps += s;
-                match result {
-                    SimResult::Value(0) => break SimResult::Value(i),
-                    SimResult::Value(_) => i += 1,
-                    other => return (other, steps),
-                }
-            }
+            return simulate_min(f, args, step_budget, opts, &mut |_, _, _| {});
         }
     };
 

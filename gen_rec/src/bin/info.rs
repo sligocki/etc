@@ -1,7 +1,7 @@
-/// Display GRF structure, aliases, and static properties.
+/// Display GRF structure, aliases, static properties, and LaTeX form.
 ///
-/// Prints the fully-unaliased and fully-aliased forms, then static
-/// properties useful for understanding pruning decisions.
+/// Prints the fully-unaliased and fully-aliased forms, static properties
+/// useful for understanding pruning decisions, and a LaTeX rendering.
 ///
 /// Usage:
 ///   cargo run --bin info -- 'R(Z0, P(2,1))'
@@ -13,9 +13,8 @@ use std::io::IsTerminal;
 
 #[derive(Parser, Debug)]
 #[command(
-    about = "Display GRF structure, aliases, and static properties",
-    long_about = "Prints raw and aliased forms, then static properties:\n\
-                  is_never_zero, is_positive_for_pos_arg, used_args.\n\
+    about = "Display GRF structure, aliases, static properties, and LaTeX",
+    long_about = "Prints raw and aliased forms, static properties, and LaTeX notation.\n\
                   For M(f) expressions the inner function is also analysed.\n\
                   EXPR may be a raw GRF string or an alias name like \"Add\"."
 )]
@@ -27,6 +26,37 @@ struct Args {
     #[arg(long, default_value_t = 10)]
     max_param: usize,
 }
+
+// ---------------------------------------------------------------------------
+// LaTeX rendering
+// ---------------------------------------------------------------------------
+
+fn latex_num(n: usize) -> String {
+    if n < 10 { format!("{n}") } else { format!("{{{n}}}") }
+}
+
+fn to_latex(grf: &Grf) -> String {
+    match grf {
+        Grf::Zero(k)      => format!("Z^{}", latex_num(*k)),
+        Grf::Succ         => "S".to_string(),
+        Grf::Proj(k, i)   => format!("P^{}_{}", latex_num(*k), latex_num(*i)),
+        Grf::Comp(h, gs, _) => {
+            let mut args = vec![to_latex(h)];
+            args.extend(gs.iter().map(to_latex));
+            format!("C^{}({})", latex_num(grf.arity()), args.join(", "))
+        }
+        Grf::Rec(g, h) => {
+            format!("R^{}({}, {})", latex_num(grf.arity()), to_latex(g), to_latex(h))
+        }
+        Grf::Min(f) => {
+            format!("M^{}({})", latex_num(grf.arity()), to_latex(f))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Static property display
+// ---------------------------------------------------------------------------
 
 fn print_static_props(grf: &Grf) {
     let arity = grf.arity();
@@ -40,11 +70,12 @@ fn print_static_props(grf: &Grf) {
             grf.is_positive_for_pos_arg(j)
         );
     }
-    println!(
-        "  used_args                : {{{}}}",
-        used_str.join(", ")
-    );
+    println!("  used_args                : {{{}}}", used_str.join(", "));
 }
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 
 fn main() {
     let args = Args::parse();
@@ -63,6 +94,9 @@ fn main() {
     println!();
     println!("alias:");
     println!("  {}", db.alias(&grf));
+    println!();
+    println!("latex:");
+    println!("  {}", to_latex(&grf));
     println!();
     println!("static properties:");
     print_static_props(&grf);

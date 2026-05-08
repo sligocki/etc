@@ -1435,6 +1435,13 @@ DiagS[f^2] := C(f, S, S)
             let grf = tc.grf.as_ref()
                 .or_else(|| grf_map.get(tc.name.as_str()).copied())
                 .unwrap_or_else(|| panic!("undefined GRF in test: {}", tc.name));
+            assert_eq!(
+                grf.arity(), tc.args.len(),
+                "arity mismatch in test {}({}): GRF has arity {} but {} args provided",
+                tc.name,
+                tc.args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "),
+                grf.arity(), tc.args.len(),
+            );
             let (result, _) = simulate(grf, &tc.args, BUDGET);
             let got = result.into_value();
             let args_str = tc.args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");

@@ -139,6 +139,9 @@ fn main() {
                 n_holdouts += 1;
                 (Status::Unknown, None, None)
             }
+            gen_rec::simulate::SimResult::ArityMismatch => {
+                panic!("arity mismatch in sim_all");
+            }
         };
 
         io_grl::write_grf_entry(&mut out, &GrfEntry {

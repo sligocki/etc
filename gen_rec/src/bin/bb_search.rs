@@ -168,6 +168,7 @@ fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
             SimResult::OutOfSteps => holdouts.push((steps, batch[idx].to_string())),
             SimResult::Diverge => diverged += 1,
             SimResult::Value(v) => top_k.insert(v, steps, sim_steps.base_approx, batch[idx].to_string()),
+            SimResult::ArityMismatch => panic!("arity mismatch in bb_search for {}", batch[idx]),
         }
     }
     BatchResult { top_k, holdouts, diverged, total_steps }

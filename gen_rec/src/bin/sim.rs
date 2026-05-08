@@ -107,6 +107,7 @@ fn main() {
                         SimResult::Value(v) => v.to_string(),
                         SimResult::Diverge => "Diverge".to_string(),
                         SimResult::OutOfSteps => "?".to_string(),
+                        SimResult::ArityMismatch => "arity mismatch".to_string(),
                     };
                     eprintln!(
                         "[{}] elapsed={:.1}s  n={}  f(n)={}  steps={}  base={}",
@@ -129,6 +130,10 @@ fn main() {
             SimResult::OutOfSteps => {
                 let limit = if args.max_steps == 0 { "unlimited".to_string() } else { args.max_steps.to_string() };
                 println!("result: timed out after {} steps (limit: {})", steps.sim, limit);
+            }
+            SimResult::ArityMismatch => {
+                eprintln!("error: arity mismatch — GRF expects {} args, got {}", grf.arity(), concrete.len());
+                std::process::exit(1);
             }
         }
         return;

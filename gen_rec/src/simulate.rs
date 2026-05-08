@@ -11,6 +11,8 @@ pub enum SimResult {
     OutOfSteps,
     /// The function will provably never terminate regardless of step budget.
     Diverge,
+    /// The function was called with the wrong number of arguments.
+    ArityMismatch,
 }
 
 impl SimResult {
@@ -21,14 +23,14 @@ impl SimResult {
     pub fn value(&self) -> Option<&Num> {
         match self {
             SimResult::Value(v) => Some(v),
-            SimResult::OutOfSteps | SimResult::Diverge => None,
+            _ => None,
         }
     }
 
     pub fn into_value(self) -> Option<Num> {
         match self {
             SimResult::Value(v) => Some(v),
-            SimResult::OutOfSteps | SimResult::Diverge => None,
+            _ => None,
         }
     }
 }
@@ -255,6 +257,9 @@ where
 pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: SimOpts) -> (SimResult, SimSteps) {
     if step_budget == Some(0) {
         return (SimResult::OutOfSteps, SimSteps::zero());
+    }
+    if args.len() != grf.arity() {
+        return (SimResult::ArityMismatch, SimSteps::zero());
     }
     let mut steps = SimSteps::one(); // cost of this call
 

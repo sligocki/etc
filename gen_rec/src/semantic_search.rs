@@ -245,7 +245,7 @@ fn test_candidate(
     for inp in fast_inputs {
         match simulate(grf, inp, max_steps).0 {
             SimResult::Diverge => return None,
-            SimResult::OutOfSteps => {}
+            SimResult::OutOfSteps | SimResult::ArityMismatch => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
@@ -264,7 +264,7 @@ fn test_candidate(
     for inp in conf_inputs {
         match simulate(grf, inp, max_steps).0 {
             SimResult::Diverge => return None,
-            SimResult::OutOfSteps => {}
+            SimResult::OutOfSteps | SimResult::ArityMismatch => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
@@ -280,7 +280,7 @@ fn test_candidate(
     for inp in verify_inputs {
         match simulate(grf, inp, max_steps).0 {
             SimResult::Diverge => return None,
-            SimResult::OutOfSteps => {}
+            SimResult::OutOfSteps | SimResult::ArityMismatch => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
@@ -375,6 +375,7 @@ pub fn probe_spec(
         match simulate(grf, inp, max_steps).0 {
             SimResult::Diverge => return ProbeResult::Diverged { inputs: inp.clone() },
             SimResult::OutOfSteps => return ProbeResult::TimedOut { inputs: inp.clone() },
+            SimResult::ArityMismatch => panic!("arity mismatch in probe_spec"),
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return ProbeResult::SpecFailed { inputs: inp.clone(), output: v };
@@ -594,6 +595,7 @@ mod tests {
                 }
                 SimResult::Diverge => { eprintln!("  {:?} -> DIVERGE", inp); false }
                 SimResult::OutOfSteps => { eprintln!("  {:?} -> TIMEOUT", inp); false }
+                SimResult::ArityMismatch => panic!("arity mismatch in probe diagnostics"),
             };
             if !ok { eprintln!("  ^^^ REJECT on fast_inputs"); break; }
         }
@@ -608,6 +610,7 @@ mod tests {
                 }
                 SimResult::Diverge => eprintln!("  {:?} -> DIVERGE", inp),
                 SimResult::OutOfSteps => eprintln!("  {:?} -> TIMEOUT", inp),
+                SimResult::ArityMismatch => panic!("arity mismatch in probe diagnostics"),
             }
         }
 
@@ -621,6 +624,7 @@ mod tests {
                 }
                 SimResult::Diverge => eprintln!("  {:?} -> DIVERGE", inp),
                 SimResult::OutOfSteps => eprintln!("  {:?} -> TIMEOUT", inp),
+                SimResult::ArityMismatch => panic!("arity mismatch in probe diagnostics"),
             }
         }
 

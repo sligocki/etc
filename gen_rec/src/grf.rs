@@ -3,6 +3,8 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 
+use crate::base::Num;
+
 /// Parse a GRF from a format string, panicking on error.
 ///
 /// Accepts the same format arguments as `format!`, passes the result through
@@ -277,6 +279,24 @@ impl Grf {
             Grf::Comp(h, gs, _) => h.is_prf() && gs.iter().all(Grf::is_prf),
             Grf::Rec(g, h) => g.is_prf() && h.is_prf(),
             Grf::Min(_) => false,
+        }
+    }
+
+    /// Returns `Some(k)` if this function is structurally equivalent to
+    /// `λ(args). args[2] + k`, i.e. a chain of k Succs applied to P2.
+    /// Used to accelerate R(g, h) when h is an affine step on the accumulator.
+    pub fn acc_plus_k(&self) -> Option<Num> {
+        match self {
+            Grf::Proj(_, 2) => Some(0),
+            Grf::Comp(outer, inners, _) => {
+                if let Grf::Succ = outer.as_ref() {
+                    if inners.len() == 1 {
+                        return inners[0].acc_plus_k().map(|k| k + 1);
+                    }
+                }
+                None
+            }
+            _ => None,
         }
     }
 
@@ -700,5 +720,22 @@ mod tests {
         assert_eq!(cao("M(P(2,2))"), vec![1]);
         // M(P(2,1)): inner=P(2,1) uses inner arg 1 (search var, synthetic). Order = [].
         assert_eq!(cao("M(P(2,1))"), vec![] as Vec<usize>);
+    }
+
+    #[test]
+    fn test_acc_plus_k() {
+        assert_eq!(Grf::Proj(3, 2).acc_plus_k(), Some(0));
+        assert_eq!(Grf::Proj(3, 1).acc_plus_k(), None);
+        assert_eq!(Grf::Zero(2).acc_plus_k(), None);
+        // C(S, P(3,2)) → Some(1)
+        let cs_p2 = Grf::comp(Grf::Succ, vec![Grf::Proj(3, 2)]);
+        assert_eq!(cs_p2.acc_plus_k(), Some(1));
+        // C(S, C(S, P(3,2))) → Some(2)
+        let cs_cs_p2 = Grf::comp(Grf::Succ, vec![cs_p2]);
+        assert_eq!(cs_cs_p2.acc_plus_k(), Some(2));
+        assert_eq!(grf!("C(S, C(S, C(S, S)))").acc_plus_k(), None);
+        assert_eq!(grf!("C(S, C(S, C(S, Z0)))").acc_plus_k(), None);
+        assert_eq!(grf!("C(S, C(S, C(S, P(1, 1))))").acc_plus_k(), None);
+        assert_eq!(grf!("C(S, C(S, C(S, P(3, 3))))").acc_plus_k(), None);
     }
 }

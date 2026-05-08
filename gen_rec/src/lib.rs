@@ -1,4 +1,5 @@
 pub mod alias;
+pub mod base;
 pub mod io_grl;
 pub mod chaos_score;
 pub mod enumerate;

@@ -1,8 +1,6 @@
 use crate::grf::Grf;
 
-/// Numeric type used for both GRF values and simulation step counts.
-/// Swap this alias to `u128` or a bignum type to widen the range.
-pub type Num = u64;
+pub use crate::base::Num;
 
 /// Result of simulating a GRF.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -291,9 +289,17 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
             let n = args[0];
             let rest = &args[1..];
 
+            // Base case
+            let (base, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps.sim), opts);
+            steps += s;
+            let mut acc = match base {
+                SimResult::Value(v) => v,
+                other => return (other, steps),
+            };
+
             // Fast-forward two different (opposite cases):
             //      * h ignores accumulator (arg 2)
-            //      * h echos the accumulator with no change
+            //      * h echos (or adds a constant each iteration to) the accumulator
             if opts.rec_fast_forward {
                 // If h ignores its accumulator (arg 2), every iteration
                 // h(i, acc, rest) = h(i, _, rest) is independent of acc.  The final
@@ -306,29 +312,22 @@ pub fn simulate_opts(grf: &Grf, args: &[Num], step_budget: Option<Num>, opts: Si
                     let (result, s) = simulate_opts(h, &h_args, step_budget.map(|b| b - steps.sim), opts);
                     let sh_base = s.base_approx;
                     steps += s;
-                    // Lower bound: unoptimized does g(rest) + (n-1) more h calls.
-                    // Missing: cost of g (sg). Underestimates by sg.
+                    // Approx: unoptimized does g(rest) + (n-1) more h calls.
+                    // This may not be exactly correct since other calls have different i value.
                     steps.base_approx += (n - 1) * sh_base;
                     return (result, steps);
                 }
 
-                // If h = Proj(_, 2), every iteration returns the
-                // accumulator unchanged, so R(g, Proj(_, 2))(n, rest) = g(rest).
-                if let Grf::Proj(_, 2) = h.as_ref() {
-                    let (result, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps.sim), opts);
-                    steps += s;
-                    // Exact: unoptimized would do n additional Proj calls (each cost 1).
-                    steps.base_approx += n;
-                    return (result, steps);
+                // If h(i, acc, rest) = acc + k for a constant k, then
+                // R(g, h)(n, rest) = g(rest) + n*k — direct multiplication.
+                if let Some(k) = h.acc_plus_k() {
+                    // Each h = S^k(P2) call costs k Comp nodes + k Succ atoms + 1 Proj = 2k+1 steps.
+                    steps.base_approx += n * (2 * k + 1);
+                    // Plain arithmetic: matches the unoptimized loop, which uses plain + in Succ.
+                    // Wraps in release and panics in debug on overflow, same as the slow path would.
+                    return (SimResult::Value(acc + n * k), steps);
                 }
             }
-
-            let (base, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps.sim), opts);
-            steps += s;
-            let mut acc = match base {
-                SimResult::Value(v) => v,
-                other => return (other, steps),
-            };
 
             for i in 0..n {
                 let mut h_args: Vec<Num> = Vec::with_capacity(rest.len() + 2);
@@ -432,6 +431,26 @@ mod tests {
     }
 
     #[test]
+    fn test_rec_affine_k1() {
+        // R(Z0, C(S, P(2,2)))(n) = n  (acc starts at 0, +1 each step)
+        let f = grf!("R(Z0, C(S, P(2,2)))");
+        for n in 0u64..=10 {
+            assert_eq!(eval_helper(&f, &[n]), Some(n));
+        }
+    }
+
+    #[test]
+    fn test_rec_affine_k2() {
+        // R(S, C(S, C(S, P(3,2))))(n, x) = S(x) + 2*n = x + 2n + 1
+        let f = grf!("R(S, C(S, C(S, P(3,2))))");
+        for n in 0u64..=5 {
+            for x in 0u64..=3 {
+                assert_eq!(eval_helper(&f, &[n, x]), Some(2*n + x + 1));
+            }
+        }
+    }
+
+    #[test]
     fn test_min_proj() {
         // M(P(1,1))() = min{i : P(1,1)(i) = 0} = 0
         let f = Grf::Min(Box::new(Grf::Proj(1, 1)));
@@ -480,13 +499,13 @@ mod tests {
 
     #[test]
     fn test_out_of_steps() {
-        // R with large n should exhaust step budget
-        let g = Grf::Zero(0);
-        let h = Grf::comp(Grf::Succ, vec![Grf::Proj(2, 2)]);
-        let r = Grf::Rec(Box::new(g), Box::new(h));
-        let (result, steps) = simulate(&r, &[1_000_000], 100);
+        // R where h = C(Plus, [P(2,1), P(2,2)]) adds the loop counter to the
+        // accumulator each step.  acc_plus_k returns None so no ff fires, and
+        // each call to Plus itself costs O(i) steps, making the total O(n^2).
+        let r = grf!("R(Z0, C(R(P(1,1), C(S, P(3,2))), P(2,1), P(2,2)))");
+        let (result, steps) = simulate(&r, &[1_000], 50);
         assert!(matches!(result, SimResult::OutOfSteps));
-        assert!(steps.sim >= 100);
+        assert!(steps.sim >= 50);
     }
 
     // --- rec_fast_forward tests ---
@@ -585,17 +604,18 @@ mod tests {
     }
 
     #[test]
-    fn test_rec_ff_not_applied_when_acc_used_nontrivially() {
-        // R(Z0, C(S, P(2,2))): h adds 1 to acc each step → R(g,h)(n) = n.
-        // h uses acc (arg 2) and is not Proj(_, 2), so neither ff applies.
-        let h = Grf::comp(Grf::Succ, vec![Grf::Proj(2, 2)]);
-        let r = Grf::rec(Grf::Zero(0), h);
-        for n in 0u64..=10 {
-            let (v_ff, steps_ff) = simulate(&r, &[n], 1_000_000);
-            let (v_no, steps_no) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
-            assert_eq!(v_ff.into_value(), Some(n), "ff wrong at n={n}");
-            assert_eq!(v_no.into_value(), Some(n), "no_ff wrong at n={n}");
-            assert_eq!(steps_ff.sim, steps_no.sim, "neither ff should fire at n={n}");
+    fn test_rec_non_affine_step_correct() {
+        // R(Z0, C(Plus, [P(2,1), P(2,2)]))(n) = n*(n-1)/2 (triangular numbers).
+        // h = C(Plus, [i, acc]): acc_plus_k returns None, so outer affine ff doesn't fire.
+        // (Inner Plus calls may still be accelerated; we verify only correctness here.)
+        let r = grf!("R(Z0, C(R(P(1,1), C(S, P(3,2))), P(2,1), P(2,2)))");
+        for n in 0u64..=8 {
+            // acc_0 = 0; acc_{i+1} = Plus(i, acc_i). acc_n = sum_{j=0}^{n-1} j = n*(n-1)/2.
+            let expected = n * n.saturating_sub(1) / 2;
+            let (v_ff, _) = simulate(&r, &[n], 1_000_000);
+            let (v_no, _) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
+            assert_eq!(v_ff.into_value(), Some(expected), "ff wrong at n={n}");
+            assert_eq!(v_no.into_value(), Some(expected), "no_ff wrong at n={n}");
         }
     }
 
@@ -799,17 +819,5 @@ mod tests {
             assert!(sx.base_approx >= sx.sim, "x={x}: base_approx must be >= sim");
             assert!(sx.base_approx <= sx_noff.sim, "x={x}: base_approx={} must be <= no_ff={}", sx.base_approx, sx_noff.sim);
         }
-    }
-
-    #[test]
-    fn test_base_approx_rec_acc_ignored_lower_bound() {
-        // R(Z0, P(2,1))(5): acc-ignored ff fires.
-        // sim is small; base_approx >= sim; base_approx < no_ff.sim (missing sg).
-        let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 1));
-        let (_, s) = simulate(&r, &[5], 0);
-        let (_, s_noff) = simulate_opts(&r, &[5], None, no_ff());
-        assert!(s.base_approx >= s.sim, "base_approx must be >= sim");
-        assert!(s.base_approx < s_noff.sim,
-            "base_approx={} should be < no_ff.sim={} (lower bound)", s.base_approx, s_noff.sim);
     }
 }

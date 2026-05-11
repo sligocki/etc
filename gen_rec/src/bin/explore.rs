@@ -10,6 +10,7 @@ use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::grf::Grf;
 use gen_rec::io_table::print_io_table;
+use gen_rec::sem::{sem_ignores_arg, sem_of, AffineFn, Sem};
 
 #[derive(Parser, Debug)]
 #[command(about = "Explore a GRF by naming its R/M sub-expressions and showing I/O tables")]
@@ -97,6 +98,114 @@ fn fmt_subst(grf: &Grf, names: &BTreeMap<String, String>) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Semantic formula display
+// ---------------------------------------------------------------------------
+
+static ARG_NAMES: &[&str] = &["x", "y", "z", "w", "v", "u", "t", "s", "r", "q", "p"];
+
+fn arg_name(pos: usize) -> &'static str {
+    ARG_NAMES.get(pos).copied().unwrap_or("x")
+}
+
+fn decrement_n(v: &str, n: usize) -> String {
+    match n {
+        0 => v.to_string(),
+        1 => format!("{}-1", v),
+        n => format!("{}-{}", v, n),
+    }
+}
+
+fn term_str(c: i64, v: &str) -> String {
+    let vp = if c.abs() != 1 && v.chars().any(|ch| ch == '-' || ch == '+') {
+        format!("({})", v)
+    } else {
+        v.to_string()
+    };
+    match c {
+        1 => vp,
+        -1 => format!("-{}", vp),
+        _ => format!("{}*{}", c, vp),
+    }
+}
+
+fn fmt_affine_expr(af: &AffineFn, vars: &[String]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (i, &c) in af.coeffs[1..].iter().enumerate() {
+        if c != 0 {
+            parts.push(term_str(c, &vars[i]));
+        }
+    }
+    if af.coeffs[0] != 0 {
+        parts.push(af.coeffs[0].to_string());
+    }
+    if parts.is_empty() {
+        return "0".to_string();
+    }
+    let mut result = parts[0].clone();
+    for p in &parts[1..] {
+        if p.starts_with('-') {
+            result.push_str(&format!(" - {}", &p[1..]));
+        } else {
+            result.push_str(&format!(" + {}", p));
+        }
+    }
+    result
+}
+
+/// Format a rule's RHS. For Affine: formula. For Piecewise (rare zero_branch): inline ternary.
+fn fmt_rule_rhs(sem: &Sem, vars: &[String]) -> String {
+    match sem {
+        Sem::Affine(af) => fmt_affine_expr(af, vars),
+        Sem::Piecewise(pw) => {
+            let x = vars[0].as_str();
+            let zero_rhs = fmt_rule_rhs(&pw.zero_branch, &vars[1..]);
+            let pos_var0 = decrement_n(x, 1);
+            let pos_vars: Vec<String> =
+                std::iter::once(pos_var0).chain(vars[1..].iter().cloned()).collect();
+            let pos_rhs = fmt_rule_rhs(&pw.pos_branch, &pos_vars);
+            format!("({x}=0 ? {zero_rhs} : {pos_rhs})")
+        }
+    }
+}
+
+/// Print multi-line pattern-matching rules for a Sem, prefixed with fn_name.
+fn print_sem_rules(fn_name: &str, sem: &Sem) {
+    let args: Vec<String> = (0..sem.arity()).map(|i| arg_name(i).to_string()).collect();
+    emit_rules(fn_name, sem, &args, 0);
+}
+
+fn emit_rules(fn_name: &str, sem: &Sem, args: &[String], depth: usize) {
+    match sem {
+        Sem::Affine(af) => {
+            let formula_args: Vec<String> = if args.is_empty() {
+                vec![]
+            } else {
+                let first = decrement_n(&args[0], depth);
+                std::iter::once(first).chain(args[1..].iter().cloned()).collect()
+            };
+            let lhs: Vec<String> = args
+                .iter()
+                .enumerate()
+                .map(|(j, name)| {
+                    if sem_ignores_arg(sem, j + 1) { "_".to_string() } else { name.clone() }
+                })
+                .collect();
+            println!("  {}({}) = {}", fn_name, lhs.join(", "), fmt_affine_expr(af, &formula_args));
+        }
+        Sem::Piecewise(pw) => {
+            let zero_lhs: Vec<String> = std::iter::once(depth.to_string())
+                .chain(args[1..].iter().enumerate().map(|(j, name)| {
+                    if sem_ignores_arg(&pw.zero_branch, j + 1) { "_".to_string() } else { name.clone() }
+                }))
+                .collect();
+            println!("  {}({}) = {}", fn_name, zero_lhs.join(", "),
+                     fmt_rule_rhs(&pw.zero_branch, &args[1..]));
+            emit_rules(fn_name, &pw.pos_branch, args, depth + 1);
+        }
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -168,7 +277,9 @@ fn main() {
                 used_tag,
             );
 
-            if !args.no_sim {
+            if let Some(sem) = sem_of(sub) {
+                print_sem_rules(&name, &sem);
+            } else if !args.no_sim {
                 print_io_table(sub, args.grid, args.max_steps);
             }
         }
@@ -184,7 +295,10 @@ fn main() {
         grf.arity(),
         grf.size()
     );
-    if !args.no_sim {
+    let root_name = idx_to_name(order.len());
+    if let Some(sem) = sem_of(&grf) {
+        print_sem_rules(&root_name, &sem);
+    } else if !args.no_sim {
         print_io_table(&grf, args.grid, args.max_steps);
     }
 }

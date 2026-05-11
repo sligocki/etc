@@ -219,7 +219,7 @@ fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
 }
 
 /// Returns true when `sem` ignores argument at 1-based `idx` for all inputs.
-fn sem_ignores_arg(sem: &Sem, idx: usize) -> bool {
+pub fn sem_ignores_arg(sem: &Sem, idx: usize) -> bool {
     match sem {
         Sem::Affine(af) => af.arity < idx || af.coeffs[idx] == 0,
         Sem::Piecewise(pw) => {

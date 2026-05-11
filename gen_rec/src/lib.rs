@@ -11,5 +11,6 @@ pub mod novel_db;
 pub mod novel_enum;
 pub mod optimize;
 pub mod pruning;
+pub mod sem;
 pub mod semantic_search;
 pub mod simulate;

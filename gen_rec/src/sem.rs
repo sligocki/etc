@@ -65,6 +65,7 @@ impl AffineFn {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PiecewiseFn {
     pub arity: usize,
+    pub branch_index: usize,
     pub zero_branch: Box<Sem>,
     pub pos_branch: Box<Sem>,
 }
@@ -72,11 +73,11 @@ pub struct PiecewiseFn {
 impl PiecewiseFn {
     pub fn eval(&self, args: &[Num]) -> Option<Num> {
         assert_eq!(args.len(), self.arity);
-        if args[0] == 0 {
+        if args[self.branch_index] == 0 {
             self.zero_branch.eval(&args[1..])
         } else {
             let mut new_args = args.to_vec();
-            new_args[0] -= 1;
+            new_args[self.branch_index] -= 1;
             self.pos_branch.eval(&new_args)
         }
     }
@@ -85,6 +86,7 @@ impl PiecewiseFn {
         assert!(arity >= self.arity);
         PiecewiseFn {
             arity,
+            branch_index: self.branch_index,
             zero_branch: Box::new(self.zero_branch.lift(arity-1)),
             pos_branch: Box::new(self.pos_branch.lift(arity)),
         }
@@ -193,6 +195,7 @@ fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
         if let Some(h_prime) = sem_drop_arg(sem_h, 2) {
             return Some(Sem::Piecewise(PiecewiseFn {
                 arity: k_outer,
+                branch_index: 0,
                 zero_branch: Box::new(sem_g.clone()),
                 pos_branch: Box::new(h_prime),
             }));
@@ -221,6 +224,7 @@ fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
 
         return Some(Sem::Piecewise(PiecewiseFn {
             arity: k_outer,
+            branch_index: 0,
             zero_branch: Box::new(sem_g.clone()),
             pos_branch: Box::new(pos_branch),
         }));
@@ -294,6 +298,7 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
             let pos_sem = sem_compose_general(h, &pos_faces, arity)?;
             Some(Sem::Piecewise(PiecewiseFn {
                 arity,
+                branch_index: 0,
                 zero_branch: Box::new(zero_sem),
                 pos_branch: Box::new(pos_sem),
             }))
@@ -343,6 +348,7 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
             let pos_sem = sem_compose_general(&pw.pos_branch, &pos_faces, arity)?;
             Some(Sem::Piecewise(PiecewiseFn {
                 arity,
+                branch_index: 0,
                 zero_branch: Box::new(zero_sem),
                 pos_branch: Box::new(pos_sem),
             }))
@@ -432,6 +438,7 @@ fn sem_drop_arg(sem: &Sem, idx: usize) -> Option<Sem> {
             let new_pos = sem_drop_arg(&pw.pos_branch, idx)?;
             Some(Sem::Piecewise(PiecewiseFn {
                 arity: pw.arity - 1,
+                branch_index: 0,
                 zero_branch: Box::new(new_zero),
                 pos_branch: Box::new(new_pos),
             }))

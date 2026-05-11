@@ -49,6 +49,13 @@ impl AffineFn {
         }
         if result < 0 { None } else { Some(result as Num) }
     }
+
+    pub fn lift(&self, arity: usize) -> Self {
+        assert!(arity >= self.arity);
+        let mut coeffs = self.coeffs.clone();
+        coeffs.resize(arity+1, 0);
+        AffineFn { arity, coeffs }
+    }
 }
 
 /// Piecewise function branching on whether the first argument is zero.
@@ -64,7 +71,7 @@ pub struct PiecewiseFn {
 
 impl PiecewiseFn {
     pub fn eval(&self, args: &[Num]) -> Option<Num> {
-        debug_assert_eq!(args.len(), self.arity);
+        assert_eq!(args.len(), self.arity);
         if args[0] == 0 {
             self.zero_branch.eval(&args[1..])
         } else {
@@ -73,12 +80,21 @@ impl PiecewiseFn {
             self.pos_branch.eval(&new_args)
         }
     }
+
+    pub fn lift(&self, arity: usize) -> Self {
+        assert!(arity >= self.arity);
+        PiecewiseFn {
+            arity,
+            zero_branch: Box::new(self.zero_branch.lift(arity-1)),
+            pos_branch: Box::new(self.pos_branch.lift(arity)),
+        }
+    }
 }
 
 /// Semantic representation of a GRF subtree.
 ///
 /// When `sem_of(grf)` returns `Some(sem)`, evaluating `sem.eval(args)` gives exactly
-/// the same result as simulating `grf` on those args (assuming the simulation terminates).
+/// the same result as simulating `grf` on those args and is guaranteed to be total.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Sem {
     Affine(AffineFn),
@@ -103,6 +119,13 @@ impl Sem {
             Sem::Piecewise(pw) => pw.eval(args),
         }
     }
+
+    pub fn lift(&self, arity: usize) -> Self {
+        match self {
+            Sem::Affine(af) => Sem::Affine(af.lift(arity)),
+            Sem::Piecewise(pw) => Sem::Piecewise(pw.lift(arity)),
+        }
+    }
 }
 
 /// Attempt to extract an exact semantic representation from a GRF.
@@ -115,28 +138,15 @@ impl Sem {
 /// Returns `None` for `Min` or patterns not yet covered.
 pub fn sem_of(grf: &Grf) -> Option<Sem> {
     match grf {
+        // Atoms are all Affine
         Grf::Zero(k) => Some(Sem::Affine(AffineFn::zero(*k))),
-
         Grf::Succ => Some(Sem::Affine(AffineFn::succ())),
-
         Grf::Proj(k, i) => Some(Sem::Affine(AffineFn::proj(*k, *i))),
 
-        Grf::Comp(h, gs, k) => {
-            if gs.is_empty() {
-                // C_k(h): lift a 0-arity h to a constant-k-arity function.
-                if let Some(Sem::Affine(af)) = sem_of(h) {
-                    if af.arity == 0 {
-                        let mut coeffs = vec![0i64; k + 1];
-                        coeffs[0] = af.coeffs[0];
-                        return Some(Sem::Affine(AffineFn { arity: *k, coeffs }));
-                    }
-                }
-                return None;
-            }
-
-            let inner_sems: Vec<Sem> = gs.iter().map(sem_of).collect::<Option<_>>()?;
-            let h_sem = sem_of(h)?;
-            sem_compose_general(&h_sem, &inner_sems)
+        Grf::Comp(g, hs, k) => {
+            let sem_g = sem_of(g)?;
+            let sem_hs: Vec<Sem> = hs.iter().map(sem_of).collect::<Option<_>>()?;
+            sem_compose_general(&sem_g, &sem_hs, *k)
         }
 
         Grf::Rec(g, h) => {
@@ -146,6 +156,7 @@ pub fn sem_of(grf: &Grf) -> Option<Sem> {
             sem_of_rec(&sem_g, &sem_h, k_outer)
         }
 
+        // Not yet supported
         Grf::Min(_) => None,
     }
 }
@@ -202,7 +213,7 @@ fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
         if b_z.arity() != inner_for_g_prime.len() {
             return None;
         }
-        let sem_g_prime = sem_compose_general(b_z, &inner_for_g_prime)?;
+        let sem_g_prime = sem_compose_general(b_z, &inner_for_g_prime, k_rest)?;
 
         // Recurse: pos_branch = R(g', B_p)
         let b_p: &Sem = &pw_h.pos_branch;
@@ -240,17 +251,14 @@ pub fn sem_ignores_arg(sem: &Sem, idx: usize) -> bool {
 ///
 /// Recursion terminates because each call either reaches the all-Affine base case
 /// or reduces the maximum Piecewise nesting depth by one.
-fn sem_compose_general(h: &Sem, inners: &[Sem]) -> Option<Sem> {
+fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
     // Base case: 0-arity composition — h is a constant, no inputs consumed.
     if inners.is_empty() {
-        debug_assert_eq!(h.arity(), 0, "sem_compose_general: 0 inners but h has arity > 0");
-        return Some(h.clone());
+        return Some(h.lift(arity));
     }
 
     debug_assert_eq!(h.arity(), inners.len());
-    debug_assert!(inners.iter().all(|s| s.arity() == inners[0].arity()));
-
-    let outer_arity = inners[0].arity();
+    debug_assert!(inners.iter().all(|s| s.arity() == arity));
 
     // Base case: all Affine
     if let Sem::Affine(h_af) = h {
@@ -264,13 +272,13 @@ fn sem_compose_general(h: &Sem, inners: &[Sem]) -> Option<Sem> {
     }
 
     // Compute the zero-face and pos-face for each inner function (only used when
-    // outer_arity ≥ 1; the Piecewise h branch guards outer_arity separately).
-    let zero_faces: Vec<Sem> = if outer_arity > 0 {
+    // arity ≥ 1; the Piecewise h branch guards arity separately).
+    let zero_faces: Vec<Sem> = if arity > 0 {
         inners.iter().map(zero_face).collect()
     } else {
         vec![]
     };
-    let pos_faces: Vec<Sem> = if outer_arity > 0 {
+    let pos_faces: Vec<Sem> = if arity > 0 {
         inners.iter().map(pos_face).collect()
     } else {
         vec![]
@@ -279,13 +287,13 @@ fn sem_compose_general(h: &Sem, inners: &[Sem]) -> Option<Sem> {
     match h {
         Sem::Affine(_) => {
             // h is affine but some inner is Piecewise → distribute on x1.
-            if outer_arity == 0 {
+            if arity == 0 {
                 return None; // can't distribute with 0-arity inners
             }
-            let zero_sem = sem_compose_general(h, &zero_faces)?;
-            let pos_sem = sem_compose_general(h, &pos_faces)?;
+            let zero_sem = sem_compose_general(h, &zero_faces, arity-1)?;
+            let pos_sem = sem_compose_general(h, &pos_faces, arity)?;
             Some(Sem::Piecewise(PiecewiseFn {
-                arity: outer_arity,
+                arity,
                 zero_branch: Box::new(zero_sem),
                 pos_branch: Box::new(pos_sem),
             }))
@@ -293,7 +301,7 @@ fn sem_compose_general(h: &Sem, inners: &[Sem]) -> Option<Sem> {
         Sem::Piecewise(pw) => {
             // If h always returns 0, so does the composition.
             if is_always_zero(h) {
-                return Some(Sem::Affine(AffineFn::zero(outer_arity)));
+                return Some(Sem::Affine(AffineFn::zero(arity)));
             }
 
             // h branches on y1 = g1(x). There are three cases depending on g1:
@@ -304,37 +312,37 @@ fn sem_compose_general(h: &Sem, inners: &[Sem]) -> Option<Sem> {
                 let raw = if inners[1..].is_empty() {
                     pw.zero_branch.as_ref().clone()
                 } else {
-                    sem_compose_general(&pw.zero_branch, &inners[1..])?
+                    sem_compose_general(&pw.zero_branch, &inners[1..], arity)?
                 };
-                return Some(sem_lift_to(raw, outer_arity));
+                return Some(raw.lift(arity));
             }
 
             // Case 2: g1 ≥ 1 always  →  h always fires pos_branch(g1-1, g2..gm)(x).
             if let Some(g1m1) = always_pos_minus_one(g1) {
                 let mut pos_inners: Vec<Sem> = vec![Sem::Affine(g1m1)];
                 pos_inners.extend(inners[1..].iter().cloned());
-                return sem_compose_general(&pw.pos_branch, &pos_inners);
+                return sem_compose_general(&pw.pos_branch, &pos_inners, arity);
             }
 
             // Case 3: g1 is the x1 projection  →  distribute on x1 boundary.
-            if outer_arity == 0 {
+            if arity == 0 {
                 return None;
             }
             if !is_x1_proj(g1) {
                 return None;
             }
             // When x1=0: g1(x)=0, h fires zero_branch on (g2..gm)(0,rest).
-            // zero_faces[1..] may be empty when m=1; lift to outer_arity-1.
+            // zero_faces[1..] may be empty when m=1; lift to arity-1.
             let raw_zero = if zero_faces[1..].is_empty() {
                 pw.zero_branch.as_ref().clone()
             } else {
-                sem_compose_general(&pw.zero_branch, &zero_faces[1..])?
+                sem_compose_general(&pw.zero_branch, &zero_faces[1..], arity-1)?
             };
-            let zero_sem = sem_lift_to(raw_zero, outer_arity - 1);
+            let zero_sem = raw_zero.lift(arity - 1);
             // When x1>0: g1(x)=x1>0, h fires pos_branch(x1-1, (g2..gm)(x)).
-            let pos_sem = sem_compose_general(&pw.pos_branch, &pos_faces)?;
+            let pos_sem = sem_compose_general(&pw.pos_branch, &pos_faces, arity)?;
             Some(Sem::Piecewise(PiecewiseFn {
-                arity: outer_arity,
+                arity,
                 zero_branch: Box::new(zero_sem),
                 pos_branch: Box::new(pos_sem),
             }))
@@ -395,28 +403,6 @@ fn is_x1_proj(sem: &Sem) -> bool {
                 && af.coeffs[2..].iter().all(|&c| c == 0)
         }
         _ => false,
-    }
-}
-
-/// Lift `sem` to `target_arity` by appending unused (zero-coefficient) arguments.
-fn sem_lift_to(sem: Sem, target_arity: usize) -> Sem {
-    let current = sem.arity();
-    if current == target_arity {
-        return sem;
-    }
-    debug_assert!(current < target_arity, "sem_lift_to: cannot shrink arity");
-    let delta = target_arity - current;
-    match sem {
-        Sem::Affine(mut af) => {
-            af.coeffs.extend(vec![0i64; delta]);
-            af.arity = target_arity;
-            Sem::Affine(af)
-        }
-        Sem::Piecewise(pw) => Sem::Piecewise(PiecewiseFn {
-            arity: target_arity,
-            zero_branch: Box::new(sem_lift_to(*pw.zero_branch, target_arity - 1)),
-            pos_branch: Box::new(sem_lift_to(*pw.pos_branch, target_arity)),
-        }),
     }
 }
 

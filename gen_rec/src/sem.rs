@@ -6,7 +6,7 @@ use crate::grf::Grf;
 /// Coefficients are i64 to allow intermediate negatives during composition.
 /// `eval` returns `None` when the result would be negative (outside the natural-number domain)
 /// or when i64 arithmetic overflows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AffineFn {
     pub arity: usize,
     /// Length arity+1. coeffs[0] = constant term; coeffs[i] = coefficient of xi (1-based).
@@ -62,7 +62,7 @@ impl AffineFn {
 ///
 /// `f(0, x2, ..., xk)   = zero_branch(x2, ..., xk)`  (zero_branch has arity k-1)
 /// `f(n, x2, ..., xk)   = pos_branch(n-1, x2, ..., xk)` for n > 0  (pos_branch has arity k)
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PiecewiseFn {
     pub arity: usize,
     pub branch_index: usize,
@@ -100,7 +100,7 @@ impl PiecewiseFn {
 ///
 /// When `sem_of(grf)` returns `Some(sem)`, evaluating `sem.eval(args)` gives exactly
 /// the same result as simulating `grf` on those args and is guaranteed to be total.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Sem {
     Affine(AffineFn),
     Piecewise(PiecewiseFn),

@@ -7,6 +7,8 @@
 ///   sem_coverage --allow-min              # include Min combinator
 ///   sem_coverage --holdouts 20            # show more holdouts
 ///   sem_coverage --max-steps 0            # skip value preview
+use std::collections::HashSet;
+
 use clap::Parser;
 use gen_rec::enumerate::stream_grf;
 use gen_rec::grf::Grf;
@@ -164,6 +166,7 @@ fn main() {
 
     let mut grand_total = 0usize;
     let mut grand_covered = 0usize;
+    let mut grand_distinct: HashSet<Sem> = HashSet::new();
     // reason → count, accumulated across all arities
     let mut grand_reason_counts: std::collections::BTreeMap<String, usize> =
         std::collections::BTreeMap::new();
@@ -175,6 +178,7 @@ fn main() {
 
         let mut arity_total = 0usize;
         let mut arity_covered = 0usize;
+        let mut arity_distinct: HashSet<Sem> = HashSet::new();
         // first `holdouts` uncovered GRFs (for the example list)
         let mut arity_holdouts: Vec<(usize, String)> = Vec::new();
         // reason → count for this arity
@@ -190,8 +194,10 @@ fn main() {
 
             stream_grf(size, arity, args.allow_min, opts, &mut |grf| {
                 size_total += 1;
-                if sem_of(grf).is_some() {
+                if let Some(sem) = sem_of(grf) {
                     size_covered += 1;
+                    arity_distinct.insert(sem.clone());
+                    grand_distinct.insert(sem);
                 } else {
                     let reason = holdout_reason(grf);
                     let root = root_cause(&reason).to_string();
@@ -229,6 +235,10 @@ fn main() {
         println!(
             "{:>5}  {:>8}  {:>8}  {:>5.1}%",
             "SUM", arity_total, arity_covered, arity_pct
+        );
+        println!(
+            "       distinct semantics covered: {}",
+            fmt_count(arity_distinct.len())
         );
         println!();
 
@@ -290,9 +300,10 @@ fn main() {
     );
     println!("  total GRFs : {}", fmt_count(grand_total));
     println!(
-        "  covered    : {}  ({:.1}%)",
+        "  covered    : {}  ({:.1}%)  —  {} distinct semantics",
         fmt_count(grand_covered),
-        grand_pct
+        grand_pct,
+        fmt_count(grand_distinct.len())
     );
     let grand_holdouts = grand_total.saturating_sub(grand_covered);
     println!("  holdouts   : {}", fmt_count(grand_holdouts));

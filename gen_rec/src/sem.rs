@@ -327,11 +327,15 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
                 }
             }
             let j = j_opt.unwrap_or(1);
-            // Correctness: no Affine inner may depend on xj (else pos branch would
-            // see xj-1 instead of xj after the outer Piecewise decrements it).
+            // Correctness: pos_face_at for Affine adjusts the constant, so Affine
+            // inners depending on xj are fine.  Piecewise inners on a *different*
+            // variable are returned unchanged by pos_face_at, which is only valid
+            // when they do not depend on xj.
             for inner in inners {
-                if matches!(inner, Sem::Affine(_)) && !sem_ignores_arg(inner, j) {
-                    return None;
+                if let Sem::Piecewise(pw) = inner {
+                    if pw.branch_index + 1 != j && !sem_ignores_arg(inner, j) {
+                        return None;
+                    }
                 }
             }
             let zero_inners: Vec<Sem> = inners.iter().map(|s| zero_face_at(s, j)).collect();
@@ -445,12 +449,20 @@ fn zero_face_at(sem: &Sem, j: usize) -> Sem {
 }
 
 /// The "pos branch" face when xj > 0 is decremented by an outer Piecewise.
-/// For Affine: unchanged (only valid when the caller ensured no dependence on xj).
-/// For Piecewise branching on xj: take its pos_branch.
-/// For Piecewise branching on a different variable: unchanged.
+///
+/// In the pos-branch context xj represents xj_caller − 1.  Each sem must be
+/// adjusted so that `pos_face_at(s, j)(x with xj = n)` equals `s(x with xj = n+1)`.
+///
+/// - Affine: add coeffs[j] to coeffs[0] (shifts the constant to compensate).
+/// - Piecewise branching on xj: take pos_branch (already defined as "called with xj-1").
+/// - Piecewise branching on a different variable: unchanged (only valid when xj-independent).
 fn pos_face_at(sem: &Sem, j: usize) -> Sem {
     match sem {
-        Sem::Affine(_) => sem.clone(),
+        Sem::Affine(af) => {
+            let mut new_coeffs = af.coeffs.clone();
+            new_coeffs[0] += new_coeffs[j];
+            Sem::Affine(AffineFn { arity: af.arity, coeffs: new_coeffs })
+        }
         Sem::Piecewise(pw) => {
             if pw.branch_index + 1 == j {
                 *pw.pos_branch.clone()
@@ -791,6 +803,15 @@ mod tests {
         // C(R(Z0, P(2,1)), P(2,1)): predecessor composed with P(2,1) = predecessor on arity 2
         // f(0, x) = 0,  f(n, x) = n-1
         check_vs_sim("C(R(Z0, P(2,1)), P(2,1))", 6);
+    }
+
+    #[test]
+    fn test_comp_piecewise_arg_plus_affine_dep() {
+        // C(R(P(1,1),C(S,P(3,2))), R(Z0,P(2,1)), P(1,1)):
+        //   h = add(arity 2), g1 = pred, g2 = x (both depend on x1)
+        //   f(x) = pred(x) + x = {0 for x=0, 2x-1 for x>0}
+        // Tests pos_face_at correction: Affine inner P(1,1) depends on xj=x1.
+        check_vs_sim("C(R(P(1,1),C(S,P(3,2))),R(Z0,P(2,1)),P(1,1))", 8);
     }
 
     #[test]

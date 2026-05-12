@@ -10,7 +10,7 @@ use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::grf::Grf;
 use gen_rec::io_table::print_io_table;
-use gen_rec::sem::{sem_ignores_arg, sem_of, AffineFn, Sem};
+use gen_rec::closed_form::{closed_form_ignores_arg, closed_form_of, AffineFn, ClosedForm};
 
 #[derive(Parser, Debug)]
 #[command(about = "Explore a GRF by naming its R/M sub-expressions and showing I/O tables")]
@@ -154,10 +154,10 @@ fn fmt_affine_expr(af: &AffineFn, vars: &[String]) -> String {
 }
 
 /// Format a rule's RHS. For Affine: formula. For Piecewise (rare zero_branch): inline ternary.
-fn fmt_rule_rhs(sem: &Sem, vars: &[String]) -> String {
+fn fmt_rule_rhs(sem: &ClosedForm, vars: &[String]) -> String {
     match sem {
-        Sem::Affine(af) => fmt_affine_expr(af, vars),
-        Sem::Piecewise(pw) => {
+        ClosedForm::Affine(af) => fmt_affine_expr(af, vars),
+        ClosedForm::Piecewise(pw) => {
             let bi = pw.branch_index;
             let x = vars[bi].as_str();
             let zero_vars: Vec<String> = vars.iter().enumerate()
@@ -173,16 +173,16 @@ fn fmt_rule_rhs(sem: &Sem, vars: &[String]) -> String {
     }
 }
 
-/// Print multi-line pattern-matching rules for a Sem, prefixed with fn_name.
-fn print_sem_rules(fn_name: &str, sem: &Sem) {
+/// Print multi-line pattern-matching rules for a ClosedForm, prefixed with fn_name.
+fn print_closed_form_rules(fn_name: &str, sem: &ClosedForm) {
     let args: Vec<String> = (0..sem.arity()).map(|i| arg_name(i).to_string()).collect();
     let depths = vec![0usize; sem.arity()];
     emit_rules(fn_name, sem, &args, &depths);
 }
 
-fn emit_rules(fn_name: &str, sem: &Sem, args: &[String], depths: &[usize]) {
+fn emit_rules(fn_name: &str, sem: &ClosedForm, args: &[String], depths: &[usize]) {
     match sem {
-        Sem::Affine(af) => {
+        ClosedForm::Affine(af) => {
             let formula_args: Vec<String> = args.iter().zip(depths.iter())
                 .map(|(name, &d)| decrement_n(name, d))
                 .collect();
@@ -190,19 +190,19 @@ fn emit_rules(fn_name: &str, sem: &Sem, args: &[String], depths: &[usize]) {
                 .iter()
                 .enumerate()
                 .map(|(j, name)| {
-                    if sem_ignores_arg(sem, j + 1) { "_".to_string() } else { name.clone() }
+                    if closed_form_ignores_arg(sem, j + 1) { "_".to_string() } else { name.clone() }
                 })
                 .collect();
             println!("  {}({}) = {}", fn_name, lhs.join(", "), fmt_affine_expr(af, &formula_args));
         }
-        Sem::Piecewise(pw) => {
+        ClosedForm::Piecewise(pw) => {
             let bi = pw.branch_index;
             let zero_lhs: Vec<String> = args.iter().enumerate().map(|(j, name)| {
                 if j == bi {
                     depths[bi].to_string()
                 } else {
                     let j_in_zero = if j < bi { j } else { j - 1 };
-                    if sem_ignores_arg(&pw.zero_branch, j_in_zero + 1) {
+                    if closed_form_ignores_arg(&pw.zero_branch, j_in_zero + 1) {
                         "_".to_string()
                     } else {
                         name.clone()
@@ -293,8 +293,8 @@ fn main() {
                 used_tag,
             );
 
-            if let Some(sem) = sem_of(sub) {
-                print_sem_rules(&name, &sem);
+            if let Some(sem) = closed_form_of(sub) {
+                print_closed_form_rules(&name, &sem);
             } else if !args.no_sim {
                 print_io_table(sub, args.grid, args.max_steps);
             }
@@ -312,8 +312,8 @@ fn main() {
         grf.size()
     );
     let root_name = idx_to_name(order.len());
-    if let Some(sem) = sem_of(&grf) {
-        print_sem_rules(&root_name, &sem);
+    if let Some(sem) = closed_form_of(&grf) {
+        print_closed_form_rules(&root_name, &sem);
     } else if !args.no_sim {
         print_io_table(&grf, args.grid, args.max_steps);
     }

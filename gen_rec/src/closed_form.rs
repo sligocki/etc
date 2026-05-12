@@ -66,8 +66,8 @@ impl AffineFn {
 pub struct PiecewiseFn {
     pub arity: usize,
     pub branch_index: usize,
-    pub zero_branch: Box<Sem>,
-    pub pos_branch: Box<Sem>,
+    pub zero_branch: Box<ClosedForm>,
+    pub pos_branch: Box<ClosedForm>,
 }
 
 impl PiecewiseFn {
@@ -98,19 +98,19 @@ impl PiecewiseFn {
 
 /// Semantic representation of a GRF subtree.
 ///
-/// When `sem_of(grf)` returns `Some(sem)`, evaluating `sem.eval(args)` gives exactly
+/// When `closed_form_of(grf)` returns `Some(sem)`, evaluating `sem.eval(args)` gives exactly
 /// the same result as simulating `grf` on those args and is guaranteed to be total.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Sem {
+pub enum ClosedForm {
     Affine(AffineFn),
     Piecewise(PiecewiseFn),
 }
 
-impl Sem {
+impl ClosedForm {
     pub fn arity(&self) -> usize {
         match self {
-            Sem::Affine(af) => af.arity,
-            Sem::Piecewise(pw) => pw.arity,
+            ClosedForm::Affine(af) => af.arity,
+            ClosedForm::Piecewise(pw) => pw.arity,
         }
     }
 
@@ -120,15 +120,15 @@ impl Sem {
     /// or on arithmetic overflow.
     pub fn eval(&self, args: &[Num]) -> Option<Num> {
         match self {
-            Sem::Affine(af) => af.eval(args),
-            Sem::Piecewise(pw) => pw.eval(args),
+            ClosedForm::Affine(af) => af.eval(args),
+            ClosedForm::Piecewise(pw) => pw.eval(args),
         }
     }
 
     pub fn lift(&self, arity: usize) -> Self {
         match self {
-            Sem::Affine(af) => Sem::Affine(af.lift(arity)),
-            Sem::Piecewise(pw) => Sem::Piecewise(pw.lift(arity)),
+            ClosedForm::Affine(af) => ClosedForm::Affine(af.lift(arity)),
+            ClosedForm::Piecewise(pw) => ClosedForm::Piecewise(pw.lift(arity)),
         }
     }
 }
@@ -141,24 +141,24 @@ impl Sem {
 /// accumulator (Case B → piecewise, step may be affine or piecewise).
 ///
 /// Returns `None` for `Min` or patterns not yet covered.
-pub fn sem_of(grf: &Grf) -> Option<Sem> {
+pub fn closed_form_of(grf: &Grf) -> Option<ClosedForm> {
     match grf {
         // Atoms are all Affine
-        Grf::Zero(k) => Some(Sem::Affine(AffineFn::zero(*k))),
-        Grf::Succ => Some(Sem::Affine(AffineFn::succ())),
-        Grf::Proj(k, i) => Some(Sem::Affine(AffineFn::proj(*k, *i))),
+        Grf::Zero(k) => Some(ClosedForm::Affine(AffineFn::zero(*k))),
+        Grf::Succ => Some(ClosedForm::Affine(AffineFn::succ())),
+        Grf::Proj(k, i) => Some(ClosedForm::Affine(AffineFn::proj(*k, *i))),
 
         Grf::Comp(g, hs, k) => {
-            let sem_g = sem_of(g)?;
-            let sem_hs: Vec<Sem> = hs.iter().map(sem_of).collect::<Option<_>>()?;
-            sem_compose_general(&sem_g, &sem_hs, *k)
+            let sem_g = closed_form_of(g)?;
+            let sem_hs: Vec<ClosedForm> = hs.iter().map(closed_form_of).collect::<Option<_>>()?;
+            compose(&sem_g, &sem_hs, *k)
         }
 
         Grf::Rec(g, h) => {
             let k_outer = g.arity() + 1;
-            let sem_g = sem_of(g)?;
-            let sem_h = sem_of(h)?;
-            sem_of_rec(&sem_g, &sem_h, k_outer)
+            let sem_g = closed_form_of(g)?;
+            let sem_h = closed_form_of(h)?;
+            closed_form_of_rec(&sem_g, &sem_h, k_outer)
         }
 
         // Not yet supported
@@ -166,7 +166,7 @@ pub fn sem_of(grf: &Grf) -> Option<Sem> {
     }
 }
 
-/// Compute the semantics of R(g, h) from their Sem representations.
+/// Compute the semantics of R(g, h) from their ClosedForm representations.
 ///
 /// k_outer = R(g,h).arity() = sem_g.arity()+1 = sem_h.arity()-1.
 ///
@@ -174,29 +174,29 @@ pub fn sem_of(grf: &Grf) -> Option<Sem> {
 ///   A: sem_h is Affine with acc+j pattern  →  affine result
 ///   B: sem_h ignores acc (arg 2)           →  Piecewise(zero=sem_g, pos=sem_h-without-acc)
 ///   C: sem_h is Piecewise on counter       →  recurse: new_g = B_z∘g, new_h = B_p
-fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
+fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) -> Option<ClosedForm> {
     // Case A: h(n, acc, rest) = j + acc  (j = coeffs[0], acc-coeff=1, rest-coeffs=0)
-    if let Sem::Affine(af_h) = sem_h {
+    if let ClosedForm::Affine(af_h) = sem_h {
         if af_h.coeffs[1] == 0
             && af_h.coeffs[2] == 1
             && af_h.coeffs[3..].iter().all(|&c| c == 0)
             && af_h.coeffs[0] >= 0
         {
-            if let Sem::Affine(g_af) = sem_g {
+            if let ClosedForm::Affine(g_af) = sem_g {
                 let j = af_h.coeffs[0];
                 let mut new_coeffs = Vec::with_capacity(k_outer + 1);
                 new_coeffs.push(g_af.coeffs[0]);
                 new_coeffs.push(j);
                 new_coeffs.extend_from_slice(&g_af.coeffs[1..]);
-                return Some(Sem::Affine(AffineFn { arity: k_outer, coeffs: new_coeffs }));
+                return Some(ClosedForm::Affine(AffineFn { arity: k_outer, coeffs: new_coeffs }));
             }
         }
     }
 
     // Case B: h ignores accumulator (arg 2)  →  drop acc to get h': (counter, rest) → value
-    if sem_ignores_arg(sem_h, 2) {
-        if let Some(h_prime) = sem_drop_arg(sem_h, 2) {
-            return Some(Sem::Piecewise(PiecewiseFn {
+    if closed_form_ignores_arg(sem_h, 2) {
+        if let Some(h_prime) = drop_arg(sem_h, 2) {
+            return Some(ClosedForm::Piecewise(PiecewiseFn {
                 arity: k_outer,
                 branch_index: 0,
                 zero_branch: Box::new(sem_g.clone()),
@@ -206,22 +206,22 @@ fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
     }
 
     // Case C: h is Piecewise on counter (arg 1)  →  peel one Piecewise layer off h
-    if let Sem::Piecewise(pw_h) = sem_h {
+    if let ClosedForm::Piecewise(pw_h) = sem_h {
         if pw_h.branch_index == 0 {
             // Build g'(rest) = B_z(g(rest), rest):
             //   B_z has arity k_outer (receives acc=g(rest), rest)
             //   We compose B_z with [sem_g, P(k-1,1), ..., P(k-1,k-1)]
-            let b_z: &Sem = &pw_h.zero_branch;
+            let b_z: &ClosedForm = &pw_h.zero_branch;
             let k_rest = k_outer - 1;
-            let mut inner_for_g_prime: Vec<Sem> = vec![sem_g.clone()];
+            let mut inner_for_g_prime: Vec<ClosedForm> = vec![sem_g.clone()];
             for i in 1..=k_rest {
-                inner_for_g_prime.push(Sem::Affine(AffineFn::proj(k_rest, i)));
+                inner_for_g_prime.push(ClosedForm::Affine(AffineFn::proj(k_rest, i)));
             }
             if b_z.arity() == inner_for_g_prime.len() {
-                if let Some(sem_g_prime) = sem_compose_general(b_z, &inner_for_g_prime, k_rest) {
-                    let b_p: &Sem = &pw_h.pos_branch;
-                    if let Some(pos_branch) = sem_of_rec(&sem_g_prime, b_p, k_outer) {
-                        return Some(Sem::Piecewise(PiecewiseFn {
+                if let Some(sem_g_prime) = compose(b_z, &inner_for_g_prime, k_rest) {
+                    let b_p: &ClosedForm = &pw_h.pos_branch;
+                    if let Some(pos_branch) = closed_form_of_rec(&sem_g_prime, b_p, k_outer) {
+                        return Some(ClosedForm::Piecewise(PiecewiseFn {
                             arity: k_outer,
                             branch_index: 0,
                             zero_branch: Box::new(sem_g.clone()),
@@ -237,17 +237,17 @@ fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
     // h'(acc, rest) = h with counter dropped.  Compute one_step = h'(g(rest), rest).
     // If h' is stable (each leaf Affine is either pure identity or ignores acc),
     // then one_step is a fixed point: f(n≥1, rest) = one_step(rest).
-    if sem_ignores_arg(sem_h, 1) {
-        if let Some(h_prime) = sem_drop_arg(sem_h, 1) {
+    if closed_form_ignores_arg(sem_h, 1) {
+        if let Some(h_prime) = drop_arg(sem_h, 1) {
             if h_prime_is_stable(&h_prime) {
                 let k_rest = k_outer - 1;
-                let mut inners: Vec<Sem> = vec![sem_g.clone()];
+                let mut inners: Vec<ClosedForm> = vec![sem_g.clone()];
                 for i in 1..=k_rest {
-                    inners.push(Sem::Affine(AffineFn::proj(k_rest, i)));
+                    inners.push(ClosedForm::Affine(AffineFn::proj(k_rest, i)));
                 }
-                if let Some(one_step) = sem_compose_general(&h_prime, &inners, k_rest) {
-                    let pos_branch = sem_prepend_arg(&one_step);
-                    return Some(Sem::Piecewise(PiecewiseFn {
+                if let Some(one_step) = compose(&h_prime, &inners, k_rest) {
+                    let pos_branch = prepend_arg(&one_step);
+                    return Some(ClosedForm::Piecewise(PiecewiseFn {
                         arity: k_outer,
                         branch_index: 0,
                         zero_branch: Box::new(sem_g.clone()),
@@ -262,10 +262,10 @@ fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
 }
 
 /// Returns true when `sem` ignores argument at 1-based `idx` for all inputs.
-pub fn sem_ignores_arg(sem: &Sem, idx: usize) -> bool {
+pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
     match sem {
-        Sem::Affine(af) => af.arity < idx || af.coeffs[idx] == 0,
-        Sem::Piecewise(pw) => {
+        ClosedForm::Affine(af) => af.arity < idx || af.coeffs[idx] == 0,
+        ClosedForm::Piecewise(pw) => {
             let b = pw.branch_index + 1; // 1-based branch variable
             if idx == b {
                 return false; // branch variable is always used for branching
@@ -273,8 +273,8 @@ pub fn sem_ignores_arg(sem: &Sem, idx: usize) -> bool {
             // In zero_branch, x_b is dropped: positions < b map to same idx,
             // positions > b map to idx-1.
             let idx_in_zero = if idx < b { idx } else { idx - 1 };
-            sem_ignores_arg(&pw.zero_branch, idx_in_zero)
-                && sem_ignores_arg(&pw.pos_branch, idx)
+            closed_form_ignores_arg(&pw.zero_branch, idx_in_zero)
+                && closed_form_ignores_arg(&pw.pos_branch, idx)
         }
     }
 }
@@ -288,7 +288,7 @@ pub fn sem_ignores_arg(sem: &Sem, idx: usize) -> bool {
 ///
 /// Recursion terminates because each call either reaches the all-Affine base case
 /// or reduces the maximum Piecewise nesting depth by one.
-fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
+fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<ClosedForm> {
     // Base case: 0-arity composition — h is a constant, no inputs consumed.
     if inners.is_empty() {
         return Some(h.lift(arity));
@@ -298,18 +298,18 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
     debug_assert!(inners.iter().all(|s| s.arity() == arity));
 
     // Base case: all Affine
-    if let Sem::Affine(h_af) = h {
+    if let ClosedForm::Affine(h_af) = h {
         if let Some(inner_afs) = inners
             .iter()
-            .map(|s| if let Sem::Affine(af) = s { Some(af.clone()) } else { None })
+            .map(|s| if let ClosedForm::Affine(af) = s { Some(af.clone()) } else { None })
             .collect::<Option<Vec<_>>>()
         {
-            return Some(Sem::Affine(compose_affine(h_af, &inner_afs)?));
+            return Some(ClosedForm::Affine(compose_affine(h_af, &inner_afs)?));
         }
     }
 
     match h {
-        Sem::Affine(_) => {
+        ClosedForm::Affine(_) => {
             // h is affine but some inner is Piecewise.
             // Find j: the branching variable all Piecewise inners agree on.
             if arity == 0 {
@@ -317,7 +317,7 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
             }
             let mut j_opt: Option<usize> = None;
             for inner in inners {
-                if let Sem::Piecewise(pw) = inner {
+                if let ClosedForm::Piecewise(pw) = inner {
                     let j2 = pw.branch_index + 1;
                     match j_opt {
                         None => j_opt = Some(j2),
@@ -332,27 +332,27 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
             // variable are returned unchanged by pos_face_at, which is only valid
             // when they do not depend on xj.
             for inner in inners {
-                if let Sem::Piecewise(pw) = inner {
-                    if pw.branch_index + 1 != j && !sem_ignores_arg(inner, j) {
+                if let ClosedForm::Piecewise(pw) = inner {
+                    if pw.branch_index + 1 != j && !closed_form_ignores_arg(inner, j) {
                         return None;
                     }
                 }
             }
-            let zero_inners: Vec<Sem> = inners.iter().map(|s| zero_face_at(s, j)).collect();
-            let pos_inners: Vec<Sem> = inners.iter().map(|s| pos_face_at(s, j)).collect();
-            let zero_sem = sem_compose_general(h, &zero_inners, arity - 1)?;
-            let pos_sem = sem_compose_general(h, &pos_inners, arity)?;
-            Some(Sem::Piecewise(PiecewiseFn {
+            let zero_inners: Vec<ClosedForm> = inners.iter().map(|s| zero_face_at(s, j)).collect();
+            let pos_inners: Vec<ClosedForm> = inners.iter().map(|s| pos_face_at(s, j)).collect();
+            let zero_sem = compose(h, &zero_inners, arity - 1)?;
+            let pos_sem = compose(h, &pos_inners, arity)?;
+            Some(ClosedForm::Piecewise(PiecewiseFn {
                 arity,
                 branch_index: j - 1,
                 zero_branch: Box::new(zero_sem),
                 pos_branch: Box::new(pos_sem),
             }))
         }
-        Sem::Piecewise(pw) => {
+        ClosedForm::Piecewise(pw) => {
             // If h always returns 0, so does the composition.
             if is_always_zero(h) {
-                return Some(Sem::Affine(AffineFn::zero(arity)));
+                return Some(ClosedForm::Affine(AffineFn::zero(arity)));
             }
 
             // h branches on y_{bi+1} = inners[bi](x).
@@ -361,23 +361,23 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
 
             // Case 1: inners[bi] is identically 0 → always fire zero_branch on rest.
             if is_always_zero(g_branch) {
-                let rest: Vec<Sem> = inners.iter().enumerate()
+                let rest: Vec<ClosedForm> = inners.iter().enumerate()
                     .filter(|(i, _)| *i != bi)
                     .map(|(_, s)| s.clone())
                     .collect();
                 let raw = if rest.is_empty() {
                     pw.zero_branch.as_ref().clone()
                 } else {
-                    sem_compose_general(&pw.zero_branch, &rest, arity)?
+                    compose(&pw.zero_branch, &rest, arity)?
                 };
                 return Some(raw.lift(arity));
             }
 
             // Case 2: inners[bi] ≥ 1 always → always fire pos_branch(inners[bi]-1, rest).
             if let Some(g_branch_m1) = always_pos_minus_one(g_branch) {
-                let mut pos_inners: Vec<Sem> = inners.to_vec();
-                pos_inners[bi] = Sem::Affine(g_branch_m1);
-                return sem_compose_general(&pw.pos_branch, &pos_inners, arity);
+                let mut pos_inners: Vec<ClosedForm> = inners.to_vec();
+                pos_inners[bi] = ClosedForm::Affine(g_branch_m1);
+                return compose(&pw.pos_branch, &pos_inners, arity);
             }
 
             // Case 3: inners[bi] is a projection of xj → distribute on xj=0 boundary.
@@ -391,8 +391,8 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
             let others_ok = inners.iter().enumerate()
                 .filter(|(i, _)| *i != bi)
                 .all(|(_, inner)| {
-                    if let Sem::Piecewise(pw2) = inner {
-                        pw2.branch_index + 1 == j || sem_ignores_arg(inner, j)
+                    if let ClosedForm::Piecewise(pw2) = inner {
+                        pw2.branch_index + 1 == j || closed_form_ignores_arg(inner, j)
                     } else {
                         true
                     }
@@ -402,7 +402,7 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
             }
             // Zero branch: compose zero_branch with all inners except inners[bi],
             // each substituted at xj=0.
-            let zero_inners: Vec<Sem> = inners.iter().enumerate()
+            let zero_inners: Vec<ClosedForm> = inners.iter().enumerate()
                 .filter(|(i, _)| *i != bi)
                 .map(|(_, inner)| zero_face_at(inner, j))
                 .collect();
@@ -410,19 +410,19 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
             let zero_sem = if zero_inners.is_empty() {
                 pw.zero_branch.as_ref().clone().lift(zero_arity)
             } else {
-                sem_compose_general(&pw.zero_branch, &zero_inners, zero_arity)?.lift(zero_arity)
+                compose(&pw.zero_branch, &zero_inners, zero_arity)?.lift(zero_arity)
             };
             // Pos branch: inners[bi]=xj delivers xj-1 ✓; apply pos_face_at to all
             // other inners so they evaluate to their caller-context value when xj is
             // decremented by the outer Piecewise.
-            let mut pos_inners: Vec<Sem> = inners.to_vec();
+            let mut pos_inners: Vec<ClosedForm> = inners.to_vec();
             for (i, inner) in pos_inners.iter_mut().enumerate() {
                 if i != bi {
                     *inner = pos_face_at(inner, j);
                 }
             }
-            let pos_sem = sem_compose_general(&pw.pos_branch, &pos_inners, arity)?;
-            Some(Sem::Piecewise(PiecewiseFn {
+            let pos_sem = compose(&pw.pos_branch, &pos_inners, arity)?;
+            Some(ClosedForm::Piecewise(PiecewiseFn {
                 arity,
                 branch_index: j - 1,
                 zero_branch: Box::new(zero_sem),
@@ -434,13 +434,13 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
 
 /// Substitute xj=0 (1-based `j`) and drop it from the argument list.
 /// The result has arity one less than `sem`.
-fn zero_face_at(sem: &Sem, j: usize) -> Sem {
+fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
     match sem {
-        Sem::Affine(af) => {
+        ClosedForm::Affine(af) => {
             let new_coeffs = drop_index(&af.coeffs, j);
-            Sem::Affine(AffineFn { arity: af.arity - 1, coeffs: new_coeffs })
+            ClosedForm::Affine(AffineFn { arity: af.arity - 1, coeffs: new_coeffs })
         }
-        Sem::Piecewise(pw) => {
+        ClosedForm::Piecewise(pw) => {
             let b = pw.branch_index + 1; // 1-based branch variable
             if j == b {
                 // Setting the branch arg to 0 always fires the zero_branch,
@@ -452,7 +452,7 @@ fn zero_face_at(sem: &Sem, j: usize) -> Sem {
                 let new_zero = zero_face_at(&pw.zero_branch, j_in_zero);
                 let new_pos = zero_face_at(&pw.pos_branch, j);
                 let new_bi = if j < b { pw.branch_index - 1 } else { pw.branch_index };
-                Sem::Piecewise(PiecewiseFn {
+                ClosedForm::Piecewise(PiecewiseFn {
                     arity: pw.arity - 1,
                     branch_index: new_bi,
                     zero_branch: Box::new(new_zero),
@@ -471,14 +471,14 @@ fn zero_face_at(sem: &Sem, j: usize) -> Sem {
 /// - Affine: add coeffs[j] to coeffs[0] (shifts the constant to compensate).
 /// - Piecewise branching on xj: take pos_branch (already defined as "called with xj-1").
 /// - Piecewise branching on a different variable: unchanged (only valid when xj-independent).
-fn pos_face_at(sem: &Sem, j: usize) -> Sem {
+fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
     match sem {
-        Sem::Affine(af) => {
+        ClosedForm::Affine(af) => {
             let mut new_coeffs = af.coeffs.clone();
             new_coeffs[0] += new_coeffs[j];
-            Sem::Affine(AffineFn { arity: af.arity, coeffs: new_coeffs })
+            ClosedForm::Affine(AffineFn { arity: af.arity, coeffs: new_coeffs })
         }
-        Sem::Piecewise(pw) => {
+        ClosedForm::Piecewise(pw) => {
             if pw.branch_index + 1 == j {
                 *pw.pos_branch.clone()
             } else {
@@ -490,9 +490,9 @@ fn pos_face_at(sem: &Sem, j: usize) -> Sem {
 
 
 /// If `sem` is a pure projection f(x) = xj (1-based j), return `Some(j)`.
-fn is_proj_of(sem: &Sem) -> Option<usize> {
+fn is_proj_of(sem: &ClosedForm) -> Option<usize> {
     match sem {
-        Sem::Affine(af) if af.coeffs[0] == 0 => {
+        ClosedForm::Affine(af) if af.coeffs[0] == 0 => {
             let mut found: Option<usize> = None;
             for (i, &c) in af.coeffs[1..].iter().enumerate() {
                 if c != 0 {
@@ -509,19 +509,19 @@ fn is_proj_of(sem: &Sem) -> Option<usize> {
 }
 
 /// Prepend one ignored argument at position 1, shifting all existing arg indices right.
-/// Used to turn a (rest)-indexed Sem into a (counter, rest)-indexed Sem.
-fn sem_prepend_arg(sem: &Sem) -> Sem {
+/// Used to turn a (rest)-indexed ClosedForm into a (counter, rest)-indexed ClosedForm.
+fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
     match sem {
-        Sem::Affine(af) => {
+        ClosedForm::Affine(af) => {
             let mut new_coeffs = vec![af.coeffs[0], 0]; // constant, then new ignored arg
             new_coeffs.extend_from_slice(&af.coeffs[1..]);
-            Sem::Affine(AffineFn { arity: af.arity + 1, coeffs: new_coeffs })
+            ClosedForm::Affine(AffineFn { arity: af.arity + 1, coeffs: new_coeffs })
         }
-        Sem::Piecewise(pw) => Sem::Piecewise(PiecewiseFn {
+        ClosedForm::Piecewise(pw) => ClosedForm::Piecewise(PiecewiseFn {
             arity: pw.arity + 1,
             branch_index: pw.branch_index + 1, // all indices shift right by 1
-            zero_branch: Box::new(sem_prepend_arg(&pw.zero_branch)),
-            pos_branch: Box::new(sem_prepend_arg(&pw.pos_branch)),
+            zero_branch: Box::new(prepend_arg(&pw.zero_branch)),
+            pos_branch: Box::new(prepend_arg(&pw.pos_branch)),
         }),
     }
 }
@@ -533,9 +533,9 @@ fn sem_prepend_arg(sem: &Sem) -> Sem {
 ///   (a) be pure identity on acc: acc-coeff=1 and all rest-coeffs=0, OR
 ///   (b) ignore acc entirely: acc-coeff=0.
 /// Piecewise branching on acc (bi=0) is rejected (too complex).
-fn h_prime_is_stable(h_prime: &Sem) -> bool {
+fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
     match h_prime {
-        Sem::Affine(af) => {
+        ClosedForm::Affine(af) => {
             let acc_coeff = if af.arity >= 1 { af.coeffs[1] } else { 0 };
             match acc_coeff {
                 0 => true, // constant after 1 step
@@ -543,7 +543,7 @@ fn h_prime_is_stable(h_prime: &Sem) -> bool {
                 _ => false,
             }
         }
-        Sem::Piecewise(pw) => {
+        ClosedForm::Piecewise(pw) => {
             if pw.branch_index == 0 {
                 return false; // branches on acc — too complex
             }
@@ -553,18 +553,18 @@ fn h_prime_is_stable(h_prime: &Sem) -> bool {
 }
 
 /// Returns true when `sem` evaluates to 0 for all natural-number inputs.
-fn is_always_zero(sem: &Sem) -> bool {
+fn is_always_zero(sem: &ClosedForm) -> bool {
     match sem {
-        Sem::Affine(af) => af.coeffs.iter().all(|&c| c == 0),
-        Sem::Piecewise(pw) => is_always_zero(&pw.zero_branch) && is_always_zero(&pw.pos_branch),
+        ClosedForm::Affine(af) => af.coeffs.iter().all(|&c| c == 0),
+        ClosedForm::Piecewise(pw) => is_always_zero(&pw.zero_branch) && is_always_zero(&pw.pos_branch),
     }
 }
 
 /// If `sem` is guaranteed ≥ 1 for all natural-number inputs (Affine with constant ≥ 1
 /// and all variable coefficients ≥ 0), returns `Some(sem - 1)`.
-fn always_pos_minus_one(sem: &Sem) -> Option<AffineFn> {
+fn always_pos_minus_one(sem: &ClosedForm) -> Option<AffineFn> {
     match sem {
-        Sem::Affine(af)
+        ClosedForm::Affine(af)
             if af.coeffs[0] >= 1 && af.coeffs[1..].iter().all(|&c| c >= 0) =>
         {
             let mut new_coeffs = af.coeffs.clone();
@@ -581,17 +581,17 @@ fn always_pos_minus_one(sem: &Sem) -> Option<AffineFn> {
 /// For Affine: drops the coefficient at position `idx`.
 /// For Piecewise: recursively removes the corresponding argument from both branches.
 /// Returns `None` if asked to remove the branching variable of a Piecewise.
-fn sem_drop_arg(sem: &Sem, idx: usize) -> Option<Sem> {
+fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
     debug_assert!(idx >= 1);
     match sem {
-        Sem::Affine(af) => {
+        ClosedForm::Affine(af) => {
             if af.coeffs[idx] != 0 {
                 return None; // arg is used
             }
             let new_coeffs = drop_index(&af.coeffs, idx);
-            Some(Sem::Affine(AffineFn { arity: af.arity - 1, coeffs: new_coeffs }))
+            Some(ClosedForm::Affine(AffineFn { arity: af.arity - 1, coeffs: new_coeffs }))
         }
-        Sem::Piecewise(pw) => {
+        ClosedForm::Piecewise(pw) => {
             let b = pw.branch_index + 1; // 1-based
             if idx == b {
                 return None; // cannot remove the branching variable
@@ -599,11 +599,11 @@ fn sem_drop_arg(sem: &Sem, idx: usize) -> Option<Sem> {
             // In zero_branch (arity pw.arity-1), x_b is absent:
             // idx < b → same position; idx > b → shifted down by 1.
             let idx_in_zero = if idx < b { idx } else { idx - 1 };
-            let new_zero = sem_drop_arg(&pw.zero_branch, idx_in_zero)?;
-            let new_pos = sem_drop_arg(&pw.pos_branch, idx)?;
+            let new_zero = drop_arg(&pw.zero_branch, idx_in_zero)?;
+            let new_pos = drop_arg(&pw.pos_branch, idx)?;
             // If we drop an arg before b, the branch_index shifts down.
             let new_bi = if idx < b { pw.branch_index - 1 } else { pw.branch_index };
-            Some(Sem::Piecewise(PiecewiseFn {
+            Some(ClosedForm::Piecewise(PiecewiseFn {
                 arity: pw.arity - 1,
                 branch_index: new_bi,
                 zero_branch: Box::new(new_zero),
@@ -620,7 +620,7 @@ fn sem_drop_arg(sem: &Sem, idx: usize) -> Option<Sem> {
 fn compose_affine(outer: &AffineFn, inners: &[AffineFn]) -> Option<AffineFn> {
     debug_assert_eq!(outer.arity, inners.len());
     if inners.is_empty() {
-        // 0-arg compose handled separately in sem_of; this shouldn't be reached.
+        // 0-arg compose handled separately in closed_form_of; this shouldn't be reached.
         return None;
     }
     let inner_arity = inners[0].arity;
@@ -663,10 +663,10 @@ mod tests {
         s.parse().unwrap()
     }
 
-    /// Assert sem_of matches simulate on a grid of inputs 0..=max_val per dimension.
+    /// Assert closed_form_of matches simulate on a grid of inputs 0..=max_val per dimension.
     fn check_vs_sim(grf_str: &str, max_val: u64) {
         let f = grf(grf_str);
-        let sem = sem_of(&f).unwrap_or_else(|| panic!("sem_of returned None for {grf_str}"));
+        let sem = closed_form_of(&f).unwrap_or_else(|| panic!("closed_form_of returned None for {grf_str}"));
         let arity = f.arity();
         if arity == 0 {
             let sim_val = simulate(&f, &[], 0).0.into_value();
@@ -697,32 +697,32 @@ mod tests {
 
     #[test]
     fn test_zero() {
-        let s = sem_of(&grf("Z0")).unwrap();
-        assert_eq!(s, Sem::Affine(AffineFn { arity: 0, coeffs: vec![0] }));
+        let s = closed_form_of(&grf("Z0")).unwrap();
+        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![0] }));
         assert_eq!(s.eval(&[]), Some(0));
 
-        let s3 = sem_of(&grf("Z3")).unwrap();
+        let s3 = closed_form_of(&grf("Z3")).unwrap();
         assert_eq!(s3.arity(), 3);
         assert_eq!(s3.eval(&[1, 2, 3]), Some(0));
     }
 
     #[test]
     fn test_succ() {
-        let s = sem_of(&grf("S")).unwrap();
-        assert_eq!(s, Sem::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] }));
+        let s = closed_form_of(&grf("S")).unwrap();
+        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] }));
         assert_eq!(s.eval(&[0]), Some(1));
         assert_eq!(s.eval(&[5]), Some(6));
     }
 
     #[test]
     fn test_proj() {
-        let s = sem_of(&grf("P(2,1)")).unwrap();
+        let s = closed_form_of(&grf("P(2,1)")).unwrap();
         assert_eq!(s.eval(&[5, 3]), Some(5));
 
-        let s2 = sem_of(&grf("P(2,2)")).unwrap();
+        let s2 = closed_form_of(&grf("P(2,2)")).unwrap();
         assert_eq!(s2.eval(&[5, 3]), Some(3));
 
-        let s3 = sem_of(&grf("P(3,2)")).unwrap();
+        let s3 = closed_form_of(&grf("P(3,2)")).unwrap();
         assert_eq!(s3.eval(&[1, 7, 9]), Some(7));
     }
 
@@ -731,7 +731,7 @@ mod tests {
     #[test]
     fn test_comp_succ_zero() {
         // C(S, Z0) = constant 1, arity 0
-        let s = sem_of(&grf("C(S, Z0)")).unwrap();
+        let s = closed_form_of(&grf("C(S, Z0)")).unwrap();
         assert_eq!(s.arity(), 0);
         assert_eq!(s.eval(&[]), Some(1));
     }
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn test_comp_succ_succ() {
         // C(S, C(S, Z0)) = constant 2
-        let s = sem_of(&grf("C(S, C(S, Z0))")).unwrap();
+        let s = closed_form_of(&grf("C(S, C(S, Z0))")).unwrap();
         assert_eq!(s.arity(), 0);
         assert_eq!(s.eval(&[]), Some(2));
     }
@@ -755,7 +755,7 @@ mod tests {
     #[test]
     fn test_comp0_lift() {
         // C2(Z0): lift arity-0 zero to arity 2
-        let s = sem_of(&grf("C2(Z0)")).unwrap();
+        let s = closed_form_of(&grf("C2(Z0)")).unwrap();
         assert_eq!(s.arity(), 2);
         assert_eq!(s.eval(&[3, 7]), Some(0));
     }
@@ -766,24 +766,24 @@ mod tests {
     fn test_rec_identity() {
         // R(Z0, C(S, P(2,2))) = identity: f(n) = n
         check_vs_sim("R(Z0, C(S, P(2,2)))", 10);
-        let s = sem_of(&grf("R(Z0, C(S, P(2,2)))")).unwrap();
-        assert_eq!(s, Sem::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] }));
+        let s = closed_form_of(&grf("R(Z0, C(S, P(2,2)))")).unwrap();
+        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] }));
     }
 
     #[test]
     fn test_rec_addition() {
         // R(P(1,1), C(S, P(3,2))) = addition: f(n, m) = n + m
         check_vs_sim("R(P(1,1), C(S, P(3,2)))", 5);
-        let s = sem_of(&grf("R(P(1,1), C(S, P(3,2)))")).unwrap();
-        assert_eq!(s, Sem::Affine(AffineFn { arity: 2, coeffs: vec![0, 1, 1] }));
+        let s = closed_form_of(&grf("R(P(1,1), C(S, P(3,2)))")).unwrap();
+        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![0, 1, 1] }));
     }
 
     #[test]
     fn test_rec_affine_step2() {
         // R(S, C(S, C(S, P(3,2)))) = f(n, x) = 1 + 2n + x
         check_vs_sim("R(S, C(S, C(S, P(3,2))))", 5);
-        let s = sem_of(&grf("R(S, C(S, C(S, P(3,2))))")).unwrap();
-        assert_eq!(s, Sem::Affine(AffineFn { arity: 2, coeffs: vec![1, 2, 1] }));
+        let s = closed_form_of(&grf("R(S, C(S, C(S, P(3,2))))")).unwrap();
+        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![1, 2, 1] }));
     }
 
     // --- Rec Case B: h ignores accumulator ---
@@ -791,8 +791,8 @@ mod tests {
     #[test]
     fn test_rec_predecessor() {
         // R(Z0, P(2,1)) = predecessor (saturating at 0): f(0)=0, f(n)=n-1
-        let s = sem_of(&grf("R(Z0, P(2,1))")).unwrap();
-        assert!(matches!(s, Sem::Piecewise(_)));
+        let s = closed_form_of(&grf("R(Z0, P(2,1))")).unwrap();
+        assert!(matches!(s, ClosedForm::Piecewise(_)));
         check_vs_sim("R(Z0, P(2,1))", 10);
     }
 
@@ -832,7 +832,7 @@ mod tests {
     #[test]
     fn test_comp_double_piecewise_none() {
         // pred(pred(n)) branches at n=2, not n=1 — not representable in our Piecewise.
-        assert!(sem_of(&grf("C(R(Z0, P(2,1)), R(Z0, P(2,1)))")).is_none());
+        assert!(closed_form_of(&grf("C(R(Z0, P(2,1)), R(Z0, P(2,1)))")).is_none());
     }
 
     // --- Case A' (semantic acc+j detection) ---
@@ -842,8 +842,8 @@ mod tests {
         // C(P(2,1), P(2,2), P(2,1))(n,acc) = P(2,1)(acc, n) = acc  →  semantically acc+0
         // R(Z0, C(P(2,1), P(2,2), P(2,1))): f(n) = g() + 0*n = 0 for all n
         check_vs_sim("R(Z0, C(P(2,1), P(2,2), P(2,1)))", 8);
-        let s = sem_of(&grf("R(Z0, C(P(2,1), P(2,2), P(2,1)))")).unwrap();
-        assert_eq!(s, Sem::Affine(AffineFn { arity: 1, coeffs: vec![0, 0] }));
+        let s = closed_form_of(&grf("R(Z0, C(P(2,1), P(2,2), P(2,1)))")).unwrap();
+        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 0] }));
     }
 
     // --- Case B with Piecewise step ---
@@ -852,7 +852,7 @@ mod tests {
     fn test_rec_case_b_piecewise_step() {
         // R(Z0, R(Z1, P(3,1))): h = R(Z1, P(3,1)) which ignores acc
         // h(counter, acc, x) = R(Z1, P(3,1))(counter, x): if counter=0 then x else counter-1
-        // But h ignores acc. Let's verify sem_of works.
+        // But h ignores acc. Let's verify closed_form_of works.
         // R(g=Z0, h=R(Z1,P(3,1))): g.arity=0, k_outer=1
         // f(0) = g() = 0; f(n) = h(n-1, f(n-1)) = R(Z1,P(3,1))(n-1, _, _) ignoring acc
         check_vs_sim("R(Z0, R(Z1, P(3,1)))", 8);
@@ -862,8 +862,8 @@ mod tests {
 
     #[test]
     fn test_min_none() {
-        assert!(sem_of(&grf("M(P(1,1))")).is_none());
-        assert!(sem_of(&grf("M(S)")).is_none());
+        assert!(closed_form_of(&grf("M(P(1,1))")).is_none());
+        assert!(closed_form_of(&grf("M(S)")).is_none());
     }
 
     #[test]
@@ -878,7 +878,7 @@ mod tests {
     fn test_rec_mul_none() {
         // Multiplication: h = add(acc, m), not a constant step — None
         // R(Z0, C(R(P(1,1),C(S,P(3,2))), P(3,2), P(3,3)))
-        assert!(sem_of(&grf("R(Z0, C(R(P(1,1),C(S,P(3,2))),P(3,2),P(3,3)))")).is_none());
+        assert!(closed_form_of(&grf("R(Z0, C(R(P(1,1),C(S,P(3,2))),P(3,2),P(3,3)))")).is_none());
     }
 
     // --- AffineFn arithmetic safety ---

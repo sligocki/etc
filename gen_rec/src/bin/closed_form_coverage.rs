@@ -1,23 +1,23 @@
-/// Report what fraction of GRFs sem_of can represent, and list smallest holdouts.
+/// Report what fraction of GRFs closed_form_of can represent, and list smallest holdouts.
 ///
 /// Usage examples:
-///   sem_coverage                          # arities 0..=2, sizes 1..=8, PRF only
-///   sem_coverage --max-arity 3            # also include arity 3
-///   sem_coverage --max-size 10            # enumerate larger sizes
-///   sem_coverage --allow-min              # include Min combinator
-///   sem_coverage --holdouts 20            # show more holdouts
-///   sem_coverage --max-steps 0            # skip value preview
+///   closed_form_coverage                          # arities 0..=2, sizes 1..=8, PRF only
+///   closed_form_coverage --max-arity 3            # also include arity 3
+///   closed_form_coverage --max-size 10            # enumerate larger sizes
+///   closed_form_coverage --allow-min              # include Min combinator
+///   closed_form_coverage --holdouts 20            # show more holdouts
+///   closed_form_coverage --max-steps 0            # skip value preview
 use std::collections::HashSet;
 
 use clap::Parser;
 use gen_rec::enumerate::stream_grf;
 use gen_rec::grf::Grf;
 use gen_rec::pruning::PruningOpts;
-use gen_rec::sem::{sem_of, Sem};
+use gen_rec::closed_form::{closed_form_of, ClosedForm};
 use gen_rec::simulate::{simulate, SimResult};
 
 #[derive(Parser, Debug)]
-#[command(about = "Report sem.rs semantic coverage over enumerated GRFs")]
+#[command(about = "Report closed_form.rs coverage over enumerated GRFs")]
 struct Args {
     /// Maximum arity to enumerate (0..=max_arity inclusive).
     #[arg(long, default_value_t = 2)]
@@ -93,7 +93,7 @@ fn value_preview(f: &Grf, max_steps: u64) -> String {
 // Holdout classification
 // ---------------------------------------------------------------------------
 
-/// Short label explaining why sem_of failed for this GRF.
+/// Short label explaining why closed_form_of failed for this GRF.
 ///
 /// For `Comp` nodes whose inner components are not representable, the reason
 /// recursively describes WHY that sub-node fails rather than just "not sem".
@@ -103,49 +103,49 @@ fn holdout_reason(grf: &Grf) -> String {
         Grf::Rec(g, h) => {
             let uses_acc = h.used_args().contains(&2);
             let acc_k = h.acc_plus_k().is_some();
-            let sem_h = sem_of(h);
+            let sem_h = closed_form_of(h);
 
             if acc_k {
-                match sem_of(g) {
+                match closed_form_of(g) {
                     None => "Rec[A]: base not sem".into(),
-                    Some(Sem::Piecewise(_)) => "Rec[A]: base is piecewise".into(),
-                    Some(Sem::Affine(_)) => "Rec[A]: unexpected (should be covered)".into(),
+                    Some(ClosedForm::Piecewise(_)) => "Rec[A]: base is piecewise".into(),
+                    Some(ClosedForm::Affine(_)) => "Rec[A]: unexpected (should be covered)".into(),
                 }
             } else if !uses_acc {
-                if sem_of(g).is_none() {
+                if closed_form_of(g).is_none() {
                     "Rec[B]: base not sem".into()
                 } else {
                     match sem_h {
                         None => "Rec[B]: step not sem".into(),
-                        Some(Sem::Affine(ref af)) if af.coeffs.get(2) == Some(&0) => {
+                        Some(ClosedForm::Affine(ref af)) if af.coeffs.get(2) == Some(&0) => {
                             "Rec[B]: step ok (unexpected)".into()
                         }
-                        Some(Sem::Affine(_)) => "Rec[B]: step has nonzero acc coeff".into(),
-                        Some(Sem::Piecewise(_)) => "Rec[B]: step is piecewise".into(),
+                        Some(ClosedForm::Affine(_)) => "Rec[B]: step has nonzero acc coeff".into(),
+                        Some(ClosedForm::Piecewise(_)) => "Rec[B]: step is piecewise".into(),
                     }
                 }
             } else {
                 match sem_h {
                     None => "Rec: step uses acc, not sem".into(),
-                    Some(Sem::Affine(_)) => "Rec: step uses acc, affine (not acc+k)".into(),
-                    Some(Sem::Piecewise(_)) => "Rec: step uses acc, piecewise".into(),
+                    Some(ClosedForm::Affine(_)) => "Rec: step uses acc, affine (not acc+k)".into(),
+                    Some(ClosedForm::Piecewise(_)) => "Rec: step uses acc, piecewise".into(),
                 }
             }
         }
         Grf::Comp(h, gs, _) => {
             for (i, g) in gs.iter().enumerate() {
-                match sem_of(g) {
+                match closed_form_of(g) {
                     None => {
                         return format!("Comp: arg[{}] → {}", i + 1, holdout_reason(g));
                     }
-                    Some(Sem::Piecewise(_)) => return "Comp: arg is piecewise".into(),
-                    Some(Sem::Affine(_)) => {}
+                    Some(ClosedForm::Piecewise(_)) => return "Comp: arg is piecewise".into(),
+                    Some(ClosedForm::Affine(_)) => {}
                 }
             }
-            match sem_of(h) {
+            match closed_form_of(h) {
                 None => format!("Comp: head → {}", holdout_reason(h)),
-                Some(Sem::Piecewise(_)) => "Comp: head is piecewise".into(),
-                Some(Sem::Affine(_)) => "Comp: all affine (unexpected)".into(),
+                Some(ClosedForm::Piecewise(_)) => "Comp: head is piecewise".into(),
+                Some(ClosedForm::Affine(_)) => "Comp: all affine (unexpected)".into(),
             }
         }
         _ => "atom (unexpected)".into(),
@@ -166,7 +166,7 @@ fn main() {
 
     let mut grand_total = 0usize;
     let mut grand_covered = 0usize;
-    let mut grand_distinct: HashSet<Sem> = HashSet::new();
+    let mut grand_distinct: HashSet<ClosedForm> = HashSet::new();
     // reason → count, accumulated across all arities
     let mut grand_reason_counts: std::collections::BTreeMap<String, usize> =
         std::collections::BTreeMap::new();
@@ -178,7 +178,7 @@ fn main() {
 
         let mut arity_total = 0usize;
         let mut arity_covered = 0usize;
-        let mut arity_distinct: HashSet<Sem> = HashSet::new();
+        let mut arity_distinct: HashSet<ClosedForm> = HashSet::new();
         // first `holdouts` uncovered GRFs (for the example list)
         let mut arity_holdouts: Vec<(usize, String)> = Vec::new();
         // reason → count for this arity
@@ -194,7 +194,7 @@ fn main() {
 
             stream_grf(size, arity, args.allow_min, opts, &mut |grf| {
                 size_total += 1;
-                if let Some(sem) = sem_of(grf) {
+                if let Some(sem) = closed_form_of(grf) {
                     size_covered += 1;
                     arity_distinct.insert(sem.clone());
                     grand_distinct.insert(sem);

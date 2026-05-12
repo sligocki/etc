@@ -158,11 +158,15 @@ fn fmt_rule_rhs(sem: &Sem, vars: &[String]) -> String {
     match sem {
         Sem::Affine(af) => fmt_affine_expr(af, vars),
         Sem::Piecewise(pw) => {
-            let x = vars[0].as_str();
-            let zero_rhs = fmt_rule_rhs(&pw.zero_branch, &vars[1..]);
-            let pos_var0 = decrement_n(x, 1);
-            let pos_vars: Vec<String> =
-                std::iter::once(pos_var0).chain(vars[1..].iter().cloned()).collect();
+            let bi = pw.branch_index;
+            let x = vars[bi].as_str();
+            let zero_vars: Vec<String> = vars.iter().enumerate()
+                .filter(|&(j, _)| j != bi)
+                .map(|(_, v)| v.clone())
+                .collect();
+            let zero_rhs = fmt_rule_rhs(&pw.zero_branch, &zero_vars);
+            let mut pos_vars = vars.to_vec();
+            pos_vars[bi] = decrement_n(x, 1);
             let pos_rhs = fmt_rule_rhs(&pw.pos_branch, &pos_vars);
             format!("({x}=0 ? {zero_rhs} : {pos_rhs})")
         }
@@ -172,18 +176,16 @@ fn fmt_rule_rhs(sem: &Sem, vars: &[String]) -> String {
 /// Print multi-line pattern-matching rules for a Sem, prefixed with fn_name.
 fn print_sem_rules(fn_name: &str, sem: &Sem) {
     let args: Vec<String> = (0..sem.arity()).map(|i| arg_name(i).to_string()).collect();
-    emit_rules(fn_name, sem, &args, 0);
+    let depths = vec![0usize; sem.arity()];
+    emit_rules(fn_name, sem, &args, &depths);
 }
 
-fn emit_rules(fn_name: &str, sem: &Sem, args: &[String], depth: usize) {
+fn emit_rules(fn_name: &str, sem: &Sem, args: &[String], depths: &[usize]) {
     match sem {
         Sem::Affine(af) => {
-            let formula_args: Vec<String> = if args.is_empty() {
-                vec![]
-            } else {
-                let first = decrement_n(&args[0], depth);
-                std::iter::once(first).chain(args[1..].iter().cloned()).collect()
-            };
+            let formula_args: Vec<String> = args.iter().zip(depths.iter())
+                .map(|(name, &d)| decrement_n(name, d))
+                .collect();
             let lhs: Vec<String> = args
                 .iter()
                 .enumerate()
@@ -194,14 +196,28 @@ fn emit_rules(fn_name: &str, sem: &Sem, args: &[String], depth: usize) {
             println!("  {}({}) = {}", fn_name, lhs.join(", "), fmt_affine_expr(af, &formula_args));
         }
         Sem::Piecewise(pw) => {
-            let zero_lhs: Vec<String> = std::iter::once(depth.to_string())
-                .chain(args[1..].iter().enumerate().map(|(j, name)| {
-                    if sem_ignores_arg(&pw.zero_branch, j + 1) { "_".to_string() } else { name.clone() }
-                }))
+            let bi = pw.branch_index;
+            let zero_lhs: Vec<String> = args.iter().enumerate().map(|(j, name)| {
+                if j == bi {
+                    depths[bi].to_string()
+                } else {
+                    let j_in_zero = if j < bi { j } else { j - 1 };
+                    if sem_ignores_arg(&pw.zero_branch, j_in_zero + 1) {
+                        "_".to_string()
+                    } else {
+                        name.clone()
+                    }
+                }
+            }).collect();
+            let zero_vars: Vec<String> = args.iter().enumerate()
+                .filter(|&(j, _)| j != bi)
+                .map(|(_, name)| name.clone())
                 .collect();
             println!("  {}({}) = {}", fn_name, zero_lhs.join(", "),
-                     fmt_rule_rhs(&pw.zero_branch, &args[1..]));
-            emit_rules(fn_name, &pw.pos_branch, args, depth + 1);
+                     fmt_rule_rhs(&pw.zero_branch, &zero_vars));
+            let mut new_depths = depths.to_vec();
+            new_depths[bi] += 1;
+            emit_rules(fn_name, &pw.pos_branch, args, &new_depths);
         }
     }
 }

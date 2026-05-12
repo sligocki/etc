@@ -73,11 +73,14 @@ pub struct PiecewiseFn {
 impl PiecewiseFn {
     pub fn eval(&self, args: &[Num]) -> Option<Num> {
         assert_eq!(args.len(), self.arity);
-        if args[self.branch_index] == 0 {
-            self.zero_branch.eval(&args[1..])
+        let bi = self.branch_index;
+        if args[bi] == 0 {
+            let zero_args: Vec<Num> =
+                args[..bi].iter().chain(&args[bi + 1..]).copied().collect();
+            self.zero_branch.eval(&zero_args)
         } else {
             let mut new_args = args.to_vec();
-            new_args[self.branch_index] -= 1;
+            new_args[bi] -= 1;
             self.pos_branch.eval(&new_args)
         }
     }
@@ -204,30 +207,55 @@ fn sem_of_rec(sem_g: &Sem, sem_h: &Sem, k_outer: usize) -> Option<Sem> {
 
     // Case C: h is Piecewise on counter (arg 1)  →  peel one Piecewise layer off h
     if let Sem::Piecewise(pw_h) = sem_h {
-        // Build g'(rest) = B_z(g(rest), rest):
-        //   B_z has arity k_outer (receives acc=g(rest), rest)
-        //   We compose B_z with [sem_g, P(k-1,1), ..., P(k-1,k-1)]
-        let b_z: &Sem = &pw_h.zero_branch;
-        let k_rest = k_outer - 1; // arity of rest = arity of g
-        let mut inner_for_g_prime: Vec<Sem> = vec![sem_g.clone()];
-        for i in 1..=k_rest {
-            inner_for_g_prime.push(Sem::Affine(AffineFn::proj(k_rest, i)));
+        if pw_h.branch_index == 0 {
+            // Build g'(rest) = B_z(g(rest), rest):
+            //   B_z has arity k_outer (receives acc=g(rest), rest)
+            //   We compose B_z with [sem_g, P(k-1,1), ..., P(k-1,k-1)]
+            let b_z: &Sem = &pw_h.zero_branch;
+            let k_rest = k_outer - 1;
+            let mut inner_for_g_prime: Vec<Sem> = vec![sem_g.clone()];
+            for i in 1..=k_rest {
+                inner_for_g_prime.push(Sem::Affine(AffineFn::proj(k_rest, i)));
+            }
+            if b_z.arity() == inner_for_g_prime.len() {
+                if let Some(sem_g_prime) = sem_compose_general(b_z, &inner_for_g_prime, k_rest) {
+                    let b_p: &Sem = &pw_h.pos_branch;
+                    if let Some(pos_branch) = sem_of_rec(&sem_g_prime, b_p, k_outer) {
+                        return Some(Sem::Piecewise(PiecewiseFn {
+                            arity: k_outer,
+                            branch_index: 0,
+                            zero_branch: Box::new(sem_g.clone()),
+                            pos_branch: Box::new(pos_branch),
+                        }));
+                    }
+                }
+            }
         }
-        if b_z.arity() != inner_for_g_prime.len() {
-            return None;
+    }
+
+    // Case D: h ignores counter (arg 1) and the step has a 1-step fixed point.
+    // h'(acc, rest) = h with counter dropped.  Compute one_step = h'(g(rest), rest).
+    // If h' is stable (each leaf Affine is either pure identity or ignores acc),
+    // then one_step is a fixed point: f(n≥1, rest) = one_step(rest).
+    if sem_ignores_arg(sem_h, 1) {
+        if let Some(h_prime) = sem_drop_arg(sem_h, 1) {
+            if h_prime_is_stable(&h_prime) {
+                let k_rest = k_outer - 1;
+                let mut inners: Vec<Sem> = vec![sem_g.clone()];
+                for i in 1..=k_rest {
+                    inners.push(Sem::Affine(AffineFn::proj(k_rest, i)));
+                }
+                if let Some(one_step) = sem_compose_general(&h_prime, &inners, k_rest) {
+                    let pos_branch = sem_prepend_arg(&one_step);
+                    return Some(Sem::Piecewise(PiecewiseFn {
+                        arity: k_outer,
+                        branch_index: 0,
+                        zero_branch: Box::new(sem_g.clone()),
+                        pos_branch: Box::new(pos_branch),
+                    }));
+                }
+            }
         }
-        let sem_g_prime = sem_compose_general(b_z, &inner_for_g_prime, k_rest)?;
-
-        // Recurse: pos_branch = R(g', B_p)
-        let b_p: &Sem = &pw_h.pos_branch;
-        let pos_branch = sem_of_rec(&sem_g_prime, b_p, k_outer)?;
-
-        return Some(Sem::Piecewise(PiecewiseFn {
-            arity: k_outer,
-            branch_index: 0,
-            zero_branch: Box::new(sem_g.clone()),
-            pos_branch: Box::new(pos_branch),
-        }));
     }
 
     None
@@ -238,9 +266,14 @@ pub fn sem_ignores_arg(sem: &Sem, idx: usize) -> bool {
     match sem {
         Sem::Affine(af) => af.arity < idx || af.coeffs[idx] == 0,
         Sem::Piecewise(pw) => {
-            // In zero_branch, idx maps to idx-1 (arg1 consumed as branch var).
-            // In pos_branch, idx maps to idx (same indexing).
-            (idx == 1 || sem_ignores_arg(&pw.zero_branch, idx - 1))
+            let b = pw.branch_index + 1; // 1-based branch variable
+            if idx == b {
+                return false; // branch variable is always used for branching
+            }
+            // In zero_branch, x_b is dropped: positions < b map to same idx,
+            // positions > b map to idx-1.
+            let idx_in_zero = if idx < b { idx } else { idx - 1 };
+            sem_ignores_arg(&pw.zero_branch, idx_in_zero)
                 && sem_ignores_arg(&pw.pos_branch, idx)
         }
     }
@@ -275,30 +308,39 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
         }
     }
 
-    // Compute the zero-face and pos-face for each inner function (only used when
-    // arity ≥ 1; the Piecewise h branch guards arity separately).
-    let zero_faces: Vec<Sem> = if arity > 0 {
-        inners.iter().map(zero_face).collect()
-    } else {
-        vec![]
-    };
-    let pos_faces: Vec<Sem> = if arity > 0 {
-        inners.iter().map(pos_face).collect()
-    } else {
-        vec![]
-    };
-
     match h {
         Sem::Affine(_) => {
-            // h is affine but some inner is Piecewise → distribute on x1.
+            // h is affine but some inner is Piecewise.
+            // Find j: the branching variable all Piecewise inners agree on.
             if arity == 0 {
-                return None; // can't distribute with 0-arity inners
+                return None;
             }
-            let zero_sem = sem_compose_general(h, &zero_faces, arity-1)?;
-            let pos_sem = sem_compose_general(h, &pos_faces, arity)?;
+            let mut j_opt: Option<usize> = None;
+            for inner in inners {
+                if let Sem::Piecewise(pw) = inner {
+                    let j2 = pw.branch_index + 1;
+                    match j_opt {
+                        None => j_opt = Some(j2),
+                        Some(j1) if j1 != j2 => return None, // Piecewise inners disagree
+                        _ => {}
+                    }
+                }
+            }
+            let j = j_opt.unwrap_or(1);
+            // Correctness: no Affine inner may depend on xj (else pos branch would
+            // see xj-1 instead of xj after the outer Piecewise decrements it).
+            for inner in inners {
+                if matches!(inner, Sem::Affine(_)) && !sem_ignores_arg(inner, j) {
+                    return None;
+                }
+            }
+            let zero_inners: Vec<Sem> = inners.iter().map(|s| zero_face_at(s, j)).collect();
+            let pos_inners: Vec<Sem> = inners.iter().map(|s| pos_face_at(s, j)).collect();
+            let zero_sem = sem_compose_general(h, &zero_inners, arity - 1)?;
+            let pos_sem = sem_compose_general(h, &pos_inners, arity)?;
             Some(Sem::Piecewise(PiecewiseFn {
                 arity,
-                branch_index: 0,
+                branch_index: j - 1,
                 zero_branch: Box::new(zero_sem),
                 pos_branch: Box::new(pos_sem),
             }))
@@ -309,46 +351,61 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
                 return Some(Sem::Affine(AffineFn::zero(arity)));
             }
 
-            // h branches on y1 = g1(x). There are three cases depending on g1:
-            let g1 = &inners[0];
+            // h branches on y_{bi+1} = inners[bi](x).
+            let bi = pw.branch_index;
+            let g_branch = &inners[bi];
 
-            // Case 1: g1 is identically 0  →  h always fires zero_branch on (g2..gm)(x).
-            if is_always_zero(g1) {
-                let raw = if inners[1..].is_empty() {
+            // Case 1: inners[bi] is identically 0 → always fire zero_branch on rest.
+            if is_always_zero(g_branch) {
+                let rest: Vec<Sem> = inners.iter().enumerate()
+                    .filter(|(i, _)| *i != bi)
+                    .map(|(_, s)| s.clone())
+                    .collect();
+                let raw = if rest.is_empty() {
                     pw.zero_branch.as_ref().clone()
                 } else {
-                    sem_compose_general(&pw.zero_branch, &inners[1..], arity)?
+                    sem_compose_general(&pw.zero_branch, &rest, arity)?
                 };
                 return Some(raw.lift(arity));
             }
 
-            // Case 2: g1 ≥ 1 always  →  h always fires pos_branch(g1-1, g2..gm)(x).
-            if let Some(g1m1) = always_pos_minus_one(g1) {
-                let mut pos_inners: Vec<Sem> = vec![Sem::Affine(g1m1)];
-                pos_inners.extend(inners[1..].iter().cloned());
+            // Case 2: inners[bi] ≥ 1 always → always fire pos_branch(inners[bi]-1, rest).
+            if let Some(g_branch_m1) = always_pos_minus_one(g_branch) {
+                let mut pos_inners: Vec<Sem> = inners.to_vec();
+                pos_inners[bi] = Sem::Affine(g_branch_m1);
                 return sem_compose_general(&pw.pos_branch, &pos_inners, arity);
             }
 
-            // Case 3: g1 is the x1 projection  →  distribute on x1 boundary.
+            // Case 3: inners[bi] is a projection of xj → distribute on xj=0 boundary.
             if arity == 0 {
                 return None;
             }
-            if !is_x1_proj(g1) {
+            let j = is_proj_of(g_branch)?;
+            // Correctness: other inners must not depend on xj so pos branch is sound.
+            let others_ok = inners.iter().enumerate()
+                .filter(|(i, _)| *i != bi)
+                .all(|(_, inner)| sem_ignores_arg(inner, j));
+            if !others_ok {
                 return None;
             }
-            // When x1=0: g1(x)=0, h fires zero_branch on (g2..gm)(0,rest).
-            // zero_faces[1..] may be empty when m=1; lift to arity-1.
-            let raw_zero = if zero_faces[1..].is_empty() {
-                pw.zero_branch.as_ref().clone()
+            // Zero branch: compose zero_branch with all inners except inners[bi],
+            // each substituted at xj=0.
+            let zero_inners: Vec<Sem> = inners.iter().enumerate()
+                .filter(|(i, _)| *i != bi)
+                .map(|(_, inner)| zero_face_at(inner, j))
+                .collect();
+            let zero_arity = arity - 1;
+            let zero_sem = if zero_inners.is_empty() {
+                pw.zero_branch.as_ref().clone().lift(zero_arity)
             } else {
-                sem_compose_general(&pw.zero_branch, &zero_faces[1..], arity-1)?
+                sem_compose_general(&pw.zero_branch, &zero_inners, zero_arity)?.lift(zero_arity)
             };
-            let zero_sem = raw_zero.lift(arity - 1);
-            // When x1>0: g1(x)=x1>0, h fires pos_branch(x1-1, (g2..gm)(x)).
-            let pos_sem = sem_compose_general(&pw.pos_branch, &pos_faces, arity)?;
+            // Pos branch: compose pos_branch with original inners (outer Piecewise eval
+            // will decrement xj before calling; inners[bi]=xj thus delivers xj-1 ✓).
+            let pos_sem = sem_compose_general(&pw.pos_branch, inners, arity)?;
             Some(Sem::Piecewise(PiecewiseFn {
                 arity,
-                branch_index: 0,
+                branch_index: j - 1,
                 zero_branch: Box::new(zero_sem),
                 pos_branch: Box::new(pos_sem),
             }))
@@ -356,23 +413,115 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
     }
 }
 
-/// Substitute x1=0: strip the first argument, reducing arity by 1.
-fn zero_face(sem: &Sem) -> Sem {
+/// Substitute xj=0 (1-based `j`) and drop it from the argument list.
+/// The result has arity one less than `sem`.
+fn zero_face_at(sem: &Sem, j: usize) -> Sem {
     match sem {
         Sem::Affine(af) => {
-            // c0 + c1*0 + c2*x2 + ... = c0 + c2*x2 + ... → drop coeffs[1]
-            let new_coeffs = drop_index(&af.coeffs, 1);
+            let new_coeffs = drop_index(&af.coeffs, j);
             Sem::Affine(AffineFn { arity: af.arity - 1, coeffs: new_coeffs })
         }
-        Sem::Piecewise(pw) => *pw.zero_branch.clone(),
+        Sem::Piecewise(pw) => {
+            let b = pw.branch_index + 1; // 1-based branch variable
+            if j == b {
+                // Setting the branch arg to 0 always fires the zero_branch,
+                // which already has this arg dropped.
+                *pw.zero_branch.clone()
+            } else {
+                // Recursively substitute xj=0 in both branches, adjusting index.
+                let j_in_zero = if j < b { j } else { j - 1 };
+                let new_zero = zero_face_at(&pw.zero_branch, j_in_zero);
+                let new_pos = zero_face_at(&pw.pos_branch, j);
+                let new_bi = if j < b { pw.branch_index - 1 } else { pw.branch_index };
+                Sem::Piecewise(PiecewiseFn {
+                    arity: pw.arity - 1,
+                    branch_index: new_bi,
+                    zero_branch: Box::new(new_zero),
+                    pos_branch: Box::new(new_pos),
+                })
+            }
+        }
     }
 }
 
-/// Return the "pos branch" face: the Sem that is evaluated with x1 replaced by x1-1.
-fn pos_face(sem: &Sem) -> Sem {
+/// The "pos branch" face when xj > 0 is decremented by an outer Piecewise.
+/// For Affine: unchanged (only valid when the caller ensured no dependence on xj).
+/// For Piecewise branching on xj: take its pos_branch.
+/// For Piecewise branching on a different variable: unchanged.
+fn pos_face_at(sem: &Sem, j: usize) -> Sem {
     match sem {
-        Sem::Affine(af) => Sem::Affine(af.clone()),
-        Sem::Piecewise(pw) => *pw.pos_branch.clone(),
+        Sem::Affine(_) => sem.clone(),
+        Sem::Piecewise(pw) => {
+            if pw.branch_index + 1 == j {
+                *pw.pos_branch.clone()
+            } else {
+                sem.clone()
+            }
+        }
+    }
+}
+
+
+/// If `sem` is a pure projection f(x) = xj (1-based j), return `Some(j)`.
+fn is_proj_of(sem: &Sem) -> Option<usize> {
+    match sem {
+        Sem::Affine(af) if af.coeffs[0] == 0 => {
+            let mut found: Option<usize> = None;
+            for (i, &c) in af.coeffs[1..].iter().enumerate() {
+                if c != 0 {
+                    if c != 1 || found.is_some() {
+                        return None; // non-unit coefficient or multiple non-zero
+                    }
+                    found = Some(i + 1); // 1-based
+                }
+            }
+            found
+        }
+        _ => None,
+    }
+}
+
+/// Prepend one ignored argument at position 1, shifting all existing arg indices right.
+/// Used to turn a (rest)-indexed Sem into a (counter, rest)-indexed Sem.
+fn sem_prepend_arg(sem: &Sem) -> Sem {
+    match sem {
+        Sem::Affine(af) => {
+            let mut new_coeffs = vec![af.coeffs[0], 0]; // constant, then new ignored arg
+            new_coeffs.extend_from_slice(&af.coeffs[1..]);
+            Sem::Affine(AffineFn { arity: af.arity + 1, coeffs: new_coeffs })
+        }
+        Sem::Piecewise(pw) => Sem::Piecewise(PiecewiseFn {
+            arity: pw.arity + 1,
+            branch_index: pw.branch_index + 1, // all indices shift right by 1
+            zero_branch: Box::new(sem_prepend_arg(&pw.zero_branch)),
+            pos_branch: Box::new(sem_prepend_arg(&pw.pos_branch)),
+        }),
+    }
+}
+
+/// Returns true when iterating h'(acc, rest) from any starting point reaches a fixed
+/// point after at most one step.  h' has args (acc, rest1, ...).
+///
+/// The condition: every Affine leaf must either
+///   (a) be pure identity on acc: acc-coeff=1 and all rest-coeffs=0, OR
+///   (b) ignore acc entirely: acc-coeff=0.
+/// Piecewise branching on acc (bi=0) is rejected (too complex).
+fn h_prime_is_stable(h_prime: &Sem) -> bool {
+    match h_prime {
+        Sem::Affine(af) => {
+            let acc_coeff = if af.arity >= 1 { af.coeffs[1] } else { 0 };
+            match acc_coeff {
+                0 => true, // constant after 1 step
+                1 => af.coeffs[2..].iter().all(|&c| c == 0), // pure identity
+                _ => false,
+            }
+        }
+        Sem::Piecewise(pw) => {
+            if pw.branch_index == 0 {
+                return false; // branches on acc — too complex
+            }
+            h_prime_is_stable(&pw.zero_branch) && h_prime_is_stable(&pw.pos_branch)
+        }
     }
 }
 
@@ -399,25 +548,12 @@ fn always_pos_minus_one(sem: &Sem) -> Option<AffineFn> {
     }
 }
 
-/// Returns true when `sem` is semantically the x1 projection: f(x1, rest) = x1.
-fn is_x1_proj(sem: &Sem) -> bool {
-    match sem {
-        Sem::Affine(af) => {
-            af.arity >= 1
-                && af.coeffs[0] == 0
-                && af.coeffs[1] == 1
-                && af.coeffs[2..].iter().all(|&c| c == 0)
-        }
-        _ => false,
-    }
-}
 
 /// Remove argument at 1-based position `idx` from `sem`, assuming it is unused.
 ///
 /// For Affine: drops the coefficient at position `idx`.
 /// For Piecewise: recursively removes the corresponding argument from both branches.
-/// Returns `None` if asked to remove the branching variable (arg 1) of a Piecewise,
-/// since that would be structurally unsound.
+/// Returns `None` if asked to remove the branching variable of a Piecewise.
 fn sem_drop_arg(sem: &Sem, idx: usize) -> Option<Sem> {
     debug_assert!(idx >= 1);
     match sem {
@@ -429,16 +565,20 @@ fn sem_drop_arg(sem: &Sem, idx: usize) -> Option<Sem> {
             Some(Sem::Affine(AffineFn { arity: af.arity - 1, coeffs: new_coeffs }))
         }
         Sem::Piecewise(pw) => {
-            if idx == 1 {
+            let b = pw.branch_index + 1; // 1-based
+            if idx == b {
                 return None; // cannot remove the branching variable
             }
-            // In zero_branch (arity pw.arity-1): arg idx maps to arg idx-1.
-            let new_zero = sem_drop_arg(&pw.zero_branch, idx - 1)?;
-            // In pos_branch (arity pw.arity): same indexing.
+            // In zero_branch (arity pw.arity-1), x_b is absent:
+            // idx < b → same position; idx > b → shifted down by 1.
+            let idx_in_zero = if idx < b { idx } else { idx - 1 };
+            let new_zero = sem_drop_arg(&pw.zero_branch, idx_in_zero)?;
             let new_pos = sem_drop_arg(&pw.pos_branch, idx)?;
+            // If we drop an arg before b, the branch_index shifts down.
+            let new_bi = if idx < b { pw.branch_index - 1 } else { pw.branch_index };
             Some(Sem::Piecewise(PiecewiseFn {
                 arity: pw.arity - 1,
-                branch_index: 0,
+                branch_index: new_bi,
                 zero_branch: Box::new(new_zero),
                 pos_branch: Box::new(new_pos),
             }))
@@ -688,6 +828,14 @@ mod tests {
     fn test_min_none() {
         assert!(sem_of(&grf("M(P(1,1))")).is_none());
         assert!(sem_of(&grf("M(S)")).is_none());
+    }
+
+    #[test]
+    fn test_rec_case_d_piecewise_on_rest_arg() {
+        // b(z,y) = y when z<2, else z-2.  b = R(P(1,1), R(P(2,1), P(4,1)))
+        // c = R(P(2,1), C(b, P(4,4), P(4,2))): arity 3, g=P(2,1)=y, h ignores counter
+        // c(n,y,z): for z<2 → y; for z≥2 → z-2.  Counter n is irrelevant.
+        check_vs_sim("R(P(2,1), C(R(P(1,1),R(P(2,1),P(4,1))),P(4,4),P(4,2)))", 5);
     }
 
     #[test]

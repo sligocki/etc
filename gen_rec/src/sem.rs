@@ -385,10 +385,18 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
                 return None;
             }
             let j = is_proj_of(g_branch)?;
-            // Correctness: other inners must not depend on xj so pos branch is sound.
+            // Correctness: Piecewise inners on a different variable must not depend on xj
+            // (their pos_face_at returns them unchanged, only valid when xj-independent).
+            // Affine inners are fine: pos_face_at adjusts their constant to compensate.
             let others_ok = inners.iter().enumerate()
                 .filter(|(i, _)| *i != bi)
-                .all(|(_, inner)| sem_ignores_arg(inner, j));
+                .all(|(_, inner)| {
+                    if let Sem::Piecewise(pw2) = inner {
+                        pw2.branch_index + 1 == j || sem_ignores_arg(inner, j)
+                    } else {
+                        true
+                    }
+                });
             if !others_ok {
                 return None;
             }
@@ -404,9 +412,16 @@ fn sem_compose_general(h: &Sem, inners: &[Sem], arity: usize) -> Option<Sem> {
             } else {
                 sem_compose_general(&pw.zero_branch, &zero_inners, zero_arity)?.lift(zero_arity)
             };
-            // Pos branch: compose pos_branch with original inners (outer Piecewise eval
-            // will decrement xj before calling; inners[bi]=xj thus delivers xj-1 ✓).
-            let pos_sem = sem_compose_general(&pw.pos_branch, inners, arity)?;
+            // Pos branch: inners[bi]=xj delivers xj-1 ✓; apply pos_face_at to all
+            // other inners so they evaluate to their caller-context value when xj is
+            // decremented by the outer Piecewise.
+            let mut pos_inners: Vec<Sem> = inners.to_vec();
+            for (i, inner) in pos_inners.iter_mut().enumerate() {
+                if i != bi {
+                    *inner = pos_face_at(inner, j);
+                }
+            }
+            let pos_sem = sem_compose_general(&pw.pos_branch, &pos_inners, arity)?;
             Some(Sem::Piecewise(PiecewiseFn {
                 arity,
                 branch_index: j - 1,

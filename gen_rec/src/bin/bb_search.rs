@@ -2,7 +2,7 @@
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::base::Num;
-use gen_rec::closed_form_enum::ClosedFormEnumerator;
+use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
@@ -285,7 +285,7 @@ fn main() {
         let cf_arity = if args.min_prf { 1 } else { 0 };
         let cf_size = if args.min_prf && size >= 2 { size - 1 } else { size };
         let cf_allow_min = !args.min_prf && args.allow_min;
-        let mut en = ClosedFormEnumerator::with_pruning(true, cf_allow_min);
+        let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, cf_allow_min);
         for s in 1..=cf_size {
             en.compute_size(cf_arity, s);
         }

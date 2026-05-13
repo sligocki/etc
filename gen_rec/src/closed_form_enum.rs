@@ -2,47 +2,51 @@
 ///
 /// Like `novel_enum::NovelEnumerator` but uses `ClosedForm` structural equality
 /// for deduplication instead of simulation-based fingerprinting.  This avoids
-/// all simulation cost for GRFs that have a closed form (~99.7% of all GRFs).
-///
-/// # Modes
-///
-/// - **Mode A** (`include_raw: false`): only yields GRFs that have a `ClosedForm`;
-///   deduplicates by structural equality of that form.  Faster; useful for
-///   algebraic exploration.
-///
-/// - **Mode B** (`include_raw: true`): also passes through non-ClosedForm GRFs
-///   without deduplication.  A superset of Mode A.  Intended for BBµ champion
-///   search where completeness matters more than perfect dedup.
+/// all simulation cost for GRFs that have a closed form (~99.7% of all GRFs)
+/// and also guarantees the GRF are equal (not just similar).
 ///
 /// # Soundness note
 ///
 /// ClosedForm structural equality is *sound* (same form ⟹ same function) but not
-/// *complete* (same function may have different forms).  Mode A therefore retains
-/// some redundancy compared to fingerprint-based dedup.  Mode B adds further
-/// redundancy from the pass-through of raw GRFs.
+/// *complete* (same function may have different forms).  ClosedFormOnly mode
+/// therefore retains some redundancy compared to fingerprint-based dedup.
+
 use crate::closed_form::{closed_form_of, ClosedForm};
 use crate::enumerate::for_each_grf_core;
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
 use std::collections::HashMap;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum EnumMode {
+    // Only enumerate GRF that have ClosedForm.
+    ClosedFormOnly,
+    // Also enumerate all GRF with all children in ClosedForm (but they might not be).
+    // Useful for seeing edge case for when ClosedForm first fails.
+    ClosedFormChildren,
+    // Enumerate all GRF. Those in ClosedForm will be de-duplicated, but others will not.
+    AllGrf,
+}
+
 pub struct ClosedFormEnumerator {
     /// (arity, size) → list of novel GRFs of exactly that (arity, size)
     memo: HashMap<(usize, usize), Vec<Grf>>,
     /// arity → ClosedForm → smallest Grf seen with that form
     seen_closed: HashMap<usize, HashMap<ClosedForm, Grf>>,
-    pub include_raw: bool,
+    pub mode: EnumMode,
     pub allow_min: bool,
     /// Structural pruning options applied when generating candidates.
     pub opts: PruningOpts,
 }
 
 impl ClosedFormEnumerator {
-    pub fn new(include_raw: bool, allow_min: bool, opts: PruningOpts) -> Self {
+    pub fn new(mode: EnumMode, allow_min: bool, opts: PruningOpts) -> Self {
+        // TODO: Not yet supported.
+        assert!(mode != EnumMode::ClosedFormChildren);
         ClosedFormEnumerator {
             memo: HashMap::new(),
             seen_closed: HashMap::new(),
-            include_raw,
+            mode,
             allow_min,
             opts,
         }
@@ -51,10 +55,10 @@ impl ClosedFormEnumerator {
     /// Convenience constructor with all recommended pruning flags enabled,
     /// including stream-only flags (`comp_rnf`, `inline_proj`, `min_dom`,
     /// `rec_step_p2`).  Use this for BBµ search and algebraic exploration.
-    pub fn with_pruning(include_raw: bool, allow_min: bool) -> Self {
+    pub fn with_pruning(mode: EnumMode, allow_min: bool) -> Self {
         let opts = PruningOpts::recommended()
             .with_flags("min_dom,inline_proj,comp_rnf,rec_step_p2");
-        Self::new(include_raw, allow_min, opts)
+        Self::new(mode, allow_min, opts)
     }
 
     /// Populate `memo[(arity, size)]` with novel GRFs, recursing into dependencies.
@@ -69,19 +73,18 @@ impl ClosedFormEnumerator {
         let mut novel: Vec<Grf> = Vec::new();
 
         for grf in candidates {
-            match closed_form_of(&grf) {
-                Some(cf) => {
+            match (closed_form_of(&grf), self.mode) {
+                (Some(cf), _) => {
                     let seen = self.seen_closed.entry(arity).or_default();
                     if !seen.contains_key(&cf) {
                         seen.insert(cf, grf.clone());
                         novel.push(grf);
                     }
                 }
-                None => {
-                    if self.include_raw {
-                        novel.push(grf);
-                    }
+                (None, EnumMode::AllGrf) => {
+                    novel.push(grf);
                 }
+                _ => {}
             }
         }
 
@@ -199,8 +202,9 @@ mod tests {
     use crate::pruning::PruningOpts;
     use crate::simulate::simulate;
 
+    // Mode A: ClosedFormOnly
     fn mode_a(max_size: usize) -> ClosedFormEnumerator {
-        let mut en = ClosedFormEnumerator::new(false, false, PruningOpts::default());
+        let mut en = ClosedFormEnumerator::new(EnumMode::ClosedFormOnly, false, PruningOpts::default());
         for s in 1..=max_size {
             en.compute_size(0, s);
             en.compute_size(1, s);
@@ -267,7 +271,7 @@ mod tests {
     #[test]
     fn mode_b_superset_of_mode_a() {
         let en_a = mode_a(7);
-        let mut en_b = ClosedFormEnumerator::new(true, false, PruningOpts::default());
+        let mut en_b = ClosedFormEnumerator::new(EnumMode::AllGrf, false, PruningOpts::default());
         for s in 1..=7 {
             en_b.compute_size(0, s);
             en_b.compute_size(1, s);
@@ -301,7 +305,7 @@ mod tests {
         let max_size = 9;
         let max_steps = 100_000_000;
 
-        let mut en = ClosedFormEnumerator::new(true, false, PruningOpts::recommended());
+        let mut en = ClosedFormEnumerator::new(EnumMode::AllGrf, false, PruningOpts::recommended());
         for size in 1..=max_size {
             en.compute_size(0, size);
         }

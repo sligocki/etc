@@ -14,7 +14,7 @@
 use clap::Parser;
 use gen_rec::base::Num;
 use gen_rec::closed_form::{closed_form_of, ClosedForm};
-use gen_rec::closed_form_enum::ClosedFormEnumerator;
+use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::grf::Grf;
 use gen_rec::simulate::{simulate, SimResult};
 
@@ -167,7 +167,7 @@ fn main() {
 
     // Pre-compute all needed (arity, size) entries up front.
     // ClosedFormEnumerator auto-resolves dependency arities beyond max_arity.
-    let mut en = ClosedFormEnumerator::with_pruning(true, args.allow_min);
+    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, args.allow_min);
     for arity in 0..=args.max_arity {
         for size in 1..=args.max_size {
             en.compute_size(arity, size);

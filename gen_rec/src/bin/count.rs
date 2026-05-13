@@ -9,7 +9,7 @@
 /// The cf+ column uses ClosedFormEnumerator (ClosedForm dedup + all pruning)
 /// and is shown up to --cf-max-size.
 use clap::Parser;
-use gen_rec::closed_form_enum::ClosedFormEnumerator;
+use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::pruning::{PruningOpts, FLAGS};
 
@@ -87,7 +87,7 @@ fn main() {
     let configs = configs.as_slice();
 
     let cf_enabled = args.cf_max_size > 0;
-    let mut cf_pruned = ClosedFormEnumerator::with_pruning(true, args.allow_min);
+    let mut cf_pruned = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, args.allow_min);
     let mut cf_total = 0usize;
     let mut cf_has_gap = false;
 

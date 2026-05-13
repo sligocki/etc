@@ -24,14 +24,21 @@ pub fn stream_grf<F: FnMut(&Grf)>(
     for_each_grf(size, arity, allow_min, opts, callback);
 }
 
-/// Internal recursive generator.  Uses `&mut dyn FnMut` so nested closures can
-/// each capture and call through the same `callback` reference without the
-/// borrow checker rejecting two simultaneous `&mut F` borrows.
-fn for_each_grf(
+/// Core recursive generator parameterised by a sub-expression enumerator.
+///
+/// `sub(size, arity, callback)` is called wherever `for_each_grf` would
+/// recursively enumerate sub-expressions (heads, args, Rec base/step, Min
+/// inner).  This lets callers swap in alternative sub-expression sources —
+/// e.g. a memoised table of novel GRFs — while reusing all pruning logic here.
+///
+/// For standard streaming enumeration use the [`for_each_grf`] wrapper, which
+/// wires `sub` back to `for_each_grf` itself.
+pub(crate) fn for_each_grf_core(
     size: usize,
     arity: usize,
     allow_min: bool,
     opts: PruningOpts,
+    sub: &dyn Fn(usize, usize, &mut dyn FnMut(&Grf)),
     callback: &mut dyn FnMut(&Grf),
 ) {
     if size == 0 {
@@ -57,7 +64,7 @@ fn for_each_grf(
         if !opts.comp_null && gs_total == 0 {
             // comp_null_null: prunes C0(h)
             if !(opts.comp_null_null && arity == 0) {
-                for_each_grf(hsize, 0, allow_min, opts, &mut |h: &Grf| {
+                sub(hsize, 0, &mut |h: &Grf| {
                     if opts.comp_zero && matches!(h, Grf::Zero(_)) {
                         return;
                     }
@@ -67,7 +74,7 @@ fn for_each_grf(
         }
 
         for m in 1..=gs_total {
-            for_each_grf(hsize, m, allow_min, opts, &mut |h: &Grf| {
+            sub(hsize, m, &mut |h: &Grf| {
                 // Prune C(Z,...) and C(P,...)
                 if opts.comp_zero && matches!(h, Grf::Zero(_)) {
                     return;
@@ -125,12 +132,13 @@ fn for_each_grf(
 
                 let forced: Option<&[bool]> = None;
                 let mut args = Vec::with_capacity(m);
-                for_each_args(
+                for_each_args_core(
                     gs_total,
                     m,
                     arity,
                     allow_min,
                     opts,
+                    sub,
                     forced,
                     &mut args,
                     &mut |gs: &[Grf]| {
@@ -169,10 +177,10 @@ fn for_each_grf(
     if arity >= 1 {
         for gsize in 1..n {
             let hsize = n - gsize;
-            for_each_grf(gsize, arity - 1, allow_min, opts, &mut |g: &Grf| {
+            sub(gsize, arity - 1, &mut |g: &Grf| {
                 let g_box = Box::new(g.clone());
                 let g_is_zero = matches!(g, Grf::Zero(_));
-                for_each_grf(hsize, arity + 1, allow_min, opts, &mut |h: &Grf| {
+                sub(hsize, arity + 1, &mut |h: &Grf| {
                     // rec_zero_base: R(Z(k), Z(k+2)) ≡ Z(k+1) (step always 0)
                     //                    R(Z(k), P(k+2,2)) ≡ Z(k+1) (acc starts 0, stays 0)
                     if opts.rec_zero_base
@@ -198,7 +206,7 @@ fn for_each_grf(
 
     // M(f): f ∈ GRF_{arity+1}, |f| = n
     if allow_min {
-        for_each_grf(n, arity + 1, allow_min, opts, &mut |f: &Grf| {
+        sub(n, arity + 1, &mut |f: &Grf| {
             if opts.min_trivial {
                 if matches!(f, Grf::Zero(_)) { return; }
                 if matches!(f, Grf::Proj(_, _)) { return; }
@@ -214,17 +222,35 @@ fn for_each_grf(
     }
 }
 
+/// Standard streaming enumeration: wraps [`for_each_grf_core`] with a
+/// sub-enumerator that recursively calls `for_each_grf` itself.
+fn for_each_grf(
+    size: usize,
+    arity: usize,
+    allow_min: bool,
+    opts: PruningOpts,
+    callback: &mut dyn FnMut(&Grf),
+) {
+    for_each_grf_core(
+        size, arity, allow_min, opts,
+        &|s, a, cb| for_each_grf(s, a, allow_min, opts, cb),
+        callback,
+    )
+}
+
 /// Generate all ordered `remaining_count`-tuples of `arity`-GRFs whose sizes
 /// sum to `remaining_size`, appending each element to `current` in turn.
 ///
+/// `sub` is the sub-expression enumerator (same contract as in [`for_each_grf_core`]).
 /// `forced`: if `Some(f)`, positions where `f[current.len()]` is `true` are
 /// constrained to `Zero(arity)` (size 1); all other positions are unconstrained.
-fn for_each_args(
+fn for_each_args_core(
     remaining_size: usize,
     remaining_count: usize,
     arity: usize,
     allow_min: bool,
     opts: PruningOpts,
+    sub: &dyn Fn(usize, usize, &mut dyn FnMut(&Grf)),
     forced: Option<&[bool]>,
     current: &mut Vec<Grf>,
     callback: &mut dyn FnMut(&[Grf]),
@@ -240,12 +266,13 @@ fn for_each_args(
         // Forced position: only Zero(arity) with size 1.
         if remaining_size >= remaining_count {
             current.push(Grf::Zero(arity));
-            for_each_args(
+            for_each_args_core(
                 remaining_size - 1,
                 remaining_count - 1,
                 arity,
                 allow_min,
                 opts,
+                sub,
                 forced,
                 current,
                 callback,
@@ -255,14 +282,15 @@ fn for_each_args(
     } else {
         let max_first = remaining_size.saturating_sub(remaining_count - 1);
         for x in 1..=max_first {
-            for_each_grf(x, arity, allow_min, opts, &mut |g: &Grf| {
+            sub(x, arity, &mut |g: &Grf| {
                 current.push(g.clone());
-                for_each_args(
+                for_each_args_core(
                     remaining_size - x,
                     remaining_count - 1,
                     arity,
                     allow_min,
                     opts,
+                    sub,
                     forced,
                     current,
                     callback,
@@ -271,6 +299,25 @@ fn for_each_args(
             });
         }
     }
+}
+
+/// Convenience wrapper: `for_each_args_core` with standard sub-enumerator.
+#[allow(dead_code)]
+fn for_each_args(
+    remaining_size: usize,
+    remaining_count: usize,
+    arity: usize,
+    allow_min: bool,
+    opts: PruningOpts,
+    forced: Option<&[bool]>,
+    current: &mut Vec<Grf>,
+    callback: &mut dyn FnMut(&[Grf]),
+) {
+    for_each_args_core(
+        remaining_size, remaining_count, arity, allow_min, opts,
+        &|s, a, cb| for_each_grf(s, a, allow_min, opts, cb),
+        forced, current, callback,
+    )
 }
 
 // ---------------------------------------------------------------------------

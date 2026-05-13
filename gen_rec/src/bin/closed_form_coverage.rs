@@ -166,7 +166,7 @@ fn main() {
 
     // Pre-compute all needed (arity, size) entries up front.
     // ClosedFormEnumerator auto-resolves dependency arities beyond max_arity.
-    let mut en = ClosedFormEnumerator::new(true, args.allow_min);
+    let mut en = ClosedFormEnumerator::with_pruning(true, args.allow_min);
     for arity in 0..=args.max_arity {
         for size in 1..=args.max_size {
             en.compute_size(arity, size);

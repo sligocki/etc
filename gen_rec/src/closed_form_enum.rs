@@ -21,7 +21,9 @@
 /// some redundancy compared to fingerprint-based dedup.  Mode B adds further
 /// redundancy from the pass-through of raw GRFs.
 use crate::closed_form::{closed_form_of, ClosedForm};
+use crate::enumerate::for_each_grf_core;
 use crate::grf::Grf;
+use crate::pruning::PruningOpts;
 use std::collections::HashMap;
 
 pub struct ClosedFormEnumerator {
@@ -31,16 +33,28 @@ pub struct ClosedFormEnumerator {
     seen_closed: HashMap<usize, HashMap<ClosedForm, Grf>>,
     pub include_raw: bool,
     pub allow_min: bool,
+    /// Structural pruning options applied when generating candidates.
+    pub opts: PruningOpts,
 }
 
 impl ClosedFormEnumerator {
-    pub fn new(include_raw: bool, allow_min: bool) -> Self {
+    pub fn new(include_raw: bool, allow_min: bool, opts: PruningOpts) -> Self {
         ClosedFormEnumerator {
             memo: HashMap::new(),
             seen_closed: HashMap::new(),
             include_raw,
             allow_min,
+            opts,
         }
+    }
+
+    /// Convenience constructor with all recommended pruning flags enabled,
+    /// including stream-only flags (`comp_rnf`, `inline_proj`, `min_dom`,
+    /// `rec_step_p2`).  Use this for BBµ search and algebraic exploration.
+    pub fn with_pruning(include_raw: bool, allow_min: bool) -> Self {
+        let opts = PruningOpts::recommended()
+            .with_flags("min_dom,inline_proj,comp_rnf,rec_step_p2");
+        Self::new(include_raw, allow_min, opts)
     }
 
     /// Populate `memo[(arity, size)]` with novel GRFs, recursing into dependencies.
@@ -132,6 +146,11 @@ impl ClosedFormEnumerator {
             self.ensure_up_to(arity, n - 1);
         }
 
+        // 0-arg Comp: C_arity(h) where h has arity 0 and hsize = n.
+        if !self.opts.comp_null {
+            self.ensure_up_to(0, n);
+        }
+
         // Rec(g, h): base has arity-1, step has arity+1.
         if arity >= 1 {
             self.ensure_up_to(arity - 1, n - 1);
@@ -153,115 +172,22 @@ impl ClosedFormEnumerator {
     }
 
     fn generate_candidates(&self, arity: usize, size: usize) -> Vec<Grf> {
+        let memo = &self.memo;
         let mut out = Vec::new();
-
-        if size == 1 {
-            out.push(Grf::Zero(arity));
-            for i in 1..=arity {
-                out.push(Grf::Proj(arity, i));
-            }
-            if arity == 1 {
-                out.push(Grf::Succ);
-            }
-            return out;
-        }
-
-        let n = size - 1;
-
-        // Comp(h, g1..gm)
-        for hsize in 1..n {
-            let gs_total = n - hsize;
-            for m in 1..=gs_total {
-                let heads = match self.memo.get(&(m, hsize)) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                for head in heads {
-                    let head_clone = head.clone();
-                    let h_used = head.used_args();
-                    let forced: Vec<bool> =
-                        (1..=m).map(|pos| !h_used.contains(&pos)).collect();
-                    let mut arg_combos: Vec<Vec<Grf>> = Vec::new();
-                    self.enum_arg_combos(
-                        arity, m, gs_total, Some(&forced), &mut Vec::new(), &mut arg_combos,
-                    );
-                    for args in arg_combos {
-                        out.push(Grf::Comp(Box::new(head_clone.clone()), args, arity));
+        for_each_grf_core(
+            size, arity, self.allow_min, self.opts,
+            &|s, a, cb| {
+                if let Some(grfs) = memo.get(&(a, s)) {
+                    for grf in grfs {
+                        cb(grf);
                     }
+                } else {
+                    panic!("Memo not correctly initialized");
                 }
-            }
-        }
-
-        // Rec(g, h): arity ≥ 1
-        if arity >= 1 {
-            for gsize in 1..n {
-                let hsize = n - gsize;
-                let bases = match self.memo.get(&(arity - 1, gsize)) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                let steps = match self.memo.get(&(arity + 1, hsize)) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                for base in bases {
-                    for step in steps {
-                        out.push(Grf::rec(base.clone(), step.clone()));
-                    }
-                }
-            }
-        }
-
-        // Min(f): allow_min only
-        if self.allow_min {
-            if let Some(inners) = self.memo.get(&(arity + 1, n)) {
-                for inner in inners {
-                    out.push(Grf::min(inner.clone()));
-                }
-            }
-        }
-
+            },
+            &mut |grf| out.push(grf.clone()),
+        );
         out
-    }
-
-    fn enum_arg_combos(
-        &self,
-        arg_arity: usize,
-        count: usize,
-        total_size: usize,
-        forced: Option<&[bool]>,
-        current: &mut Vec<Grf>,
-        out: &mut Vec<Vec<Grf>>,
-    ) {
-        if count == 0 {
-            if total_size == 0 {
-                out.push(current.clone());
-            }
-            return;
-        }
-        let pos = current.len();
-        if forced.map_or(false, |f| f[pos]) {
-            if total_size >= count {
-                current.push(Grf::Zero(arg_arity));
-                self.enum_arg_combos(
-                    arg_arity, count - 1, total_size - 1, forced, current, out,
-                );
-                current.pop();
-            }
-        } else {
-            let max_this = total_size - (count - 1);
-            for s in 1..=max_this {
-                if let Some(candidates) = self.memo.get(&(arg_arity, s)) {
-                    for grf in candidates {
-                        current.push(grf.clone());
-                        self.enum_arg_combos(
-                            arg_arity, count - 1, total_size - s, forced, current, out,
-                        );
-                        current.pop();
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -269,10 +195,11 @@ impl ClosedFormEnumerator {
 mod tests {
     use super::*;
     use crate::closed_form::closed_form_of;
+    use crate::pruning::PruningOpts;
     use crate::simulate::simulate;
 
     fn mode_a(max_size: usize) -> ClosedFormEnumerator {
-        let mut en = ClosedFormEnumerator::new(false, false);
+        let mut en = ClosedFormEnumerator::new(false, false, PruningOpts::default());
         for s in 1..=max_size {
             en.compute_size(0, s);
             en.compute_size(1, s);
@@ -339,7 +266,7 @@ mod tests {
     #[test]
     fn mode_b_superset_of_mode_a() {
         let en_a = mode_a(7);
-        let mut en_b = ClosedFormEnumerator::new(true, false);
+        let mut en_b = ClosedFormEnumerator::new(true, false, PruningOpts::default());
         for s in 1..=7 {
             en_b.compute_size(0, s);
             en_b.compute_size(1, s);
@@ -373,7 +300,7 @@ mod tests {
         let max_size = 9;
         let max_steps = 100_000_000;
 
-        let mut en = ClosedFormEnumerator::new(true, false);
+        let mut en = ClosedFormEnumerator::new(true, false, PruningOpts::recommended());
         for size in 1..=max_size {
             en.compute_size(0, size);
         }

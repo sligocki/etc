@@ -277,10 +277,12 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
             // h.zero_branch has arity k_outer (counter + acc + rest-without-arg-j_b).
             let h_zero = pw_h.zero_branch.as_ref();
             if let Some(zero_b) = closed_form_of_rec(&g_zero, h_zero, k_outer - 1) {
-                // h.pos_branch has the same arity as h (k_outer+1); in the pos context
-                // b's arg j_b is already decremented, which is exactly what pos_branch expects.
+                // h.pos_branch is called with b's arg j_b decremented by 1.  The base g is
+                // evaluated in that same decremented context, so shift g to compensate:
+                // g_pos(z') = g(z'+1).
+                let g_pos = pos_face_at(sem_g, j_b - 1);
                 let h_pos = pw_h.pos_branch.as_ref();
-                if let Some(pos_b) = closed_form_of_rec(sem_g, h_pos, k_outer) {
+                if let Some(pos_b) = closed_form_of_rec(&g_pos, h_pos, k_outer) {
                     return Some(ClosedForm::Piecewise(PiecewiseFn {
                         arity: k_outer,
                         branch_index: j_b - 1, // 0-based in b's args

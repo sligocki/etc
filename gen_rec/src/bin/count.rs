@@ -6,7 +6,10 @@
 /// Fast (count_grf) columns cover all sizes up to --max-size.
 /// Stream-only columns are counted by exhaustive enumeration and only shown
 /// up to --stream-max-size.
+/// The cf+ column uses ClosedFormEnumerator (ClosedForm dedup + all pruning)
+/// and is shown up to --cf-max-size.
 use clap::Parser;
+use gen_rec::closed_form_enum::ClosedFormEnumerator;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::pruning::{PruningOpts, FLAGS};
 
@@ -47,6 +50,11 @@ struct Args {
     /// Include Minimization combinator (default: PRF only).
     #[arg(long)]
     allow_min: bool,
+
+    /// Maximum size for cf+ column (ClosedForm dedup + all pruning).
+    /// Set to 0 to disable.
+    #[arg(long, default_value_t = 14)]
+    cf_max_size: usize,
 }
 
 fn fmt_count(n: usize) -> String {
@@ -63,6 +71,10 @@ fn fmt_count(n: usize) -> String {
     }
 }
 
+fn fmt_pct(saved: usize, total: usize) -> String {
+    format!("{:5.1}%", 100.0 * saved as f64 / total as f64)
+}
+
 fn count_by_stream(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) -> usize {
     let mut n = 0usize;
     stream_grf(size, arity, allow_min, opts, &mut |_| n += 1);
@@ -74,23 +86,38 @@ fn main() {
     let configs = make_configs(args.allow_min);
     let configs = configs.as_slice();
 
-    println!(
-        "GRF counts: arity={}, allow_min={}  (stream columns shown for size ≤ {})",
-        args.arity, args.allow_min, args.stream_max_size,
-    );
-    println!("{}", "=".repeat(100));
+    let cf_enabled = args.cf_max_size > 0;
+    let mut cf_pruned = ClosedFormEnumerator::with_pruning(true, args.allow_min);
+    let mut cf_total = 0usize;
+    let mut cf_has_gap = false;
 
-    const W: usize = 10;
+    println!(
+        "GRF counts: arity={}, allow_min={}  (stream cols ≤ {}{})",
+        args.arity, args.allow_min, args.stream_max_size,
+        if cf_enabled { format!(", cf+ col ≤ {}", args.cf_max_size) } else { String::new() },
+    );
+
+    let w: usize = configs.iter().map(|(n, _, _)| n.len()).max().unwrap_or(0).max(10);
+    const P: usize = 6; // %red column width
+    let sep_width = 4 + 2 + w
+        + (configs.len() - 1) * (2 + w + 2 + P)
+        + if cf_enabled { 2 + 1 + 2 + w + 2 + P } else { 0 };
+    println!("{}", "=".repeat(sep_width));
+
     // Header row
-    print!("{:>4}  {:>W$}", "size", configs[0].0);
+    print!("{:>4}  {:>w$}", "size", configs[0].0);
     for (name, _, _) in &configs[1..] {
-        print!("  {:>W$}  {:>5}", name, "%red");
+        print!("  {:>w$}  {:>P$}", name, "%red");
+    }
+    if cf_enabled {
+        print!("  |  {:>w$}  {:>P$}", "cf+", "%red");
     }
     println!();
-    let sep_width = 4 + 2 + W + (configs.len() - 1) * (2 + W + 2 + 5);
     println!("{}", "-".repeat(sep_width));
 
-    let max_size = args.max_size.max(args.stream_max_size);
+    let max_size = args.max_size
+        .max(args.stream_max_size)
+        .max(if cf_enabled { args.cf_max_size } else { 0 });
     // totals_full: accumulates all counted sizes (up to max_size for fast, stream_max for stream).
     let mut totals_full: Vec<usize> = vec![0; configs.len()];
     // totals_partial: accumulates only sizes ≤ stream_max_size for every config.
@@ -117,8 +144,16 @@ fn main() {
             })
             .collect();
 
-        // Skip rows where all counts are None.
-        if counts.iter().all(|c| c.is_none()) {
+        // cf+ count.
+        let cf_count: Option<usize> = if cf_enabled && size <= args.cf_max_size {
+            cf_pruned.compute_size(args.arity, size);
+            Some(cf_pruned.raw_candidates_at_size(args.arity, size).len())
+        } else {
+            None
+        };
+
+        // Skip rows where everything is None.
+        if counts.iter().all(|c| c.is_none()) && cf_count.is_none() {
             continue;
         }
 
@@ -133,33 +168,49 @@ fn main() {
         if counts.iter().any(|c| c.is_none()) {
             total_has_stream = true;
         }
+        if let Some(n) = cf_count {
+            cf_total += n;
+        } else if cf_enabled {
+            cf_has_gap = true;
+        }
 
         // Print row.
         let first = counts[0].map_or("-".to_string(), fmt_count);
-        print!("{:>4}  {:>W$}", size, first);
+        print!("{:>4}  {:>w$}", size, first);
         for i in 1..configs.len() {
             let cur_str = counts[i].map_or("-".to_string(), fmt_count);
             let pct_str = match (counts[i - 1], counts[i]) {
                 (Some(prev), Some(cur)) if prev > 0 => {
-                    let saved = prev.saturating_sub(cur);
-                    format!("{:4.1}%", 100.0 * saved as f64 / prev as f64)
+                    fmt_pct(prev.saturating_sub(cur), prev)
                 }
-                (Some(prev), None) if prev > 0 => "    ?".to_string(),
-                _ => "    -".to_string(),
+                (Some(prev), None) if prev > 0 => "     ?".to_string(),
+                _ => "     -".to_string(),
             };
-            print!("  {:>W$}  {:>5}", cur_str, pct_str);
+            print!("  {:>w$}  {:>P$}", cur_str, pct_str);
+        }
+        if cf_enabled {
+            if let Some(n) = cf_count {
+                let last_std = counts.last().and_then(|c| *c);
+                let pct_str = match last_std {
+                    Some(prev) if prev > 0 && n <= prev => fmt_pct(prev - n, prev),
+                    Some(prev) if prev > 0 => format!("{:>5.0}x", n as f64 / prev as f64),
+                    _ => "     -".to_string(),
+                };
+                print!("  |  {:>w$}  {:>P$}", fmt_count(n), pct_str);
+            } else {
+                print!("  |  {:>w$}  {:>P$}", "-", "     -");
+            }
         }
         println!();
     }
 
-    // Totals row: for stream columns compare partial-to-partial so the % is meaningful.
+    // Totals row.
     println!("{}", "-".repeat(sep_width));
     let first_str = fmt_count(totals_full[0]);
-    print!("{:>4}  {:>W$}", "SUM", first_str);
+    print!("{:>4}  {:>w$}", "SUM", first_str);
     for i in 1..configs.len() {
         let is_stream = configs[i].2;
         let is_prev_stream = i > 0 && configs[i - 1].2;
-        // Once we enter stream territory, compare partial sums for both prev and cur.
         let (prev, cur) = if is_stream || is_prev_stream {
             (totals_partial[i - 1], totals_partial[i])
         } else {
@@ -171,12 +222,24 @@ fn main() {
             fmt_count(totals_full[i])
         };
         let pct_str = if prev > 0 {
-            let saved = prev.saturating_sub(cur);
-            format!("{:4.1}%", 100.0 * saved as f64 / prev as f64)
+            fmt_pct(prev.saturating_sub(cur), prev)
         } else {
-            "    -".to_string()
+            "     -".to_string()
         };
-        print!("  {:>W$}  {:>5}", cur_str, pct_str);
+        print!("  {:>w$}  {:>P$}", cur_str, pct_str);
+    }
+    if cf_enabled {
+        let cf_str = if cf_has_gap { format!("{}*", fmt_count(cf_total)) }
+            else { fmt_count(cf_total) };
+        let last_std_full = *totals_full.last().unwrap_or(&0);
+        let pct_str = if last_std_full > 0 && cf_total <= last_std_full {
+            fmt_pct(last_std_full - cf_total, last_std_full)
+        } else if last_std_full > 0 {
+            format!("{:>5.0}x", cf_total as f64 / last_std_full as f64)
+        } else {
+            "     -".to_string()
+        };
+        print!("  |  {:>w$}  {:>P$}", cf_str, pct_str);
     }
     println!();
     println!();
@@ -187,8 +250,14 @@ fn main() {
             println!("  {:<15} {}{}", meta.name, meta.desc, note);
         }
     }
+    if cf_enabled {
+        println!("  {:<15} ClosedForm dedup + all structural pruning", "cf+");
+    }
     println!("%red = % reduction vs the immediately preceding column.");
     if total_has_stream {
         println!("* SUM marked with * covers only sizes ≤ {} for stream-only columns.", args.stream_max_size);
+    }
+    if cf_has_gap {
+        println!("* cf+ SUM marked with * covers only sizes ≤ {}.", args.cf_max_size);
     }
 }

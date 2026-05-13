@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use clap::Parser;
 use gen_rec::alias::AliasDb;
+use gen_rec::base::Num;
 use gen_rec::grf::Grf;
 use gen_rec::io_table::print_io_table;
 use gen_rec::closed_form::{closed_form_ignores_arg, closed_form_of, AffineFn, ClosedForm};
@@ -20,11 +21,11 @@ struct Args {
 
     /// Simulation step budget per evaluation (0 = unlimited).
     #[arg(long, default_value_t = 100_000)]
-    max_steps: u64,
+    max_steps: Num,
 
     /// Inclusive maximum input value for I/O tables.
     #[arg(long, default_value_t = 10)]
-    grid: u64,
+    grid: Num,
 
     /// Skip I/O tables; show structural info only.
     #[arg(long)]

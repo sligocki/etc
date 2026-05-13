@@ -42,6 +42,7 @@
 /// let entries = en.run(2, 1, 8, false);
 /// // entries: Vec<(Fingerprint, usize, String)> for arity=2, sizes 1..=8
 /// ```
+use crate::base::Num;
 use crate::fingerprint::{
     canonical_inputs_n, compute_fp, fp_is_complete, verification_inputs, Fingerprint,
 };
@@ -55,16 +56,16 @@ pub struct NovelEnumerator {
     /// arity → set of combined fingerprints already seen (primary ++ verification banks)
     seen: HashMap<usize, HashSet<Fingerprint>>,
     /// arity → primary canonical inputs (cached)
-    inputs: HashMap<usize, Vec<Vec<u64>>>,
+    inputs: HashMap<usize, Vec<Vec<Num>>>,
     /// arity → verification inputs (broader exhaustive grid, cached)
-    verify_inputs: HashMap<usize, Vec<Vec<u64>>>,
+    verify_inputs: HashMap<usize, Vec<Vec<Num>>>,
     fp_inputs: usize,
-    max_steps: u64,
+    max_steps: Num,
     allow_min: bool,
 }
 
 impl NovelEnumerator {
-    pub fn new(fp_inputs: usize, max_steps: u64, allow_min: bool) -> Self {
+    pub fn new(fp_inputs: usize, max_steps: Num, allow_min: bool) -> Self {
         NovelEnumerator {
             memo: HashMap::new(),
             seen: HashMap::new(),
@@ -77,14 +78,14 @@ impl NovelEnumerator {
     }
 
     /// Return the cached canonical input set for `arity`, computing it if needed.
-    fn inputs_for(&mut self, arity: usize) -> &Vec<Vec<u64>> {
+    fn inputs_for(&mut self, arity: usize) -> &Vec<Vec<Num>> {
         self.inputs
             .entry(arity)
             .or_insert_with(|| canonical_inputs_n(arity, self.fp_inputs))
     }
 
     /// Return the cached verification input set for `arity`, computing it if needed.
-    fn verify_inputs_for(&mut self, arity: usize) -> &Vec<Vec<u64>> {
+    fn verify_inputs_for(&mut self, arity: usize) -> &Vec<Vec<Num>> {
         self.verify_inputs
             .entry(arity)
             .or_insert_with(|| verification_inputs(arity))

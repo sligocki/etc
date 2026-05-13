@@ -1,3 +1,5 @@
+use crate::base::Num;
+
 /// Measures how hard it is to predict the sequence f(0), f(1), f(2), ...
 ///
 /// A "tournament" of independent predictors runs in parallel.  Each tracks its
@@ -219,13 +221,17 @@ fn make_predictors(max_recurrence: usize, max_period: usize, max_transient: usiz
 /// value means the pattern was detected earlier.  `None` means no predictor
 /// ever stabilised (most chaotic / interesting).
 pub fn chaos_score(
-    vals: &[u64],
+    vals: &[Num],
     stability: usize,
     max_recurrence: usize,
     max_period: usize,
     max_transient: usize,
     end_slack: usize,
 ) -> Option<usize> {
+    // Convert Num values to u64 for the BM/periodic predictors (which work mod PRIME).
+    let vals_u64: Vec<u64> = vals.iter().map(|&v| (v % PRIME as Num) as u64).collect();
+    let vals = vals_u64.as_slice();
+
     let predictors = make_predictors(max_recurrence, max_period, max_transient);
     let np = predictors.len();
     let mut streaks = vec![0usize; np];
@@ -270,7 +276,8 @@ mod tests {
     use super::*;
 
     fn score(vals: &[u64]) -> Option<usize> {
-        chaos_score(vals, 12, 16, 8, 3, 0)
+        let vals_num: Vec<Num> = vals.iter().map(|&v| v as Num).collect();
+        chaos_score(&vals_num, 12, 16, 8, 3, 0)
     }
 
     // --- BerlekampMasseyPredictor unit tests ---
@@ -398,8 +405,8 @@ mod tests {
         // BM with transient=1 fits [2,5,11,...] directly (0 mistakes).
         // BM with transient=0 also works on a long-enough sequence: it finds l=3
         // (verifying from i=3 onward, avoiding the a[0] conflict) with 2 mistakes.
-        let vals_long: Vec<u64> = std::iter::once(1)
-            .chain((1u64..20).scan(2u64, |s, _| { let v = *s; *s = 2 * v + 1; Some(v) }))
+        let vals_long: Vec<Num> = std::iter::once(1)
+            .chain((1u64..20).scan(2u64, |s, _| { let v = *s; *s = 2 * v + 1; Some(v) }).map(|v| v as Num))
             .collect();
         // transient=0: BM finds l=3 (verification skips a[0..2]), locks on at t=16.
         assert_eq!(chaos_score(&vals_long, 12, 16, 8, 0, 0), Some(16));
@@ -409,8 +416,8 @@ mod tests {
 
         // Short version (15 terms, like a timed-out holdout entry):
         // transient=0 + end_slack=0 can't gather enough streak.
-        let vals_short: Vec<u64> = std::iter::once(1)
-            .chain((1u64..15).scan(2u64, |s, _| { let v = *s; *s = 2 * v + 1; Some(v) }))
+        let vals_short: Vec<Num> = std::iter::once(1)
+            .chain((1u64..15).scan(2u64, |s, _| { let v = *s; *s = 2 * v + 1; Some(v) }).map(|v| v as Num))
             .collect();
         assert_eq!(chaos_score(&vals_short, 12, 16, 8, 0, 0), None);
         // transient=1 + end_slack=2 reaches end-of-sequence threshold
@@ -423,7 +430,7 @@ mod tests {
         // 2^(n+1) - 1: [1 3 7 15 31 ... 32767] (15 terms, like a timed-out inner PRF).
         // BM finds recurrence s[n] = 3s[n-1] - 2s[n-2] and is correct for 11 straight
         // terms, but stability=12 is unreachable without slack.
-        let vals: Vec<u64> = (0u64..15).map(|n| (1u64 << (n + 1)) - 1).collect();
+        let vals: Vec<Num> = (0u64..15).map(|n| ((1u64 << (n + 1)) - 1) as Num).collect();
         assert_eq!(chaos_score(&vals, 12, 16, 8, 0, 0), None); // strict: 11 < 12
         let s = chaos_score(&vals, 12, 16, 8, 0, 2);           // end_slack=2: 11 >= 10
         assert!(s.is_some(), "should lock on with end_slack=2; streak=11, threshold=10");
@@ -433,10 +440,10 @@ mod tests {
     fn random_looking_sequence_no_lock() {
         // LCG output: defeats simple polynomial/periodic predictors.
         let mut x: u64 = 1;
-        let vals: Vec<u64> = (0..50)
+        let vals: Vec<Num> = (0..50)
             .map(|_| {
                 x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-                (x >> 33) + 1
+                ((x >> 33) + 1) as Num
             })
             .collect();
         let s = chaos_score(&vals, 5, 16, 8, 0, 0);

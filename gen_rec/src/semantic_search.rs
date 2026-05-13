@@ -37,7 +37,7 @@ use crate::fingerprint::{
 };
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
-use crate::simulate::{simulate, SimResult};
+use crate::simulate::{simulate, Num, SimResult};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -50,7 +50,7 @@ pub struct SearchConfig {
     /// Stop searching after this GRF size (inclusive).
     pub max_size: usize,
     /// Step budget per simulation call. `0` = unlimited.
-    pub max_steps: u64,
+    pub max_steps: Num,
     /// Number of inputs used as the confidence threshold for accepting a match.
     ///
     /// A candidate must pass the spec on all `confidence_inputs` inputs (after the
@@ -72,7 +72,7 @@ impl Default for SearchConfig {
             arity: 1,
             allow_min: false,
             max_size: 12,
-            max_steps: 100_000,
+            max_steps: 100_000 as Num,
             confidence_inputs: 64,
             progress: false,
             trace: false,
@@ -113,7 +113,7 @@ pub struct SearchOutput {
 /// `output.partials` and the search continues until a guaranteed match is found.
 pub fn search_smallest(
     config: &SearchConfig,
-    spec: &mut dyn FnMut(&[u64], u64) -> bool,
+    spec: &mut dyn FnMut(&[Num], Num) -> bool,
 ) -> SearchOutput {
     let opts = PruningOpts::recommended();
     let fast_inputs = canonical_inputs(config.arity);
@@ -179,7 +179,7 @@ pub fn search_smallest(
 /// smaller sizes plus any at the minimum size.
 pub fn search_all_at_min(
     config: &SearchConfig,
-    spec: &mut dyn FnMut(&[u64], u64) -> bool,
+    spec: &mut dyn FnMut(&[Num], Num) -> bool,
 ) -> SearchOutput {
     // First pass: find the min size and collect early partials.
     let first = search_smallest(config, &mut *spec);
@@ -234,11 +234,11 @@ pub fn search_all_at_min(
 /// `timed_out > 0` as a partial (unverified) result.
 fn test_candidate(
     grf: &Grf,
-    fast_inputs: &[Vec<u64>],
-    conf_inputs: &[Vec<u64>],
-    verify_inputs: &[Vec<u64>],
-    max_steps: u64,
-    spec: &mut dyn FnMut(&[u64], u64) -> bool,
+    fast_inputs: &[Vec<Num>],
+    conf_inputs: &[Vec<Num>],
+    verify_inputs: &[Vec<Num>],
+    max_steps: Num,
+    spec: &mut dyn FnMut(&[Num], Num) -> bool,
 ) -> Option<(usize, usize)> {
     // Phase 1: fast rejection on canonical inputs.
     let mut fast_converged = 0usize;
@@ -296,11 +296,11 @@ fn test_candidate(
 ///
 /// `f(inputs)` should return `Some(expected_output)` when the reference function
 /// converges, or `None` when it diverges (that input is skipped, not a counterexample).
-pub fn exact_spec<F>(mut f: F) -> impl FnMut(&[u64], u64) -> bool
+pub fn exact_spec<F>(mut f: F) -> impl FnMut(&[Num], Num) -> bool
 where
-    F: FnMut(&[u64]) -> Option<u64>,
+    F: FnMut(&[Num]) -> Option<Num>,
 {
-    move |inputs: &[u64], output: u64| match f(inputs) {
+    move |inputs: &[Num], output: Num| match f(inputs) {
         Some(expected) => expected == output,
         None => true, // reference diverges: skip this input
     }
@@ -309,11 +309,11 @@ where
 /// Build a spec from a boolean function where true -> 0 and false -> >0.
 ///
 /// Useful in M(f) to define a halting condition.
-pub fn bool_spec<F>(mut f: F) -> impl FnMut(&[u64], u64) -> bool
+pub fn bool_spec<F>(mut f: F) -> impl FnMut(&[Num], Num) -> bool
 where
-    F: FnMut(&[u64]) -> bool,
+    F: FnMut(&[Num]) -> bool,
 {
-    move |inputs: &[u64], output: u64| match f(inputs) {
+    move |inputs: &[Num], output: Num| match f(inputs) {
         true => output == 0,
         false => output > 0,
     }
@@ -329,19 +329,19 @@ pub enum ProbeResult {
     /// The spec rejected this (input, output) pair.
     SpecFailed {
         /// The input tuple on which the spec returned false.
-        inputs: Vec<u64>,
+        inputs: Vec<Num>,
         /// The value the GRF returned.
-        output: u64,
+        output: Num,
     },
     /// The GRF exceeded the step budget on this input (may terminate with more steps).
     TimedOut {
         /// The input tuple that caused the timeout.
-        inputs: Vec<u64>,
+        inputs: Vec<Num>,
     },
     /// The GRF provably diverges on this input (will never terminate regardless of budget).
     Diverged {
         /// The input tuple on which divergence was detected.
-        inputs: Vec<u64>,
+        inputs: Vec<Num>,
     },
 }
 
@@ -367,9 +367,9 @@ impl std::fmt::Display for ProbeResult {
 ///   confidence set.
 pub fn probe_spec(
     grf: &Grf,
-    spec: &mut dyn FnMut(&[u64], u64) -> bool,
-    inputs: &[Vec<u64>],
-    max_steps: u64,
+    spec: &mut dyn FnMut(&[Num], Num) -> bool,
+    inputs: &[Vec<Num>],
+    max_steps: Num,
 ) -> ProbeResult {
     for inp in inputs {
         match simulate(grf, inp, max_steps).0 {
@@ -393,7 +393,7 @@ pub fn probe_spec(
 /// - Diagnose whether `max_steps` is too low (a timeout here means steps are needed).
 /// - Verify the spec is correct (a surprising failure might indicate a spec bug).
 ///
-/// **Note on `n = 0` for trailing-bits specs**: `2u64.pow(0) - 1 = 0`, so the mask
+/// **Note on `n = 0` for trailing-bits specs**: `2.pow(0) - 1 = 0`, so the mask
 /// is 0 and the spec passes vacuously for every function when `n = 0`. If your first
 /// argument is the bit-count, start `max_val` at 1 or use a custom input list.
 ///
@@ -401,9 +401,9 @@ pub fn probe_spec(
 /// Panics if `grf.arity() == 0` (no inputs to enumerate) — call `probe_spec` instead.
 pub fn exhaustive_probe(
     grf: &Grf,
-    spec: &mut dyn FnMut(&[u64], u64) -> bool,
-    max_val: u64,
-    max_steps: u64,
+    spec: &mut dyn FnMut(&[Num], Num) -> bool,
+    max_val: Num,
+    max_steps: Num,
 ) -> ProbeResult {
     let inputs = grid_inputs(grf.arity(), max_val + 1);
     probe_spec(grf, spec, &inputs, max_steps)
@@ -479,7 +479,7 @@ mod tests {
     fn test_search_pow2() {
         // confidence_inputs must stay ≤ 16 here: 2^x − 1 takes ~3·2^x simulation steps,
         // so x=16 already exceeds the 100k step budget.
-        let mut spec = exact_spec(|args| Some(2u64.pow(args[0] as u32)));
+        let mut spec = exact_spec(|args| Some((2 as Num).pow(args[0] as u32)));
         let config = SearchConfig {
             arity: 1,
             max_size: 12,
@@ -494,11 +494,11 @@ mod tests {
     }
 
     // Spec shared by trailing-bits tests: f(n, x) must end in at least n ones.
-    fn trailing_bits_spec(inputs: &[u64], output: u64) -> bool {
+    fn trailing_bits_spec(inputs: &[Num], output: Num) -> bool {
         let n = inputs[0];
         if n >= 64 { return true; }
-        let mask = (1u64 << n) - 1;
-        (output & mask) == mask
+        let mask = ((1 as Num) << n as u32) - 1;
+        (output & mask as Num) == mask as Num
     }
 
     #[test]
@@ -533,8 +533,8 @@ mod tests {
         assert_eq!(result.grf.arity(), 2);
         assert_eq!(result.size, 10, "should have size 10, got {}: {}", result.size, result.grf);
 
-        let inputs: Vec<Vec<u64>> = (1u64..=8)
-            .flat_map(|n| (0u64..=8).map(move |x| vec![n, x]))
+        let inputs: Vec<Vec<Num>> = (1..=8 as Num)
+            .flat_map(|n| (0..=8 as Num).map(move |x| vec![n, x]))
             .collect();
         assert_eq!(
             probe_spec(&result.grf, &mut trailing_bits_spec, &inputs, 0),
@@ -578,7 +578,7 @@ mod tests {
     fn trace_trailing_bits_arity2() {
         let expected: Grf = grf!("R(S, C(R(S, C(S, P(3,2))), P(3,2), P(3,2)))");
         let arity = 2;
-        let max_steps = 1_000_000u64;
+        let max_steps = 1_000_000 as Num;
         let confidence_inputs = 64usize;
         let fast_inputs = canonical_inputs(arity);
         let conf_inputs = canonical_inputs_n(arity, confidence_inputs);
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_search_no_match() {
-        let mut spec = |_inputs: &[u64], output: u64| output > 100;
+        let mut spec = |_inputs: &[Num], output: Num| output > 100;
         let output = search_smallest(&SearchConfig { arity: 1, max_size: 3, ..Default::default() }, &mut spec);
         assert!(output.guaranteed.is_empty(), "should not find a match");
     }

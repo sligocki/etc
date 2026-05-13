@@ -79,7 +79,7 @@ fn print_3d_slices(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize],
 fn print_flat(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize], grid: Num, max_steps: Num) {
     let sc = sweep_indices.len();
     let mut all_sweep_vals: Vec<Vec<Num>> = Vec::new();
-    let mut tuple = vec![0u64; sc];
+    let mut tuple = vec![0 as Num; sc];
     loop {
         all_sweep_vals.push(tuple.clone());
         let mut pos = sc - 1;

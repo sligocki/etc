@@ -213,7 +213,7 @@ where
                             // Exact base_extra derivation:
                             //   unoptimized M(R(g,h)) at result n = 1 + Σᵢ₌₀ⁿ (1+sg + Σⱼ<ᵢ shⱼ)
                             // formula: (n+1) + n*sg + (n-1)*sum_h - k_sum_h
-                            // rewritten to avoid u64 underflow: (n+1) + n*(sg+sum_h) - sum_h - k_sum_h
+                            // rewritten to avoid underflow: (n+1) + n*(sg+sum_h) - sum_h - k_sum_h
                             let base_extra = (n + 1) + n * (sg + sum_h) - sum_h - k_sum_h;
                             steps.base_approx += base_extra;
                             return (SimResult::Value(k + 1), steps);
@@ -439,7 +439,7 @@ mod tests {
     fn test_rec_affine_k1() {
         // R(Z0, C(S, P(2,2)))(n) = n  (acc starts at 0, +1 each step)
         let f = grf!("R(Z0, C(S, P(2,2)))");
-        for n in 0u64..=10 {
+        for n in (0 as Num)..=10 {
             assert_eq!(eval_helper(&f, &[n]), Some(n));
         }
     }
@@ -448,8 +448,8 @@ mod tests {
     fn test_rec_affine_k2() {
         // R(S, C(S, C(S, P(3,2))))(n, x) = S(x) + 2*n = x + 2n + 1
         let f = grf!("R(S, C(S, C(S, P(3,2))))");
-        for n in 0u64..=5 {
-            for x in 0u64..=3 {
+        for n in (0 as Num)..=5 {
+            for x in (0 as Num)..=3 {
                 assert_eq!(eval_helper(&f, &[n, x]), Some(2*n + x + 1));
             }
         }
@@ -528,7 +528,7 @@ mod tests {
         // Pred: R(Z0, P(2,1))
         // Ignores accumulator
         let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 1));
-        for n in 0u64..=10 {
+        for n in (0 as Num)..=10 {
             let expected = n.saturating_sub(1);
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
             let (v_no, _) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
@@ -550,7 +550,7 @@ mod tests {
     fn test_rec_ff_nested_correctness() {
         let f = nested_rec();
         // Both with and without fast-forward must give the same answer.
-        for n in 0u64..=20 {
+        for n in (0 as Num)..=20 {
             let (r_ff, _) = simulate(&f, &[n], 1_000_000);
             let (r_no, _) = simulate_opts(&f, &[n], Some(1_000_000), no_ff());
             assert_eq!(
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn test_rec_ff_fewer_steps() {
         let f = nested_rec();
-        let n = 1000u64;
+        let n : Num = 1000;
         let (_, steps_ff) = simulate(&f, &[n], 0);
         let (_, steps_no) = simulate_opts(&f, &[n], None, no_ff());
         // Without fast-forward: O(n^2). With: O(1). Confirm dramatically fewer steps.
@@ -581,7 +581,7 @@ mod tests {
         // With ff:    steps = 1(Rec) + 1(Z0) = 2.
         // Without ff: steps = 1(Rec) + 1(Z0) + 3*1(P) = 5.
         let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 2));
-        for n in 0u64..=10 {
+        for n in (0 as Num)..=10 {
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
             let (v_no, _) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
             assert_eq!(v_ff.into_value(), Some(0), "ff wrong at n={n}");
@@ -598,8 +598,8 @@ mod tests {
     fn test_rec_ff_proj_acc_identity_arity2() {
         // R(P(1,1), P(3,2))(n, m): h = P(3,2) returns acc; result = P(1,1)(m) = m for all n.
         let r = Grf::rec(Grf::Proj(1, 1), Grf::Proj(3, 2));
-        for n in 0u64..=5 {
-            for m in 0u64..=5 {
+        for n in (0 as Num)..=5 {
+            for m in (0 as Num)..=5 {
                 let (v_ff, _) = simulate(&r, &[n, m], 1_000_000);
                 let (v_no, _) = simulate_opts(&r, &[n, m], Some(1_000_000), no_ff());
                 assert_eq!(v_ff.into_value(), Some(m), "ff wrong at n={n} m={m}");
@@ -614,7 +614,7 @@ mod tests {
         // h = C(Plus, [i, acc]): acc_plus_k returns None, so outer affine ff doesn't fire.
         // (Inner Plus calls may still be accelerated; we verify only correctness here.)
         let r = grf!("R(Z0, C(R(P(1,1), C(S, P(3,2))), P(2,1), P(2,2)))");
-        for n in 0u64..=8 {
+        for n in (0 as Num)..=8 {
             // acc_0 = 0; acc_{i+1} = Plus(i, acc_i). acc_n = sum_{j=0}^{n-1} j = n*(n-1)/2.
             let expected = n * n.saturating_sub(1) / 2;
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
@@ -748,7 +748,7 @@ mod tests {
         // M(R(P(1,1), C(R(Z0,P(2,1)), P(3,2))))(x) = x.
         // R counts down: base=x, step=pred(acc), reaches 0 at iteration x.
         let grf = grf!("M(R(P(1,1), C(R(Z0,P(2,1)),P(3,2))))");
-        for x in 0u64..=10 {
+        for x in (0 as Num)..=10 {
             let (r_fuse, steps_fuse) = simulate(&grf, &[x], 1_000_000);
             let (r_no, steps_no) = simulate_opts(&grf, &[x], Some(1_000_000), no_rec_fuse());
             assert_eq!(r_fuse, SimResult::Value(x), "fuse wrong at x={x}");
@@ -818,7 +818,7 @@ mod tests {
         let (_, s3) = simulate(&grf_plan, &[0], 0);
         let (_, s3_noff) = simulate_opts(&grf_plan, &[0], None, no_ff());
         assert_eq!(s3.base_approx, s3_noff.sim, "x=0 exact: base_approx={} no_ff={}", s3.base_approx, s3_noff.sim);
-        for x in 1u64..=10 {
+        for x in (1 as Num)..=10 {
             let (_, sx) = simulate(&grf_plan, &[x], 0);
             let (_, sx_noff) = simulate_opts(&grf_plan, &[x], None, no_ff());
             assert!(sx.base_approx >= sx.sim, "x={x}: base_approx must be >= sim");

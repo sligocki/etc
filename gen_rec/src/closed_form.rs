@@ -704,7 +704,7 @@ mod tests {
     }
 
     /// Assert closed_form_of matches simulate on a grid of inputs 0..=max_val per dimension.
-    fn check_vs_sim(grf_str: &str, max_val: u64) {
+    fn check_vs_sim(grf_str: &str, max_val: Num) {
         let f = grf(grf_str);
         let sem = closed_form_of(&f).unwrap_or_else(|| panic!("closed_form_of returned None for {grf_str}"));
         let arity = f.arity();
@@ -718,10 +718,10 @@ mod tests {
         let n = (max_val + 1) as usize;
         let total = n.pow(arity as u32);
         for idx in 0..total {
-            let mut args = vec![0u64; arity];
+            let mut args : Vec<Num> = vec![0; arity];
             let mut rem = idx;
             for a in args.iter_mut().rev() {
-                *a = (rem % n) as u64;
+                *a = (rem % n) as Num;
                 rem /= n;
             }
             let sim_val = simulate(&f, &args, 0).0.into_value();
@@ -957,12 +957,12 @@ mod tests {
     // ── Exhaustive closed_form_of vs simulate validation ──────────────────────
 
     /// Canonical test inputs for arity k: small exhaustive grid.
-    pub fn test_inputs(arity: usize) -> Vec<Vec<u64>> {
+    pub fn test_inputs(arity: usize) -> Vec<Vec<Num>> {
         if arity == 0 {
             return vec![vec![]];
         }
-        let vals: &[u64] = &[0, 1, 2, 3, 5, 8];
-        let mut result: Vec<Vec<u64>> = vec![vec![]];
+        let vals: &[Num] = &[0, 1, 2, 3, 5, 8];
+        let mut result: Vec<Vec<Num>> = vec![vec![]];
         for _ in 0..arity {
             let mut next = Vec::new();
             for prefix in &result {
@@ -981,7 +981,7 @@ mod tests {
         check_all_opts(max_arity, max_size, 1_000_000);
     }
 
-    pub fn check_all_opts(max_arity: usize, max_size: usize, max_steps: u64) {
+    pub fn check_all_opts(max_arity: usize, max_size: usize, max_steps: Num) {
         let opts = PruningOpts::default();
 
         let mut checked = 0usize;

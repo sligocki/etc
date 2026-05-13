@@ -194,6 +194,7 @@ impl ClosedFormEnumerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::base::Num;
     use crate::closed_form::closed_form_of;
     use crate::pruning::PruningOpts;
     use crate::simulate::simulate;
@@ -296,7 +297,7 @@ mod tests {
     /// Known BBµ values: n=1→0, n=3→1, n=5→2, n=7→3, n=8→2, n=9→4.
     #[test]
     fn mode_b_bb_correctness_arity0() {
-        let known: &[(usize, u64)] = &[(1, 0), (3, 1), (5, 2), (7, 3), (8, 2), (9, 4)];
+        let known: &[(usize, Num)] = &[(1, 0), (3, 1), (5, 2), (7, 3), (8, 2), (9, 4)];
         let max_size = 9;
         let max_steps = 100_000_000;
 
@@ -307,7 +308,7 @@ mod tests {
 
         for &(size, expected) in known {
             let raw = en.raw_candidates_at_size(0, size);
-            let best: u64 = raw
+            let best: Num = raw
                 .iter()
                 .filter_map(|grf| {
                     let (result, _) = simulate(grf, &[], max_steps);

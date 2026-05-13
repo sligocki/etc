@@ -3,6 +3,7 @@ use std::iter::Peekable;
 use std::path::Path;
 use std::str::Chars;
 
+use crate::base::Num;
 use crate::grf::Grf;
 
 /// A single inline spec test from a `.mgrf` file.
@@ -12,9 +13,9 @@ pub struct TestCase {
     /// Resolved GRF for tests whose name is a macro instantiation (e.g. `Plus[3]`).
     /// `None` means look the GRF up by name at run time.
     pub grf: Option<Grf>,
-    pub args: Vec<u64>,
+    pub args: Vec<Num>,
     /// `Some(v)` = expects value v; `None` = expects divergence (⊥).
-    pub expected: Option<u64>,
+    pub expected: Option<Num>,
 }
 
 /// Parsed `.mgrf` file: resolved GRF definitions plus inline spec tests.
@@ -528,7 +529,7 @@ fn parse_use_statement(s: &str) -> Option<UseStatement> {
 fn parse_test_line(line: &str) -> Option<TestCase> {
     let (lhs, rhs) = line.split_once("==")?;
     let rhs = rhs.trim();
-    let expected: Option<u64> = if rhs == "⊥" {
+    let expected: Option<Num> = if rhs == "⊥" {
         None
     } else {
         Some(rhs.parse().ok()?)
@@ -541,7 +542,7 @@ fn parse_test_line(line: &str) -> Option<TestCase> {
     }
     let name = lhs[..lparen].trim().to_string();
     let args_str = &lhs[lparen + 1..rparen];
-    let args: Vec<u64> = if args_str.trim().is_empty() {
+    let args: Vec<Num> = if args_str.trim().is_empty() {
         vec![]
     } else {
         args_str
@@ -1428,7 +1429,7 @@ DiagS[f^2] := C(f, S, S)
 
     fn run_mgrf_tests(file: &MgrfFile) {
         use crate::simulate::simulate;
-        const BUDGET: u64 = 1_000_000;
+        const BUDGET: Num = 1_000_000;
         let grf_map: HashMap<&str, &Grf> =
             file.defs.iter().map(|(n, g)| (n.as_str(), g)).collect();
         for tc in &file.tests {

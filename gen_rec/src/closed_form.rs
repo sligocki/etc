@@ -258,6 +258,40 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
         }
     }
 
+    // Case E: h is Piecewise on an outer argument (branch_index ≥ 2, i.e. not counter/acc).
+    //
+    // h branches on outer arg j_b = bi (1-based in b's args).  Peel one Piecewise layer:
+    //   zero-slice (b's arg j_b = 0): recurse with g_zero and h.zero_branch, arity k_outer-1.
+    //   pos-slice  (b's arg j_b > 0): recurse with g (unchanged) and h.pos_branch, arity k_outer.
+    // The outer result is Piecewise with branch_index = bi-1 (0-based in b's args).
+    if let ClosedForm::Piecewise(pw_h) = sem_h {
+        let bi = pw_h.branch_index;
+        if bi >= 2 {
+            // j_b is the 1-based index in b's args that h branches on.
+            // h's arg bi+1 (1-based) = b's arg bi (1-based), since h's args are
+            // (counter, acc, b_arg2, b_arg3, ...).
+            let j_b = bi; // 1-based in b's full arg list
+
+            // g has arity k_outer-1; its arg j_b-1 (1-based) = b's arg j_b.
+            let g_zero = zero_face_at(sem_g, j_b - 1);
+            // h.zero_branch has arity k_outer (counter + acc + rest-without-arg-j_b).
+            let h_zero = pw_h.zero_branch.as_ref();
+            if let Some(zero_b) = closed_form_of_rec(&g_zero, h_zero, k_outer - 1) {
+                // h.pos_branch has the same arity as h (k_outer+1); in the pos context
+                // b's arg j_b is already decremented, which is exactly what pos_branch expects.
+                let h_pos = pw_h.pos_branch.as_ref();
+                if let Some(pos_b) = closed_form_of_rec(sem_g, h_pos, k_outer) {
+                    return Some(ClosedForm::Piecewise(PiecewiseFn {
+                        arity: k_outer,
+                        branch_index: j_b - 1, // 0-based in b's args
+                        zero_branch: Box::new(zero_b),
+                        pos_branch: Box::new(pos_b),
+                    }));
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -539,7 +573,9 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
             let acc_coeff = if af.arity >= 1 { af.coeffs[1] } else { 0 };
             match acc_coeff {
                 0 => true, // constant after 1 step
-                1 => af.coeffs[2..].iter().all(|&c| c == 0), // pure identity
+                // Pure identity: f(acc, rest) = acc exactly (no constant shift, no rest terms).
+                // A constant term like acc+1 is NOT stable — it grows without bound.
+                1 => af.coeffs[0] == 0 && af.coeffs[2..].iter().all(|&c| c == 0),
                 _ => false,
             }
         }
@@ -657,7 +693,9 @@ fn drop_index(coeffs: &[i64], idx: usize) -> Vec<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulate::simulate;
+    use crate::enumerate::stream_grf;
+    use crate::pruning::PruningOpts;
+    use crate::simulate::{simulate, SimResult};
 
     fn grf(s: &str) -> Grf {
         s.parse().unwrap()
@@ -830,6 +868,14 @@ mod tests {
     }
 
     #[test]
+    fn test_rec_case_e_outer_arg_piecewise() {
+        // R(P(3,2), C(R(S,P(3,1)), P(5,3), P(5,2))): arity 4
+        // h branches on outer x2 (b's arg 2, h's branch_index=2).
+        // b(n,0,z,w)=n+z  b(n,y,z,w)=y-1 for y>0
+        check_vs_sim("R(P(3,2), C(R(S, P(3,1)), P(5,3), P(5,2)))", 5);
+    }
+
+    #[test]
     fn test_comp_double_piecewise_none() {
         // pred(pred(n)) branches at n=2, not n=1 — not representable in our Piecewise.
         assert!(closed_form_of(&grf("C(R(Z0, P(2,1)), R(Z0, P(2,1)))")).is_none());
@@ -904,5 +950,101 @@ mod tests {
         // i64::MAX * 2 overflows — should return None
         let af = AffineFn { arity: 1, coeffs: vec![0, i64::MAX] };
         assert_eq!(af.eval(&[2]), None);
+    }
+
+    // ── Exhaustive closed_form_of vs simulate validation ──────────────────────
+
+    /// Canonical test inputs for arity k: small exhaustive grid.
+    pub fn test_inputs(arity: usize) -> Vec<Vec<u64>> {
+        if arity == 0 {
+            return vec![vec![]];
+        }
+        let vals: &[u64] = &[0, 1, 2, 3, 5, 8];
+        let mut result: Vec<Vec<u64>> = vec![vec![]];
+        for _ in 0..arity {
+            let mut next = Vec::new();
+            for prefix in &result {
+                for &v in vals {
+                    let mut row = prefix.clone();
+                    row.push(v);
+                    next.push(row);
+                }
+            }
+            result = next;
+        }
+        result
+    }
+
+    pub fn check_all(max_arity: usize, max_size: usize) {
+        check_all_opts(max_arity, max_size, 1_000_000);
+    }
+
+    pub fn check_all_opts(max_arity: usize, max_size: usize, max_steps: u64) {
+        let opts = PruningOpts::default();
+
+        let mut checked = 0usize;
+        let mut mismatches = 0usize;
+
+        for arity in 0..=max_arity {
+            let inputs = test_inputs(arity);
+            for size in 1..=max_size {
+                stream_grf(size, arity, false, opts, &mut |grf| {
+                    let cf = match closed_form_of(grf) {
+                        Some(cf) => cf,
+                        None => return,
+                    };
+                    for args in &inputs {
+                        let (sim_result, _) = simulate(grf, args, max_steps);
+                        let sim_val = match sim_result {
+                            SimResult::Value(v) => Some(v),
+                            SimResult::Diverge | SimResult::OutOfSteps => None,
+                            SimResult::ArityMismatch => {
+                                panic!("arity mismatch for {} on {:?}", grf, args);
+                            }
+                        };
+                        let cf_val = cf.eval(args);
+                        checked += 1;
+                        if cf_val != sim_val {
+                            mismatches += 1;
+                            if mismatches <= 5 {
+                                eprintln!(
+                                    "MISMATCH: {} args={:?}  cf={:?}  sim={:?}",
+                                    grf, args, cf_val, sim_val
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        assert_eq!(
+            mismatches, 0,
+            "{mismatches} mismatches found (checked {checked} (grf, input) pairs)"
+        );
+        eprintln!(
+            "closed_form validate_all: {checked} (grf, input) pairs matched \
+             (arities 0..={max_arity}, sizes 1..={max_size})"
+        );
+    }
+
+    /// Default: arities 0..=2, sizes 1..=8.  Catches bugs that first appear at size 8.
+    #[test]
+    fn validate_closed_form_small() {
+        check_all(2, 8);
+    }
+
+    /// Extended: arities 0..=2, sizes 1..=10.
+    #[test]
+    #[ignore]
+    fn validate_closed_form_medium() {
+        check_all(2, 10);
+    }
+
+    /// Large: arity 3, sizes 1..=7.
+    #[test]
+    #[ignore]
+    fn validate_closed_form_arity3() {
+        check_all(3, 7);
     }
 }

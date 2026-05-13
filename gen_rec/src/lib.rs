@@ -1,7 +1,6 @@
 pub mod alias;
 pub mod base;
 pub mod io_grl;
-pub mod chaos_score;
 pub mod closed_form;
 pub mod closed_form_enum;
 pub mod enumerate;

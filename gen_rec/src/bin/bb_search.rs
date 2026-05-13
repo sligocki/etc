@@ -1,6 +1,7 @@
 /// Enumerate 0-arity GRFs of a given size and track BBµ champions.
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
+use gen_rec::closed_form_enum::ClosedFormEnumerator;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
@@ -65,6 +66,12 @@ struct Args {
     /// Restrict enumeration to a range: --seek START COUNT.
     #[arg(long, num_args = 2, value_names = ["START", "COUNT"])]
     seek: Option<Vec<usize>>,
+
+    /// Use ClosedFormEnumerator instead of stream_grf.
+    /// Reduces candidates by deduplicating sub-expressions on ClosedForm structural
+    /// equality, while remaining complete: every semantically distinct GRF is reachable.
+    #[arg(long)]
+    cf: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +250,10 @@ fn main() {
     }
     let count_opts = opts.for_counting();
 
-    let mode_str = if args.min_prf { "min_prf" } else if args.allow_min { "grf" } else { "prf" };
+    let mode_str = {
+        let base = if args.min_prf { "min_prf" } else if args.allow_min { "grf" } else { "prf" };
+        if args.cf { format!("{base}+cf") } else { base.to_string() }
+    };
     let has_min = args.allow_min || args.min_prf;
     let size = args.size;
 
@@ -268,8 +278,35 @@ fn main() {
         }
     };
 
+    // If --cf: build the ClosedFormEnumerator and materialise candidates now so we
+    // can report an accurate expected count before the main loop starts.
+    let cf_candidates: Option<Vec<Grf>> = if args.cf {
+        let cf_arity = if args.min_prf { 1 } else { 0 };
+        let cf_size = if args.min_prf && size >= 2 { size - 1 } else { size };
+        let cf_allow_min = !args.min_prf && args.allow_min;
+        let mut en = ClosedFormEnumerator::with_pruning(true, cf_allow_min);
+        for s in 1..=cf_size {
+            en.compute_size(cf_arity, s);
+        }
+        Some(if args.min_prf && size < 2 {
+            vec![]
+        } else {
+            en.raw_candidates_at_size(cf_arity, cf_size)
+        })
+    } else {
+        None
+    };
+
     // Expected count (informational; count_grf doesn't account for min_dom).
-    let expected = if args.min_prf {
+    let expected = if let Some(ref cands) = cf_candidates {
+        if args.min_prf {
+            cands.iter().filter(|f| {
+                !opts.min_dom || (f.used_args().contains(&1) && !f.is_never_zero())
+            }).count()
+        } else {
+            cands.len()
+        }
+    } else if args.min_prf {
         if size < 2 { 0 } else { count_grf(size - 1, 1, false, count_opts) }
     } else {
         count_grf(size, 0, args.allow_min, count_opts)
@@ -329,7 +366,26 @@ fn main() {
 
     let mut idx = 0usize;
 
-    if args.min_prf && size >= 2 {
+    if let Some(ref candidates) = cf_candidates {
+        for grf in candidates {
+            if args.min_prf {
+                if opts.min_dom {
+                    if !grf.used_args().contains(&1) { continue; }
+                    if grf.is_never_zero() { continue; }
+                }
+            }
+            let g = if args.min_prf { Grf::min(grf.clone()) } else { grf.clone() };
+            let cur = idx;
+            idx += 1;
+            if cur < seek_start || cur >= seek_start + seek_count { continue; }
+            acc.total += 1;
+            batch.push(g);
+            if batch.len() >= args.batch_size {
+                flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
+                maybe_progress!();
+            }
+        }
+    } else if args.min_prf && size >= 2 {
         stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
             if opts.min_dom {
                 if !f.used_args().contains(&1) { return; }
@@ -425,6 +481,7 @@ fn main() {
     writeln!(cfg_w, "  \"top_k\": {},",           args.top_k).unwrap();
     writeln!(cfg_w, "  \"allow_min\": {},",       args.allow_min).unwrap();
     writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
+    writeln!(cfg_w, "  \"cf\": {},",              args.cf).unwrap();
     writeln!(cfg_w, "  \"opts\": \"{}\",",           opts.stream_opt_names().join(",")).unwrap();
     writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
     writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();

@@ -5,6 +5,7 @@
 ///   mgrf_show mgrf/erdos.mgrf
 ///   mgrf_show mgrf/erdos.mgrf --fp-max-size 8
 use clap::Parser;
+use gen_rec::base::Num;
 use gen_rec::fingerprint::FingerprintDb;
 use gen_rec::mgrf::parse_mgrf_file;
 use gen_rec::optimize::{opt_fingerprint, opt_inline_proj};
@@ -32,7 +33,7 @@ struct Args {
 
     /// Max simulation steps per test case and for fingerprinting.
     #[arg(long, default_value_t = 1_000_000)]
-    max_steps: u64,
+    max_steps: Num,
 }
 
 fn main() {
@@ -127,7 +128,7 @@ fn main() {
             }
         };
         let (result, _) = simulate(grf, &tc.args, args.max_steps);
-        let got: Option<u64> = result.into_value();
+        let got: Option<Num> = result.into_value();
         let ok = match (got, tc.expected) {
             (Some(g), Some(exp)) => g == exp,
             (None,    None)      => true,

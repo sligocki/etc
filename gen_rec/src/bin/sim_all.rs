@@ -9,6 +9,7 @@
 ///   cargo run --bin sim_all -- holdout.grl 1000000000 next.grl --progress-interval 10
 use chrono::Local;
 use clap::Parser;
+use gen_rec::base::Num;
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::simulate::simulate;
@@ -24,7 +25,7 @@ struct Args {
     input: PathBuf,
 
     /// Step budget per simulation (0 = unlimited).
-    steps: u64,
+    steps: Num,
 
     /// Output file (.grl); receives all GRFs with their simulation results.
     output: PathBuf,
@@ -34,7 +35,7 @@ struct Args {
     progress_interval: u64,
 }
 
-fn fmt_steps(n: u64) -> String {
+fn fmt_steps(n: Num) -> String {
     if n < 1_000 {
         format!("{}", n)
     } else if n < 1_000_000 {
@@ -83,7 +84,7 @@ fn main() {
         ),
     ).unwrap();
 
-    let max_steps = if args.steps == 0 { u64::MAX } else { args.steps };
+    let max_steps = if args.steps == 0 { Num::MAX } else { args.steps };
 
     let start = Instant::now();
     let mut last_progress = start;
@@ -94,9 +95,9 @@ fn main() {
     let mut n_diverged   = 0usize;
     let mut n_holdouts   = 0usize;
     let mut n_skipped    = 0usize;
-    let mut max_score    = 0u64;
-    let mut max_halt_steps = 0u64;
-    let mut total_steps  = 0u64;
+    let mut max_score : Num = 0;
+    let mut max_halt_steps : Num = 0;
+    let mut total_steps : Num = 0;
 
     for entry in entries {
         // Skip entries already known to diverge.

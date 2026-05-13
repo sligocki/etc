@@ -10,6 +10,7 @@
 ///   2. Redundancy by structural category (what does the redundant GRF look like?)
 ///   3. Redundancy by canonical target (what smaller GRF is it equivalent to?)
 use clap::Parser;
+use gen_rec::base::Num;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::fingerprint::{canonical_inputs, compute_fp, Fingerprint};
 use gen_rec::grf::Grf;
@@ -33,7 +34,7 @@ struct Args {
 
     /// Max steps per simulation (0 = unlimited; keep small for fast fingerprinting).
     #[arg(long, default_value_t = 10_000)]
-    max_steps: u64,
+    max_steps: Num,
 
     /// Include Minimization combinator.
     #[arg(long)]

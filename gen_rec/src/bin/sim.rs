@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use chrono::Local;
 use clap::Parser;
 use gen_rec::alias::AliasDb;
+use gen_rec::base::Num;
 use gen_rec::grf::Grf;
 use gen_rec::io_table::print_sweep_table;
 use gen_rec::simulate::{simulate, simulate_min, SimOpts, SimResult, SimSteps};
@@ -28,11 +29,11 @@ struct Args {
 
     /// Maximum simulation steps before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
-    max_steps: u64,
+    max_steps: Num,
 
     /// Upper bound (inclusive) for each argument in sweep mode.
     #[arg(long, default_value_t = 10)]
-    max_val: u64,
+    max_val: Num,
 }
 
 fn main() {
@@ -49,11 +50,11 @@ fn main() {
     let arity = grf.arity();
 
     // Parse inputs: numbers or "_" wildcards.
-    let parsed: Vec<Option<u64>> = args.inputs.iter().map(|s| {
+    let parsed: Vec<Option<Num>> = args.inputs.iter().map(|s| {
         if s == "_" {
             None
         } else {
-            match s.parse::<u64>() {
+            match s.parse::<Num>() {
                 Ok(v) => Some(v),
                 Err(_) => {
                     eprintln!("error: invalid input '{}' (expected a number or '_')", s);
@@ -64,7 +65,7 @@ fn main() {
     }).collect();
 
     // No args given with arity > 0 → full sweep.
-    let template: Vec<Option<u64>> = if parsed.is_empty() && arity > 0 {
+    let template: Vec<Option<Num>> = if parsed.is_empty() && arity > 0 {
         vec![None; arity]
     } else {
         parsed
@@ -88,7 +89,7 @@ fn main() {
 
     // Single-run mode: arity 0, or all args concrete.
     if sweep_indices.is_empty() {
-        let concrete: Vec<u64> = template.iter().map(|v| v.unwrap()).collect();
+        let concrete: Vec<Num> = template.iter().map(|v| v.unwrap()).collect();
         println!("expr  : {}", grf);
         println!("arity : {}", arity);
         println!("size  : {}", grf.size());

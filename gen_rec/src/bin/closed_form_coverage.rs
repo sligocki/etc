@@ -1,4 +1,8 @@
-/// Report what fraction of GRFs closed_form_of can represent, and list smallest holdouts.
+/// Report what fraction of novel GRFs closed_form_of can represent, and list smallest holdouts.
+///
+/// Uses ClosedFormEnumerator (novel sub-expression enumeration) instead of exhaustive
+/// stream_grf.  GRFs are only generated from canonical sub-expressions, so the counts
+/// reflect the novel/deduped population rather than all raw GRFs.
 ///
 /// Usage examples:
 ///   closed_form_coverage                          # arities 0..=2, sizes 1..=8, PRF only
@@ -7,13 +11,10 @@
 ///   closed_form_coverage --allow-min              # include Min combinator
 ///   closed_form_coverage --holdouts 20            # show more holdouts
 ///   closed_form_coverage --max-steps 0            # skip value preview
-use std::collections::HashSet;
-
 use clap::Parser;
-use gen_rec::enumerate::stream_grf;
-use gen_rec::grf::Grf;
-use gen_rec::pruning::PruningOpts;
 use gen_rec::closed_form::{closed_form_of, ClosedForm};
+use gen_rec::closed_form_enum::ClosedFormEnumerator;
+use gen_rec::grf::Grf;
 use gen_rec::simulate::{simulate, SimResult};
 
 #[derive(Parser, Debug)]
@@ -162,11 +163,18 @@ fn root_cause(reason: &str) -> &str {
 
 fn main() {
     let args = Args::parse();
-    let opts = PruningOpts::default();
+
+    // Pre-compute all needed (arity, size) entries up front.
+    // ClosedFormEnumerator auto-resolves dependency arities beyond max_arity.
+    let mut en = ClosedFormEnumerator::new(true, args.allow_min);
+    for arity in 0..=args.max_arity {
+        for size in 1..=args.max_size {
+            en.compute_size(arity, size);
+        }
+    }
 
     let mut grand_total = 0usize;
     let mut grand_covered = 0usize;
-    let mut grand_distinct: HashSet<ClosedForm> = HashSet::new();
     // reason → count, accumulated across all arities
     let mut grand_reason_counts: std::collections::BTreeMap<String, usize> =
         std::collections::BTreeMap::new();
@@ -178,7 +186,6 @@ fn main() {
 
         let mut arity_total = 0usize;
         let mut arity_covered = 0usize;
-        let mut arity_distinct: HashSet<ClosedForm> = HashSet::new();
         // first `holdouts` uncovered GRFs (for the example list)
         let mut arity_holdouts: Vec<(usize, String)> = Vec::new();
         // reason → count for this arity
@@ -192,12 +199,10 @@ fn main() {
             let mut size_total = 0usize;
             let mut size_covered = 0usize;
 
-            stream_grf(size, arity, args.allow_min, opts, &mut |grf| {
+            for grf in en.candidates(arity, size) {
                 size_total += 1;
-                if let Some(sem) = closed_form_of(grf) {
+                if closed_form_of(grf).is_some() {
                     size_covered += 1;
-                    arity_distinct.insert(sem.clone());
-                    grand_distinct.insert(sem);
                 } else {
                     let reason = holdout_reason(grf);
                     let root = root_cause(&reason).to_string();
@@ -210,7 +215,7 @@ fn main() {
                         .entry(root)
                         .or_insert_with(|| (size, grf.to_string()));
                 }
-            });
+            };
 
             let pct = if size_total > 0 {
                 100.0 * size_covered as f64 / size_total as f64
@@ -235,10 +240,6 @@ fn main() {
         println!(
             "{:>5}  {:>8}  {:>8}  {:>5.1}%",
             "SUM", arity_total, arity_covered, arity_pct
-        );
-        println!(
-            "       distinct semantics covered: {}",
-            fmt_count(arity_distinct.len())
         );
         println!();
 
@@ -298,15 +299,14 @@ fn main() {
         "=== Overall (arities 0..={}, sizes 1..={}) ===",
         args.max_arity, args.max_size
     );
-    println!("  total GRFs : {}", fmt_count(grand_total));
+    println!("  total novel GRFs : {}", fmt_count(grand_total));
     println!(
-        "  covered    : {}  ({:.1}%)  —  {} distinct semantics",
+        "  covered          : {}  ({:.1}%)",
         fmt_count(grand_covered),
         grand_pct,
-        fmt_count(grand_distinct.len())
     );
     let grand_holdouts = grand_total.saturating_sub(grand_covered);
-    println!("  holdouts   : {}", fmt_count(grand_holdouts));
+    println!("  holdouts         : {}", fmt_count(grand_holdouts));
 
     if !grand_reason_counts.is_empty() {
         println!();

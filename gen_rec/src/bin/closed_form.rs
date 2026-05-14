@@ -178,7 +178,15 @@ fn elapsed_str(start: Instant) -> String {
 ///
 /// Affine: "0", "1 + x1", "x1 + 2·x2", etc.
 /// Piecewise: "(x2=0 ? <zero> : <pos>@x2-1)"
+///
+/// Variable names are threaded through the recursion so that zero_branch of a Piecewise
+/// branching on x_i is displayed with x_i removed (outer x_{i+1} shows as x_{i+1}, not x_i).
 fn format_cf(cf: &ClosedForm) -> String {
+    let names: Vec<String> = (1..=cf.arity()).map(|i| format!("x{i}")).collect();
+    format_cf_named(cf, &names)
+}
+
+fn format_cf_named(cf: &ClosedForm, names: &[String]) -> String {
     match cf {
         ClosedForm::Affine(af) => {
             let mut terms: Vec<String> = Vec::new();
@@ -186,10 +194,10 @@ fn format_cf(cf: &ClosedForm) -> String {
                 terms.push(af.coeffs[0].to_string());
             }
             for (i, &c) in af.coeffs[1..].iter().enumerate() {
-                let xi = format!("x{}", i + 1);
+                let xi = &names[i];
                 match c {
                     0 => {}
-                    1 => terms.push(xi),
+                    1 => terms.push(xi.clone()),
                     -1 => terms.push(format!("-{xi}")),
                     _ => terms.push(format!("{c}·{xi}")),
                 }
@@ -201,12 +209,15 @@ fn format_cf(cf: &ClosedForm) -> String {
             }
         }
         ClosedForm::Piecewise(pw) => {
-            let b = pw.branch_index + 1;
-            format!(
-                "(x{b}=0 ? {} : {}@x{b}-1)",
-                format_cf(&pw.zero_branch),
-                format_cf(&pw.pos_branch)
-            )
+            let bi = pw.branch_index; // 0-indexed
+            let bname = &names[bi];
+            // pos_branch: same variable names as outer (bi-th arg is decremented, not removed).
+            let pos_str = format_cf_named(&pw.pos_branch, names);
+            // zero_branch: remove names[bi] from the list (that arg is absent in the zero case).
+            let zero_names: Vec<String> =
+                names.iter().enumerate().filter(|&(i, _)| i != bi).map(|(_, n)| n.clone()).collect();
+            let zero_str = format_cf_named(&pw.zero_branch, &zero_names);
+            format!("({bname}=0 ? {zero_str} : {pos_str}@{bname}-1)")
         }
     }
 }

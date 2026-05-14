@@ -52,7 +52,7 @@ struct CoverageArgs {
     max_arity: usize,
 
     /// Maximum size to enumerate (inclusive).
-    #[arg(long, default_value_t = 8)]
+    #[arg(long, default_value_t = 12)]
     max_size: usize,
 
     /// Include the Minimization combinator.

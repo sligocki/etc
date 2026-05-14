@@ -1,4 +1,4 @@
-use crate::base::Num;
+use crate::sim_nat::SmallNat;
 use crate::grf::Grf;
 
 /// Affine function over natural numbers: c0 + c1*x1 + ... + ck*xk.
@@ -35,7 +35,7 @@ impl AffineFn {
     /// Evaluate the affine function on concrete arguments.
     ///
     /// Returns `None` if the result would be negative, or if i64 arithmetic overflows.
-    pub fn eval(&self, args: &[Num]) -> Option<Num> {
+    pub fn eval(&self, args: &[SmallNat]) -> Option<SmallNat> {
         debug_assert_eq!(args.len(), self.arity);
         let mut result: i64 = self.coeffs[0];
         for (i, &arg) in args.iter().enumerate() {
@@ -47,7 +47,7 @@ impl AffineFn {
             let term = c.checked_mul(arg_i64)?;
             result = result.checked_add(term)?;
         }
-        if result < 0 { None } else { Some(result as Num) }
+        if result < 0 { None } else { Some(result as SmallNat) }
     }
 
     pub fn lift(&self, arity: usize) -> Self {
@@ -71,11 +71,11 @@ pub struct PiecewiseFn {
 }
 
 impl PiecewiseFn {
-    pub fn eval(&self, args: &[Num]) -> Option<Num> {
+    pub fn eval(&self, args: &[SmallNat]) -> Option<SmallNat> {
         assert_eq!(args.len(), self.arity);
         let bi = self.branch_index;
         if args[bi] == 0 {
-            let zero_args: Vec<Num> =
+            let zero_args: Vec<SmallNat> =
                 args[..bi].iter().chain(&args[bi + 1..]).copied().collect();
             self.zero_branch.eval(&zero_args)
         } else {
@@ -118,7 +118,7 @@ impl ClosedForm {
     ///
     /// Returns `None` if the result would be negative (e.g. affine with negative sum),
     /// or on arithmetic overflow.
-    pub fn eval(&self, args: &[Num]) -> Option<Num> {
+    pub fn eval(&self, args: &[SmallNat]) -> Option<SmallNat> {
         match self {
             ClosedForm::Affine(af) => af.eval(args),
             ClosedForm::Piecewise(pw) => pw.eval(args),
@@ -714,7 +714,7 @@ mod tests {
     }
 
     /// Assert closed_form_of matches simulate on a grid of inputs 0..=max_val per dimension.
-    fn check_vs_sim(grf_str: &str, max_val: Num) {
+    fn check_vs_sim(grf_str: &str, max_val: SmallNat) {
         let f = grf(grf_str);
         let sem = closed_form_of(&f).unwrap_or_else(|| panic!("closed_form_of returned None for {grf_str}"));
         let arity = f.arity();
@@ -728,10 +728,10 @@ mod tests {
         let n = (max_val + 1) as usize;
         let total = n.pow(arity as u32);
         for idx in 0..total {
-            let mut args : Vec<Num> = vec![0; arity];
+            let mut args : Vec<SmallNat> = vec![0; arity];
             let mut rem = idx;
             for a in args.iter_mut().rev() {
-                *a = (rem % n) as Num;
+                *a = (rem % n) as SmallNat;
                 rem /= n;
             }
             let sim_val = simulate(&f, &args, 0).0.into_value();
@@ -978,12 +978,12 @@ mod tests {
     // ── Exhaustive closed_form_of vs simulate validation ──────────────────────
 
     /// Canonical test inputs for arity k: small exhaustive grid.
-    pub fn test_inputs(arity: usize) -> Vec<Vec<Num>> {
+    pub fn test_inputs(arity: usize) -> Vec<Vec<SmallNat>> {
         if arity == 0 {
             return vec![vec![]];
         }
-        let vals: &[Num] = &[0, 1, 2, 3, 5, 8];
-        let mut result: Vec<Vec<Num>> = vec![vec![]];
+        let vals: &[SmallNat] = &[0, 1, 2, 3, 5, 8];
+        let mut result: Vec<Vec<SmallNat>> = vec![vec![]];
         for _ in 0..arity {
             let mut next = Vec::new();
             for prefix in &result {
@@ -1002,7 +1002,7 @@ mod tests {
         check_all_opts(max_arity, max_size, 1_000_000);
     }
 
-    pub fn check_all_opts(max_arity: usize, max_size: usize, max_steps: Num) {
+    pub fn check_all_opts(max_arity: usize, max_size: usize, max_steps: SmallNat) {
         let opts = PruningOpts::default();
 
         let mut checked = 0usize;

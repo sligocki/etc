@@ -1,8 +1,8 @@
 use crate::grf::Grf;
-use crate::simulate::{simulate_with_fallback, SimResult, Num};
+use crate::simulate::{simulate_with_fallback, SimResult, SmallNat};
 
-fn eval(grf: &Grf, template: &[Option<Num>], sweep: &[(usize, Num)], max_steps: Num) -> String {
-    let mut args: Vec<Num> = template.iter().map(|v| v.unwrap_or(0)).collect();
+fn eval(grf: &Grf, template: &[Option<SmallNat>], sweep: &[(usize, SmallNat)], max_steps: SmallNat) -> String {
+    let mut args: Vec<SmallNat> = template.iter().map(|v| v.unwrap_or(0)).collect();
     for &(idx, val) in sweep {
         args[idx] = val;
     }
@@ -13,14 +13,14 @@ fn eval(grf: &Grf, template: &[Option<Num>], sweep: &[(usize, Num)], max_steps: 
     }
 }
 
-pub fn fmt_val(v: Option<Num>) -> String {
+pub fn fmt_val(v: Option<SmallNat>) -> String {
     match v {
         Some(n) => n.to_string(),
         None => "?".to_string(),
     }
 }
 
-fn print_1d(grf: &Grf, template: &[Option<Num>], sweep_idx: usize, grid: Num, max_steps: Num) {
+fn print_1d(grf: &Grf, template: &[Option<SmallNat>], sweep_idx: usize, grid: SmallNat, max_steps: SmallNat) {
     let axis = format!("x{}", sweep_idx + 1);
     let f_hdr = format!("f(x{})", sweep_idx + 1);
     let vals: Vec<String> = (0..=grid)
@@ -36,7 +36,7 @@ fn print_1d(grf: &Grf, template: &[Option<Num>], sweep_idx: usize, grid: Num, ma
     }
 }
 
-fn print_2d(grf: &Grf, template: &[Option<Num>], row_idx: usize, col_idx: usize, grid: Num, max_steps: Num) {
+fn print_2d(grf: &Grf, template: &[Option<SmallNat>], row_idx: usize, col_idx: usize, grid: SmallNat, max_steps: SmallNat) {
     let vals: Vec<Vec<String>> = (0..=grid)
         .map(|a| (0..=grid)
             .map(|b| eval(grf, template, &[(row_idx, a), (col_idx, b)], max_steps))
@@ -66,7 +66,7 @@ fn print_2d(grf: &Grf, template: &[Option<Num>], row_idx: usize, col_idx: usize,
     }
 }
 
-fn print_3d_slices(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize], grid: Num, max_steps: Num) {
+fn print_3d_slices(grf: &Grf, template: &[Option<SmallNat>], sweep_indices: &[usize], grid: SmallNat, max_steps: SmallNat) {
     debug_assert_eq!(sweep_indices.len(), 3);
     let (slice_idx, row_idx, col_idx) = (sweep_indices[0], sweep_indices[1], sweep_indices[2]);
     for s in 0..=grid {
@@ -80,10 +80,10 @@ fn print_3d_slices(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize],
     }
 }
 
-fn print_flat(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize], grid: Num, max_steps: Num) {
+fn print_flat(grf: &Grf, template: &[Option<SmallNat>], sweep_indices: &[usize], grid: SmallNat, max_steps: SmallNat) {
     let sc = sweep_indices.len();
-    let mut all_sweep_vals: Vec<Vec<Num>> = Vec::new();
-    let mut tuple = vec![0 as Num; sc];
+    let mut all_sweep_vals: Vec<Vec<SmallNat>> = Vec::new();
+    let mut tuple = vec![0 as SmallNat; sc];
     loop {
         all_sweep_vals.push(tuple.clone());
         let mut pos = sc - 1;
@@ -99,7 +99,7 @@ fn print_flat(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize], grid
 
     let results: Vec<String> = all_sweep_vals.iter()
         .map(|sv| {
-            let sweep: Vec<(usize, Num)> = sweep_indices.iter().copied().zip(sv.iter().copied()).collect();
+            let sweep: Vec<(usize, SmallNat)> = sweep_indices.iter().copied().zip(sv.iter().copied()).collect();
             eval(grf, template, &sweep, max_steps)
         })
         .collect();
@@ -127,10 +127,10 @@ fn print_flat(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize], grid
 ///           3 → 2D slices (first sweep dim is the slice axis), 4+ → flat list.
 pub fn print_sweep_table(
     grf: &Grf,
-    template: &[Option<Num>],
+    template: &[Option<SmallNat>],
     sweep_indices: &[usize],
-    grid: Num,
-    max_steps: Num,
+    grid: SmallNat,
+    max_steps: SmallNat,
 ) {
     match sweep_indices.len() {
         0 => {
@@ -146,9 +146,9 @@ pub fn print_sweep_table(
 
 /// Print an I/O table for `grf`, sweeping only the args reported by `used_args()`.
 /// Unused args are held at 0. Arity-0 or all-unused → prints a single value.
-pub fn print_io_table(grf: &Grf, grid: Num, max_steps: Num) {
+pub fn print_io_table(grf: &Grf, grid: SmallNat, max_steps: SmallNat) {
     let used: Vec<usize> = grf.used_args().into_iter().map(|j| j - 1).collect();
-    let template: Vec<Option<Num>> = (0..grf.arity())
+    let template: Vec<Option<SmallNat>> = (0..grf.arity())
         .map(|i| if used.contains(&i) { None } else { Some(0) })
         .collect();
 

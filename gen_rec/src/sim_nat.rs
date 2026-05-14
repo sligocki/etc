@@ -1,21 +1,24 @@
-/// Numeric type for GRF values and step counts. Swap to `u128` or bignum to widen.
-pub type Num = u64;
+/// Native fixed-width natural number type (u64). Used everywhere performance matters.
+pub type SmallNat = u64;
 
-/// Arithmetic interface for GRF value types.
+/// Arbitrary-precision natural number type. Used when `SmallNat` overflows.
+pub type BigNat = rug::Integer;
+
+/// Arithmetic interface over natural-number types.
 ///
-/// Implemented for `u64` (returns `None` on overflow) and `rug::Integer` (arbitrary
+/// Implemented for `SmallNat` (returns `None` on overflow) and `BigNat` (arbitrary
 /// precision — never returns `None` from checked operations).
-pub trait SimNum:
+pub trait SimNat:
     Clone + PartialEq + Eq + PartialOrd + Ord
     + std::fmt::Debug + std::fmt::Display + 'static
 {
     fn zero() -> Self;
     fn one()  -> Self;
-    /// Checked successor. Returns `None` only for `u64` at `u64::MAX`.
+    /// Checked successor. Returns `None` only for `SmallNat` at `SmallNat::MAX`.
     fn succ(self) -> Option<Self>;
-    /// Checked addition. Returns `None` only on `u64` overflow.
+    /// Checked addition. Returns `None` only on `SmallNat` overflow.
     fn checked_add(self, rhs: Self) -> Option<Self>;
-    /// Multiply `self` by a `u64` counter. Returns `None` only on `u64` overflow.
+    /// Multiply `self` by a `SmallNat` counter. Returns `None` only on `SmallNat` overflow.
     fn checked_mul_u64(self, n: u64) -> Option<Self>;
     /// Saturating predecessor: zero stays zero (used in step-count formulas).
     fn pred(self) -> Self;
@@ -32,7 +35,7 @@ pub trait SimNum:
     }
 }
 
-impl SimNum for u64 {
+impl SimNat for SmallNat {
     fn zero() -> Self { 0 }
     fn one()  -> Self { 1 }
     fn succ(self) -> Option<Self> { self.checked_add(1) }
@@ -45,7 +48,7 @@ impl SimNum for u64 {
     fn saturating_add_assign(&mut self, rhs: Self) { *self = u64::saturating_add(*self, rhs); }
 }
 
-impl SimNum for rug::Integer {
+impl SimNat for BigNat {
     fn zero() -> Self { rug::Integer::new() }
     fn one()  -> Self { rug::Integer::from(1u64) }
     fn succ(self) -> Option<Self> { Some(self + 1u64) }

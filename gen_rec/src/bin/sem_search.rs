@@ -11,7 +11,7 @@ use gen_rec::fingerprint::{canonical_inputs_n, verification_inputs};
 use gen_rec::semantic_search::{
     bool_spec, exact_spec, exhaustive_probe, probe_spec, search_all_at_min, search_smallest, SearchConfig,
 };
-use gen_rec::simulate::Num;
+use gen_rec::simulate::SmallNat;
 use std::cmp::min;
 use std::time::Instant;
 
@@ -23,14 +23,14 @@ struct SpecDef {
     name: &'static str,
     default_arity: usize,
     description: &'static str,
-    build: fn() -> Box<dyn FnMut(&[Num], Num) -> bool>,
+    build: fn() -> Box<dyn FnMut(&[SmallNat], SmallNat) -> bool>,
 }
 
-fn plus_8p(inputs: &[Num], output: Num) -> bool {
+fn plus_8p(inputs: &[SmallNat], output: SmallNat) -> bool {
     output >= inputs[0] + 8
 }
 
-fn trailing_bits(inputs: &[Num], output: Num) -> bool {
+fn trailing_bits(inputs: &[SmallNat], output: SmallNat) -> bool {
     let n = inputs[0];
     if n >= 64 { return true; }
     let mask = (1u64 << n) - 1;

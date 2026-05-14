@@ -9,7 +9,7 @@
 ///     higher step budget, they are retried and may be recovered into the main map.
 ///
 /// Canonical filenames: `a{arity}_{prf|min}.db`
-use crate::base::Num;
+use crate::sim_nat::SmallNat;
 use crate::enumerate::stream_grf;
 use crate::fingerprint::{canonical_inputs, compute_fp, fp_is_complete, Fingerprint, FingerprintDb, FpEntry};
 use crate::grf::Grf;
@@ -45,7 +45,7 @@ fn parse_fp(s: &str) -> Option<Fingerprint> {
             } else if v == "!" {
                 Some(FpEntry::Diverge)
             } else {
-                v.parse::<Num>().ok().map(FpEntry::Value)
+                v.parse::<SmallNat>().ok().map(FpEntry::Value)
             }
         })
         .collect()
@@ -176,7 +176,7 @@ pub fn load_novel_file(path: &Path) -> io::Result<(NovelDbMeta, NovelMap, Vec<(u
         for (arity, entries) in by_arity {
             let inputs = canonical_inputs(arity);
             for (sz, g) in entries {
-                let fp = compute_fp(&g, &inputs, max_steps as Num);
+                let fp = compute_fp(&g, &inputs, max_steps as SmallNat);
                 if fp_is_complete(&fp) {
                     let s = g.to_string();
                     let e = map.entry(fp).or_insert((sz, s.clone()));
@@ -214,7 +214,7 @@ pub fn retry_timed_out(
             Ok(g) => g,
             Err(_) => { still_timed_out.push((size, grf_str)); continue; }
         };
-        let fp = compute_fp(&grf, &inputs, max_steps as Num);
+        let fp = compute_fp(&grf, &inputs, max_steps as SmallNat);
         if fp_is_complete(&fp) {
             let is_novel = map.get(&fp).map_or(true, |(s, _)| size < *s);
             if is_novel {
@@ -305,7 +305,7 @@ pub fn extend_novel_map(
 
         stream_grf(size, arity, allow_min, opts, &mut |grf| {
             n_enum += 1;
-            let fp = compute_fp(grf, &inputs, max_steps as Num);
+            let fp = compute_fp(grf, &inputs, max_steps as SmallNat);
             if !fp_is_complete(&fp) {
                 if !partial {
                     stats.timed_out_entries.push((size, grf.to_string()));
@@ -361,7 +361,7 @@ pub fn fingerprint_db_from_file(path: &Path, max_steps: u64) -> io::Result<Finge
             max_steps,
         );
     }
-    let mut db = FingerprintDb::build_empty(max_steps as Num);
+    let mut db = FingerprintDb::build_empty(max_steps as SmallNat);
     for (fp, (_, grf_str)) in map {
         if let Ok(grf) = grf_str.parse::<Grf>() {
             db.add_entry(grf.arity(), fp, grf);
@@ -373,7 +373,7 @@ pub fn fingerprint_db_from_file(path: &Path, max_steps: u64) -> io::Result<Finge
 /// Build a `FingerprintDb` from all `.db` files in a directory.
 /// Timed-out entries in any file are ignored (they have no fingerprint to look up).
 pub fn fingerprint_db_from_dir(dir: &Path, max_steps: u64) -> io::Result<FingerprintDb> {
-    let mut db = FingerprintDb::build_empty(max_steps as Num);
+    let mut db = FingerprintDb::build_empty(max_steps as SmallNat);
     for path in db_paths_in_dir(dir)? {
         let (meta, map, _timed_out) = match load_novel_file(&path) {
             Ok(r) => r,

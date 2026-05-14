@@ -37,7 +37,7 @@ use crate::fingerprint::{
 };
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
-use crate::simulate::{simulate, Num, SimResult};
+use crate::simulate::{simulate, SmallNat, SimResult};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -50,7 +50,7 @@ pub struct SearchConfig {
     /// Stop searching after this GRF size (inclusive).
     pub max_size: usize,
     /// Step budget per simulation call. `0` = unlimited.
-    pub max_steps: Num,
+    pub max_steps: SmallNat,
     /// Number of inputs used as the confidence threshold for accepting a match.
     ///
     /// A candidate must pass the spec on all `confidence_inputs` inputs (after the
@@ -72,7 +72,7 @@ impl Default for SearchConfig {
             arity: 1,
             allow_min: false,
             max_size: 12,
-            max_steps: 100_000 as Num,
+            max_steps: 100_000 as SmallNat,
             confidence_inputs: 64,
             progress: false,
             trace: false,
@@ -113,7 +113,7 @@ pub struct SearchOutput {
 /// `output.partials` and the search continues until a guaranteed match is found.
 pub fn search_smallest(
     config: &SearchConfig,
-    spec: &mut dyn FnMut(&[Num], Num) -> bool,
+    spec: &mut dyn FnMut(&[SmallNat], SmallNat) -> bool,
 ) -> SearchOutput {
     let opts = PruningOpts::recommended();
     let fast_inputs = canonical_inputs(config.arity);
@@ -179,7 +179,7 @@ pub fn search_smallest(
 /// smaller sizes plus any at the minimum size.
 pub fn search_all_at_min(
     config: &SearchConfig,
-    spec: &mut dyn FnMut(&[Num], Num) -> bool,
+    spec: &mut dyn FnMut(&[SmallNat], SmallNat) -> bool,
 ) -> SearchOutput {
     // First pass: find the min size and collect early partials.
     let first = search_smallest(config, &mut *spec);
@@ -234,11 +234,11 @@ pub fn search_all_at_min(
 /// `timed_out > 0` as a partial (unverified) result.
 fn test_candidate(
     grf: &Grf,
-    fast_inputs: &[Vec<Num>],
-    conf_inputs: &[Vec<Num>],
-    verify_inputs: &[Vec<Num>],
-    max_steps: Num,
-    spec: &mut dyn FnMut(&[Num], Num) -> bool,
+    fast_inputs: &[Vec<SmallNat>],
+    conf_inputs: &[Vec<SmallNat>],
+    verify_inputs: &[Vec<SmallNat>],
+    max_steps: SmallNat,
+    spec: &mut dyn FnMut(&[SmallNat], SmallNat) -> bool,
 ) -> Option<(usize, usize)> {
     // Phase 1: fast rejection on canonical inputs.
     let mut fast_converged = 0usize;
@@ -296,11 +296,11 @@ fn test_candidate(
 ///
 /// `f(inputs)` should return `Some(expected_output)` when the reference function
 /// converges, or `None` when it diverges (that input is skipped, not a counterexample).
-pub fn exact_spec<F>(mut f: F) -> impl FnMut(&[Num], Num) -> bool
+pub fn exact_spec<F>(mut f: F) -> impl FnMut(&[SmallNat], SmallNat) -> bool
 where
-    F: FnMut(&[Num]) -> Option<Num>,
+    F: FnMut(&[SmallNat]) -> Option<SmallNat>,
 {
-    move |inputs: &[Num], output: Num| match f(inputs) {
+    move |inputs: &[SmallNat], output: SmallNat| match f(inputs) {
         Some(expected) => expected == output,
         None => true, // reference diverges: skip this input
     }
@@ -309,11 +309,11 @@ where
 /// Build a spec from a boolean function where true -> 0 and false -> >0.
 ///
 /// Useful in M(f) to define a halting condition.
-pub fn bool_spec<F>(mut f: F) -> impl FnMut(&[Num], Num) -> bool
+pub fn bool_spec<F>(mut f: F) -> impl FnMut(&[SmallNat], SmallNat) -> bool
 where
-    F: FnMut(&[Num]) -> bool,
+    F: FnMut(&[SmallNat]) -> bool,
 {
-    move |inputs: &[Num], output: Num| match f(inputs) {
+    move |inputs: &[SmallNat], output: SmallNat| match f(inputs) {
         true => output == 0,
         false => output > 0,
     }
@@ -329,19 +329,19 @@ pub enum ProbeResult {
     /// The spec rejected this (input, output) pair.
     SpecFailed {
         /// The input tuple on which the spec returned false.
-        inputs: Vec<Num>,
+        inputs: Vec<SmallNat>,
         /// The value the GRF returned.
-        output: Num,
+        output: SmallNat,
     },
     /// The GRF exceeded the step budget on this input (may terminate with more steps).
     TimedOut {
         /// The input tuple that caused the timeout.
-        inputs: Vec<Num>,
+        inputs: Vec<SmallNat>,
     },
     /// The GRF provably diverges on this input (will never terminate regardless of budget).
     Diverged {
         /// The input tuple on which divergence was detected.
-        inputs: Vec<Num>,
+        inputs: Vec<SmallNat>,
     },
 }
 
@@ -367,9 +367,9 @@ impl std::fmt::Display for ProbeResult {
 ///   confidence set.
 pub fn probe_spec(
     grf: &Grf,
-    spec: &mut dyn FnMut(&[Num], Num) -> bool,
-    inputs: &[Vec<Num>],
-    max_steps: Num,
+    spec: &mut dyn FnMut(&[SmallNat], SmallNat) -> bool,
+    inputs: &[Vec<SmallNat>],
+    max_steps: SmallNat,
 ) -> ProbeResult {
     for inp in inputs {
         match simulate(grf, inp, max_steps).0 {
@@ -401,9 +401,9 @@ pub fn probe_spec(
 /// Panics if `grf.arity() == 0` (no inputs to enumerate) — call `probe_spec` instead.
 pub fn exhaustive_probe(
     grf: &Grf,
-    spec: &mut dyn FnMut(&[Num], Num) -> bool,
-    max_val: Num,
-    max_steps: Num,
+    spec: &mut dyn FnMut(&[SmallNat], SmallNat) -> bool,
+    max_val: SmallNat,
+    max_steps: SmallNat,
 ) -> ProbeResult {
     let inputs = grid_inputs(grf.arity(), max_val + 1);
     probe_spec(grf, spec, &inputs, max_steps)
@@ -413,7 +413,7 @@ pub fn exhaustive_probe(
 mod tests {
     use super::*;
     use crate::grf;
-    use crate::simulate::Num;
+    use crate::simulate::SmallNat;
 
     fn cfg(arity: usize, max_size: usize) -> SearchConfig {
         SearchConfig {
@@ -479,7 +479,7 @@ mod tests {
     fn test_search_pow2() {
         // confidence_inputs must stay ≤ 16 here: 2^x − 1 takes ~3·2^x simulation steps,
         // so x=16 already exceeds the 100k step budget.
-        let mut spec = exact_spec(|args| Some((2 as Num).pow(args[0] as u32)));
+        let mut spec = exact_spec(|args| Some((2 as SmallNat).pow(args[0] as u32)));
         let config = SearchConfig {
             arity: 1,
             max_size: 12,
@@ -494,11 +494,11 @@ mod tests {
     }
 
     // Spec shared by trailing-bits tests: f(n, x) must end in at least n ones.
-    fn trailing_bits_spec(inputs: &[Num], output: Num) -> bool {
+    fn trailing_bits_spec(inputs: &[SmallNat], output: SmallNat) -> bool {
         let n = inputs[0];
         if n >= 64 { return true; }
-        let mask = ((1 as Num) << n as u32) - 1;
-        (output & mask as Num) == mask as Num
+        let mask = ((1 as SmallNat) << n as u32) - 1;
+        (output & mask as SmallNat) == mask as SmallNat
     }
 
     #[test]
@@ -533,8 +533,8 @@ mod tests {
         assert_eq!(result.grf.arity(), 2);
         assert_eq!(result.size, 10, "should have size 10, got {}: {}", result.size, result.grf);
 
-        let inputs: Vec<Vec<Num>> = (1..=8 as Num)
-            .flat_map(|n| (0..=8 as Num).map(move |x| vec![n, x]))
+        let inputs: Vec<Vec<SmallNat>> = (1..=8 as SmallNat)
+            .flat_map(|n| (0..=8 as SmallNat).map(move |x| vec![n, x]))
             .collect();
         assert_eq!(
             probe_spec(&result.grf, &mut trailing_bits_spec, &inputs, 0),
@@ -578,7 +578,7 @@ mod tests {
     fn trace_trailing_bits_arity2() {
         let expected: Grf = grf!("R(S, C(R(S, C(S, P(3,2))), P(3,2), P(3,2)))");
         let arity = 2;
-        let max_steps = 1_000_000 as Num;
+        let max_steps = 1_000_000 as SmallNat;
         let confidence_inputs = 64usize;
         let fast_inputs = canonical_inputs(arity);
         let conf_inputs = canonical_inputs_n(arity, confidence_inputs);
@@ -655,14 +655,14 @@ mod tests {
 
     #[test]
     fn test_search_no_match() {
-        let mut spec = |_inputs: &[Num], output: Num| output > 100;
+        let mut spec = |_inputs: &[SmallNat], output: SmallNat| output > 100;
         let output = search_smallest(&SearchConfig { arity: 1, max_size: 3, ..Default::default() }, &mut spec);
         assert!(output.guaranteed.is_empty(), "should not find a match");
     }
 
     #[test]
     fn test_exact_spec_skips_none() {
-        let mut spec = exact_spec(|args: &[Num]| {
+        let mut spec = exact_spec(|args: &[SmallNat]| {
             if args[0] == 0 { None } else { Some(args[0] - 1) }
         });
         assert!(spec(&[0], 42));

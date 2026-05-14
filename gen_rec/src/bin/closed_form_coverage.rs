@@ -12,7 +12,7 @@
 ///   closed_form_coverage --holdouts 20            # show more holdouts
 ///   closed_form_coverage --max-steps 0            # skip value preview
 use clap::Parser;
-use gen_rec::base::Num;
+use gen_rec::sim_nat::SmallNat;
 use gen_rec::closed_form::{closed_form_of, ClosedForm};
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::grf::Grf;
@@ -39,7 +39,7 @@ struct Args {
 
     /// Max simulation steps when computing value previews (0 = skip preview).
     #[arg(long, default_value_t = 10_000)]
-    max_steps: Num,
+    max_steps: SmallNat,
 }
 
 // ---------------------------------------------------------------------------
@@ -52,13 +52,13 @@ struct Args {
 /// arity 1 : "f(0..3) = V0 V1 V2 V3"
 /// arity 2 : "f(0,0)=A f(1,0)=B f(0,1)=C f(1,1)=D"
 /// arity 3+: skip (too many inputs)
-fn value_preview(f: &Grf, max_steps: Num) -> String {
+fn value_preview(f: &Grf, max_steps: SmallNat) -> String {
     let arity = f.arity();
     if max_steps == 0 || arity > 2 {
         return String::new();
     }
 
-    let eval = |args: &[Num]| -> String {
+    let eval = |args: &[SmallNat]| -> String {
         let (res, _) = simulate(f, args, max_steps);
         match res {
             SimResult::Value(v) => v.to_string(),
@@ -76,7 +76,7 @@ fn value_preview(f: &Grf, max_steps: Num) -> String {
             format!("f(0..3) = {}", vals.join(" "))
         }
         2 => {
-            let pts: &[(&str, &[Num])] = &[
+            let pts: &[(&str, &[SmallNat])] = &[
                 ("f(0,0)", &[0, 0]),
                 ("f(1,0)", &[1, 0]),
                 ("f(0,1)", &[0, 1]),

@@ -3,7 +3,7 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 
-use crate::base::Num;
+use crate::sim_nat::SmallNat;
 
 /// Parse a GRF from a format string, panicking on error.
 ///
@@ -285,7 +285,7 @@ impl Grf {
     /// Returns `Some(k)` if this function is structurally equivalent to
     /// `λ(args). args[2] + k`, i.e. a chain of k Succs applied to P2.
     /// Used to accelerate R(g, h) when h is an affine step on the accumulator.
-    pub fn acc_plus_k(&self) -> Option<Num> {
+    pub fn acc_plus_k(&self) -> Option<SmallNat> {
         match self {
             Grf::Proj(_, 2) => Some(0),
             Grf::Comp(outer, inners, _) => {

@@ -1,7 +1,7 @@
 /// Enumerate 0-arity GRFs of a given size and track BBµ champions.
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
-use gen_rec::base::Num;
+use gen_rec::sim_nat::SmallNat;
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::grf::Grf;
@@ -32,7 +32,7 @@ struct Args {
 
     /// Maximum steps per simulation before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
-    max_steps: Num,
+    max_steps: SmallNat,
 
     /// Include Minimization combinator (default: PRF only).
     #[arg(long)]
@@ -83,7 +83,7 @@ struct Args {
 /// Entries are (score, steps, base_steps, raw_expr) sorted ascending; best at end.
 struct TopK {
     k: usize,
-    entries: Vec<(Num, Num, Num, String)>,
+    entries: Vec<(SmallNat, SmallNat, SmallNat, String)>,
 }
 
 impl TopK {
@@ -91,11 +91,11 @@ impl TopK {
         TopK { k, entries: Vec::new() }
     }
 
-    fn best_score(&self) -> Option<Num> {
+    fn best_score(&self) -> Option<SmallNat> {
         self.entries.last().map(|(s, _, _, _)| *s)
     }
 
-    fn insert(&mut self, score: Num, steps: Num, base_steps: Num, expr: String) {
+    fn insert(&mut self, score: SmallNat, steps: SmallNat, base_steps: SmallNat, expr: String) {
         if self.entries.len() >= self.k && score < self.entries[0].0 {
             return;
         }
@@ -112,7 +112,7 @@ impl TopK {
         }
     }
 
-    fn iter_desc(&self) -> impl Iterator<Item = &(Num, Num, Num, String)> {
+    fn iter_desc(&self) -> impl Iterator<Item = &(SmallNat, SmallNat, SmallNat, String)> {
         self.entries.iter().rev()
     }
 }
@@ -126,8 +126,8 @@ struct Accumulator {
     total: usize,
     holdouts: usize,
     diverged: usize,
-    total_steps: Num,
-    max_steps_single: Num,
+    total_steps: SmallNat,
+    max_steps_single: SmallNat,
     sim_nanos: u64,
 }
 
@@ -151,12 +151,12 @@ impl Accumulator {
 
 struct BatchResult {
     top_k: TopK,
-    holdouts: Vec<(Num, String, Option<&'static str>)>,
+    holdouts: Vec<(SmallNat, String, Option<&'static str>)>,
     diverged: usize,
-    total_steps: Num,
+    total_steps: SmallNat,
 }
 
-fn process_batch(batch: &[Grf], max_steps: Num, k: usize) -> BatchResult {
+fn process_batch(batch: &[Grf], max_steps: SmallNat, k: usize) -> BatchResult {
     // Strings not allocated in worker threads — avoids macOS nano-zone
     // cross-thread free errors ("pointer being freed was not allocated").
     let outcomes: Vec<(SimResult, SimSteps)> = batch
@@ -167,7 +167,7 @@ fn process_batch(batch: &[Grf], max_steps: Num, k: usize) -> BatchResult {
     let mut top_k = TopK::new(k);
     let mut holdouts = Vec::new();
     let mut diverged = 0usize;
-    let mut total_steps : Num = 0;
+    let mut total_steps : SmallNat = 0;
 
     for (idx, (result, sim_steps)) in outcomes.into_iter().enumerate() {
         let steps = sim_steps.sim;
@@ -187,7 +187,7 @@ fn flush_batch<W: Write>(
     batch: &mut Vec<Grf>,
     acc: &mut Accumulator,
     holdout_w: &mut W,
-    max_steps: Num,
+    max_steps: SmallNat,
     k: usize,
 ) {
     if batch.is_empty() {
@@ -218,7 +218,7 @@ fn flush_batch<W: Write>(
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
-fn fmt_si(n: Num) -> String {
+fn fmt_si(n: SmallNat) -> String {
     if n < 1_000 { format!("{}", n) } else { fmt_si_f64(n as f64) }
 }
 
@@ -352,13 +352,13 @@ fn main() {
                 if has_min {
                     println!(
                         "[t={:.1}s] best={}  fns={}  holdouts={}  diverged={}  steps={}  ({} steps/s)",
-                        t, best_s, fmt_si(acc.total as Num), fmt_si(acc.holdouts as Num),
-                        fmt_si(acc.diverged as Num), steps_s, rate_s,
+                        t, best_s, fmt_si(acc.total as SmallNat), fmt_si(acc.holdouts as SmallNat),
+                        fmt_si(acc.diverged as SmallNat), steps_s, rate_s,
                     );
                 } else {
                     println!(
                         "[t={:.1}s] best={}  fns={}  holdouts={}  steps={}  ({} steps/s)",
-                        t, best_s, fmt_si(acc.total as Num), fmt_si(acc.holdouts as Num),
+                        t, best_s, fmt_si(acc.total as SmallNat), fmt_si(acc.holdouts as SmallNat),
                         steps_s, rate_s,
                     );
                 }

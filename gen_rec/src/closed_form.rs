@@ -663,6 +663,30 @@ fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, po
             return ClosedForm::Affine(AffineFn { arity, coeffs: new_coeffs });
         }
     }
+    // If pos_branch is itself a Piecewise on a different axis bi2, try reordering the two
+    // levels of branching into a single Piecewise on bi2.  For each slice of bi2 we form a
+    // new inner piecewise on bi1; if *both* slices simplify to Affine (via the checks above)
+    // we can replace the nested structure with a flat Piecewise on bi2.  The "both Affine"
+    // guard ensures termination: if a slice can't collapse we leave the original form as-is.
+    if let ClosedForm::Piecewise(pp) = &pos_branch {
+        let bi2 = pp.branch_index;
+        if bi2 != branch_index {
+            // bi2 in zero_branch's arg space (bi1 was dropped, so indices after bi1 shift down).
+            let bi2_in_zero = if bi2 < branch_index { bi2 } else { bi2 - 1 };
+            // bi1 in new_zero's arg space (bi2 was dropped, so indices after bi2 shift down).
+            let bi1_in_new_zero = if bi2 < branch_index { branch_index - 1 } else { branch_index };
+            let pz: ClosedForm = *pp.zero_branch.clone();
+            let pp_pos: ClosedForm = *pp.pos_branch.clone();
+            // Slice zero_branch at bi2=0 (substitute & drop) and bi2>0 (shift for decrement).
+            let z0 = zero_face_at(&zero_branch, bi2_in_zero + 1);
+            let z_pos = pos_face_at(&zero_branch, bi2_in_zero + 1);
+            let new_zero = make_piecewise(arity - 1, bi1_in_new_zero, z0, pz);
+            let new_pos = make_piecewise(arity, branch_index, z_pos, pp_pos);
+            if matches!(new_zero, ClosedForm::Affine(_)) && matches!(new_pos, ClosedForm::Affine(_)) {
+                return make_piecewise(arity, bi2, new_zero, new_pos);
+            }
+        }
+    }
     ClosedForm::Piecewise(PiecewiseFn {
         arity,
         branch_index,
@@ -1002,6 +1026,27 @@ mod tests {
         // Multiplication: h = add(acc, m), not a constant step — None
         // R(Z0, C(R(P(1,1),C(S,P(3,2))), P(3,2), P(3,3)))
         assert!(closed_form_of(&grf("R(Z0, C(R(P(1,1),C(S,P(3,2))),P(3,2),P(3,3)))")).is_none());
+    }
+
+    #[test]
+    fn test_make_piecewise_reorder_collapses_nested_piecewise() {
+        // R(Z1, C(R(S, Z3), P(3,3), P(3,1))): arity 2.
+        // closed_form_of produces (x1=0 ? 0 : (x2=0 ? 1+x1 : 0@x2-1)@x1-1).
+        // The reorder check should collapse this to (x2=0 ? x1 : 0@x2-1).
+        //
+        // Semantics: f(0,m)=0, f(n>0,0)=n, f(n>0,m>0)=0.
+        let cf = closed_form_of(&grf("R(Z1, C(R(S, Z3), P(3,3), P(3,1)))")).unwrap();
+        assert_eq!(
+            cf,
+            ClosedForm::Piecewise(PiecewiseFn {
+                arity: 2,
+                branch_index: 1,
+                zero_branch: Box::new(ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] })),
+                pos_branch: Box::new(ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![0, 0, 0] })),
+            }),
+            "expected (x2=0 ? x1 : 0@x2-1), got {cf:?}"
+        );
+        check_vs_sim("R(Z1, C(R(S, Z3), P(3,3), P(3,1)))", 4);
     }
 
     // --- AffineFn arithmetic safety ---

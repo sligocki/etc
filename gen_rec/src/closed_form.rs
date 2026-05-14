@@ -631,14 +631,36 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
     }
 }
 
-/// Build a PiecewiseFn, but simplify to the pos_branch if both branches agree.
+/// Build a PiecewiseFn, but simplify if both branches agree semantically.
 ///
-/// If pos_branch ignores branch_index (drop_arg succeeds) and the dropped form equals
-/// zero_branch, then both branches return the same value for all inputs — no need to branch.
+/// Case 1: pos_branch ignores the branched arg entirely — both branches return the same
+/// value regardless of the arg's value, so return pos_branch directly.
+///
+/// Case 2: both branches are Affine and the piecewise is "smooth" at the boundary:
+/// pos_branch(args_with_bi=0) == zero_branch(args_without_bi) for all other args.
+/// The piecewise is then a pure affine: the same as pos_branch but with the constant
+/// adjusted to pos_branch.c0 − pos_branch.coeffs[bi+1].
 fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, pos_branch: ClosedForm) -> ClosedForm {
     if let Some(dropped) = drop_arg(&pos_branch, branch_index + 1) {
         if dropped == zero_branch {
             return pos_branch;
+        }
+    }
+    if let (ClosedForm::Affine(z), ClosedForm::Affine(p)) = (&zero_branch, &pos_branch) {
+        let bi1 = branch_index + 1; // 1-based index of the branched arg
+        // Adjusted constant: A.c0 = p.c0 - p.coeffs[bi1] (from the pos-branch shift by -1)
+        let c0_ok = p.coeffs[0].checked_sub(p.coeffs[bi1])
+            .map_or(false, |c0| c0 == z.coeffs[0]);
+        // Non-branched args must have matching coefficients between p and z
+        // (z skips the bi1 slot, so z.coeffs[j] matches p.coeffs[j] for j<bi1,
+        //  and z.coeffs[j-1] matches p.coeffs[j] for j>bi1).
+        let coeffs_ok = c0_ok
+            && (1..bi1).all(|j| p.coeffs[j] == z.coeffs[j])
+            && (bi1 + 1..=arity).all(|j| p.coeffs[j] == z.coeffs[j - 1]);
+        if coeffs_ok {
+            let mut new_coeffs = p.coeffs.clone();
+            new_coeffs[0] = z.coeffs[0];
+            return ClosedForm::Affine(AffineFn { arity, coeffs: new_coeffs });
         }
     }
     ClosedForm::Piecewise(PiecewiseFn {
@@ -950,6 +972,29 @@ mod tests {
             assert_ne!(pw.branch_index, 0, "outer Piecewise should not branch on the counter");
         }
         check_vs_sim("R(R(R(S, P(3,2)), P(4,1)), P(5,2))", 4);
+    }
+
+    #[test]
+    fn test_make_piecewise_smooth_boundary_collapses_to_affine() {
+        // Case B produces pos_branch that uses the branched arg, but pos_branch(bi=0) == zero_branch,
+        // so the piecewise is a pure affine (smooth at the boundary).
+
+        // R(Z0, C(S, P(2,1))): f(0)=0, f(n+1)=1+n → f(n)=n (identity).
+        // pos_branch = 1+x1 uses x1; boundary: pos_branch(0)=1 ≠ z.c0=0, yet
+        // p.c0 - p.coeffs[1] = 0 = z.c0, so it collapses to Affine x1.
+        let cf = closed_form_of(&grf("R(Z0, C(S, P(2,1)))")).unwrap();
+        assert_eq!(cf, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] }));
+        check_vs_sim("R(Z0, C(S, P(2,1)))", 8);
+
+        // R(C(S, Z0), C(S, C(S, P(2,1)))): f(0)=1, f(n+1)=2+n → f(n)=n+1 (successor).
+        let cf2 = closed_form_of(&grf("R(C(S, Z0), C(S, C(S, P(2,1))))")).unwrap();
+        assert_eq!(cf2, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] }));
+        check_vs_sim("R(C(S, Z0), C(S, C(S, P(2,1))))", 8);
+
+        // R(Z1, C(S, P(3,1))): arity 2, f(0,m)=0, f(n+1,m)=1+n → f(n,m)=n (project first arg).
+        let cf3 = closed_form_of(&grf("R(Z1, C(S, P(3,1)))")).unwrap();
+        assert_eq!(cf3, ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![0, 1, 0] }));
+        check_vs_sim("R(Z1, C(S, P(3,1)))", 4);
     }
 
     #[test]

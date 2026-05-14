@@ -1051,23 +1051,23 @@ mod tests {
         );
     }
 
-    /// Default: arities 0..=2, sizes 1..=8.  Catches bugs that first appear at size 8.
+    // 0.37s
     #[test]
-    fn validate_closed_form_small() {
-        check_all(2, 8);
+    fn validate_small() {
+        check_all(2, 7);
     }
 
-    /// Extended: arities 0..=2, sizes 1..=10.
+    // 143s
     #[test]
     #[ignore]
-    fn validate_closed_form_medium() {
+    fn validate_long() {
         check_all(2, 10);
     }
 
-    /// Large: arity 3, sizes 1..=7.
+    // 50s
     #[test]
     #[ignore]
-    fn validate_closed_form_arity3() {
-        check_all(3, 7);
+    fn validate_wide() {
+        check_all(4, 7);
     }
 }

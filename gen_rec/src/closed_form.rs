@@ -506,7 +506,8 @@ fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
 ///
 /// - Affine: add coeffs[j] to coeffs[0] (shifts the constant to compensate).
 /// - Piecewise branching on xj: take pos_branch (already defined as "called with xj-1").
-/// - Piecewise branching on a different variable: unchanged (only valid when xj-independent).
+/// - Piecewise branching on xk (k≠j): recurse into both branches.  In the zero_branch
+///   (where xk is absent) the index for xj shifts to j_in_zero = j if j<k else j-1.
 fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
     match sem {
         ClosedForm::Affine(af) => {
@@ -515,10 +516,19 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
             ClosedForm::Affine(AffineFn { arity: af.arity, coeffs: new_coeffs })
         }
         ClosedForm::Piecewise(pw) => {
-            if pw.branch_index + 1 == j {
+            let b = pw.branch_index + 1; // 1-based branch variable
+            if b == j {
                 *pw.pos_branch.clone()
             } else {
-                sem.clone()
+                let j_in_zero = if j < b { j } else { j - 1 };
+                let new_zero = pos_face_at(&pw.zero_branch, j_in_zero);
+                let new_pos = pos_face_at(&pw.pos_branch, j);
+                ClosedForm::Piecewise(PiecewiseFn {
+                    arity: pw.arity,
+                    branch_index: pw.branch_index,
+                    zero_branch: Box::new(new_zero),
+                    pos_branch: Box::new(new_pos),
+                })
             }
         }
     }

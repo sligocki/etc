@@ -196,12 +196,7 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
     // Case B: h ignores accumulator (arg 2)  →  drop acc to get h': (counter, rest) → value
     if closed_form_ignores_arg(sem_h, 2) {
         if let Some(h_prime) = drop_arg(sem_h, 2) {
-            return Some(ClosedForm::Piecewise(PiecewiseFn {
-                arity: k_outer,
-                branch_index: 0,
-                zero_branch: Box::new(sem_g.clone()),
-                pos_branch: Box::new(h_prime),
-            }));
+            return Some(make_piecewise(k_outer, 0, sem_g.clone(), h_prime));
         }
     }
 
@@ -221,12 +216,7 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
                 if let Some(sem_g_prime) = compose(b_z, &inner_for_g_prime, k_rest) {
                     let b_p: &ClosedForm = &pw_h.pos_branch;
                     if let Some(pos_branch) = closed_form_of_rec(&sem_g_prime, b_p, k_outer) {
-                        return Some(ClosedForm::Piecewise(PiecewiseFn {
-                            arity: k_outer,
-                            branch_index: 0,
-                            zero_branch: Box::new(sem_g.clone()),
-                            pos_branch: Box::new(pos_branch),
-                        }));
+                        return Some(make_piecewise(k_outer, 0, sem_g.clone(), pos_branch));
                     }
                 }
             }
@@ -247,12 +237,7 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
                 }
                 if let Some(one_step) = compose(&h_prime, &inners, k_rest) {
                     let pos_branch = prepend_arg(&one_step);
-                    return Some(ClosedForm::Piecewise(PiecewiseFn {
-                        arity: k_outer,
-                        branch_index: 0,
-                        zero_branch: Box::new(sem_g.clone()),
-                        pos_branch: Box::new(pos_branch),
-                    }));
+                    return Some(make_piecewise(k_outer, 0, sem_g.clone(), pos_branch));
                 }
             }
         }
@@ -283,12 +268,7 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
                 let g_pos = pos_face_at(sem_g, j_b - 1);
                 let h_pos = pw_h.pos_branch.as_ref();
                 if let Some(pos_b) = closed_form_of_rec(&g_pos, h_pos, k_outer) {
-                    return Some(ClosedForm::Piecewise(PiecewiseFn {
-                        arity: k_outer,
-                        branch_index: j_b - 1, // 0-based in b's args
-                        zero_branch: Box::new(zero_b),
-                        pos_branch: Box::new(pos_b),
-                    }));
+                    return Some(make_piecewise(k_outer, j_b - 1, zero_b, pos_b));
                 }
             }
         }
@@ -378,12 +358,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
             let pos_inners: Vec<ClosedForm> = inners.iter().map(|s| pos_face_at(s, j)).collect();
             let zero_sem = compose(h, &zero_inners, arity - 1)?;
             let pos_sem = compose(h, &pos_inners, arity)?;
-            Some(ClosedForm::Piecewise(PiecewiseFn {
-                arity,
-                branch_index: j - 1,
-                zero_branch: Box::new(zero_sem),
-                pos_branch: Box::new(pos_sem),
-            }))
+            Some(make_piecewise(arity, j - 1, zero_sem, pos_sem))
         }
         ClosedForm::Piecewise(pw) => {
             // If h always returns 0, so does the composition.
@@ -458,12 +433,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                 }
             }
             let pos_sem = compose(&pw.pos_branch, &pos_inners, arity)?;
-            Some(ClosedForm::Piecewise(PiecewiseFn {
-                arity,
-                branch_index: j - 1,
-                zero_branch: Box::new(zero_sem),
-                pos_branch: Box::new(pos_sem),
-            }))
+            Some(make_piecewise(arity, j - 1, zero_sem, pos_sem))
         }
     }
 }
@@ -659,6 +629,24 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
             }))
         }
     }
+}
+
+/// Build a PiecewiseFn, but simplify to the pos_branch if both branches agree.
+///
+/// If pos_branch ignores branch_index (drop_arg succeeds) and the dropped form equals
+/// zero_branch, then both branches return the same value for all inputs — no need to branch.
+fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, pos_branch: ClosedForm) -> ClosedForm {
+    if let Some(dropped) = drop_arg(&pos_branch, branch_index + 1) {
+        if dropped == zero_branch {
+            return pos_branch;
+        }
+    }
+    ClosedForm::Piecewise(PiecewiseFn {
+        arity,
+        branch_index,
+        zero_branch: Box::new(zero_branch),
+        pos_branch: Box::new(pos_branch),
+    })
 }
 
 /// Compose an outer affine function with a slice of inner affine functions.
@@ -941,6 +929,27 @@ mod tests {
         // c = R(P(2,1), C(b, P(4,4), P(4,2))): arity 3, g=P(2,1)=y, h ignores counter
         // c(n,y,z): for z<2 → y; for z≥2 → z-2.  Counter n is irrelevant.
         check_vs_sim("R(P(2,1), C(R(P(1,1),R(P(2,1),P(4,1))),P(4,4),P(4,2)))", 5);
+    }
+
+    #[test]
+    fn test_rec_piecewise_same_branches_simplified() {
+        // R(Z0, Z2): base=Z0 (arity 0), step=Z2 (arity 2) always returns 0.
+        // Both branches compute zero, so the result should be Affine, not Piecewise.
+        let cf = closed_form_of(&grf("R(Z0, Z2)")).unwrap();
+        assert!(
+            matches!(cf, ClosedForm::Affine(_)),
+            "expected Affine (not Piecewise), got {cf:?}"
+        );
+        assert_eq!(cf.arity(), 1);
+        check_vs_sim("R(Z0, Z2)", 8);
+
+        // Motivating example: R(b, P(5,2)) where b ignores its counter.
+        // The outer piecewise (on the outermost counter) has equal branches and should collapse.
+        let cf2 = closed_form_of(&grf("R(R(R(S, P(3,2)), P(4,1)), P(5,2))")).unwrap();
+        if let ClosedForm::Piecewise(ref pw) = cf2 {
+            assert_ne!(pw.branch_index, 0, "outer Piecewise should not branch on the counter");
+        }
+        check_vs_sim("R(R(R(S, P(3,2)), P(4,1)), P(5,2))", 4);
     }
 
     #[test]

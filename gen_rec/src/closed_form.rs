@@ -878,6 +878,17 @@ mod tests {
     }
 
     #[test]
+    fn test_pos_face_at_piecewise_depends_on_shifted_arg() {
+        // Regression test for pos_face_at on a Piecewise that branches on xk but still
+        // depends on xj (k != j).  Case E of closed_form_of_rec calls pos_face_at(sem_g, j)
+        // where sem_g = R(S, P(3,3)) branches on x1 while depending on x2 (j=2).
+        // The inner Rec f(n, x1, x2) = R(S,P(3,3))(x1,x2) = if x1=0 then x2+1 else x2.
+        check_vs_sim("R(R(S, P(3,3)), C(R(P(1,1), P(3,3)), P(4,4), P(4,2)))", 5);
+        // The reported mismatch: C(f, S, S, P(1,1)) at args=[3] gave cf=2, sim=3.
+        check_vs_sim("C(R(R(S, P(3,3)), C(R(P(1,1), P(3,3)), P(4,4), P(4,2))), S, S, P(1,1))", 8);
+    }
+
+    #[test]
     fn test_comp_double_piecewise_none() {
         // pred(pred(n)) branches at n=2, not n=1 — not representable in our Piecewise.
         assert!(closed_form_of(&grf("C(R(Z0, P(2,1)), R(Z0, P(2,1)))")).is_none());

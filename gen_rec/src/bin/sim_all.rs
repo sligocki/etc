@@ -125,32 +125,37 @@ fn main() {
         total_steps += steps_taken;
         n_total += 1;
 
-        let (out_status, out_score, out_base_steps) = match result {
+        let (out_status, out_score, out_base_steps, out_unknown_reason) = match result {
             gen_rec::simulate::SimResult::Value(v) => {
                 n_halted += 1;
                 if v > max_score { max_score = v; }
                 if steps_taken > max_halt_steps { max_halt_steps = steps_taken; }
-                (Status::Halt, Some(v), Some(sim_steps.base_approx))
+                (Status::Halt, Some(v), Some(sim_steps.base_approx), None)
             }
             gen_rec::simulate::SimResult::Diverge => {
                 n_diverged += 1;
-                (Status::Diverge, None, None)
+                (Status::Diverge, None, None, None)
             }
             gen_rec::simulate::SimResult::OutOfSteps => {
                 n_holdouts += 1;
-                (Status::Unknown, None, None)
+                (Status::Unknown, None, None, Some("OutOfSteps"))
             }
             gen_rec::simulate::SimResult::ArityMismatch => {
                 panic!("arity mismatch in sim_all");
             }
+            gen_rec::simulate::SimResult::ValueOverflow => {
+                n_holdouts += 1;
+                (Status::Unknown, None, None, Some("Overflow"))
+            }
         };
 
         io_grl::write_grf_entry(&mut out, &GrfEntry {
-            expr:       entry.expr,
-            status:     Some(out_status),
-            steps:      Some(steps_taken),
-            base_steps: out_base_steps,
-            score:      out_score,
+            expr:           entry.expr,
+            status:         Some(out_status),
+            steps:          Some(steps_taken),
+            base_steps:     out_base_steps,
+            score:          out_score,
+            unknown_reason: out_unknown_reason.map(|r| r.to_string()),
         }).unwrap();
 
         // Progress report.

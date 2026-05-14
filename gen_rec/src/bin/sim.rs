@@ -15,7 +15,7 @@ use gen_rec::alias::AliasDb;
 use gen_rec::base::Num;
 use gen_rec::grf::Grf;
 use gen_rec::io_table::print_sweep_table;
-use gen_rec::simulate::{simulate, simulate_min, SimOpts, SimResult, SimSteps};
+use gen_rec::simulate::{simulate, simulate_min, simulate_with_fallback, SimOpts, SimResult, SimSteps};
 
 #[derive(Parser, Debug)]
 #[command(about = "Simulate a single GRF expression")]
@@ -109,6 +109,7 @@ fn main() {
                         SimResult::Diverge => "Diverge".to_string(),
                         SimResult::OutOfSteps => "?".to_string(),
                         SimResult::ArityMismatch => "arity mismatch".to_string(),
+                        SimResult::ValueOverflow => "!overflow".to_string(),
                     };
                     eprintln!(
                         "[{}] elapsed={:.1}s  n={}  f(n)={}  steps={}  base={}",
@@ -135,6 +136,18 @@ fn main() {
             SimResult::ArityMismatch => {
                 eprintln!("error: arity mismatch — GRF expects {} args, got {}", grf.arity(), concrete.len());
                 std::process::exit(1);
+            }
+            SimResult::ValueOverflow => {
+                let (big_result, big_steps) = simulate_with_fallback(&grf, &concrete, args.max_steps);
+                match big_result {
+                    SimResult::Value(v) => println!("result: {}  ({} steps, {} base)", v, big_steps.sim, big_steps.base_approx),
+                    SimResult::Diverge => println!("result: diverges  ({} steps)", big_steps.sim),
+                    SimResult::OutOfSteps => {
+                        let limit = if args.max_steps == 0 { "unlimited".to_string() } else { args.max_steps.to_string() };
+                        println!("result: timed out after {} steps (limit: {})", big_steps.sim, limit);
+                    }
+                    SimResult::ArityMismatch | SimResult::ValueOverflow => unreachable!(),
+                }
             }
         }
         return;

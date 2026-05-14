@@ -185,6 +185,7 @@ pub fn compute_fp(grf: &Grf, inputs: &[Vec<Num>], max_steps: Num) -> Fingerprint
                 SimResult::Diverge => FpEntry::Diverge,
                 SimResult::OutOfSteps => FpEntry::Unknown,
                 SimResult::ArityMismatch => FpEntry::Unknown,
+                SimResult::ValueOverflow => FpEntry::Unknown,
             }
         })
         .collect()

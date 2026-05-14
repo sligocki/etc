@@ -1,12 +1,16 @@
 use crate::grf::Grf;
-use crate::simulate::{simulate, Num};
+use crate::simulate::{simulate_with_fallback, SimResult, Num};
 
-fn eval(grf: &Grf, template: &[Option<Num>], sweep: &[(usize, Num)], max_steps: Num) -> Option<Num> {
+fn eval(grf: &Grf, template: &[Option<Num>], sweep: &[(usize, Num)], max_steps: Num) -> String {
     let mut args: Vec<Num> = template.iter().map(|v| v.unwrap_or(0)).collect();
     for &(idx, val) in sweep {
         args[idx] = val;
     }
-    simulate(grf, &args, max_steps).0.into_value()
+    match simulate_with_fallback(grf, &args, max_steps).0 {
+        SimResult::Value(v) => v.to_string(),
+        SimResult::Diverge  => "∞".to_string(),
+        _                   => "?".to_string(),
+    }
 }
 
 pub fn fmt_val(v: Option<Num>) -> String {
@@ -19,28 +23,28 @@ pub fn fmt_val(v: Option<Num>) -> String {
 fn print_1d(grf: &Grf, template: &[Option<Num>], sweep_idx: usize, grid: Num, max_steps: Num) {
     let axis = format!("x{}", sweep_idx + 1);
     let f_hdr = format!("f(x{})", sweep_idx + 1);
-    let vals: Vec<Option<Num>> = (0..=grid)
+    let vals: Vec<String> = (0..=grid)
         .map(|v| eval(grf, template, &[(sweep_idx, v)], max_steps))
         .collect();
-    let val_w = vals.iter().map(|v| fmt_val(*v).len()).max().unwrap_or(1).max(f_hdr.len());
+    let val_w = vals.iter().map(|v| v.len()).max().unwrap_or(1).max(f_hdr.len());
     let n_w = grid.to_string().len().max(axis.len());
 
     println!("{:>n_w$}  |  {:>val_w$}", axis, f_hdr);
     println!("{}--+--{}", "-".repeat(n_w), "-".repeat(val_w));
     for (a, v) in vals.iter().enumerate() {
-        println!("{:>n_w$}  |  {:>val_w$}", a, fmt_val(*v));
+        println!("{:>n_w$}  |  {:>val_w$}", a, v);
     }
 }
 
 fn print_2d(grf: &Grf, template: &[Option<Num>], row_idx: usize, col_idx: usize, grid: Num, max_steps: Num) {
-    let vals: Vec<Vec<Option<Num>>> = (0..=grid)
+    let vals: Vec<Vec<String>> = (0..=grid)
         .map(|a| (0..=grid)
             .map(|b| eval(grf, template, &[(row_idx, a), (col_idx, b)], max_steps))
             .collect())
         .collect();
 
     let cell_w = vals.iter().flatten()
-        .map(|v| fmt_val(*v).len())
+        .map(|v| v.len())
         .chain((0..=grid).map(|b| b.to_string().len()))
         .max().unwrap_or(1);
 
@@ -56,7 +60,7 @@ fn print_2d(grf: &Grf, template: &[Option<Num>], row_idx: usize, col_idx: usize,
 
     for (a, row) in vals.iter().enumerate() {
         let cells: String = row.iter()
-            .map(|v| format!("{:>cell_w$}", fmt_val(*v)))
+            .map(|v| format!("{:>cell_w$}", v))
             .collect::<Vec<_>>().join("  ");
         println!("{:>row_w$}  |  {}", a, cells);
     }
@@ -93,7 +97,7 @@ fn print_flat(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize], grid
         if tuple.iter().all(|&x| x == 0) { break; }
     }
 
-    let results: Vec<Option<Num>> = all_sweep_vals.iter()
+    let results: Vec<String> = all_sweep_vals.iter()
         .map(|sv| {
             let sweep: Vec<(usize, Num)> = sweep_indices.iter().copied().zip(sv.iter().copied()).collect();
             eval(grf, template, &sweep, max_steps)
@@ -101,7 +105,7 @@ fn print_flat(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize], grid
         .collect();
 
     let arg_w = grid.to_string().len().max(2);
-    let val_w = results.iter().map(|v| fmt_val(*v).len()).max().unwrap_or(1).max(6);
+    let val_w = results.iter().map(|v| v.len()).max().unwrap_or(1).max(6);
 
     let arg_headers: String = sweep_indices.iter()
         .map(|i| format!("{:>arg_w$}", format!("x{}", i + 1)))
@@ -111,7 +115,7 @@ fn print_flat(grf: &Grf, template: &[Option<Num>], sweep_indices: &[usize], grid
 
     for (sv, v) in all_sweep_vals.iter().zip(results.iter()) {
         let args_str: String = sv.iter().map(|x| format!("{:>arg_w$}", x)).collect::<Vec<_>>().join("  ");
-        println!("{}  |  {:>val_w$}", args_str, fmt_val(*v));
+        println!("{}  |  {:>val_w$}", args_str, v);
     }
 }
 
@@ -131,7 +135,7 @@ pub fn print_sweep_table(
     match sweep_indices.len() {
         0 => {
             let v = eval(grf, template, &[], max_steps);
-            println!("  = {}", fmt_val(v));
+            println!("  = {}", v);
         }
         1 => print_1d(grf, template, sweep_indices[0], grid, max_steps),
         2 => print_2d(grf, template, sweep_indices[0], sweep_indices[1], grid, max_steps),
@@ -149,9 +153,8 @@ pub fn print_io_table(grf: &Grf, grid: Num, max_steps: Num) {
         .collect();
 
     if used.is_empty() {
-        let args: Vec<Num> = template.iter().map(|v| v.unwrap_or(0)).collect();
-        let v = simulate(grf, &args, max_steps).0.into_value();
-        println!("  = {}", fmt_val(v));
+        let v = eval(grf, &template, &[], max_steps);
+        println!("  = {}", v);
     } else {
         print_sweep_table(grf, &template, &used, grid, max_steps);
     }

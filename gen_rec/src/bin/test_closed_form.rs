@@ -89,6 +89,7 @@ fn check_size(arity: usize, size: usize, max_steps: u64) -> (usize, usize) {
                 SimResult::Value(v) => Some(v),
                 SimResult::Diverge | SimResult::OutOfSteps => None,
                 SimResult::ArityMismatch => panic!("arity mismatch for {} on {:?}", grf, args),
+                SimResult::ValueOverflow => None,
             };
             let cf_val = cf.eval(args);
             if cf_val != sim_val {
@@ -140,6 +141,7 @@ fn check_one_grf(grf_str: &str, explicit_args: &[u64], max_steps: u64) {
             SimResult::Value(v) => Some(v),
             SimResult::Diverge | SimResult::OutOfSteps => None,
             SimResult::ArityMismatch => panic!("arity mismatch for {grf_str} on {input:?}"),
+            SimResult::ValueOverflow => None,
         };
         let cf_val = cf.eval(input);
         if cf_val != sim_val {

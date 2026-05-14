@@ -65,6 +65,7 @@ fn value_preview(f: &Grf, max_steps: Num) -> String {
             SimResult::Diverge => "∞".to_string(),
             SimResult::OutOfSteps => "?".to_string(),
             SimResult::ArityMismatch => "!".to_string(),
+            SimResult::ValueOverflow => "!overflow".to_string(),
         }
     };
 

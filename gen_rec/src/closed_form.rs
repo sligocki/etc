@@ -1024,6 +1024,7 @@ mod tests {
                             SimResult::ArityMismatch => {
                                 panic!("arity mismatch for {} on {:?}", grf, args);
                             }
+                            SimResult::ValueOverflow => None,
                         };
                         let cf_val = cf.eval(args);
                         checked += 1;

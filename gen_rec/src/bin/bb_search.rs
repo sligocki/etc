@@ -151,7 +151,7 @@ impl Accumulator {
 
 struct BatchResult {
     top_k: TopK,
-    holdouts: Vec<(Num, String)>,
+    holdouts: Vec<(Num, String, Option<&'static str>)>,
     diverged: usize,
     total_steps: Num,
 }
@@ -173,10 +173,11 @@ fn process_batch(batch: &[Grf], max_steps: Num, k: usize) -> BatchResult {
         let steps = sim_steps.sim;
         total_steps += steps;
         match result {
-            SimResult::OutOfSteps => holdouts.push((steps, batch[idx].to_string())),
+            SimResult::OutOfSteps => holdouts.push((steps, batch[idx].to_string(), Some("OutOfSteps"))),
             SimResult::Diverge => diverged += 1,
             SimResult::Value(v) => top_k.insert(v, steps, sim_steps.base_approx, batch[idx].to_string()),
             SimResult::ArityMismatch => panic!("arity mismatch in bb_search for {}", batch[idx]),
+            SimResult::ValueOverflow => holdouts.push((steps, batch[idx].to_string(), Some("Overflow"))),
         }
     }
     BatchResult { top_k, holdouts, diverged, total_steps }
@@ -198,14 +199,15 @@ fn flush_batch<W: Write>(
     acc.holdouts += br.holdouts.len();
     acc.diverged += br.diverged;
     acc.total_steps += br.total_steps;
-    for (s, _) in &br.holdouts {
+    for (s, _, _) in &br.holdouts {
         if *s > acc.max_steps_single {
             acc.max_steps_single = *s;
         }
     }
-    for (steps, expr) in br.holdouts {
+    for (steps, expr, reason) in br.holdouts {
         io_grl::write_grf_entry(holdout_w, &GrfEntry {
             expr, status: Some(Status::Unknown), steps: Some(steps), base_steps: None, score: None,
+            unknown_reason: reason.map(|r| r.to_string()),
         }).unwrap();
     }
     acc.top_k.merge_from(br.top_k);
@@ -463,6 +465,7 @@ fn main() {
         io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
             expr: expr.clone(), status: Some(Status::Halt),
             steps: Some(*steps), base_steps: Some(*base_steps), score: Some(*score),
+            unknown_reason: None,
         }).unwrap();
     }
     halt_w.flush().unwrap();

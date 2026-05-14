@@ -213,6 +213,7 @@ fn process_file(path: &PathBuf, args: &Args) {
                     steps: entry.steps,
                     base_steps: None,
                     score: None,
+                    unknown_reason: None,
                 }).ok();
             }
         }

@@ -458,9 +458,9 @@ mod tests {
     #[ignore = "Too slow"]
     fn test_search_div2() {
         let mut spec = exact_spec(|args| Some(args[0] / 2));
-        let output = search_smallest(&cfg(1, 14), &mut spec);
+        let output = search_smallest(&cfg(1, 12), &mut spec);
         let result = output.guaranteed.into_iter().next().unwrap();
-        assert_eq!(result.size, 14, "Found size {}: {}", result.size, result.grf);
+        assert_eq!(result.size, 12, "Found size {}: {}", result.size, result.grf);
         assert_eq!(result.grf.arity(), 1);
     }
 
@@ -468,9 +468,9 @@ mod tests {
     #[ignore = "Too slow"]
     fn test_search_ceildiv2() {
         let mut spec = exact_spec(|args| Some(args[0].div_ceil(2)));
-        let output = search_smallest(&cfg(1, 14), &mut spec);
+        let output = search_smallest(&cfg(1, 12), &mut spec);
         let result = output.guaranteed.into_iter().next().unwrap();
-        assert_eq!(result.size, 14, "Found size {}: {}", result.size, result.grf);
+        assert_eq!(result.size, 12, "Found size {}: {}", result.size, result.grf);
         assert_eq!(result.grf.arity(), 1);
     }
 

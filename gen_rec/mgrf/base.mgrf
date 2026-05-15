@@ -22,8 +22,12 @@ Pred := Monus[1]
 RMonus := R(P(1,1), C(R(Z0, P(2,1)), P(3,2)))
 
 # Multiplication
+
 # Mult[n](x) = n*x
-Mult[n] := R(Z, C(Plus[n], P2))
+PlusP2[0] := P2
+PlusP2[n+1] :=  C(S, PlusP2[n])
+Mult[n] := R(Z, PlusP2[n])
+
 # Mult(x,y) = x*y
 Mult  := R(Z, R(Add, P2))
 

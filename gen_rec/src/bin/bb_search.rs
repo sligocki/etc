@@ -3,7 +3,7 @@ use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::sim_nat::SmallNat;
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
-use gen_rec::enumerate::{count_grf, stream_grf};
+use gen_rec::enumerate::stream_grf;
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
@@ -73,6 +73,12 @@ struct Args {
     /// equality, while remaining complete: every semantically distinct GRF is reachable.
     #[arg(long)]
     cf: bool,
+
+    /// Cap CF caching to domains where arity+size <= LIMIT; larger domains stream
+    /// without caching. Reduces memory at large sizes at the cost of some dedup
+    /// coverage for high-arity sub-expressions. Only used with --cf.
+    #[arg(long, value_name = "LIMIT")]
+    cf_limit: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -251,8 +257,6 @@ fn main() {
             std::process::exit(1);
         });
     }
-    let count_opts = opts.for_counting();
-
     let mode_str = {
         let base = if args.min_prf { "min_prf" } else if args.allow_min { "grf" } else { "prf" };
         if args.cf { format!("{base}+cf") } else { base.to_string() }
@@ -281,52 +285,14 @@ fn main() {
         }
     };
 
-    // If --cf: build the ClosedFormEnumerator and materialise candidates now so we
-    // can report an accurate expected count before the main loop starts.
-    let cf_candidates: Option<Vec<Grf>> = if args.cf {
-        let cf_arity = if args.min_prf { 1 } else { 0 };
-        let cf_size = if args.min_prf && size >= 2 { size - 1 } else { size };
-        let cf_allow_min = !args.min_prf && args.allow_min;
-        let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, cf_allow_min);
-        for s in 1..=cf_size {
-            en.compute_size(cf_arity, s);
-        }
-        Some(if args.min_prf && size < 2 {
-            vec![]
-        } else {
-            en.raw_candidates_at_size(cf_arity, cf_size)
-        })
-    } else {
-        None
-    };
-
-    // Expected count (informational; count_grf doesn't account for min_dom).
-    let expected = if let Some(ref cands) = cf_candidates {
-        if args.min_prf {
-            cands.iter().filter(|f| {
-                !opts.min_dom || (f.used_args().contains(&1) && !f.is_never_zero())
-            }).count()
-        } else {
-            cands.len()
-        }
-    } else if args.min_prf {
-        if size < 2 { 0 } else { count_grf(size - 1, 1, false, count_opts) }
-    } else {
-        count_grf(size, 0, args.allow_min, count_opts)
-    };
-
-    let (seek_start, seek_count, range_str) = match args.seek {
-        Some(ref v) => {
-            let (s, c) = (v[0], v[1]);
-            let end = s.saturating_add(c);
-            (s, c, format!(" [{}..{})", s, end))
-        }
-        None => (0, usize::MAX, String::new()),
+    let (seek_start, seek_count) = match args.seek {
+        Some(ref v) => (v[0], v[1]),
+        None => (0, usize::MAX),
     };
 
     println!(
-        "BBµ search: 0-arity {}, size={}, max_steps={}, ~{} fns{}, opts={:?}",
-        mode_str, size, args.max_steps, expected, range_str, opts,
+        "BBµ search: 0-arity {}, size={}, max_steps={}, opts={:?}",
+        mode_str, size, args.max_steps, opts,
     );
     println!("  threads={}, batch={}, top_k={}", rayon::current_num_threads(), args.batch_size, args.top_k);
     println!("  results: {}/", args.results_dir.display());
@@ -369,25 +335,33 @@ fn main() {
 
     let mut idx = 0usize;
 
-    if let Some(ref candidates) = cf_candidates {
-        for grf in candidates {
+    if args.cf && !(args.min_prf && size < 2) {
+        let cf_arity = if args.min_prf { 1 } else { 0 };
+        let cf_size = if args.min_prf && size >= 2 { size - 1 } else { size };
+        let cf_allow_min = !args.min_prf && args.allow_min;
+        let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, cf_allow_min);
+        if let Some(limit) = args.cf_limit {
+            en = en.with_cf_limit(limit);
+        }
+        en.prepare(cf_arity, cf_size);
+        en.for_each_raw_candidate(cf_arity, cf_size, &mut |grf| {
             if args.min_prf {
                 if opts.min_dom {
-                    if !grf.used_args().contains(&1) { continue; }
-                    if grf.is_never_zero() { continue; }
+                    if !grf.used_args().contains(&1) { return; }
+                    if grf.is_never_zero() { return; }
                 }
             }
             let g = if args.min_prf { Grf::min(grf.clone()) } else { grf.clone() };
             let cur = idx;
             idx += 1;
-            if cur < seek_start || cur >= seek_start + seek_count { continue; }
+            if cur < seek_start || cur >= seek_start + seek_count { return; }
             acc.total += 1;
             batch.push(g);
             if batch.len() >= args.batch_size {
                 flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
                 maybe_progress!();
             }
-        }
+        });
     } else if args.min_prf && size >= 2 {
         stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
             if opts.min_dom {
@@ -486,6 +460,10 @@ fn main() {
     writeln!(cfg_w, "  \"allow_min\": {},",       args.allow_min).unwrap();
     writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
     writeln!(cfg_w, "  \"cf\": {},",              args.cf).unwrap();
+    match args.cf_limit {
+        Some(limit) => writeln!(cfg_w, "  \"cf_limit\": {},", limit).unwrap(),
+        None        => writeln!(cfg_w, "  \"cf_limit\": null,").unwrap(),
+    }
     writeln!(cfg_w, "  \"opts\": \"{}\",",           opts.stream_opt_names().join(",")).unwrap();
     writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
     writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();

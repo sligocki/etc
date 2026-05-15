@@ -12,7 +12,7 @@
 /// therefore retains some redundancy compared to fingerprint-based dedup.
 
 use crate::closed_form::{closed_form_of, ClosedForm};
-use crate::enumerate::for_each_grf_core;
+use crate::enumerate::{for_each_grf_core, stream_grf};
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
 use std::collections::HashMap;
@@ -37,6 +37,10 @@ pub struct ClosedFormEnumerator {
     pub allow_min: bool,
     /// Structural pruning options applied when generating candidates.
     pub opts: PruningOpts,
+    /// Only cache (and CF-deduplicate) domains where `arity + size <= cf_limit`.
+    /// Larger domains are streamed on demand without caching, bounding memory use.
+    /// Default: `usize::MAX` (no limit, original behavior).
+    pub cf_limit: usize,
 }
 
 impl ClosedFormEnumerator {
@@ -49,6 +53,7 @@ impl ClosedFormEnumerator {
             mode,
             allow_min,
             opts,
+            cf_limit: usize::MAX,
         }
     }
 
@@ -61,9 +66,27 @@ impl ClosedFormEnumerator {
         Self::new(mode, allow_min, opts)
     }
 
+    /// Set the arity+size threshold above which domains are streamed instead of cached.
+    pub fn with_cf_limit(mut self, limit: usize) -> Self {
+        self.cf_limit = limit;
+        self
+    }
+
+    /// Pre-fill the memo for all in-limit dependency domains needed to call
+    /// `raw_candidates_at_size(arity, size)`.  Never caches the target domain
+    /// itself, so no above-limit entry is ever written to the memo.
+    pub fn prepare(&mut self, arity: usize, size: usize) {
+        self.ensure_dependencies(arity, size);
+    }
+
     /// Populate `memo[(arity, size)]` with novel GRFs, recursing into dependencies.
+    /// If `arity + size > cf_limit` this is a no-op: the domain is intentionally
+    /// left uncached and will be streamed on demand by `generate_candidates`.
     pub fn compute_size(&mut self, arity: usize, size: usize) {
         if self.memo.contains_key(&(arity, size)) {
+            return;
+        }
+        if arity + size > self.cf_limit {
             return;
         }
 
@@ -116,15 +139,35 @@ impl ClosedFormEnumerator {
         (closed, raw)
     }
 
-    /// Generate all GRFs of exactly (arity, size) using canonical sub-expressions,
-    /// without ClosedForm deduplication.  For BBµ search: the champion at size n may
-    /// compute a value already seen at a smaller size, so it won't appear in
-    /// `candidates`, but it is still a valid size-n GRF worth simulating.
+    /// Stream all GRFs of exactly (arity, size) using canonical sub-expressions,
+    /// calling `callback` for each without collecting into a Vec.  For BBµ search:
+    /// the champion at size n may compute a value already seen at a smaller size,
+    /// so it won't appear in `candidates`, but is still a valid size-n GRF.
     ///
-    /// The caller must have already called `compute_size(arity, s)` for all
-    /// dependencies (or called `compute_size(arity, size)` which ensures them).
+    /// Call `prepare(arity, size)` first to ensure in-limit dependency domains are
+    /// in the memo.  Above-limit domains are streamed on demand.
+    pub fn for_each_raw_candidate<F: FnMut(&Grf)>(&self, arity: usize, size: usize, callback: &mut F) {
+        let memo = &self.memo;
+        let allow_min = self.allow_min;
+        let opts = self.opts;
+        for_each_grf_core(
+            size, arity, allow_min, opts,
+            &|s, a, cb| {
+                if let Some(grfs) = memo.get(&(a, s)) {
+                    for grf in grfs { cb(grf); }
+                } else {
+                    stream_grf(s, a, allow_min, opts, &mut |grf| cb(grf));
+                }
+            },
+            &mut |grf| callback(grf),
+        );
+    }
+
+    /// Convenience wrapper around `for_each_raw_candidate` that collects into a Vec.
     pub fn raw_candidates_at_size(&self, arity: usize, size: usize) -> Vec<Grf> {
-        self.generate_candidates(arity, size)
+        let mut out = Vec::new();
+        self.for_each_raw_candidate(arity, size, &mut |grf| out.push(grf.clone()));
+        out
     }
 
     fn ensure_dependencies(&mut self, arity: usize, size: usize) {
@@ -168,29 +211,14 @@ impl ClosedFormEnumerator {
 
     fn ensure_up_to(&mut self, arity: usize, size: usize) {
         for s in 1..=size {
-            if !self.memo.contains_key(&(arity, s)) {
+            if arity + s <= self.cf_limit && !self.memo.contains_key(&(arity, s)) {
                 self.compute_size(arity, s);
             }
         }
     }
 
     fn generate_candidates(&self, arity: usize, size: usize) -> Vec<Grf> {
-        let memo = &self.memo;
-        let mut out = Vec::new();
-        for_each_grf_core(
-            size, arity, self.allow_min, self.opts,
-            &|s, a, cb| {
-                if let Some(grfs) = memo.get(&(a, s)) {
-                    for grf in grfs {
-                        cb(grf);
-                    }
-                } else {
-                    panic!("Memo not correctly initialized");
-                }
-            },
-            &mut |grf| out.push(grf.clone()),
-        );
-        out
+        self.raw_candidates_at_size(arity, size)
     }
 }
 

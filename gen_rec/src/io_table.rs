@@ -1,6 +1,30 @@
 use crate::grf::Grf;
 use crate::simulate::{simulate_with_fallback, SimResult, SmallNat};
 
+const MAX_VAL_W: usize = 8;
+
+/// Abbreviate a long integer string to e-notation: "123456789" → "1.23e8".
+/// Non-numeric strings (∞, ?) are returned unchanged.
+fn compact_val(s: &str) -> String {
+    if s.len() <= MAX_VAL_W {
+        return s.to_string();
+    }
+    if s.chars().all(|c| c.is_ascii_digit()) {
+        let exp = s.len() - 1;
+        let sig: String = s.chars().take(3).collect();
+        let sig = sig.trim_end_matches('0');
+        let compact = if sig.len() <= 1 {
+            format!("{}e{}", sig, exp)
+        } else {
+            format!("{}.{}e{}", &sig[..1], &sig[1..], exp)
+        };
+        if compact.len() < s.len() {
+            return compact;
+        }
+    }
+    s.to_string()
+}
+
 fn eval(grf: &Grf, template: &[Option<SmallNat>], sweep: &[(usize, SmallNat)], max_steps: SmallNat) -> String {
     let mut args: Vec<SmallNat> = template.iter().map(|v| v.unwrap_or(0)).collect();
     for &(idx, val) in sweep {
@@ -24,7 +48,7 @@ fn print_1d(grf: &Grf, template: &[Option<SmallNat>], sweep_idx: usize, grid: Sm
     let axis = format!("x{}", sweep_idx + 1);
     let f_hdr = format!("f(x{})", sweep_idx + 1);
     let vals: Vec<String> = (0..=grid)
-        .map(|v| eval(grf, template, &[(sweep_idx, v)], max_steps))
+        .map(|v| compact_val(&eval(grf, template, &[(sweep_idx, v)], max_steps)))
         .collect();
     let val_w = vals.iter().map(|v| v.len()).max().unwrap_or(1).max(f_hdr.len());
     let n_w = grid.to_string().len().max(axis.len());
@@ -39,7 +63,7 @@ fn print_1d(grf: &Grf, template: &[Option<SmallNat>], sweep_idx: usize, grid: Sm
 fn print_2d(grf: &Grf, template: &[Option<SmallNat>], row_idx: usize, col_idx: usize, grid: SmallNat, max_steps: SmallNat) {
     let vals: Vec<Vec<String>> = (0..=grid)
         .map(|a| (0..=grid)
-            .map(|b| eval(grf, template, &[(row_idx, a), (col_idx, b)], max_steps))
+            .map(|b| compact_val(&eval(grf, template, &[(row_idx, a), (col_idx, b)], max_steps)))
             .collect())
         .collect();
 
@@ -100,7 +124,7 @@ fn print_flat(grf: &Grf, template: &[Option<SmallNat>], sweep_indices: &[usize],
     let results: Vec<String> = all_sweep_vals.iter()
         .map(|sv| {
             let sweep: Vec<(usize, SmallNat)> = sweep_indices.iter().copied().zip(sv.iter().copied()).collect();
-            eval(grf, template, &sweep, max_steps)
+            compact_val(&eval(grf, template, &sweep, max_steps))
         })
         .collect();
 

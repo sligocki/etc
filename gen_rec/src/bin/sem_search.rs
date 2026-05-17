@@ -139,6 +139,24 @@ const SPECS: &[SpecDef] = &[
             ((a[0] % 3) == 2) as u64
         ))),
     },
+    // Mod : PRF17 : R(Z, C(R(R(S, P2), R(R(R(Z, P1), P1), P2)), P3, P3, P2))
+    SpecDef {
+        name: "mod", default_arity: 2,
+        description: "f(x, y) = x % y",
+        build: || Box::new(exact_spec(|a|
+            if a[1] != 0 {
+                Some(a[0] % a[1])
+            } else {
+                None
+            })),
+    },
+    // Mod_S : 12 : M(C(R(P1, R(R(P2, P1), P2)), P2, P1, P3))
+    //      PRF13 : R(Z, C(R(P1, R(R(P2, P1), P2)), P3, P2, P3))
+    SpecDef {
+        name: "mod_s", default_arity: 2,
+        description: "f(x, y) = x % (y+1)",
+        build: || Box::new(exact_spec(|a| Some(a[0] % (a[1] + 1)))),
+    },
     SpecDef {
         name: "div2", default_arity: 1,
         description: "f(x) = floor(x / 2)",

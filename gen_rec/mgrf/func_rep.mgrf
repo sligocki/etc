@@ -4,7 +4,10 @@
 RepSucc[f^1] := R(S, C(f, P2))
 
 # DiagRep[f](k,n) = (\x. f(x,x))^k (n+1)
-DiagRep[f^2] := R(S, C(f, P(3,2), P(3,2)))
+DiagRep[f^2] := R(S, C(f, P2, P2))
+
+# RepFirst[f](k,n) = (\x. f(x,n))^k (n+1)
+RepFirst[f^2] := R(S, R(f, P2))
 
 # DiagS[f](n) = f(n+1,n+1)
 DiagS[f^2] := C(f, S, S)

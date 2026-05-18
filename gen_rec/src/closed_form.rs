@@ -1,16 +1,15 @@
-use crate::sim_nat::SmallNat;
+use crate::sim_nat::SimNat;
 use crate::grf::{Grf, GrfKind};
 
 /// Affine function over natural numbers: c0 + c1*x1 + ... + ck*xk.
 ///
-/// Coefficients are i64 to allow intermediate negatives during composition.
-/// `eval` returns `None` when the result would be negative (outside the natural-number domain)
-/// or when i64 arithmetic overflows.
+/// All coefficients are non-negative (this is an invariant maintained by `closed_form_of`).
+/// `eval` returns `None` on arithmetic overflow of `N`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AffineFn {
     pub arity: usize,
     /// Length arity+1. coeffs[0] = constant term; coeffs[i] = coefficient of xi (1-based).
-    pub coeffs: Vec<i64>,
+    pub coeffs: Vec<u64>,
 }
 
 impl AffineFn {
@@ -27,27 +26,23 @@ impl AffineFn {
     /// The projection P^k_i(x1,...,xk) = xi (i is 1-based).
     pub fn proj(arity: usize, i: usize) -> Self {
         debug_assert!(i >= 1 && i <= arity);
-        let mut coeffs = vec![0i64; arity + 1];
+        let mut coeffs = vec![0u64; arity + 1];
         coeffs[i] = 1;
         AffineFn { arity, coeffs }
     }
 
     /// Evaluate the affine function on concrete arguments.
     ///
-    /// Returns `None` if the result would be negative, or if i64 arithmetic overflows.
-    pub fn eval(&self, args: &[SmallNat]) -> Option<SmallNat> {
+    /// Returns `None` on arithmetic overflow of `N`.
+    pub fn eval<N: SimNat>(&self, args: &[N]) -> Option<N> {
         debug_assert_eq!(args.len(), self.arity);
-        let mut result: i64 = self.coeffs[0];
-        for (i, &arg) in args.iter().enumerate() {
+        let mut acc: N = N::from_u64(self.coeffs[0]);
+        for (i, arg) in args.iter().enumerate() {
             let c = self.coeffs[i + 1];
-            if c == 0 {
-                continue;
-            }
-            let arg_i64 = i64::try_from(arg).ok()?;
-            let term = c.checked_mul(arg_i64)?;
-            result = result.checked_add(term)?;
+            if c == 0 { continue; }
+            acc = acc.checked_add(arg.clone().checked_mul_u64(c)?)?;
         }
-        if result < 0 { None } else { Some(result as SmallNat) }
+        Some(acc)
     }
 
     pub fn lift(&self, arity: usize) -> Self {
@@ -71,16 +66,16 @@ pub struct PiecewiseFn {
 }
 
 impl PiecewiseFn {
-    pub fn eval(&self, args: &[SmallNat]) -> Option<SmallNat> {
+    pub fn eval<N: SimNat>(&self, args: &[N]) -> Option<N> {
         assert_eq!(args.len(), self.arity);
         let bi = self.branch_index;
-        if args[bi] == 0 {
-            let zero_args: Vec<SmallNat> =
-                args[..bi].iter().chain(&args[bi + 1..]).copied().collect();
+        if args[bi].is_zero() {
+            let zero_args: Vec<N> =
+                args[..bi].iter().chain(&args[bi + 1..]).cloned().collect();
             self.zero_branch.eval(&zero_args)
         } else {
             let mut new_args = args.to_vec();
-            new_args[bi] -= 1;
+            new_args[bi] = new_args[bi].clone().pred();
             self.pos_branch.eval(&new_args)
         }
     }
@@ -117,11 +112,27 @@ impl ClosedForm {
     /// Evaluate the semantic function on concrete arguments.
     ///
     /// Returns `None` if the result would be negative (e.g. affine with negative sum),
-    /// or on arithmetic overflow.
-    pub fn eval(&self, args: &[SmallNat]) -> Option<SmallNat> {
-        match self {
-            ClosedForm::Affine(af) => af.eval(args),
-            ClosedForm::Piecewise(pw) => pw.eval(args),
+    /// or on arithmetic overflow of `N`.
+    ///
+    /// Iterative: follows the Piecewise tree with in-place mutations on a single
+    /// owned buffer, avoiding per-level Vec allocations and deep recursion.
+    pub fn eval<N: SimNat>(&self, args: &[N]) -> Option<N> {
+        let mut current: &ClosedForm = self;
+        let mut buf: Vec<N> = args.to_vec();
+        loop {
+            match current {
+                ClosedForm::Affine(af) => return af.eval(&buf),
+                ClosedForm::Piecewise(pw) => {
+                    let bi = pw.branch_index;
+                    if buf[bi].is_zero() {
+                        buf.remove(bi);
+                        current = &pw.zero_branch;
+                    } else {
+                        buf[bi] = buf[bi].clone().pred();
+                        current = &pw.pos_branch;
+                    }
+                }
+            }
         }
     }
 
@@ -184,7 +195,6 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
         if af_h.coeffs[1] == 0
             && af_h.coeffs[2] == 1
             && af_h.coeffs[3..].iter().all(|&c| c == 0)
-            && af_h.coeffs[0] >= 0
         {
             if let ClosedForm::Affine(g_af) = sem_g {
                 let j = af_h.coeffs[0];
@@ -486,7 +496,7 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
     match sem {
         ClosedForm::Affine(af) => {
             let mut new_coeffs = af.coeffs.clone();
-            new_coeffs[0] += new_coeffs[j];
+            new_coeffs[0] = new_coeffs[0].saturating_add(new_coeffs[j]);
             ClosedForm::Affine(AffineFn { arity: af.arity, coeffs: new_coeffs })
         }
         ClosedForm::Piecewise(pw) => {
@@ -582,13 +592,11 @@ fn is_always_zero(sem: &ClosedForm) -> bool {
     }
 }
 
-/// If `sem` is guaranteed ≥ 1 for all natural-number inputs (Affine with constant ≥ 1
-/// and all variable coefficients ≥ 0), returns `Some(sem - 1)`.
+/// If `sem` is guaranteed ≥ 1 for all natural-number inputs (Affine with constant ≥ 1),
+/// returns `Some(sem - 1)`.
 fn always_pos_minus_one(sem: &ClosedForm) -> Option<AffineFn> {
     match sem {
-        ClosedForm::Affine(af)
-            if af.coeffs[0] >= 1 && af.coeffs[1..].iter().all(|&c| c >= 0) =>
-        {
+        ClosedForm::Affine(af) if af.coeffs[0] >= 1 => {
             let mut new_coeffs = af.coeffs.clone();
             new_coeffs[0] -= 1;
             Some(AffineFn { arity: af.arity, coeffs: new_coeffs })
@@ -702,7 +710,7 @@ fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, po
 /// Compose an outer affine function with a slice of inner affine functions.
 ///
 /// `outer` must have arity == inners.len(); all inners must have the same arity.
-/// The result has arity == inner_arity.  Returns `None` on i64 overflow.
+/// The result has arity == inner_arity.  Returns `None` on u64 overflow.
 fn compose_affine(outer: &AffineFn, inners: &[AffineFn]) -> Option<AffineFn> {
     debug_assert_eq!(outer.arity, inners.len());
     if inners.is_empty() {
@@ -712,7 +720,7 @@ fn compose_affine(outer: &AffineFn, inners: &[AffineFn]) -> Option<AffineFn> {
     let inner_arity = inners[0].arity;
     debug_assert!(inners.iter().all(|f| f.arity == inner_arity));
 
-    let mut new_coeffs = vec![0i64; inner_arity + 1];
+    let mut new_coeffs = vec![0u64; inner_arity + 1];
     new_coeffs[0] = outer.coeffs[0];
 
     for (i, inner) in inners.iter().enumerate() {
@@ -731,7 +739,7 @@ fn compose_affine(outer: &AffineFn, inners: &[AffineFn]) -> Option<AffineFn> {
 }
 
 /// Return a copy of `coeffs` with the element at `idx` removed.
-fn drop_index(coeffs: &[i64], idx: usize) -> Vec<i64> {
+fn drop_index(coeffs: &[u64], idx: usize) -> Vec<u64> {
     coeffs
         .iter()
         .enumerate()
@@ -745,6 +753,7 @@ mod tests {
     use super::*;
     use crate::enumerate::stream_grf;
     use crate::pruning::PruningOpts;
+    use crate::sim_nat::SmallNat;
     use crate::simulate::{simulate, SimResult};
 
     fn grf(s: &str) -> Grf {
@@ -787,31 +796,31 @@ mod tests {
     fn test_zero() {
         let s = closed_form_of(&grf("Z0")).unwrap();
         assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![0] }));
-        assert_eq!(s.eval(&[]), Some(0));
+        assert_eq!(s.eval::<SmallNat>(&[]), Some(0));
 
         let s3 = closed_form_of(&grf("Z3")).unwrap();
         assert_eq!(s3.arity(), 3);
-        assert_eq!(s3.eval(&[1, 2, 3]), Some(0));
+        assert_eq!(s3.eval(&[1u64, 2, 3]), Some(0));
     }
 
     #[test]
     fn test_succ() {
         let s = closed_form_of(&grf("S")).unwrap();
         assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] }));
-        assert_eq!(s.eval(&[0]), Some(1));
-        assert_eq!(s.eval(&[5]), Some(6));
+        assert_eq!(s.eval(&[0u64]), Some(1));
+        assert_eq!(s.eval(&[5u64]), Some(6));
     }
 
     #[test]
     fn test_proj() {
         let s = closed_form_of(&grf("P(2,1)")).unwrap();
-        assert_eq!(s.eval(&[5, 3]), Some(5));
+        assert_eq!(s.eval(&[5u64, 3]), Some(5));
 
         let s2 = closed_form_of(&grf("P(2,2)")).unwrap();
-        assert_eq!(s2.eval(&[5, 3]), Some(3));
+        assert_eq!(s2.eval(&[5u64, 3]), Some(3));
 
         let s3 = closed_form_of(&grf("P(3,2)")).unwrap();
-        assert_eq!(s3.eval(&[1, 7, 9]), Some(7));
+        assert_eq!(s3.eval(&[1u64, 7, 9]), Some(7));
     }
 
     // --- Compositions ---
@@ -821,7 +830,7 @@ mod tests {
         // C(S, Z0) = constant 1, arity 0
         let s = closed_form_of(&grf("C(S, Z0)")).unwrap();
         assert_eq!(s.arity(), 0);
-        assert_eq!(s.eval(&[]), Some(1));
+        assert_eq!(s.eval::<SmallNat>(&[]), Some(1));
     }
 
     #[test]
@@ -837,7 +846,7 @@ mod tests {
         // C(S, C(S, Z0)) = constant 2
         let s = closed_form_of(&grf("C(S, C(S, Z0))")).unwrap();
         assert_eq!(s.arity(), 0);
-        assert_eq!(s.eval(&[]), Some(2));
+        assert_eq!(s.eval::<SmallNat>(&[]), Some(2));
     }
 
     #[test]
@@ -845,7 +854,7 @@ mod tests {
         // C2(Z0): lift arity-0 zero to arity 2
         let s = closed_form_of(&grf("C2(Z0)")).unwrap();
         assert_eq!(s.arity(), 2);
-        assert_eq!(s.eval(&[3, 7]), Some(0));
+        assert_eq!(s.eval(&[3u64, 7]), Some(0));
     }
 
     // --- Rec Case A: h = acc + k ---
@@ -1056,26 +1065,12 @@ mod tests {
     // --- AffineFn arithmetic safety ---
 
     #[test]
-    fn test_affine_negative_eval() {
-        // Constant -1: returns None
-        let af = AffineFn { arity: 0, coeffs: vec![-1] };
-        assert_eq!(af.eval(&[]), None);
-    }
-
-    #[test]
-    fn test_affine_negative_coeff() {
-        // f(x) = 5 - x: None when x > 5
-        let af = AffineFn { arity: 1, coeffs: vec![5, -1] };
-        assert_eq!(af.eval(&[3]), Some(2));
-        assert_eq!(af.eval(&[5]), Some(0));
-        assert_eq!(af.eval(&[6]), None);
-    }
-
-    #[test]
     fn test_affine_overflow() {
-        // i64::MAX * 2 overflows — should return None
-        let af = AffineFn { arity: 1, coeffs: vec![0, i64::MAX] };
-        assert_eq!(af.eval(&[2]), None);
+        // Coefficient that overflows when multiplied by 3: i64::MAX as u64 * 3 > u64::MAX.
+        let af = AffineFn { arity: 1, coeffs: vec![0u64, i64::MAX as u64] };
+        assert_eq!(af.eval(&[3u64]), None);
+        // i64::MAX * 2 = u64::MAX - 1: valid u64, should return Some.
+        assert_eq!(af.eval(&[2u64]), Some(u64::MAX - 1));
     }
 
     // ── Exhaustive closed_form_of vs simulate validation ──────────────────────

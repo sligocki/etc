@@ -73,6 +73,12 @@ impl<N: SimNat> std::ops::AddAssign<SimSteps<N>> for SimSteps<N> {
 /// Options controlling simulation behavior.
 #[derive(Clone, Copy, Debug)]
 pub struct SimOpts {
+    /// When true (default), evaluate GRFs with a known `ClosedForm` directly via
+    /// algebraic evaluation instead of structural simulation. Subsumes `acc_plus_k`
+    /// and handles all affine/piecewise patterns in O(GRF_size) time.
+    /// Set to `false` to measure raw simulation (e.g. in CF validation tests).
+    pub use_closed_form: bool,
+
     /// When true (default), skip the Rec iteration when the step function provably
     /// ignores its accumulator (arg 2), computing `h(n-1, 0, rest)` in O(1) instead
     /// of iterating `n` times. Semantically equivalent; dramatically faster for
@@ -92,7 +98,7 @@ pub struct SimOpts {
 
 impl Default for SimOpts {
     fn default() -> Self {
-        SimOpts { rec_fast_forward: true, min_fast_forward: true, min_rec_fuse: true }
+        SimOpts { use_closed_form: true, rec_fast_forward: true, min_fast_forward: true, min_rec_fuse: true }
     }
 }
 
@@ -294,6 +300,19 @@ pub fn simulate_opts<N: SimNat>(grf: &Grf, args: &[N], step_budget: Option<u64>,
     if args.len() != grf.arity() {
         return (SimResult::ArityMismatch, SimSteps::zero());
     }
+
+    // CF fast-path: evaluate directly via closed form when available.
+    // Works for any N: SimNat — no SmallNat conversion needed.
+    // TODO: base_approx for CF-evaluated runs
+    if opts.use_closed_form {
+        if let Some(cf) = grf.closed_form() {
+            return match cf.eval(args) {
+                Some(v) => (SimResult::Value(v), SimSteps::one()),
+                None    => (SimResult::ValueOverflow, SimSteps::one()),
+            };
+        }
+    }
+
     let mut steps = SimSteps::one(); // cost of this call
 
     let result = match &grf.kind {
@@ -529,13 +548,17 @@ mod tests {
 
     #[test]
     fn test_step_counting() {
+        // These tests verify structural step counts; use_closed_form=false so the CF
+        // fast-path doesn't collapse multi-step expressions to a single step.
+        let no_cf = SimOpts { use_closed_form: false, ..SimOpts::default() };
+
         // Z0(): 1 step
-        let (_, steps) = simulate(&Grf::zero_atom(0), &[], 1_000_000);
+        let (_, steps) = simulate_opts::<SmallNat>(&Grf::zero_atom(0), &[], Some(1_000_000), no_cf);
         assert_eq!(steps.sim, 1);
 
         // C(S, Z0)(): simulate_opts(C) = 1, simulate_opts(Z0) = 1, simulate_opts(S) = 1 → 3 steps
         let f = Grf::comp(Grf::succ_atom(), vec![Grf::zero_atom(0)]);
-        let (_, steps) = simulate(&f, &[], 1_000_000);
+        let (_, steps) = simulate_opts::<SmallNat>(&f, &[], Some(1_000_000), no_cf);
         assert_eq!(steps.sim, 3);
     }
 
@@ -543,10 +566,12 @@ mod tests {
     fn test_rec_steps() {
         // R(Z0, P(2,2))(3): h = P(2,2) is Proj(_, 2), so the identity ff fires:
         // result = g(rest) = Z0() = 0 in steps: 1 (Rec) + 1 (Z0) = 2.
+        // use_closed_form=false so the Rec itself is evaluated structurally.
+        let no_cf = SimOpts { use_closed_form: false, ..SimOpts::default() };
         let g = Grf::zero_atom(0);
         let h = Grf::proj_atom(2, 2);
         let r = Grf::rec(g, h);
-        let (val, steps) = simulate(&r, &[3], 1_000_000);
+        let (val, steps) = simulate_opts(&r, &[3], Some(1_000_000), no_cf);
         assert_eq!(val.into_value(), Some(0));
         assert_eq!(steps.sim, 2);
     }
@@ -581,7 +606,7 @@ mod tests {
     // --- rec_fast_forward tests ---
 
     fn no_ff() -> SimOpts {
-        SimOpts { rec_fast_forward: false, min_fast_forward: false, min_rec_fuse: false }
+        SimOpts { use_closed_form: false, rec_fast_forward: false, min_fast_forward: false, min_rec_fuse: false }
     }
 
     fn no_min_ff() -> SimOpts {
@@ -642,9 +667,10 @@ mod tests {
 
     #[test]
     fn test_rec_ff_proj_acc_identity() {
-        // R(Z0, P(2,2)): h is Proj(_, 2) so the new ff fires: result = g(rest) = Z0() = 0.
-        // With ff:    steps = 1(Rec) + 1(Z0) = 2.
-        // Without ff: steps = 1(Rec) + 1(Z0) + 3*1(P) = 5.
+        // R(Z0, P(2,2)): h is Proj(_, 2) so the rec ff fires: result = g(rest) = Z0() = 0.
+        // Step counts tested with use_closed_form=false so the Rec is evaluated structurally.
+        // With rec_ff:    steps = 1(Rec) + 1(Z0) = 2.
+        // Without any ff: steps = 1(Rec) + 1(Z0) + 3*1(P) = 5.
         let r = Grf::rec(Grf::zero_atom(0), Grf::proj_atom(2, 2));
         for n in (0 as SmallNat)..=10 {
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
@@ -652,7 +678,8 @@ mod tests {
             assert_eq!(v_ff.into_value(), Some(0), "ff wrong at n={n}");
             assert_eq!(v_no.into_value(), Some(0), "no_ff wrong at n={n}");
         }
-        let (_, steps_ff) = simulate(&r, &[3], 1_000_000);
+        let no_cf = SimOpts { use_closed_form: false, ..SimOpts::default() };
+        let (_, steps_ff) = simulate_opts(&r, &[3], Some(1_000_000), no_cf);
         let (_, steps_no) = simulate_opts(&r, &[3], Some(1_000_000), no_ff());
         assert_eq!(steps_ff.sim, 2, "ff should skip the loop");
         assert_eq!(steps_no.sim, 5);
@@ -852,8 +879,10 @@ mod tests {
     #[test]
     fn test_base_approx_proj_identity_rec() {
         // R(Z0, P(2,2))(3): Proj-identity ff fires → sim=2, base_approx=5 (2 + 3 Proj calls).
+        // use_closed_form=false so structural step counts are measured.
+        let no_cf = SimOpts { use_closed_form: false, ..SimOpts::default() };
         let r = Grf::rec(Grf::zero_atom(0), Grf::proj_atom(2, 2));
-        let (_, s) = simulate(&r, &[3], 0);
+        let (_, s) = simulate_opts(&r, &[3], None, no_cf);
         assert_eq!(s.sim, 2, "sim steps");
         assert_eq!(s.base_approx, 5, "base_approx steps");
         let (_, s_noff) = simulate_opts(&r, &[3], None, no_ff());
@@ -862,29 +891,33 @@ mod tests {
 
     #[test]
     fn test_base_approx_min_rec_fuse_exact() {
+        // base_approx accuracy is only guaranteed when use_closed_form=false, because CF
+        // fast-path collapses sub-call step counts to 1, lowering base_approx.
+        let no_cf = SimOpts { use_closed_form: false, ..SimOpts::default() };
+
         // M(R(C(S,Z0), Z2))(): g()=1, h(k,acc)=0 (atom, no inner Rec → base_approx exact).
         // Fused: acc=1, k=0: h returns 0 → result=1. One loop iteration.
         let grf_0 = grf!("M(R(C(S,Z0), Z2))");
-        let (_, s) = simulate(&grf_0, &[], 0);
+        let (_, s) = simulate_opts::<SmallNat>(&grf_0, &[], None, no_cf);
         let (_, s_noff) = simulate_opts::<SmallNat>(&grf_0, &[], None, no_ff());
         assert_eq!(s.base_approx, s_noff.sim, "M(R(C(S,Z0),Z2)): base_approx={} no_ff={}", s.base_approx, s_noff.sim);
 
         // M(R(Z0, Z2))(): g()=0 → base case, acc=0 immediately, result=0.
         // base_extra = 1 (skipped Rec node for i=0).
         let grf_base = grf!("M(R(Z0, Z2))");
-        let (_, s2) = simulate(&grf_base, &[], 0);
+        let (_, s2) = simulate_opts::<SmallNat>(&grf_base, &[], None, no_cf);
         let (_, s2_noff) = simulate_opts::<SmallNat>(&grf_base, &[], None, no_ff());
         assert_eq!(s2.base_approx, s2_noff.sim, "M(R(Z0,Z2)) base case: base_approx={} no_ff={}", s2.base_approx, s2_noff.sim);
 
-        // For the GRF from the plan M(R(P(1,1),C(R(Z0,P(2,1)),P(3,2)))):
+        // For M(R(P(1,1),C(R(Z0,P(2,1)),P(3,2)))):
         // x=0 is exact (acc=0 base case, inner h never evaluated).
         // x>0 is a lower bound because h contains acc-ignored rec_ff inside R(Z0,P(2,1)).
         let grf_plan = grf!("M(R(P(1,1),C(R(Z0,P(2,1)),P(3,2))))");
-        let (_, s3) = simulate(&grf_plan, &[0], 0);
+        let (_, s3) = simulate_opts::<SmallNat>(&grf_plan, &[0], None, no_cf);
         let (_, s3_noff) = simulate_opts(&grf_plan, &[0], None, no_ff());
         assert_eq!(s3.base_approx, s3_noff.sim, "x=0 exact: base_approx={} no_ff={}", s3.base_approx, s3_noff.sim);
         for x in (1 as SmallNat)..=10 {
-            let (_, sx) = simulate(&grf_plan, &[x], 0);
+            let (_, sx) = simulate_opts(&grf_plan, &[x], None, no_cf);
             let (_, sx_noff) = simulate_opts(&grf_plan, &[x], None, no_ff());
             assert!(sx.base_approx >= sx.sim, "x={x}: base_approx must be >= sim");
             assert!(sx.base_approx <= sx_noff.sim, "x={x}: base_approx={} must be <= no_ff={}", sx.base_approx, sx_noff.sim);

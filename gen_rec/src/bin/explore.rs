@@ -117,16 +117,11 @@ fn decrement_n(v: &str, n: usize) -> String {
     }
 }
 
-fn term_str(c: i64, v: &str) -> String {
-    let vp = if c.abs() != 1 && v.chars().any(|ch| ch == '-' || ch == '+') {
-        format!("({})", v)
-    } else {
+fn term_str(c: u64, v: &str) -> String {
+    if c == 1 {
         v.to_string()
-    };
-    match c {
-        1 => vp,
-        -1 => format!("-{}", vp),
-        _ => format!("{}*{}", c, vp),
+    } else {
+        format!("{}*{}", c, v)
     }
 }
 
@@ -143,15 +138,7 @@ fn fmt_affine_expr(af: &AffineFn, vars: &[String]) -> String {
     if parts.is_empty() {
         return "0".to_string();
     }
-    let mut result = parts[0].clone();
-    for p in &parts[1..] {
-        if p.starts_with('-') {
-            result.push_str(&format!(" - {}", &p[1..]));
-        } else {
-            result.push_str(&format!(" + {}", p));
-        }
-    }
-    result
+    parts.join(" + ")
 }
 
 /// Format a rule's RHS. For Affine: formula. For Piecewise (rare zero_branch): inline ternary.

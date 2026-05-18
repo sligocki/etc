@@ -18,7 +18,7 @@ use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_grl::parse_grf_entries;
 use gen_rec::pruning::PruningOpts;
 use gen_rec::sim_nat::SmallNat;
-use gen_rec::simulate::{simulate, SimResult};
+use gen_rec::simulate::{simulate, simulate_opts, SimOpts, SimResult};
 
 // =============================================================================
 // CLI
@@ -255,7 +255,6 @@ fn format_cf_named(cf: &ClosedForm, names: &[String]) -> String {
                 match c {
                     0 => {}
                     1 => terms.push(xi.clone()),
-                    -1 => terms.push(format!("-{xi}")),
                     _ => terms.push(format!("{c}·{xi}")),
                 }
             }
@@ -565,6 +564,9 @@ fn test_inputs(arity: usize) -> Vec<Vec<u64>> {
 fn check_size(arity: usize, size: usize, max_steps: u64) -> (usize, usize) {
     let inputs = test_inputs(arity);
     let opts = PruningOpts::default();
+    // Disable CF fast-path so we compare CF eval against raw structural simulation.
+    let sim_opts = SimOpts { use_closed_form: false, ..SimOpts::default() };
+    let step_budget = if max_steps == 0 { None } else { Some(max_steps) };
     let mut grfs_checked = 0usize;
     let mut grfs_bad = 0usize;
     stream_grf(size, arity, false, opts, &mut |grf| {
@@ -576,7 +578,7 @@ fn check_size(arity: usize, size: usize, max_steps: u64) -> (usize, usize) {
         let mut first_bad: Option<(Vec<u64>, Option<u64>, Option<u64>)> = None;
         let mut bad_count = 0usize;
         for args in &inputs {
-            let (sim_result, _) = simulate(grf, args, max_steps);
+            let (sim_result, _) = simulate_opts(grf, args, step_budget, sim_opts);
             let sim_val = match sim_result {
                 SimResult::Value(v) => Some(v),
                 SimResult::Diverge | SimResult::OutOfSteps => None,
@@ -631,10 +633,12 @@ fn check_one_grf(grf_str: &str, explicit_args: &[u64], max_steps: u64) {
         }
         vec![explicit_args.to_vec()]
     };
+    let sim_opts = SimOpts { use_closed_form: false, ..SimOpts::default() };
+    let step_budget = if max_steps == 0 { None } else { Some(max_steps) };
     let mut bad_count = 0usize;
     let mut first_bad: Option<(Vec<u64>, Option<u64>, Option<u64>)> = None;
     for input in &inputs {
-        let (sim_result, _) = simulate(&grf, input, max_steps);
+        let (sim_result, _) = simulate_opts(&grf, input, step_budget, sim_opts);
         let sim_val = match sim_result {
             SimResult::Value(v) => Some(v),
             SimResult::Diverge | SimResult::OutOfSteps => None,

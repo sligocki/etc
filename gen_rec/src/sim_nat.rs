@@ -18,6 +18,8 @@ pub trait SimNat:
     fn succ(self) -> Option<Self>;
     /// Checked addition. Returns `None` only on `SmallNat` overflow.
     fn checked_add(self, rhs: Self) -> Option<Self>;
+    /// Checked subtraction. Returns `None` if `self < rhs` (result would be negative).
+    fn checked_sub(self, rhs: Self) -> Option<Self>;
     /// Multiply `self` by a `SmallNat` counter. Returns `None` only on `SmallNat` overflow.
     fn checked_mul_u64(self, n: u64) -> Option<Self>;
     /// Saturating predecessor: zero stays zero (used in step-count formulas).
@@ -40,6 +42,7 @@ impl SimNat for SmallNat {
     fn one()  -> Self { 1 }
     fn succ(self) -> Option<Self> { self.checked_add(1) }
     fn checked_add(self, rhs: Self) -> Option<Self> { u64::checked_add(self, rhs) }
+    fn checked_sub(self, rhs: Self) -> Option<Self> { u64::checked_sub(self, rhs) }
     fn checked_mul_u64(self, n: u64) -> Option<Self> { self.checked_mul(n) }
     fn pred(self) -> Self { self.saturating_sub(1) }
     fn from_u64(n: u64) -> Self { n }
@@ -53,6 +56,9 @@ impl SimNat for BigNat {
     fn one()  -> Self { rug::Integer::from(1u64) }
     fn succ(self) -> Option<Self> { Some(self + 1u64) }
     fn checked_add(self, rhs: Self) -> Option<Self> { Some(self + rhs) }
+    fn checked_sub(self, rhs: Self) -> Option<Self> {
+        if self >= rhs { Some(self - rhs) } else { None }
+    }
     fn checked_mul_u64(self, n: u64) -> Option<Self> { Some(self * n) }
     fn pred(self) -> Self {
         if self == 0u64 { rug::Integer::new() } else { self - 1u64 }

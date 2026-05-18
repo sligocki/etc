@@ -1,4 +1,6 @@
 # Weak Goodstein
+# By Racheline
+# https://discord.com/channels/960643023006490684/1447627603698647303/1505794435663794266
 
 use base::{K, Pred, RMonus, Mult, ModS, Pow2P}
 

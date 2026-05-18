@@ -341,14 +341,16 @@ fn load_import(
         }
     }
 
-    // Export only locally-defined macros.
+    // Export all locally-defined macros regardless of the names filter — macros are
+    // expansion helpers, so imported macros (e.g. Mult[n]) that depend on non-imported
+    // helper macros (e.g. PlusP2[n]) must still be expandable in the importing file.
     for (name, def) in sub_grf_macros {
-        if import_name(&name) && local_grf_macro_names.contains(&name) {
+        if local_grf_macro_names.contains(&name) {
             out_grf_macros.insert(name, def);
         }
     }
     for (name, cases) in sub_num_macros {
-        if import_name(&name) && local_num_macro_names.contains(&name) {
+        if local_num_macro_names.contains(&name) {
             out_num_macros.insert(name, cases);
         }
     }

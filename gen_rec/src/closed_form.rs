@@ -136,6 +136,60 @@ impl ClosedForm {
         }
     }
 
+    /// Find the minimum i ≥ 0 such that self(i, outer_args) = 0.
+    /// Returns `Some(i)` if found, `None` if M(self)(outer_args) diverges.
+    ///
+    /// - AffineFn: non-negative coefficients → non-decreasing in i → decisive at i=0.
+    /// - Piecewise on outer arg (bi ≥ 1): the branch chosen by the outer arg is fixed for
+    ///   all i, so we just pick it. Handled iteratively to avoid O(n) stack depth.
+    /// - Piecewise on search var (bi = 0): check i=0 via zero_branch; if nonzero,
+    ///   M = 1 + M(pos_branch) for the i>0 case.
+    pub fn compute_min<N: SimNat>(&self, outer_args: &[N]) -> Option<N> {
+        let mut cf: &ClosedForm = self;
+        let mut outer: Vec<N> = outer_args.to_vec();
+        loop {
+            match cf {
+                ClosedForm::Affine(af) => {
+                    // Evaluate at i=0. Non-negative coefficients mean f is non-decreasing
+                    // in i, so f(0, outer) > 0 implies f(i, outer) > 0 for all i.
+                    let mut full = Vec::with_capacity(outer.len() + 1);
+                    full.push(N::zero());
+                    full.extend(outer.iter().cloned());
+                    return match af.eval(&full) {
+                        Some(v) if v.is_zero() => Some(N::zero()),
+                        _ => None,
+                    };
+                }
+                ClosedForm::Piecewise(pw) => {
+                    let bi = pw.branch_index;
+                    if bi == 0 {
+                        // Branch on the search variable i.
+                        // i=0: check if zero_branch(outer) = 0.
+                        if let Some(v) = pw.zero_branch.eval(&outer) {
+                            if v.is_zero() {
+                                return Some(N::zero());
+                            }
+                        }
+                        // i>0: cf(i, outer) = pos_branch(i-1, outer), so M(cf) = 1 + M(pos_branch).
+                        return pw.pos_branch.compute_min(&outer).and_then(|j| j.succ());
+                    } else {
+                        // Branch on outer_args[bi-1] (0-based in outer). This outer arg
+                        // is the same for all i, so we can choose the branch unconditionally.
+                        let oi = bi - 1;
+                        if outer[oi].is_zero() {
+                            outer.remove(oi);
+                            cf = &pw.zero_branch;
+                        } else {
+                            outer[oi] = outer[oi].clone().pred();
+                            cf = &pw.pos_branch;
+                        }
+                        // Continue loop with updated cf and outer.
+                    }
+                }
+            }
+        }
+    }
+
     pub fn lift(&self, arity: usize) -> Self {
         match self {
             ClosedForm::Affine(af) => ClosedForm::Affine(af.lift(arity)),
@@ -1015,6 +1069,64 @@ mod tests {
         assert!(closed_form_of(&grf("M(S)")).is_none());
         // M(P(2,2)): f(0,x)=x, not always zero → None
         assert!(closed_form_of(&grf("M(P(2,2))")).is_none());
+    }
+
+    #[test]
+    fn test_compute_min_affine() {
+        // AffineFn: f(i, x) = x. At i=0: f=x. If x=0 → min=0; else diverge.
+        let cf = closed_form_of(&grf("P(2,2)")).unwrap(); // P(2,2)(i,x) = x
+        assert!(matches!(cf, ClosedForm::Affine(_)));
+        assert_eq!(cf.compute_min::<u64>(&[0]), Some(0));
+        assert_eq!(cf.compute_min::<u64>(&[3]), None);
+
+        // f(i, x) = i + 1 (Succ of search var). f(0,...) = 1 always → diverge.
+        let cf2 = closed_form_of(&grf("S")).unwrap(); // S(i) = i+1
+        assert_eq!(cf2.compute_min::<u64>(&[]), None);
+    }
+
+    #[test]
+    fn test_compute_min_piecewise_bi0() {
+        // Predecessor R(Z0, P(2,1)) has arity 1: f(i)=pred(i). pred(0)=0 → M()=0.
+        let cf = closed_form_of(&grf("R(Z0, P(2,1))")).unwrap();
+        assert!(matches!(cf, ClosedForm::Piecewise(ref pw) if pw.branch_index == 0));
+        assert_eq!(cf.compute_min::<u64>(&[]), Some(0));
+
+        // R(C(S,Z0), Z2): arity 1. base=1, step always returns 0 → f(0)=1, f(1)=0 → M()=1.
+        let cf2 = closed_form_of(&grf("R(C(S,Z0), Z2)")).unwrap();
+        assert!(matches!(cf2, ClosedForm::Piecewise(ref pw) if pw.branch_index == 0));
+        assert_eq!(cf2.compute_min::<u64>(&[]), Some(1));
+    }
+
+    #[test]
+    fn test_compute_min_piecewise_outer_arg() {
+        // C(pred, P(2,2)) = pred(y) for (x, y): arity 2, branches on bi=1 (the y arg).
+        // f(i, y) = pred(y) regardless of i.
+        // M(f)(y): pred(0)=0 → Some(0); pred(1)=0 → Some(0); pred(3)=2 → None.
+        let cf = closed_form_of(&grf("C(R(Z0,P(2,1)),P(2,2))")).unwrap();
+        assert!(matches!(cf, ClosedForm::Piecewise(ref pw) if pw.branch_index == 1));
+        assert_eq!(cf.compute_min::<u64>(&[0]), Some(0));
+        assert_eq!(cf.compute_min::<u64>(&[1]), Some(0));
+        assert_eq!(cf.compute_min::<u64>(&[3]), None);
+    }
+
+    #[test]
+    fn test_compute_min_nested() {
+        // cf(0,y) = y+1
+        // cf(1,y) = y
+        // cf(_,_) = 0
+        let cf = closed_form_of(&grf("R(S, R(P(2,2), Z4))")).unwrap();
+        assert_eq!(cf.compute_min::<u64>(&[0]), Some(1));
+        assert_eq!(cf.compute_min::<u64>(&[1]), Some(2));
+    }
+
+    #[test]
+    fn test_compute_min_nested_diverge() {
+        // cf(0,y) = y+1
+        // cf(1,y) = y
+        // cf(_,_) = 1
+        let cf = closed_form_of(&grf("R(S, R(P(2,2), C(S, Z4)))")).unwrap();
+        assert_eq!(cf.compute_min::<u64>(&[0]), Some(1));
+        assert_eq!(cf.compute_min::<u64>(&[1]), None);
     }
 
     #[test]

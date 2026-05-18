@@ -168,6 +168,16 @@ where
         return (SimResult::Diverge, steps);
     }
 
+    // Fast-forward: if f has a ClosedForm, use compute_min for an exact O(1)-or-O(n) answer.
+    if opts.min_fast_forward && opts.use_closed_form {
+        if let Some(cf) = f.closed_form() {
+            return match cf.compute_min(args) {
+                Some(v) => (SimResult::Value(v), steps),
+                None => (SimResult::Diverge, steps),
+            };
+        }
+    }
+
     // Fast-forward: f ignores its search variable (1-indexed arg 1).
     if opts.min_fast_forward && !f.used_args().contains(&1) {
         let mut f_args: Vec<N> = Vec::with_capacity(args.len() + 1);

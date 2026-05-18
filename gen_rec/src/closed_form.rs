@@ -176,8 +176,7 @@ pub fn closed_form_of(grf: &Grf) -> Option<ClosedForm> {
             closed_form_of_rec(&sem_g, &sem_h, k_outer)
         }
 
-        // Not yet supported
-        GrfKind::Min(_) => None,
+        GrfKind::Min(f_grf) => closed_form_of_min(f_grf),
     }
 }
 
@@ -288,6 +287,20 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
         }
     }
 
+    None
+}
+
+/// Compute the ClosedForm for M(f_grf) when possible.
+///
+/// Because all AffineFn coefficients are non-negative, f(i, args) >= f(0, args) for all i >= 0.
+/// So M(f)(args) is finite iff f(0, args) = 0, and then M(f)(args) = 0.
+/// If f(0, args) = 0 for ALL args, M(f) = 0 always.
+fn closed_form_of_min(f_grf: &Grf) -> Option<ClosedForm> {
+    let cf = closed_form_of(f_grf)?;
+    let at_zero = zero_face_at(&cf, 1); // f with search variable (arg 1) set to 0
+    if is_always_zero(&at_zero) {
+        return Some(ClosedForm::Affine(AffineFn::zero(cf.arity() - 1)));
+    }
     None
 }
 
@@ -974,12 +987,34 @@ mod tests {
         check_vs_sim("R(Z0, R(Z1, P(3,1)))", 8);
     }
 
-    // --- None cases ---
+    // --- Min ---
+
+    #[test]
+    fn test_min_always_zero() {
+        // M(Z1): Z1(i)=0 always, so M=0 (arity 0)
+        let s = closed_form_of(&grf("Z1")).unwrap();
+        assert!(is_always_zero(&s));
+        let m = closed_form_of(&grf("M(Z1)")).unwrap();
+        assert_eq!(m, ClosedForm::Affine(AffineFn::zero(0)));
+        assert_eq!(m.eval::<SmallNat>(&[]), Some(0));
+
+        // M(P(2,1)): f(i,x)=i, so f(0,x)=0 for all x → M=0 (arity 1)
+        let m = closed_form_of(&grf("M(P(2,1))")).unwrap();
+        assert_eq!(m, ClosedForm::Affine(AffineFn::zero(1)));
+        check_vs_sim("M(P(2,1))", 5);
+
+        // M(P(1,1)): f(i)=i, so f(0)=0 → M=0 (arity 0)
+        let m = closed_form_of(&grf("M(P(1,1))")).unwrap();
+        assert_eq!(m, ClosedForm::Affine(AffineFn::zero(0)));
+        check_vs_sim("M(P(1,1))", 5);
+    }
 
     #[test]
     fn test_min_none() {
-        assert!(closed_form_of(&grf("M(P(1,1))")).is_none());
+        // M(S): S(0)=1 → never zero → None
         assert!(closed_form_of(&grf("M(S)")).is_none());
+        // M(P(2,2)): f(0,x)=x, not always zero → None
+        assert!(closed_form_of(&grf("M(P(2,2))")).is_none());
     }
 
     #[test]

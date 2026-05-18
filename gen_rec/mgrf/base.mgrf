@@ -42,6 +42,9 @@ Mod2 := R(Z0, C(R(S, Z3), P(2,2), Z2))
 # Mod3(x) = x%3
 Mod3 := R(Z0, C(R(S, R(P(2,1), Z4)), P(2,2), P(2,2)))
 
+# ModS(x,y) = x % (y+1)
+ModS := M(C(R(P1, R(R(P2, P1), P2)), P2, P1, P3))
+
 # Division
 # Div2(x) = floor(x/2)
 # Alt: Div2 := M(R(Pred, C(Monus[2], P2)))

@@ -1,0 +1,23 @@
+# Weak Goodstein
+
+use base::{K, Pred, RMonus, Mult, ModS, Pow2P}
+
+# HalfEven(2k) = k
+# HalfEven(2k+1) = 2k+1
+HalfEven := C(R(Z, C(S, R(P1, R(R(P2, P1), P2)))), P1, Pred)
+
+# HalfOdd(2k+1) = k
+HalfOdd := C(R(Z, R(P1, R(R(P2, P1), P2))), P1, P1)
+
+A025480 := C(HalfOdd, C(R(P1, C(HalfEven, P2)), S, S))
+
+Seq := C(RMonus, A025480, P1)
+
+Next := C(RMonus, C(S, C(ModS, P2, C(Pow2P, C(Seq, P1)))), C(Mult[2], P2))
+
+WG := M(R(S, Next))
+
+Fw2 := R(S, C(WG, P2))
+
+# G() > Graham's number
+G := C(C(Fw2, S, S), K[1])

@@ -13,7 +13,7 @@ use clap::Parser;
 use gen_rec::sim_nat::SmallNat;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::fingerprint::{canonical_inputs, compute_fp, Fingerprint};
-use gen_rec::grf::Grf;
+use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::pruning::PruningOpts;
 use std::collections::HashMap;
 
@@ -60,14 +60,14 @@ struct Args {
 fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
     let n = gs.len();
 
-    let all_proj = gs.iter().all(|g| matches!(g, Grf::Proj(_, _)));
+    let all_proj = gs.iter().all(|g| matches!(&g.kind, GrfKind::Proj(_, _)));
 
     if all_proj {
         // Is it the identity tuple P(n,1), P(n,2), ..., P(n,n)?
         let is_identity = gs
             .iter()
             .enumerate()
-            .all(|(i, g)| matches!(g, Grf::Proj(k, j) if *k == n && *j == i + 1));
+            .all(|(i, g)| matches!(&g.kind, GrfKind::Proj(k, j) if *k == n && *j == i + 1));
         if is_identity {
             return "all_proj_identity     [C(R,P(k,1),..,P(k,k)) ≡ R — always prunable]";
         }
@@ -75,7 +75,7 @@ fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
         // Are all projection indices distinct? (a permutation of inputs)
         let mut indices: Vec<usize> = gs
             .iter()
-            .map(|g| if let Grf::Proj(_, j) = g { *j } else { 0 })
+            .map(|g| if let GrfKind::Proj(_, j) = &g.kind { *j } else { 0 })
             .collect();
         indices.sort_unstable();
         indices.dedup();
@@ -89,10 +89,10 @@ fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
     // and whether any non-atom sub-expressions appear.
     let all_atoms = gs
         .iter()
-        .all(|g| matches!(g, Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _)));
+        .all(|g| matches!(&g.kind, GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)));
 
-    let first_is_proj = matches!(gs.first(), Some(Grf::Proj(_, _)));
-    let first_is_succ = matches!(gs.first(), Some(Grf::Succ));
+    let first_is_proj = matches!(gs.first().map(|g| &g.kind), Some(GrfKind::Proj(_, _)));
+    let first_is_succ = matches!(gs.first().map(|g| &g.kind), Some(GrfKind::Succ));
 
     if all_atoms {
         if first_is_succ {
@@ -104,8 +104,8 @@ fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
         return "atoms_other           [C(R, atoms, first≠proj/succ/zero)]";
     }
 
-    let has_rec = gs.iter().any(|g| matches!(g, Grf::Rec(_, _)));
-    let has_comp = gs.iter().any(|g| matches!(g, Grf::Comp(_, _, _)));
+    let has_rec = gs.iter().any(|g| matches!(&g.kind, GrfKind::Rec(_, _)));
+    let has_comp = gs.iter().any(|g| matches!(&g.kind, GrfKind::Comp(_, _, _)));
 
     if has_rec {
         if first_is_proj {
@@ -125,39 +125,39 @@ fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
 
 /// Coarse structural label for a GRF — used to group redundancy examples.
 fn grf_category(grf: &Grf) -> &'static str {
-    match grf {
-        Grf::Rec(_, h) => match h.as_ref() {
+    match &grf.kind {
+        GrfKind::Rec(_, h) => match &h.kind {
             // Step function returns the accumulator unchanged → R always == base case extended
-            Grf::Proj(_, 2) => "R(_,P(·,2))      [step=acc, result independent of n]",
+            GrfKind::Proj(_, 2) => "R(_,P(·,2))      [step=acc, result independent of n]",
             // Step function returns the step counter
-            Grf::Proj(_, 1) => "R(_,P(·,1))      [step=counter]",
+            GrfKind::Proj(_, 1) => "R(_,P(·,1))      [step=counter]",
             // Step function returns one of the "rest" args (ignores acc and counter)
-            Grf::Proj(k, i) if *i >= 3 && *i <= *k => {
+            GrfKind::Proj(k, i) if *i >= 3 && *i <= *k => {
                 "R(_,P(·,≥3))     [step=rest_arg, ignores acc]"
             }
             // Step always returns 0
-            Grf::Zero(_) => "R(_,Z)           [step=zero]",
-            Grf::Comp(ih, _, _) if matches!(ih.as_ref(), Grf::Zero(_)) => {
+            GrfKind::Zero(_) => "R(_,Z)           [step=zero]",
+            GrfKind::Comp(ih, _, _) if matches!(&ih.kind, GrfKind::Zero(_)) => {
                 "R(_,C(Z,…))      [step=zero via comp]"
             }
             // Step is itself a Rec
-            Grf::Rec(_, _) => "R(_,R(…))        [nested rec]",
+            GrfKind::Rec(_, _) => "R(_,R(…))        [nested rec]",
             // Step is a Comp
-            Grf::Comp(_, _, _) => "R(_,C(…))        [step=comp]",
+            GrfKind::Comp(_, _, _) => "R(_,C(…))        [step=comp]",
             _ => "R(_,other)",
         },
-        Grf::Comp(h, gs, _) => {
+        GrfKind::Comp(h, gs, _) => {
             let repeated = gs.len() > 1 && gs.iter().all(|g| g == &gs[0]);
-            match h.as_ref() {
+            match &h.kind {
                 // C(C(f,…), g,…) can sometimes be rewritten as C(f, C(…, g,…), …)
-                Grf::Comp(_, _, _) => "C(C(·),·)        [nested comp in head]",
-                Grf::Rec(_, _) if repeated => "C(R(·),g,g,…)    [rec head, repeated args]",
-                Grf::Rec(_, _) => "C(R(·),·)        [rec in head]",
-                Grf::Succ if gs.len() == 1 => "C(S,·)           [succ of single arg]",
+                GrfKind::Comp(_, _, _) => "C(C(·),·)        [nested comp in head]",
+                GrfKind::Rec(_, _) if repeated => "C(R(·),g,g,…)    [rec head, repeated args]",
+                GrfKind::Rec(_, _) => "C(R(·),·)        [rec in head]",
+                GrfKind::Succ if gs.len() == 1 => "C(S,·)           [succ of single arg]",
                 _ => "C(other)",
             }
         }
-        Grf::Min(_) => "M(·)",
+        GrfKind::Min(_) => "M(·)",
         _ => "atom",
     }
 }
@@ -230,12 +230,12 @@ fn main() {
                 total += 1;
 
                 // Pattern counting (before fingerprint work).
-                if let Grf::Comp(_, gs, _) = grf {
+                if let GrfKind::Comp(_, gs, _) = &grf.kind {
                     if gs.len() == 1 {
-                        if gs[0] == Grf::Proj(1, 1) {
+                        if gs[0] == Grf::proj_atom(1, 1) {
                             pat_p11 += 1;
                         }
-                        if matches!(gs[0], Grf::Proj(_, _)) {
+                        if matches!(&gs[0].kind, GrfKind::Proj(_, _)) {
                             pat_single_proj += 1;
                         }
                     }
@@ -245,8 +245,8 @@ fn main() {
                 *cat_total.entry(grf_category(grf)).or_default() += 1;
 
                 // C(R,·) deep analysis — count every occurrence.
-                let crec_sub = if let Grf::Comp(h, gs, _) = grf {
-                    if matches!(h.as_ref(), Grf::Rec(_, _)) {
+                let crec_sub = if let GrfKind::Comp(h, gs, _) = &grf.kind {
+                    if matches!(&h.kind, GrfKind::Rec(_, _)) {
                         let s = crec_arg_pattern(gs);
                         crec_by_subcat.entry(s).or_insert((0, 0, vec![], vec![])).0 += 1;
                         Some(s)

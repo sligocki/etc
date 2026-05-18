@@ -10,7 +10,7 @@
 use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::fingerprint::FingerprintDb;
-use gen_rec::grf::Grf;
+use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::novel_db::{fingerprint_db_from_dir, fingerprint_db_from_file};
 use gen_rec::optimize::{opt_fingerprint, opt_inline_proj};
 use std::path::PathBuf;
@@ -79,18 +79,18 @@ fn collect_diff(before: &Grf, after: &Grf, path: &str, out: &mut Vec<Change>) {
     if before == after {
         return;
     }
-    match (before, after) {
-        (Grf::Comp(h1, gs1, _), Grf::Comp(h2, gs2, _)) if gs1.len() == gs2.len() => {
+    match (&before.kind, &after.kind) {
+        (GrfKind::Comp(h1, gs1, _), GrfKind::Comp(h2, gs2, _)) if gs1.len() == gs2.len() => {
             collect_diff(h1, h2, &format!("{path}.head"), out);
             for (i, (g1, g2)) in gs1.iter().zip(gs2.iter()).enumerate() {
                 collect_diff(g1, g2, &format!("{path}.arg{i}"), out);
             }
         }
-        (Grf::Rec(g1, h1), Grf::Rec(g2, h2)) => {
+        (GrfKind::Rec(g1, h1), GrfKind::Rec(g2, h2)) => {
             collect_diff(g1, g2, &format!("{path}.base"), out);
             collect_diff(h1, h2, &format!("{path}.step"), out);
         }
-        (Grf::Min(f1), Grf::Min(f2)) => {
+        (GrfKind::Min(f1), GrfKind::Min(f2)) => {
             collect_diff(f1, f2, &format!("{path}.inner"), out);
         }
         // Variants differ or arg counts differ — the whole node was replaced.

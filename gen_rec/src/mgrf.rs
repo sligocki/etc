@@ -4,7 +4,7 @@ use std::path::Path;
 use std::str::Chars;
 
 use crate::sim_nat::SmallNat;
-use crate::grf::Grf;
+use crate::grf::{Grf, GrfKind};
 
 /// A single inline spec test from a `.mgrf` file.
 #[derive(Debug, Clone)]
@@ -220,7 +220,7 @@ fn parse_mgrf_impl(content: &str, resolver: Option<&ImportResolver<'_>>) -> Resu
     // Build display entries for GRF macros: resolve body with f → P(param_arity, 1).
     let mut grf_macro_defs = Vec::new();
     for (name, def) in &grf_macros {
-        let placeholder = Grf::Proj(def.param_arity, 1);
+        let placeholder = Grf::proj_atom(def.param_arity, 1);
         let mut ph_grfs = grfs.clone();
         let mut ph_arities = arities.clone();
         ph_grfs.insert(def.param_name.clone(), placeholder);
@@ -926,14 +926,14 @@ pub fn lift_grf(grf: &Grf, target: usize) -> Result<Grf, String> {
             current, target
         ));
     }
-    match grf {
-        Grf::Zero(_) => Ok(Grf::Zero(target)),
-        Grf::Succ => Err(format!(
+    match &grf.kind {
+        GrfKind::Zero(_) => Ok(Grf::zero_atom(target)),
+        GrfKind::Succ => Err(format!(
             "Cannot lift S (arity 1) to arity {}: S has a fixed arity",
             target
         )),
-        Grf::Proj(_, i) => Ok(Grf::Proj(target, *i)),
-        Grf::Comp(h, gs, _) => {
+        GrfKind::Proj(_, i) => Ok(Grf::proj_atom(target, *i)),
+        GrfKind::Comp(h, gs, _) => {
             if gs.is_empty() {
                 Ok(Grf::comp0(*h.clone(), target))
             } else {
@@ -944,12 +944,12 @@ pub fn lift_grf(grf: &Grf, target: usize) -> Result<Grf, String> {
                 Ok(Grf::comp(*h.clone(), lifted_gs))
             }
         }
-        Grf::Rec(g, h) => {
+        GrfKind::Rec(g, h) => {
             let lg = lift_grf(g, target - 1)?;
             let lh = lift_grf(h, target + 1)?;
             Ok(Grf::rec(lg, lh))
         }
-        Grf::Min(f) => {
+        GrfKind::Min(f) => {
             let lf = lift_grf(f, target + 1)?;
             Ok(Grf::min(lf))
         }
@@ -964,14 +964,14 @@ fn resolve(expr: &Expr, target: usize, known: &HashMap<String, Grf>) -> Result<G
             if *k != target {
                 return Err(format!("Z{}: explicit arity {} vs required {}", k, k, target));
             }
-            Ok(Grf::Zero(*k))
+            Ok(Grf::zero_atom(*k))
         }
-        Expr::Zero(None) => Ok(Grf::Zero(target)),
+        Expr::Zero(None) => Ok(Grf::zero_atom(target)),
         Expr::Succ => {
             if target != 1 {
                 return Err(format!("S has arity 1, required {}", target));
             }
-            Ok(Grf::Succ)
+            Ok(Grf::succ_atom())
         }
         Expr::Proj(Some(k), i) => {
             if *k != target {
@@ -980,9 +980,9 @@ fn resolve(expr: &Expr, target: usize, known: &HashMap<String, Grf>) -> Result<G
                     k, i, k, target
                 ));
             }
-            Ok(Grf::Proj(*k, *i))
+            Ok(Grf::proj_atom(*k, *i))
         }
-        Expr::Proj(None, i) => Ok(Grf::Proj(target, *i)),
+        Expr::Proj(None, i) => Ok(Grf::proj_atom(target, *i)),
         Expr::Comp(h, gs) => {
             let m = gs.len();
             let resolved_gs: Vec<Grf> = gs

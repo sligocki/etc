@@ -1,4 +1,4 @@
-use crate::grf::Grf;
+use crate::grf::{Grf, GrfKind};
 
 pub use crate::sim_nat::{SmallNat, BigNat, SimNat};
 
@@ -195,7 +195,7 @@ where
     // Fused M(R(g,h)): carry accumulator forward instead of restarting
     // the recursion from scratch for each Min candidate.
     if opts.min_rec_fuse {
-        if let Grf::Rec(rec_g, rec_h) = f {
+        if let GrfKind::Rec(rec_g, rec_h) = &f.kind {
             let (base, s_g) = simulate_opts(rec_g, args, step_budget.map(|b| b - steps.sim), opts);
             let sg = s_g.base_approx.clone();
             steps += s_g;
@@ -296,17 +296,17 @@ pub fn simulate_opts<N: SimNat>(grf: &Grf, args: &[N], step_budget: Option<u64>,
     }
     let mut steps = SimSteps::one(); // cost of this call
 
-    let result = match grf {
-        Grf::Zero(_) => SimResult::Value(N::zero()),
+    let result = match &grf.kind {
+        GrfKind::Zero(_) => SimResult::Value(N::zero()),
 
-        Grf::Succ => match args[0].clone().succ() {
+        GrfKind::Succ => match args[0].clone().succ() {
             Some(v) => SimResult::Value(v),
             None => SimResult::ValueOverflow,
         },
 
-        Grf::Proj(_, i) => SimResult::Value(args[i - 1].clone()),
+        GrfKind::Proj(_, i) => SimResult::Value(args[i - 1].clone()),
 
-        Grf::Comp(h, gs, _) => {
+        GrfKind::Comp(h, gs, _) => {
             // Evaluate each gi(args), collecting results as new arg list for h.
             let mut h_args: Vec<N> = Vec::with_capacity(gs.len());
             for g in gs.iter() {
@@ -322,7 +322,7 @@ pub fn simulate_opts<N: SimNat>(grf: &Grf, args: &[N], step_budget: Option<u64>,
             result
         }
 
-        Grf::Rec(g, h) => {
+        GrfKind::Rec(g, h) => {
             // args = [n, x2, ..., x_{k+1}]
             // R(g,h)(0, rest) = g(rest)
             // R(g,h)(n+1, rest) = h(n, R(g,h)(n, rest), rest)
@@ -401,7 +401,7 @@ pub fn simulate_opts<N: SimNat>(grf: &Grf, args: &[N], step_budget: Option<u64>,
             SimResult::Value(acc)
         }
 
-        Grf::Min(f) => {
+        GrfKind::Min(f) => {
             return simulate_min(f, args, step_budget, opts, &mut |_, _, _| {});
         }
     };
@@ -412,7 +412,6 @@ pub fn simulate_opts<N: SimNat>(grf: &Grf, args: &[N], step_budget: Option<u64>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grf::Grf;
     use crate::grf;
 
     fn eval_helper(grf: &Grf, args: &[SmallNat]) -> Option<SmallNat> {
@@ -422,42 +421,42 @@ mod tests {
 
     #[test]
     fn test_zero() {
-        assert_eq!(eval_helper(&Grf::Zero(0), &[]), Some(0));
-        assert_eq!(eval_helper(&Grf::Zero(2), &[3, 5]), Some(0));
+        assert_eq!(eval_helper(&Grf::zero_atom(0), &[]), Some(0));
+        assert_eq!(eval_helper(&Grf::zero_atom(2), &[3, 5]), Some(0));
     }
 
     #[test]
     fn test_succ() {
-        assert_eq!(eval_helper(&Grf::Succ, &[0]), Some(1));
-        assert_eq!(eval_helper(&Grf::Succ, &[5]), Some(6));
+        assert_eq!(eval_helper(&Grf::succ_atom(), &[0]), Some(1));
+        assert_eq!(eval_helper(&Grf::succ_atom(), &[5]), Some(6));
     }
 
     #[test]
     fn test_proj() {
-        assert_eq!(eval_helper(&Grf::Proj(2, 1), &[3, 5]), Some(3));
-        assert_eq!(eval_helper(&Grf::Proj(2, 2), &[3, 5]), Some(5));
-        assert_eq!(eval_helper(&Grf::Proj(3, 2), &[1, 2, 3]), Some(2));
+        assert_eq!(eval_helper(&Grf::proj_atom(2, 1), &[3, 5]), Some(3));
+        assert_eq!(eval_helper(&Grf::proj_atom(2, 2), &[3, 5]), Some(5));
+        assert_eq!(eval_helper(&Grf::proj_atom(3, 2), &[1, 2, 3]), Some(2));
     }
 
     #[test]
     fn test_comp_k0_1() {
         // C(S, Z0)() = S(Z0()) = S(0) = 1
-        let f = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
+        let f = Grf::comp(Grf::succ_atom(), vec![Grf::zero_atom(0)]);
         assert_eq!(eval_helper(&f, &[]), Some(1));
     }
 
     #[test]
     fn test_comp_k0_2() {
         // C(S, C(S, Z0))() = 2
-        let k01 = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
-        let k02 = Grf::comp(Grf::Succ, vec![k01]);
+        let k01 = Grf::comp(Grf::succ_atom(), vec![Grf::zero_atom(0)]);
+        let k02 = Grf::comp(Grf::succ_atom(), vec![k01]);
         assert_eq!(eval_helper(&k02, &[]), Some(2));
     }
 
     #[test]
     fn test_comp_projection_selects_arg() {
         // C(P(2,1), S, Z1)([3]) = P(2,1)(S(3), Z1(3)) = P(2,1)(4, 0) = 4
-        let f = Grf::comp(Grf::Proj(2, 1), vec![Grf::Succ, Grf::Zero(1)]);
+        let f = Grf::comp(Grf::proj_atom(2, 1), vec![Grf::succ_atom(), Grf::zero_atom(1)]);
         assert_eq!(eval_helper(&f, &[3]), Some(4));
     }
 
@@ -465,9 +464,9 @@ mod tests {
     fn test_rec_plus() {
         // Plus = R(P(1,1), C(S, P(3,2)))
         // Plus(n, m) = n + m
-        let g = Grf::Proj(1, 1);
-        let h = Grf::comp(Grf::Succ, vec![Grf::Proj(3, 2)]);
-        let plus = Grf::Rec(Box::new(g), Box::new(h));
+        let g = Grf::proj_atom(1, 1);
+        let h = Grf::comp(Grf::succ_atom(), vec![Grf::proj_atom(3, 2)]);
+        let plus = Grf::rec(g, h);
 
         assert_eq!(eval_helper(&plus, &[0, 0]), Some(0));
         assert_eq!(eval_helper(&plus, &[3, 2]), Some(5));
@@ -477,9 +476,9 @@ mod tests {
 
     #[test]
     fn test_rec_identity() {
-        let g = Grf::Zero(0);
-        let h = Grf::comp(Grf::Succ, vec![Grf::Proj(2, 2)]);
-        let identity = Grf::Rec(Box::new(g), Box::new(h));
+        let g = Grf::zero_atom(0);
+        let h = Grf::comp(Grf::succ_atom(), vec![Grf::proj_atom(2, 2)]);
+        let identity = Grf::rec(g, h);
         assert_eq!(identity.arity(), 1);
         assert_eq!(eval_helper(&identity, &[0]), Some(0));
         assert_eq!(eval_helper(&identity, &[5]), Some(5));
@@ -508,21 +507,21 @@ mod tests {
     #[test]
     fn test_min_proj() {
         // M(P(1,1))() = min{i : P(1,1)(i) = 0} = 0
-        let f = Grf::Min(Box::new(Grf::Proj(1, 1)));
+        let f = Grf::min(Grf::proj_atom(1, 1));
         assert_eq!(eval_helper(&f, &[]), Some(0));
     }
 
     #[test]
     fn test_min_zero() {
         // M(Z1)() = min{i : Z1(i) = 0} = 0
-        let f = Grf::Min(Box::new(Grf::Zero(1)));
+        let f = Grf::min(Grf::zero_atom(1));
         assert_eq!(eval_helper(&f, &[]), Some(0));
     }
 
     #[test]
     fn test_min_succ_diverges() {
         // M(S)() = min{i : S(i) = 0} = diverges; caught cheaply by is_never_zero.
-        let f = Grf::Min(Box::new(Grf::Succ));
+        let f = Grf::min(Grf::succ_atom());
         let (result, steps) = simulate(&f, &[], 1000);
         assert_eq!(result, SimResult::Diverge);
         assert!(steps.sim < 10, "is_never_zero should short-circuit, got {} steps", steps.sim);
@@ -531,11 +530,11 @@ mod tests {
     #[test]
     fn test_step_counting() {
         // Z0(): 1 step
-        let (_, steps) = simulate(&Grf::Zero(0), &[], 1_000_000);
+        let (_, steps) = simulate(&Grf::zero_atom(0), &[], 1_000_000);
         assert_eq!(steps.sim, 1);
 
         // C(S, Z0)(): simulate_opts(C) = 1, simulate_opts(Z0) = 1, simulate_opts(S) = 1 → 3 steps
-        let f = Grf::comp(Grf::Succ, vec![Grf::Zero(0)]);
+        let f = Grf::comp(Grf::succ_atom(), vec![Grf::zero_atom(0)]);
         let (_, steps) = simulate(&f, &[], 1_000_000);
         assert_eq!(steps.sim, 3);
     }
@@ -544,9 +543,9 @@ mod tests {
     fn test_rec_steps() {
         // R(Z0, P(2,2))(3): h = P(2,2) is Proj(_, 2), so the identity ff fires:
         // result = g(rest) = Z0() = 0 in steps: 1 (Rec) + 1 (Z0) = 2.
-        let g = Grf::Zero(0);
-        let h = Grf::Proj(2, 2);
-        let r = Grf::Rec(Box::new(g), Box::new(h));
+        let g = Grf::zero_atom(0);
+        let h = Grf::proj_atom(2, 2);
+        let r = Grf::rec(g, h);
         let (val, steps) = simulate(&r, &[3], 1_000_000);
         assert_eq!(val.into_value(), Some(0));
         assert_eq!(steps.sim, 2);
@@ -566,7 +565,7 @@ mod tests {
     #[test]
     fn test_succ_overflow_u64() {
         // S(u64::MAX) should return ValueOverflow, not wrap.
-        let (result, _) = simulate(&Grf::Succ, &[u64::MAX], 100);
+        let (result, _) = simulate(&Grf::succ_atom(), &[u64::MAX], 100);
         assert_eq!(result, SimResult::ValueOverflow);
     }
 
@@ -574,7 +573,7 @@ mod tests {
     fn test_succ_overflow_bignum() {
         // S(u64::MAX) with bignum should return Value(2^64), not ValueOverflow.
         let big_max = BigNat::from(u64::MAX);
-        let (result, _) = simulate_big(&Grf::Succ, &[big_max], 100);
+        let (result, _) = simulate_big(&Grf::succ_atom(), &[big_max], 100);
         let expected = BigNat::from(1u64) << 64u32;
         assert_eq!(result, SimResult::Value(expected));
     }
@@ -593,7 +592,7 @@ mod tests {
     fn test_rec_ff_simple() {
         // Pred: R(Z0, P(2,1))
         // Ignores accumulator
-        let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 1));
+        let r = Grf::rec(Grf::zero_atom(0), Grf::proj_atom(2, 1));
         for n in (0 as SmallNat)..=10 {
             let expected = n.saturating_sub(1);
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
@@ -607,9 +606,9 @@ mod tests {
     // P(3,1) ignores the accumulator so both Rs fast-forward.
     fn nested_rec() -> Grf {
         // Pred = R(Z1, P(3,1))
-        let inner = Grf::rec(Grf::Zero(1), Grf::Proj(3, 1));
+        let inner = Grf::rec(Grf::zero_atom(1), Grf::proj_atom(3, 1));
         // Monus2 = R(Z0, Pred)
-        Grf::rec(Grf::Zero(0), inner)
+        Grf::rec(Grf::zero_atom(0), inner)
     }
 
     #[test]
@@ -646,7 +645,7 @@ mod tests {
         // R(Z0, P(2,2)): h is Proj(_, 2) so the new ff fires: result = g(rest) = Z0() = 0.
         // With ff:    steps = 1(Rec) + 1(Z0) = 2.
         // Without ff: steps = 1(Rec) + 1(Z0) + 3*1(P) = 5.
-        let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 2));
+        let r = Grf::rec(Grf::zero_atom(0), Grf::proj_atom(2, 2));
         for n in (0 as SmallNat)..=10 {
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
             let (v_no, _) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
@@ -663,7 +662,7 @@ mod tests {
     #[test]
     fn test_rec_ff_proj_acc_identity_arity2() {
         // R(P(1,1), P(3,2))(n, m): h = P(3,2) returns acc; result = P(1,1)(m) = m for all n.
-        let r = Grf::rec(Grf::Proj(1, 1), Grf::Proj(3, 2));
+        let r = Grf::rec(Grf::proj_atom(1, 1), Grf::proj_atom(3, 2));
         for n in (0 as SmallNat)..=5 {
             for m in (0 as SmallNat)..=5 {
                 let (v_ff, _) = simulate(&r, &[n, m], 1_000_000);
@@ -695,7 +694,7 @@ mod tests {
     #[test]
     fn test_min_ff_unused_search_var_zero() {
         // M(Z1)(): Z1 ignores arg 1. f(0)=0 → Value(0).
-        let f = Grf::Min(Box::new(Grf::Zero(1)));
+        let f = Grf::min(Grf::zero_atom(1));
         let (r, _) = simulate(&f, &[], 1_000_000);
         assert_eq!(r, SimResult::Value(0));
     }
@@ -703,7 +702,7 @@ mod tests {
     #[test]
     fn test_min_ff_proj_outer_arg_zero() {
         // M(P(2,2))(0): P(2,2) ignores arg 1 (search var). f(0,0)=0 → Value(0).
-        let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
+        let f = Grf::min(Grf::proj_atom(2, 2));
         let (r, _) = simulate(&f, &[0], 1_000_000);
         assert_eq!(r, SimResult::Value(0));
     }
@@ -711,7 +710,7 @@ mod tests {
     #[test]
     fn test_min_ff_proj_outer_arg_diverges() {
         // M(P(2,2))(3): f(0,3)=3≠0 → Diverge.
-        let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
+        let f = Grf::min(Grf::proj_atom(2, 2));
         let (r, _) = simulate(&f, &[3], 1_000_000);
         assert_eq!(r, SimResult::Diverge);
     }
@@ -721,7 +720,7 @@ mod tests {
         // M(P(2,2))(3): P(2,2) ignores arg 1. f(0,3)=3≠0 → Diverge (with ff).
         // Without ff + small budget → OutOfSteps (budget exhausted, not proven diverge).
         // P(2,2).is_never_zero() is false so the is_never_zero short-circuit doesn't fire.
-        let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
+        let f = Grf::min(Grf::proj_atom(2, 2));
         let (r_ff, _) = simulate(&f, &[3], 0);  // unlimited
         assert_eq!(r_ff, SimResult::Diverge);
         let (r_no, _) = simulate_opts(&f, &[3], Some(100), no_min_ff());
@@ -733,7 +732,7 @@ mod tests {
         // M(S)(): S uses arg 1 (search var) so the fast-forward (which relies on
         // the search var being ignored) must NOT apply.  However, S.is_never_zero()
         // so the never-zero short-circuit fires first and returns Diverge cheaply.
-        let f = Grf::Min(Box::new(Grf::Succ));
+        let f = Grf::min(Grf::succ_atom());
         let (r_ff, _) = simulate_opts::<SmallNat>(&f, &[], Some(1000), SimOpts::default());
         let (r_no, _) = simulate_opts::<SmallNat>(&f, &[], Some(1000), no_min_ff());
         assert_eq!(r_ff, SimResult::Diverge);
@@ -744,7 +743,7 @@ mod tests {
     fn test_min_ff_fewer_steps() {
         // M(P(2,2))(3): ff detects divergence in one eval; without ff exhausts budget.
         // P(2,2).is_never_zero() is false so is_never_zero doesn't short-circuit.
-        let f = Grf::Min(Box::new(Grf::Proj(2, 2)));
+        let f = Grf::min(Grf::proj_atom(2, 2));
         let (_, steps_ff) = simulate(&f, &[3], 0);
         let (_, steps_no) = simulate_opts(&f, &[3], Some(100), no_min_ff());
         assert!(steps_ff.sim < 10, "ff should use very few steps, got {}", steps_ff.sim);
@@ -853,7 +852,7 @@ mod tests {
     #[test]
     fn test_base_approx_proj_identity_rec() {
         // R(Z0, P(2,2))(3): Proj-identity ff fires → sim=2, base_approx=5 (2 + 3 Proj calls).
-        let r = Grf::rec(Grf::Zero(0), Grf::Proj(2, 2));
+        let r = Grf::rec(Grf::zero_atom(0), Grf::proj_atom(2, 2));
         let (_, s) = simulate(&r, &[3], 0);
         assert_eq!(s.sim, 2, "sim steps");
         assert_eq!(s.base_approx, 5, "base_approx steps");

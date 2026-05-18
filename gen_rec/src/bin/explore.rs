@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::sim_nat::SmallNat;
-use gen_rec::grf::Grf;
+use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_table::print_io_table;
-use gen_rec::closed_form::{closed_form_ignores_arg, closed_form_of, AffineFn, ClosedForm};
+use gen_rec::closed_form::{closed_form_ignores_arg, AffineFn, ClosedForm};
 
 #[derive(Parser, Debug)]
 #[command(about = "Explore a GRF by naming its R/M sub-expressions and showing I/O tables")]
@@ -34,23 +34,23 @@ struct Args {
 
 /// Collect unique R/M nodes in post-order, recording their string keys in `order`.
 fn collect_subexprs(grf: &Grf, seen: &mut BTreeMap<String, Grf>, order: &mut Vec<String>) {
-    match grf {
-        Grf::Comp(h, gs, _) => {
+    match &grf.kind {
+        GrfKind::Comp(h, gs, _) => {
             collect_subexprs(h, seen, order);
             for g in gs {
                 collect_subexprs(g, seen, order);
             }
         }
-        Grf::Rec(g, h) => {
+        GrfKind::Rec(g, h) => {
             collect_subexprs(g, seen, order);
             collect_subexprs(h, seen, order);
         }
-        Grf::Min(f) => {
+        GrfKind::Min(f) => {
             collect_subexprs(f, seen, order);
         }
         _ => return,
     }
-    if matches!(grf, Grf::Rec(..) | Grf::Min(..)) {
+    if matches!(&grf.kind, GrfKind::Rec(..) | GrfKind::Min(..)) {
         let key = grf.to_string();
         if !seen.contains_key(&key) {
             seen.insert(key.clone(), grf.clone());
@@ -81,11 +81,11 @@ fn fmt_subst(grf: &Grf, names: &BTreeMap<String, String>) -> String {
     if let Some(name) = names.get(&key) {
         return name.clone();
     }
-    match grf {
-        Grf::Zero(k) => format!("Z{}", k),
-        Grf::Succ => "S".to_string(),
-        Grf::Proj(k, i) => format!("P({},{})", k, i),
-        Grf::Comp(h, gs, k) => {
+    match &grf.kind {
+        GrfKind::Zero(k) => format!("Z{}", k),
+        GrfKind::Succ => "S".to_string(),
+        GrfKind::Proj(k, i) => format!("P({},{})", k, i),
+        GrfKind::Comp(h, gs, k) => {
             let h_str = fmt_subst(h, names);
             if gs.is_empty() {
                 format!("C{}({})", k, h_str)
@@ -94,8 +94,8 @@ fn fmt_subst(grf: &Grf, names: &BTreeMap<String, String>) -> String {
                 format!("C({}, {})", h_str, gs_str.join(", "))
             }
         }
-        Grf::Rec(g, h) => format!("R({}, {})", fmt_subst(g, names), fmt_subst(h, names)),
-        Grf::Min(f) => format!("M({})", fmt_subst(f, names)),
+        GrfKind::Rec(g, h) => format!("R({}, {})", fmt_subst(g, names), fmt_subst(h, names)),
+        GrfKind::Min(f) => format!("M({})", fmt_subst(f, names)),
     }
 }
 
@@ -294,8 +294,8 @@ fn main() {
                 used_tag,
             );
 
-            if let Some(sem) = closed_form_of(sub) {
-                print_closed_form_rules(&name, &sem);
+            if let Some(sem) = sub.closed_form() {
+                print_closed_form_rules(&name, sem);
             } else if !args.no_sim {
                 print_io_table(sub, args.grid, args.max_steps);
             }
@@ -313,8 +313,8 @@ fn main() {
         grf.size()
     );
     let root_name = idx_to_name(order.len());
-    if let Some(sem) = closed_form_of(&grf) {
-        print_closed_form_rules(&root_name, &sem);
+    if let Some(sem) = grf.closed_form() {
+        print_closed_form_rules(&root_name, sem);
     } else if !args.no_sim {
         print_io_table(&grf, args.grid, args.max_steps);
     }

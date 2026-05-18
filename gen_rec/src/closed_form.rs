@@ -1,5 +1,5 @@
 use crate::sim_nat::SmallNat;
-use crate::grf::Grf;
+use crate::grf::{Grf, GrfKind};
 
 /// Affine function over natural numbers: c0 + c1*x1 + ... + ck*xk.
 ///
@@ -142,27 +142,31 @@ impl ClosedForm {
 ///
 /// Returns `None` for `Min` or patterns not yet covered.
 pub fn closed_form_of(grf: &Grf) -> Option<ClosedForm> {
-    match grf {
+    // Short-circuit if already cached (avoids recomputing sub-expressions).
+    if let Some(cached) = grf.cf.get() {
+        return cached.clone();
+    }
+    match &grf.kind {
         // Atoms are all Affine
-        Grf::Zero(k) => Some(ClosedForm::Affine(AffineFn::zero(*k))),
-        Grf::Succ => Some(ClosedForm::Affine(AffineFn::succ())),
-        Grf::Proj(k, i) => Some(ClosedForm::Affine(AffineFn::proj(*k, *i))),
+        GrfKind::Zero(k) => Some(ClosedForm::Affine(AffineFn::zero(*k))),
+        GrfKind::Succ => Some(ClosedForm::Affine(AffineFn::succ())),
+        GrfKind::Proj(k, i) => Some(ClosedForm::Affine(AffineFn::proj(*k, *i))),
 
-        Grf::Comp(g, hs, k) => {
-            let sem_g = closed_form_of(g)?;
-            let sem_hs: Vec<ClosedForm> = hs.iter().map(closed_form_of).collect::<Option<_>>()?;
+        GrfKind::Comp(g, hs, k) => {
+            let sem_g = g.closed_form()?.clone();
+            let sem_hs: Vec<ClosedForm> = hs.iter().map(|h| h.closed_form().cloned()).collect::<Option<_>>()?;
             compose(&sem_g, &sem_hs, *k)
         }
 
-        Grf::Rec(g, h) => {
+        GrfKind::Rec(g, h) => {
             let k_outer = g.arity() + 1;
-            let sem_g = closed_form_of(g)?;
-            let sem_h = closed_form_of(h)?;
+            let sem_g = g.closed_form()?.clone();
+            let sem_h = h.closed_form()?.clone();
             closed_form_of_rec(&sem_g, &sem_h, k_outer)
         }
 
         // Not yet supported
-        Grf::Min(_) => None,
+        GrfKind::Min(_) => None,
     }
 }
 

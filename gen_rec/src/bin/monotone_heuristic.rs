@@ -9,7 +9,7 @@
 ///   monotone_heuristic results/min_prf/14_10M/holdout.txt
 ///   monotone_heuristic --max-val 20 --max-steps 100000 holdout.txt
 use clap::Parser;
-use gen_rec::grf::Grf;
+use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_grl::{self, GrfEntry};
 use gen_rec::mgrf::parse_mgrf_to_grfs;
 use gen_rec::simulate::{simulate};
@@ -159,8 +159,8 @@ fn process_file(path: &PathBuf, args: &Args) {
             Err(e) => { eprintln!("parse error ({}): {}", e, expr); continue; }
         };
 
-        let inner = match &grf {
-            Grf::Min(f) => f.as_ref().clone(),
+        let inner = match &grf.kind {
+            GrfKind::Min(f) => f.as_ref().clone(),
             _ => { eprintln!("expected M(...), got: {}", expr); continue; }
         };
 
@@ -249,13 +249,13 @@ fn probe_grf(expr: &str, args: &Args) {
         Err(e) => { eprintln!("parse error: {}", e); return; }
     };
 
-    let inner = match &grf {
-        Grf::Min(f) => f.as_ref().clone(),
+    let inner = match &grf.kind {
+        GrfKind::Min(f) => f.as_ref().clone(),
         _ => grf.clone(),
     };
 
     println!("probe : {}", expr);
-    if matches!(grf, Grf::Min(_)) {
+    if matches!(&grf.kind, GrfKind::Min(_)) {
         println!("inner : {}", inner);
     }
     println!("arity : {}", inner.arity());

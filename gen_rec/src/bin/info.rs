@@ -8,7 +8,7 @@
 ///   cargo run --bin info -- Add
 use clap::Parser;
 use gen_rec::alias::AliasDb;
-use gen_rec::grf::Grf;
+use gen_rec::grf::{Grf, GrfKind};
 use std::io::IsTerminal;
 
 #[derive(Parser, Debug)]
@@ -36,19 +36,19 @@ fn latex_num(n: usize) -> String {
 }
 
 fn to_latex(grf: &Grf) -> String {
-    match grf {
-        Grf::Zero(k)      => format!("Z^{}", latex_num(*k)),
-        Grf::Succ         => "S".to_string(),
-        Grf::Proj(k, i)   => format!("P^{}_{}", latex_num(*k), latex_num(*i)),
-        Grf::Comp(h, gs, _) => {
+    match &grf.kind {
+        GrfKind::Zero(k)      => format!("Z^{}", latex_num(*k)),
+        GrfKind::Succ         => "S".to_string(),
+        GrfKind::Proj(k, i)   => format!("P^{}_{}", latex_num(*k), latex_num(*i)),
+        GrfKind::Comp(h, gs, _) => {
             let mut args = vec![to_latex(h)];
             args.extend(gs.iter().map(to_latex));
             format!("C^{}({})", latex_num(grf.arity()), args.join(", "))
         }
-        Grf::Rec(g, h) => {
+        GrfKind::Rec(g, h) => {
             format!("R^{}({}, {})", latex_num(grf.arity()), to_latex(g), to_latex(h))
         }
-        Grf::Min(f) => {
+        GrfKind::Min(f) => {
             format!("M^{}({})", latex_num(grf.arity()), to_latex(f))
         }
     }
@@ -101,7 +101,7 @@ fn main() {
     println!("static properties:");
     print_static_props(&grf);
 
-    if let Grf::Min(inner) = &grf {
+    if let GrfKind::Min(inner) = &grf.kind {
         println!();
         println!("inner [arity={}, size={}]:", inner.arity(), inner.size());
         println!("  {}", inner);

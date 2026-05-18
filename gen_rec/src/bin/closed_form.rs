@@ -14,7 +14,7 @@ use gen_rec::closed_form::{closed_form_of, ClosedForm};
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::stream_grf;
 use gen_rec::fingerprint::canonical_inputs;
-use gen_rec::grf::Grf;
+use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_grl::parse_grf_entries;
 use gen_rec::pruning::PruningOpts;
 use gen_rec::sim_nat::SmallNat;
@@ -353,9 +353,9 @@ fn value_preview(f: &Grf, max_steps: SmallNat) -> String {
 }
 
 fn holdout_reason(grf: &Grf) -> String {
-    match grf {
-        Grf::Min(_) => "Min".into(),
-        Grf::Rec(g, h) => {
+    match &grf.kind {
+        GrfKind::Min(_) => "Min".into(),
+        GrfKind::Rec(g, h) => {
             let uses_acc = h.used_args().contains(&2);
             let acc_k = h.acc_plus_k().is_some();
             let sem_h = closed_form_of(h);
@@ -386,7 +386,7 @@ fn holdout_reason(grf: &Grf) -> String {
                 }
             }
         }
-        Grf::Comp(h, gs, _) => {
+        GrfKind::Comp(h, gs, _) => {
             for (i, g) in gs.iter().enumerate() {
                 match closed_form_of(g) {
                     None => return format!("Comp: arg[{}] → {}", i + 1, holdout_reason(g)),
@@ -971,8 +971,8 @@ fn normalize_grf(s: &str) -> String {
 ///
 /// Atoms are always canonical and bypass the memo lookup.
 fn is_in_memo(grf: &Grf, en: &ClosedFormEnumerator) -> bool {
-    match grf {
-        Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => true,
+    match &grf.kind {
+        GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => true,
         _ => en.candidates(grf.arity(), grf.size()).iter().any(|g| g == grf),
     }
 }
@@ -985,11 +985,11 @@ fn first_non_canonical(
     grf: &Grf,
     en: &ClosedFormEnumerator,
 ) -> Option<(Grf, Grf, ClosedForm)> {
-    match grf {
+    match &grf.kind {
         // Atoms are always canonical.
-        Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => return None,
+        GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => return None,
 
-        Grf::Comp(h, gs, _) => {
+        GrfKind::Comp(h, gs, _) => {
             for g in gs {
                 if let Some(r) = first_non_canonical(g, en) {
                     return Some(r);
@@ -1000,7 +1000,7 @@ fn first_non_canonical(
             }
         }
 
-        Grf::Rec(g, h) => {
+        GrfKind::Rec(g, h) => {
             if let Some(r) = first_non_canonical(g, en) {
                 return Some(r);
             }
@@ -1009,7 +1009,7 @@ fn first_non_canonical(
             }
         }
 
-        Grf::Min(f) => {
+        GrfKind::Min(f) => {
             if let Some(r) = first_non_canonical(f, en) {
                 return Some(r);
             }

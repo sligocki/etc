@@ -1,8 +1,11 @@
 use std::collections::BTreeSet;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::iter::Peekable;
 use std::str::{Chars, FromStr};
+use std::sync::OnceLock;
 
+use crate::closed_form::{ClosedForm, closed_form_of};
 use crate::sim_nat::SmallNat;
 
 /// Parse a GRF from a format string, panicking on error.
@@ -21,13 +24,11 @@ macro_rules! grf {
     };
 }
 
-/// A General Recursive Function (GRF).
+/// The structural variant of a GRF node (renamed from `Grf` to allow the wrapper struct).
 ///
-/// Each GRF has a well-defined arity (number of inputs) derivable from its structure.
-///
-/// Size measure: atoms have size 1; combinators have size 1 + sum of sub-expression sizes.
+/// Each combinator stores child `Grf` nodes (which carry the lazy ClosedForm cache).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Grf {
+pub enum GrfKind {
     // --- Atoms (size 1) ---
     /// Z_k: k-arity constant-zero. Z_k(x1,...,xk) = 0.
     Zero(usize),
@@ -43,29 +44,90 @@ pub enum Grf {
     /// C(h,g1,...,gm)(x1,...,xk) = h(g1(x1,...,xk), ..., gm(x1,...,xk))
     ///
     /// The third field stores k (the shared arity of all gi and of the result).
-    /// Storing it here avoids the O(depth) traversal and prevents panics on
-    /// empty-arg edge cases.
     Comp(Box<Grf>, Vec<Grf>, usize),
 
     /// R(g, h): g ∈ GRF_k, h ∈ GRF_{k+2}, result ∈ GRF_{k+1}.
-    /// R(g,h)(0, rest) = g(rest)
-    /// R(g,h)(n+1, rest) = h(n, R(g,h)(n, rest), rest)
     Rec(Box<Grf>, Box<Grf>),
 
     /// M(f): f ∈ GRF_{k+1}, result ∈ GRF_k.
-    /// M(f)(x1,...,xk) = min{i ∈ ℕ : f(i,x1,...,xk) = 0}
     Min(Box<Grf>),
 }
 
+/// A General Recursive Function (GRF) with a lazily-computed ClosedForm cache.
+///
+/// The `kind` field holds the structural variant; `cf` caches the result of
+/// `closed_form_of` on first access via `closed_form()`.
+///
+/// `PartialEq`, `Eq`, and `Hash` are based on `kind` only — `cf` is a
+/// transparent cache and does not affect identity.
+pub struct Grf {
+    pub kind: GrfKind,
+    /// Lazily computed once; `None` means no closed form exists for this node.
+    pub(crate) cf: OnceLock<Option<ClosedForm>>,
+}
+
+impl Clone for Grf {
+    fn clone(&self) -> Self {
+        let cf = OnceLock::new();
+        if let Some(v) = self.cf.get() {
+            let _ = cf.set(v.clone());
+        }
+        Grf { kind: self.kind.clone(), cf }
+    }
+}
+
+impl fmt::Debug for Grf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl PartialEq for Grf {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Eq for Grf {}
+
+impl Hash for Grf {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
+    }
+}
+
 impl Grf {
+    pub(crate) fn new(kind: GrfKind) -> Self {
+        Grf { kind, cf: OnceLock::new() }
+    }
+
+    // --- Atom constructors ---
+
+    /// Z_k: k-arity constant-zero.
+    pub fn zero_atom(k: usize) -> Self {
+        Self::new(GrfKind::Zero(k))
+    }
+
+    /// S: 1-arity successor.
+    pub fn succ_atom() -> Self {
+        Self::new(GrfKind::Succ)
+    }
+
+    /// P^k_i: k-arity projection (i is 1-based).
+    pub fn proj_atom(k: usize, i: usize) -> Self {
+        Self::new(GrfKind::Proj(k, i))
+    }
+
+    // --- Combinator constructors ---
+
     /// Convenience constructor for Rec: boxes both sub-functions.
     pub fn rec(g: Self, h: Self) -> Self {
-        Grf::Rec(Box::new(g), Box::new(h))
+        Self::new(GrfKind::Rec(Box::new(g), Box::new(h)))
     }
 
     /// Convenience constructor for Min: boxes the inner function.
     pub fn min(f: Self) -> Self {
-        Grf::Min(Box::new(f))
+        Self::new(GrfKind::Min(Box::new(f)))
     }
 
     /// Convenience constructor for Comp: derives and stores the arity of the args.
@@ -77,27 +139,37 @@ impl Grf {
             "Comp requires at least 1 argument function; use comp0 for 0-arg Comp"
         );
         let arity = args[0].arity();
-        Grf::Comp(Box::new(h), args, arity)
+        Self::new(GrfKind::Comp(Box::new(h), args, arity))
     }
 
     /// Convenience constructor for 0-arg Comp: `Ck(h)` lifts a 0-arity `h` to
     /// a constant function of `outer_arity` inputs.
     pub fn comp0(h: Self, outer_arity: usize) -> Self {
-        Grf::Comp(Box::new(h), vec![], outer_arity)
+        Self::new(GrfKind::Comp(Box::new(h), vec![], outer_arity))
     }
+
+    // --- ClosedForm access ---
+
+    /// Returns the closed-form semantic representation, computing and caching it on
+    /// first call. Returns `None` for `Min`-containing GRFs or unsupported patterns.
+    pub fn closed_form(&self) -> Option<&ClosedForm> {
+        self.cf.get_or_init(|| closed_form_of(self)).as_ref()
+    }
+
+    // --- Structural queries ---
 
     /// Returns the arity (number of inputs) of this function.
     pub fn arity(&self) -> usize {
-        match self {
-            Grf::Zero(k) => *k,
-            Grf::Succ => 1,
-            Grf::Proj(k, _) => *k,
+        match &self.kind {
+            GrfKind::Zero(k) => *k,
+            GrfKind::Succ => 1,
+            GrfKind::Proj(k, _) => *k,
             // Arity is stored directly; O(1) and no panic on empty args.
-            Grf::Comp(_, _, k) => *k,
+            GrfKind::Comp(_, _, k) => *k,
             // g ∈ GRF_k → R(g,h) ∈ GRF_{k+1}
-            Grf::Rec(g, _) => g.arity() + 1,
+            GrfKind::Rec(g, _) => g.arity() + 1,
             // f ∈ GRF_{k+1} → M(f) ∈ GRF_k
-            Grf::Min(f) => {
+            GrfKind::Min(f) => {
                 let a = f.arity();
                 debug_assert!(a >= 1, "M(f) requires arity(f) >= 1");
                 a - 1
@@ -107,11 +179,11 @@ impl Grf {
 
     /// Returns the structural size of this function.
     pub fn size(&self) -> usize {
-        match self {
-            Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => 1,
-            Grf::Comp(h, gs, _) => 1 + h.size() + gs.iter().map(Grf::size).sum::<usize>(),
-            Grf::Rec(g, h) => 1 + g.size() + h.size(),
-            Grf::Min(f) => 1 + f.size(),
+        match &self.kind {
+            GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => 1,
+            GrfKind::Comp(h, gs, _) => 1 + h.size() + gs.iter().map(Grf::size).sum::<usize>(),
+            GrfKind::Rec(g, h) => 1 + g.size() + h.size(),
+            GrfKind::Min(f) => 1 + f.size(),
         }
     }
 
@@ -128,16 +200,16 @@ impl Grf {
     /// Conservative: returns false when unsure. Used by the enumerator to
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
-        match self {
-            Grf::Succ => { return true; }
-            Grf::Rec(g, h) => {
+        match &self.kind {
+            GrfKind::Succ => { return true; }
+            GrfKind::Rec(g, h) => {
                 // R(g, h)(n, rest): base g(rest), then h applies n times accumulating.
                 // Positive for all n iff: g never zero AND h positive when accumulator positive.
                 if g.is_never_zero() && h.is_positive_for_pos_arg(2) {
                     return true;
                 }
             }
-            Grf::Comp(h, gs, _) => {
+            GrfKind::Comp(h, gs, _) => {
                 // C(+, ...) -> +
                 if h.is_never_zero() {
                     return true;
@@ -146,7 +218,7 @@ impl Grf {
                 // C(R(_, h_step), gs) -> + when h_step and all gs are always positive:
                 // gs[0] is never zero so the counter n >= 1, meaning R always steps at
                 // least once; since h_step is never zero the result is always positive.
-                if let Grf::Rec(_, h_step) = h.as_ref() {
+                if let GrfKind::Rec(_, h_step) = &h.kind {
                     if h_step.is_never_zero() && gs.first().map_or(false, |g| g.is_never_zero()) {
                         return true;
                     }
@@ -166,9 +238,9 @@ impl Grf {
         if self.is_never_zero() {
             return true;
         }
-        match self {
-            Grf::Proj(_, i) => *i == j,
-            Grf::Rec(g, h) => {
+        match &self.kind {
+            GrfKind::Proj(_, i) => *i == j,
+            GrfKind::Rec(g, h) => {
                 if j == 1 {
                     // Counter positive (n ≥ 1): h fires at least once. If h always
                     // returns positive, done. The g.is_never_zero() + h.is_positive_for_pos_arg(2)
@@ -182,7 +254,7 @@ impl Grf {
                     g.is_positive_for_pos_arg(j - 1) && h.is_positive_for_pos_arg(2)
                 }
             }
-            Grf::Comp(h, gs, _) => {
+            GrfKind::Comp(h, gs, _) => {
                 // h positive when h's arg 1 positive, gs[0] positive when comp's arg j positive
                 if h.is_positive_for_pos_arg(1)
                     && gs.first().map_or(false, |g| g.is_positive_for_pos_arg(j))
@@ -190,7 +262,7 @@ impl Grf {
                     return true;
                 }
                 // h = Proj to position p: output = gs[p-1], delegate
-                if let Grf::Proj(_, p) = h.as_ref() {
+                if let GrfKind::Proj(_, p) = &h.kind {
                     if let Some(gp) = gs.get(p - 1) {
                         return gp.is_positive_for_pos_arg(j);
                     }
@@ -202,11 +274,11 @@ impl Grf {
     }
 
     pub fn used_args(&self) -> BTreeSet<usize> {
-        match self {
-            Grf::Zero(_) => BTreeSet::new(),
-            Grf::Succ => [1].into_iter().collect(),
-            Grf::Proj(_, i) => [*i].into_iter().collect(),
-            Grf::Comp(h, gs, _) => {
+        match &self.kind {
+            GrfKind::Zero(_) => BTreeSet::new(),
+            GrfKind::Succ => [1].into_iter().collect(),
+            GrfKind::Proj(_, i) => [*i].into_iter().collect(),
+            GrfKind::Comp(h, gs, _) => {
                 // C(h, g1..gm)(args) = h(g1(args), ..., gm(args)).
                 // Comp reads arg j iff h reads some position i where gi reads arg j.
                 let h_used = h.used_args();
@@ -218,7 +290,7 @@ impl Grf {
                 }
                 result
             }
-            Grf::Rec(g, h) => {
+            GrfKind::Rec(g, h) => {
                 // R(g,h)(n, r1..r_{k-1}): base g(r1..r_{k-1}), step h(i, acc, r1..r_{k-1}).
                 // g's arg j  →  Rec's arg j+1  (rest starts at position 2 of Rec).
                 // h's arg j (j≥3)  →  Rec's arg j-1  (h's positions 1,2 are i and acc).
@@ -239,7 +311,7 @@ impl Grf {
                 }
                 result
             }
-            Grf::Min(f) => {
+            GrfKind::Min(f) => {
                 // M(f)(r1..r_k): f(i, r1..r_k). f's arg j (j≥2) → Min's arg j-1.
                 let f_used = f.used_args();
                 let mut result = BTreeSet::new();
@@ -274,11 +346,11 @@ impl Grf {
 
     /// Returns true if this is a Primitive Recursive Function (no Min anywhere).
     pub fn is_prf(&self) -> bool {
-        match self {
-            Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => true,
-            Grf::Comp(h, gs, _) => h.is_prf() && gs.iter().all(Grf::is_prf),
-            Grf::Rec(g, h) => g.is_prf() && h.is_prf(),
-            Grf::Min(_) => false,
+        match &self.kind {
+            GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => true,
+            GrfKind::Comp(h, gs, _) => h.is_prf() && gs.iter().all(Grf::is_prf),
+            GrfKind::Rec(g, h) => g.is_prf() && h.is_prf(),
+            GrfKind::Min(_) => false,
         }
     }
 
@@ -286,10 +358,10 @@ impl Grf {
     /// `λ(args). args[2] + k`, i.e. a chain of k Succs applied to P2.
     /// Used to accelerate R(g, h) when h is an affine step on the accumulator.
     pub fn acc_plus_k(&self) -> Option<SmallNat> {
-        match self {
-            Grf::Proj(_, 2) => Some(0),
-            Grf::Comp(outer, inners, _) => {
-                if let Grf::Succ = outer.as_ref() {
+        match &self.kind {
+            GrfKind::Proj(_, 2) => Some(0),
+            GrfKind::Comp(outer, inners, _) => {
+                if let GrfKind::Succ = &outer.kind {
                     if inners.len() == 1 {
                         return inners[0].acc_plus_k().map(|k| k + 1);
                     }
@@ -308,16 +380,16 @@ impl Grf {
         match c {
             'Z' => {
                 let k = Self::parse_num(chars)?;
-                Ok(Grf::Zero(k))
+                Ok(Grf::zero_atom(k))
             }
-            'S' => Ok(Grf::Succ),
+            'S' => Ok(Grf::succ_atom()),
             'P' => {
                 Self::consume(chars, '(')?;
                 let k = Self::parse_num(chars)?;
                 Self::consume(chars, ',')?;
                 let i = Self::parse_num(chars)?;
                 Self::consume(chars, ')')?;
-                Ok(Grf::Proj(k, i))
+                Ok(Grf::proj_atom(k, i))
             }
             'C' => {
                 // 0-arg form: Ck(h) where k is the outer arity encoded as a decimal integer.
@@ -326,7 +398,7 @@ impl Grf {
                     Self::consume(chars, '(')?;
                     let h = Self::parse_expr(chars)?;
                     Self::consume(chars, ')')?;
-                    return Ok(Grf::Comp(Box::new(h), vec![], k));
+                    return Ok(Grf::comp0(h, k));
                 }
                 Self::consume(chars, '(')?;
                 let h = Self::parse_expr(chars)?;
@@ -346,13 +418,13 @@ impl Grf {
                 Self::consume(chars, ',')?;
                 let h = Self::parse_expr(chars)?;
                 Self::consume(chars, ')')?;
-                Ok(Grf::Rec(Box::new(g), Box::new(h)))
+                Ok(Grf::rec(g, h))
             }
             'M' => {
                 Self::consume(chars, '(')?;
                 let f = Self::parse_expr(chars)?;
                 Self::consume(chars, ')')?;
-                Ok(Grf::Min(Box::new(f)))
+                Ok(Grf::min(f))
             }
             _ => Err(format!("Unexpected character: {}", c)),
         }
@@ -398,16 +470,16 @@ fn grf_outer_arg_dfs(
     seen: &mut Vec<bool>,
     order: &mut Vec<usize>,
 ) {
-    match g {
-        Grf::Proj(_, i) => {
+    match &g.kind {
+        GrfKind::Proj(_, i) => {
             let outer = map[i - 1];
             if outer > 0 && !seen[outer] {
                 seen[outer] = true;
                 order.push(outer);
             }
         }
-        Grf::Zero(_) => {}
-        Grf::Succ => {
+        GrfKind::Zero(_) => {}
+        GrfKind::Succ => {
             // Succ uses its single inner arg directly (no Proj node).
             debug_assert_eq!(map.len(), 1);
             let outer = map[0];
@@ -416,13 +488,13 @@ fn grf_outer_arg_dfs(
                 order.push(outer);
             }
         }
-        Grf::Comp(_, gs, _) => {
+        GrfKind::Comp(_, gs, _) => {
             // Outer args flow into gs; head h only sees abstract inner positions.
             for gi in gs {
                 grf_outer_arg_dfs(gi, map, seen, order);
             }
         }
-        Grf::Rec(base, step) => {
+        GrfKind::Rec(base, step) => {
             let k = base.arity() + 1; // outer arity of this Rec
             // Counter = outer map[0]; always encountered first for Rec.
             let outer_counter = map[0];
@@ -440,7 +512,7 @@ fn grf_outer_arg_dfs(
             }
             grf_outer_arg_dfs(step, &map_step, seen, order);
         }
-        Grf::Min(inner) => {
+        GrfKind::Min(inner) => {
             let k = g.arity();
             // inner: arg 1 → 0 (search var), arg j≥2 → map[j-2]
             let mut map_inner = vec![0usize];
@@ -454,11 +526,11 @@ fn grf_outer_arg_dfs(
 
 impl fmt::Display for Grf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Grf::Zero(k) => write!(f, "Z{k}"),
-            Grf::Succ => write!(f, "S"),
-            Grf::Proj(k, i) => write!(f, "P({k},{i})"),
-            Grf::Comp(h, gs, k) => {
+        match &self.kind {
+            GrfKind::Zero(k) => write!(f, "Z{k}"),
+            GrfKind::Succ => write!(f, "S"),
+            GrfKind::Proj(k, i) => write!(f, "P({k},{i})"),
+            GrfKind::Comp(h, gs, k) => {
                 if gs.is_empty() {
                     // 0-arg Comp: Ck(h) format encodes the outer arity for round-tripping.
                     write!(f, "C{k}({h})")
@@ -470,8 +542,8 @@ impl fmt::Display for Grf {
                     write!(f, ")")
                 }
             }
-            Grf::Rec(g, h) => write!(f, "R({g}, {h})"),
-            Grf::Min(func) => write!(f, "M({func})"),
+            GrfKind::Rec(g, h) => write!(f, "R({g}, {h})"),
+            GrfKind::Min(func) => write!(f, "M({func})"),
         }
     }
 }
@@ -660,7 +732,7 @@ mod tests {
         let inner = grf!("R(Z1,P(3,1))");
         assert!(!inner.used_args().contains(&2));
         // Outer R(Z0, inner): inner.used_args = {1}, so inner ignores acc.
-        let outer = Grf::rec(Grf::Zero(0), inner);
+        let outer = Grf::rec(Grf::zero_atom(0), inner);
         assert!(!outer.used_args().contains(&2));
     }
 
@@ -724,14 +796,14 @@ mod tests {
 
     #[test]
     fn test_acc_plus_k() {
-        assert_eq!(Grf::Proj(3, 2).acc_plus_k(), Some(0));
-        assert_eq!(Grf::Proj(3, 1).acc_plus_k(), None);
-        assert_eq!(Grf::Zero(2).acc_plus_k(), None);
+        assert_eq!(Grf::proj_atom(3, 2).acc_plus_k(), Some(0));
+        assert_eq!(Grf::proj_atom(3, 1).acc_plus_k(), None);
+        assert_eq!(Grf::zero_atom(2).acc_plus_k(), None);
         // C(S, P(3,2)) → Some(1)
-        let cs_p2 = Grf::comp(Grf::Succ, vec![Grf::Proj(3, 2)]);
+        let cs_p2 = Grf::comp(Grf::succ_atom(), vec![Grf::proj_atom(3, 2)]);
         assert_eq!(cs_p2.acc_plus_k(), Some(1));
         // C(S, C(S, P(3,2))) → Some(2)
-        let cs_cs_p2 = Grf::comp(Grf::Succ, vec![cs_p2]);
+        let cs_cs_p2 = Grf::comp(Grf::succ_atom(), vec![cs_p2]);
         assert_eq!(cs_cs_p2.acc_plus_k(), Some(2));
         assert_eq!(grf!("C(S, C(S, C(S, S)))").acc_plus_k(), None);
         assert_eq!(grf!("C(S, C(S, C(S, Z0)))").acc_plus_k(), None);

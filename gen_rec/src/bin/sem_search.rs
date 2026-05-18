@@ -310,7 +310,16 @@ const SPECS: &[SpecDef] = &[
         description: "trailing ones: f(n[,x]) has n trailing 1-bits (arity 1 or 2)",
         build: || Box::new(trailing_bits),
     },
+    SpecDef {
+        name: "A112367", default_arity: 1,
+        description: "https://oeis.org/A112367",
+        build: || Box::new(exact_spec(|a|
+            Some(A112367[a[0] as usize])
+        )),
+    },
 ];
+
+const A112367 : &[u64] = &[0, 0, 1, 0, 1, 3, 0, 1, 3, 6, 0, 1, 3, 6, 10, 0, 1, 3, 6, 10, 15, 0, 1, 3, 6, 10, 15, 21, 0, 1, 3, 6, 10, 15, 21, 28, 0, 1, 3, 6, 10, 15, 21, 28, 36, 0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 0, 1, 3, 6, 10];
 
 fn list_specs() {
     eprintln!("Available specs:");

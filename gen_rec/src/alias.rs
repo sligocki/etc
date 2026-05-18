@@ -2,7 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use std::cmp::Reverse;
 
-use crate::grf::Grf;
+use crate::grf::{Grf, GrfKind};
 use crate::mgrf::{lift_grf, parse_mgrf_with_modules, MgrfFile};
 
 // Ordered list of embedded mgrf files. Earlier files take precedence for
@@ -12,6 +12,7 @@ const MGRF_FILES: &[(&str, &str)] = &[
     ("base",     include_str!("../mgrf/base.mgrf")),
     ("bool_zero", include_str!("../mgrf/bool_zero.mgrf")),
     ("func_rep", include_str!("../mgrf/func_rep.mgrf")),
+    ("ack_worm", include_str!("../mgrf/ack_worm.mgrf")),
 ];
 
 
@@ -67,7 +68,7 @@ impl AliasDb {
             // and must not be overridden (e.g. bool_zero defines True := Z and False1 := S).
             for (name, grf) in &file.defs {
                 if seen_defs.insert(name.clone())
-                    && !matches!(grf, Grf::Succ | Grf::Zero(_) | Grf::Proj(_, _))
+                    && !matches!(&grf.kind, GrfKind::Succ | GrfKind::Zero(_) | GrfKind::Proj(_, _))
                 {
                     push!(name.clone(), grf.clone());
                 }
@@ -83,7 +84,7 @@ impl AliasDb {
                 if seen_macros.insert(macro_name.clone()) {
                     for n in 0..=max_param {
                         if let Ok(g) = file.eval_expr(&format!("{macro_name}[{n}]")) {
-                            if !matches!(g, Grf::Succ | Grf::Zero(_) | Grf::Proj(_, _)) {
+                            if !matches!(&g.kind, GrfKind::Succ | GrfKind::Zero(_) | GrfKind::Proj(_, _)) {
                                 push!(format!("{macro_name}[{n}]"), g);
                             }
                         }
@@ -160,19 +161,19 @@ impl AliasDb {
                 };
             }
         }
-        match grf {
-            Grf::Zero(k) => format!("Z{k}"),
-            Grf::Succ => "S".to_string(),
-            Grf::Proj(k, i) => format!("P({k},{i})"),
-            Grf::Comp(h, gs, _) => {
+        match &grf.kind {
+            GrfKind::Zero(k) => format!("Z{k}"),
+            GrfKind::Succ => "S".to_string(),
+            GrfKind::Proj(k, i) => format!("P({k},{i})"),
+            GrfKind::Comp(h, gs, _) => {
                 let head = self.alias_node(h);
                 let args: Vec<String> = gs.iter().map(|g| self.alias_node(g)).collect();
                 format!("C({}, {})", head, args.join(", "))
             }
-            Grf::Rec(g, h) => {
+            GrfKind::Rec(g, h) => {
                 format!("R({}, {})", self.alias_node(g), self.alias_node(h))
             }
-            Grf::Min(f) => format!("M({})", self.alias_node(f)),
+            GrfKind::Min(f) => format!("M({})", self.alias_node(f)),
         }
     }
 }
@@ -198,22 +199,22 @@ mod tests {
     use crate::grf::Grf;
 
     fn pred() -> Grf {
-        Grf::rec(Grf::Zero(0), Grf::Proj(2, 1))
+        Grf::rec(Grf::zero_atom(0), Grf::proj_atom(2, 1))
     }
     fn plus2() -> Grf {
-        Grf::comp(Grf::Succ, vec![Grf::Succ])
+        Grf::comp(Grf::succ_atom(), vec![Grf::succ_atom()])
     }
     fn add() -> Grf {
-        Grf::rec(Grf::Proj(1,1), Grf::comp(Grf::Succ, vec![Grf::Proj(3,2)]))
+        Grf::rec(Grf::proj_atom(1,1), Grf::comp(Grf::succ_atom(), vec![Grf::proj_atom(3,2)]))
     }
     fn shift() -> Grf {
-        Grf::rec(Grf::Proj(1, 1),
-                 Grf::comp(add(), vec![Grf::Proj(3, 2), Grf::Proj(3, 2)]))
+        Grf::rec(Grf::proj_atom(1, 1),
+                 Grf::comp(add(), vec![Grf::proj_atom(3, 2), Grf::proj_atom(3, 2)]))
     }
     fn constant(n: usize, arity: usize) -> Grf {
-        let mut f = Grf::Zero(arity);
+        let mut f = Grf::zero_atom(arity);
         for _ in 0..n {
-            f = Grf::comp(Grf::Succ, vec![f]);
+            f = Grf::comp(Grf::succ_atom(), vec![f]);
         }
         f
     }
@@ -231,7 +232,7 @@ mod tests {
     fn test_succ_not_aliased() {
         let db = AliasDb::default();
         // S stays as S, not Plus[1]
-        assert_eq!(db.alias(&Grf::Succ), "S");
+        assert_eq!(db.alias(&Grf::succ_atom()), "S");
     }
 
     #[test]
@@ -240,10 +241,10 @@ mod tests {
         // lift_grf correctly rejects lifting S to arity 2.
         // The old weaken() returned S unchanged, which would have added a spurious
         // "Plus[1]^2" -> S (arity 1) entry if Plus[1]=S entered the catalog.
-        assert!(lift_grf(&Grf::Succ, 2).is_err());
+        assert!(lift_grf(&Grf::succ_atom(), 2).is_err());
         // Confirm S still aliases correctly and no spurious "S^k" entry overrides it.
         let db = AliasDb::default();
-        assert_eq!(db.alias(&Grf::Succ), "S");
+        assert_eq!(db.alias(&Grf::succ_atom()), "S");
     }
 
     #[test]

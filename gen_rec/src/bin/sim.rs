@@ -13,7 +13,7 @@ use chrono::Local;
 use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::sim_nat::SmallNat;
-use gen_rec::grf::Grf;
+use gen_rec::grf::GrfKind;
 use gen_rec::io_table::print_sweep_table;
 use gen_rec::simulate::{simulate, simulate_min, simulate_with_fallback, SimOpts, SimResult, SimSteps};
 
@@ -98,7 +98,7 @@ fn main() {
             println!("inputs: {}", input_str.join(", "));
         }
         println!("---");
-        let (result, steps) = if let Grf::Min(f) = &grf {
+        let (result, steps) = if let GrfKind::Min(f) = &grf.kind {
             let step_budget = if args.max_steps == 0 { None } else { Some(args.max_steps) };
             let start = Instant::now();
             let mut last_progress = Instant::now();

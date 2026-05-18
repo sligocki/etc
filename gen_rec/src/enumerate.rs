@@ -1,4 +1,4 @@
-use crate::grf::Grf;
+use crate::grf::{Grf, GrfKind};
 use crate::optimize::{compute_inline_constraints, InlineConstraints};
 use crate::pruning::PruningOpts;
 use std::cell::RefCell;
@@ -45,12 +45,12 @@ pub(crate) fn for_each_grf_core(
         return;
     }
     if size == 1 {
-        callback(&Grf::Zero(arity));
+        callback(&Grf::zero_atom(arity));
         for i in 1..=arity {
-            callback(&Grf::Proj(arity, i));
+            callback(&Grf::proj_atom(arity, i));
         }
         if arity == 1 {
-            callback(&Grf::Succ);
+            callback(&Grf::succ_atom());
         }
         return;
     }
@@ -65,10 +65,10 @@ pub(crate) fn for_each_grf_core(
             // comp_null_null: prunes C0(h)
             if !(opts.comp_null_null && arity == 0) {
                 sub(hsize, 0, &mut |h: &Grf| {
-                    if opts.comp_zero && matches!(h, Grf::Zero(_)) {
+                    if opts.comp_zero && matches!(&h.kind, GrfKind::Zero(_)) {
                         return;
                     }
-                    callback(&Grf::Comp(Box::new(h.clone()), vec![], arity));
+                    callback(&Grf::comp0(h.clone(), arity));
                 });
             }
         }
@@ -76,15 +76,15 @@ pub(crate) fn for_each_grf_core(
         for m in 1..=gs_total {
             sub(hsize, m, &mut |h: &Grf| {
                 // Prune C(Z,...) and C(P,...)
-                if opts.comp_zero && matches!(h, Grf::Zero(_)) {
+                if opts.comp_zero && matches!(&h.kind, GrfKind::Zero(_)) {
                     return;
                 }
-                if opts.comp_proj && matches!(h, Grf::Proj(_, _)) {
+                if opts.comp_proj && matches!(&h.kind, GrfKind::Proj(_, _)) {
                     return;
                 }
                 // Prune C(C(f,g), h1, ...)
                 if opts.comp_assoc {
-                    if let Grf::Comp(_, inner_gs, _) = h {
+                    if let GrfKind::Comp(_, inner_gs, _) = &h.kind {
                         if inner_gs.len() == 1 {
                             return;
                         }
@@ -92,7 +92,7 @@ pub(crate) fn for_each_grf_core(
                 }
 
                 let h_box = Box::new(h.clone());
-                let h_is_rec = matches!(h, Grf::Rec(_, _));
+                let h_is_rec = matches!(&h.kind, GrfKind::Rec(_, _));
                 // Compute constraints once per head; O(h.size()) upfront instead of
                 // O(h.size()) per arg-tuple.
                 let inline_c: Option<InlineConstraints> = if opts.inline_proj {
@@ -123,8 +123,8 @@ pub(crate) fn for_each_grf_core(
                 // P2 as step always returns the accumulator unchanged, so R(g,P2)
                 // ignores its first argument entirely.
                 if opts.rec_step_p2 {
-                    if let Grf::Rec(_, step) = h {
-                        if matches!(step.as_ref(), Grf::Proj(_, 2)) {
+                    if let GrfKind::Rec(_, step) = &h.kind {
+                        if matches!(&step.kind, GrfKind::Proj(_, 2)) {
                             return;
                         }
                     }
@@ -147,7 +147,7 @@ pub(crate) fn for_each_grf_core(
                         // fires. The strictly-smaller C(g, f2,...) is generated separately.
                         if opts.rec_zero_arg
                             && h_is_rec
-                            && matches!(gs.first(), Some(Grf::Zero(_)))
+                            && gs.first().map_or(false, |g| matches!(&g.kind, GrfKind::Zero(_)))
                         {
                             return;
                         }
@@ -155,9 +155,9 @@ pub(crate) fn for_each_grf_core(
                         // is equivalent to inline_proj(h, k, rewiring), which is smaller.
                         // O(m) check using precomputed constraints.
                         if let Some(ref ic) = inline_c {
-                            let rewiring: Option<Vec<usize>> = gs.iter().map(|g| match g {
-                                Grf::Proj(_, i) => Some(*i),
-                                Grf::Zero(_) => Some(0),
+                            let rewiring: Option<Vec<usize>> = gs.iter().map(|g| match &g.kind {
+                                GrfKind::Proj(_, i) => Some(*i),
+                                GrfKind::Zero(_) => Some(0),
                                 _ => None,
                             }).collect();
                             if let Some(rw) = rewiring {
@@ -166,7 +166,7 @@ pub(crate) fn for_each_grf_core(
                                 }
                             }
                         }
-                        callback(&Grf::Comp(h_box.clone(), gs.to_vec(), arity));
+                        callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
                     },
                 );
             });
@@ -178,27 +178,26 @@ pub(crate) fn for_each_grf_core(
         for gsize in 1..n {
             let hsize = n - gsize;
             sub(gsize, arity - 1, &mut |g: &Grf| {
-                let g_box = Box::new(g.clone());
-                let g_is_zero = matches!(g, Grf::Zero(_));
+                let g_is_zero = matches!(&g.kind, GrfKind::Zero(_));
                 sub(hsize, arity + 1, &mut |h: &Grf| {
                     // rec_zero_base: R(Z(k), Z(k+2)) ≡ Z(k+1) (step always 0)
                     //                    R(Z(k), P(k+2,2)) ≡ Z(k+1) (acc starts 0, stays 0)
                     if opts.rec_zero_base
                         && g_is_zero
-                        && matches!(h, Grf::Zero(_) | Grf::Proj(_, 2))
+                        && matches!(&h.kind, GrfKind::Zero(_) | GrfKind::Proj(_, 2))
                     {
                         return;
                     }
                     // rec_proj_base: R(P(k-1,i), P(k+1,2))   ≡ P(k,i+1)  (h echoes acc, result = base)
                     //                R(P(k-1,i), P(k+1,i+2)) ≡ P(k,i+1)  (h returns xᵢ = base)
                     if opts.rec_proj_base {
-                        if let (Grf::Proj(_, i), Grf::Proj(_, j)) = (g, h) {
+                        if let (GrfKind::Proj(_, i), GrfKind::Proj(_, j)) = (&g.kind, &h.kind) {
                             if *j == 2 || *j == i + 2 {
                                 return;
                             }
                         }
                     }
-                    callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                    callback(&Grf::rec(g.clone(), h.clone()));
                 });
             });
         }
@@ -208,8 +207,8 @@ pub(crate) fn for_each_grf_core(
     if allow_min {
         sub(n, arity + 1, &mut |f: &Grf| {
             if opts.min_trivial {
-                if matches!(f, Grf::Zero(_)) { return; }
-                if matches!(f, Grf::Proj(_, _)) { return; }
+                if matches!(&f.kind, GrfKind::Zero(_)) { return; }
+                if matches!(&f.kind, GrfKind::Proj(_, _)) { return; }
             }
             if opts.min_dom {
                 // (a) f ignores the search variable (arg 1 of f): M(f) is a restriction of Z_{arity}.
@@ -217,7 +216,7 @@ pub(crate) fn for_each_grf_core(
                 // (b) f never returns 0: M(f) always diverges, dominated by Z_{arity}.
                 if f.is_never_zero() { return; }
             }
-            callback(&Grf::Min(Box::new(f.clone())));
+            callback(&Grf::min(f.clone()));
         });
     }
 }
@@ -265,7 +264,7 @@ fn for_each_args_core(
     if forced.map_or(false, |f| f[pos]) {
         // Forced position: only Zero(arity) with size 1.
         if remaining_size >= remaining_count {
-            current.push(Grf::Zero(arity));
+            current.push(Grf::zero_atom(arity));
             for_each_args_core(
                 remaining_size - 1,
                 remaining_count - 1,
@@ -377,15 +376,15 @@ fn seek_grfs(
 
     // Size-1 atoms: Zero(arity), Proj(arity,1..=arity), Succ (if arity==1).
     if size == 1 {
-        emit_atom(skip, rem, &Grf::Zero(arity), callback);
+        emit_atom(skip, rem, &Grf::zero_atom(arity), callback);
         for i in 1..=arity {
             if *rem == 0 {
                 return;
             }
-            emit_atom(skip, rem, &Grf::Proj(arity, i), callback);
+            emit_atom(skip, rem, &Grf::proj_atom(arity, i), callback);
         }
         if arity == 1 {
-            emit_atom(skip, rem, &Grf::Succ, callback);
+            emit_atom(skip, rem, &Grf::succ_atom(), callback);
         }
         return;
     }
@@ -463,7 +462,7 @@ fn seek_grfs(
                         seek_args(gs_total, m, arity, allow_min, opts, false,
                             skip, rem, &mut args,
                             &mut |gs: &[Grf]| {
-                                callback(&Grf::Comp(h_box.clone(), gs.to_vec(), arity));
+                                callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
                             });
                     });
             } else if *skip >= pre_rec_block {
@@ -486,7 +485,7 @@ fn seek_grfs(
                             opts.rec_zero_arg,
                             skip, rem, &mut args,
                             &mut |gs: &[Grf]| {
-                                callback(&Grf::Comp(h_box.clone(), gs.to_vec(), arity));
+                                callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
                             });
                     });
             } else if *skip >= rec_block {
@@ -506,16 +505,16 @@ fn seek_grfs(
                         // inner_size == 1: all Zero and Proj pruned; only Succ survives (when ar==1).
                         let ar = m + 1;
                         let valid_inners: Vec<Grf> =
-                            if ar == 1 { vec![Grf::Succ] } else { vec![] };
+                            if ar == 1 { vec![Grf::succ_atom()] } else { vec![] };
                         for f in &valid_inners {
                             if *rem == 0 || local_rem == 0 { break; }
                             if local_skip > 0 { local_skip -= 1; continue; }
-                            let h_box = Box::new(Grf::Min(Box::new(f.clone())));
+                            let h_box = Box::new(Grf::min(f.clone()));
                             let mut args = Vec::with_capacity(m);
                             seek_args(gs_total, m, arity, allow_min, opts, false,
                                 skip, rem, &mut args,
                                 &mut |gs: &[Grf]| {
-                                    callback(&Grf::Comp(h_box.clone(), gs.to_vec(), arity));
+                                    callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
                                 });
                             local_rem -= 1;
                         }
@@ -524,12 +523,12 @@ fn seek_grfs(
                             &mut local_skip, &mut local_rem,
                             &mut |f: &Grf| {
                                 if *rem == 0 { return; }
-                                let h_box = Box::new(Grf::Min(Box::new(f.clone())));
+                                let h_box = Box::new(Grf::min(f.clone()));
                                 let mut args = Vec::with_capacity(m);
                                 seek_args(gs_total, m, arity, allow_min, opts, false,
                                     skip, rem, &mut args,
                                     &mut |gs: &[Grf]| {
-                                        callback(&Grf::Comp(h_box.clone(), gs.to_vec(), arity));
+                                        callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
                                     });
                             });
                     }
@@ -551,7 +550,7 @@ fn seek_grfs(
                 *skip -= h_count;
             } else {
                 seek_grfs(n, 0, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                    callback(&Grf::Comp(Box::new(h.clone()), vec![], arity));
+                    callback(&Grf::comp0(h.clone(), arity));
                 });
             }
         }
@@ -587,10 +586,9 @@ fn seek_grfs(
                     if *rem == 0 {
                         return;
                     }
-                    let g_box = Box::new(g.clone());
-                    let g_is_zero = matches!(g, Grf::Zero(_));
+                    let g_is_zero = matches!(&g.kind, GrfKind::Zero(_));
                     let g_proj_idx: Option<usize> = if opts.rec_proj_base {
-                        if let Grf::Proj(_, i) = g { Some(*i) } else { None }
+                        if let GrfKind::Proj(_, i) = &g.kind { Some(*i) } else { None }
                     } else {
                         None
                     };
@@ -604,22 +602,22 @@ fn seek_grfs(
                     }
                     if pruned_h == 0 {
                         seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                            callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                            callback(&Grf::rec(g.clone(), h.clone()));
                         });
                     } else {
                         let ar1 = arity + 1;
                         let valid_hs: Vec<Grf> = if opts.rec_zero_base && g_is_zero {
                             // Pruned from h: Z(ar1) and P(ar1,2)
-                            std::iter::once(Grf::Proj(ar1, 1))
-                                .chain((3..=ar1).map(|j| Grf::Proj(ar1, j)))
+                            std::iter::once(Grf::proj_atom(ar1, 1))
+                                .chain((3..=ar1).map(|j| Grf::proj_atom(ar1, j)))
                                 .collect()
                         } else {
                             // g=Proj(_, gi): prune P(ar1,2) and P(ar1,gi+2)
                             let gi = g_proj_idx.unwrap();
-                            std::iter::once(Grf::Zero(ar1))
+                            std::iter::once(Grf::zero_atom(ar1))
                                 .chain((1..=ar1).filter_map(move |j| {
                                     if j == 2 || j == gi + 2 { None }
-                                    else { Some(Grf::Proj(ar1, j)) }
+                                    else { Some(Grf::proj_atom(ar1, j)) }
                                 }))
                                 .collect()
                         };
@@ -631,7 +629,7 @@ fn seek_grfs(
                                 *skip -= 1;
                                 continue;
                             }
-                            callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                            callback(&Grf::rec(g.clone(), h.clone()));
                             *rem -= 1;
                         }
                     }
@@ -648,9 +646,8 @@ fn seek_grfs(
                     if *rem == 0 {
                         return;
                     }
-                    let g_box = Box::new(g.clone());
                     seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                        callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                        callback(&Grf::rec(g.clone(), h.clone()));
                     });
                 });
             }
@@ -665,11 +662,11 @@ fn seek_grfs(
             let ar = arity + 1;
             if ar == 1 && *rem > 0 {
                 if *skip > 0 { *skip -= 1; }
-                else { callback(&Grf::Min(Box::new(Grf::Succ))); *rem -= 1; }
+                else { callback(&Grf::min(Grf::succ_atom())); *rem -= 1; }
             }
         } else {
             seek_grfs(n, arity + 1, allow_min, opts, skip, rem, &mut |f: &Grf| {
-                callback(&Grf::Min(Box::new(f.clone())));
+                callback(&Grf::min(f.clone()));
             });
         }
     }
@@ -708,18 +705,18 @@ fn seek_pre_rec_heads(
     if size == 1 {
         // Atoms with head-pruning.
         if !opts.comp_zero {
-            emit_atom(skip, rem, &Grf::Zero(arity), callback);
+            emit_atom(skip, rem, &Grf::zero_atom(arity), callback);
         }
         for i in 1..=arity {
             if *rem == 0 {
                 return;
             }
             if !opts.comp_proj {
-                emit_atom(skip, rem, &Grf::Proj(arity, i), callback);
+                emit_atom(skip, rem, &Grf::proj_atom(arity, i), callback);
             }
         }
         if arity == 1 {
-            emit_atom(skip, rem, &Grf::Succ, callback);
+            emit_atom(skip, rem, &Grf::succ_atom(), callback);
         }
         return;
     }
@@ -763,14 +760,14 @@ fn seek_pre_rec_heads(
             // relative to the outer head counts we optimised above.)
             for_each_grf(h2size, m2, allow_min, opts, &mut |h2: &Grf| {
                 if *rem == 0 { return; }
-                if opts.comp_zero && matches!(h2, Grf::Zero(_)) { return; }
-                if opts.comp_proj && matches!(h2, Grf::Proj(_, _)) { return; }
+                if opts.comp_zero && matches!(&h2.kind, GrfKind::Zero(_)) { return; }
+                if opts.comp_proj && matches!(&h2.kind, GrfKind::Proj(_, _)) { return; }
                 if opts.comp_assoc {
-                    if let Grf::Comp(_, inner_gs, _) = h2 {
+                    if let GrfKind::Comp(_, inner_gs, _) = &h2.kind {
                         if inner_gs.len() == 1 { return; }
                     }
                 }
-                let h2_is_rec = matches!(h2, Grf::Rec(_, _));
+                let h2_is_rec = matches!(&h2.kind, GrfKind::Rec(_, _));
                 let per_h2_args = if h2_is_rec { args2_rec } else { args2_all };
                 if *skip >= per_h2_args { *skip -= per_h2_args; return; }
                 let h2_box = Box::new(h2.clone());
@@ -780,7 +777,7 @@ fn seek_pre_rec_heads(
                     h2_is_rec && opts.rec_zero_arg,
                     skip, rem, &mut args2,
                     &mut |gs2: &[Grf]| {
-                        callback(&Grf::Comp(h2_box.clone(), gs2.to_vec(), arity));
+                        callback(&Grf::new(GrfKind::Comp(h2_box.clone(), gs2.to_vec(), arity)));
                     },
                 );
             });
@@ -798,7 +795,7 @@ fn seek_pre_rec_heads(
                 *skip -= h2_count;
             } else if h2_count > 0 {
                 seek_grfs(n, 0, allow_min, opts, skip, rem, &mut |h2: &Grf| {
-                    callback(&Grf::Comp(Box::new(h2.clone()), vec![], arity));
+                    callback(&Grf::comp0(h2.clone(), arity));
                 });
             }
         }
@@ -843,10 +840,9 @@ fn seek_rec_only(
             // Sequential — same as the n==2 branch in the Rec section of seek_grfs.
             for_each_grf(gsize, arity - 1, allow_min, opts, &mut |g: &Grf| {
                 if *rem == 0 { return; }
-                let g_box = Box::new(g.clone());
-                let g_is_zero = matches!(g, Grf::Zero(_));
+                let g_is_zero = matches!(&g.kind, GrfKind::Zero(_));
                 let g_proj_idx: Option<usize> = if opts.rec_proj_base {
-                    if let Grf::Proj(_, i) = g { Some(*i) } else { None }
+                    if let GrfKind::Proj(_, i) = &g.kind { Some(*i) } else { None }
                 } else {
                     None
                 };
@@ -857,27 +853,27 @@ fn seek_rec_only(
                 if *skip >= h_count { *skip -= h_count; return; }
                 if pruned_h == 0 {
                     seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                        callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                        callback(&Grf::rec(g.clone(), h.clone()));
                     });
                 } else {
                     let ar1 = arity + 1;
                     let valid_hs: Vec<Grf> = if opts.rec_zero_base && g_is_zero {
-                        std::iter::once(Grf::Proj(ar1, 1))
-                            .chain((3..=ar1).map(|j| Grf::Proj(ar1, j)))
+                        std::iter::once(Grf::proj_atom(ar1, 1))
+                            .chain((3..=ar1).map(|j| Grf::proj_atom(ar1, j)))
                             .collect()
                     } else {
                         let gi = g_proj_idx.unwrap();
-                        std::iter::once(Grf::Zero(ar1))
+                        std::iter::once(Grf::zero_atom(ar1))
                             .chain((1..=ar1).filter_map(move |j| {
                                 if j == 2 || j == gi + 2 { None }
-                                else { Some(Grf::Proj(ar1, j)) }
+                                else { Some(Grf::proj_atom(ar1, j)) }
                             }))
                             .collect()
                     };
                     for h in &valid_hs {
                         if *rem == 0 { return; }
                         if *skip > 0 { *skip -= 1; continue; }
-                        callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                        callback(&Grf::rec(g.clone(), h.clone()));
                         *rem -= 1;
                     }
                 }
@@ -892,9 +888,8 @@ fn seek_rec_only(
             seek_grfs(gsize, arity - 1, allow_min, opts, &mut local_skip, &mut local_rem,
                 &mut |g: &Grf| {
                     if *rem == 0 { return; }
-                    let g_box = Box::new(g.clone());
                     seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                        callback(&Grf::Rec(g_box.clone(), Box::new(h.clone())));
+                        callback(&Grf::rec(g.clone(), h.clone()));
                     });
                 });
         }
@@ -975,9 +970,9 @@ fn seek_args(
         // Inside this size-x block: iterate g's, skipping whole rest_count groups.
         if is_first && x == 1 {
             // Enumerate non-Zero size-1 atoms in canonical order.
-            let mut non_zero_atoms: Vec<Grf> = (1..=arity).map(|i| Grf::Proj(arity, i)).collect();
+            let mut non_zero_atoms: Vec<Grf> = (1..=arity).map(|i| Grf::proj_atom(arity, i)).collect();
             if arity == 1 {
-                non_zero_atoms.push(Grf::Succ);
+                non_zero_atoms.push(Grf::succ_atom());
             }
             for atom in &non_zero_atoms {
                 if *rem == 0 {
@@ -1387,7 +1382,7 @@ mod tests {
     fn test_skip_trivial_removes_zero_proj_comps() {
         let trim = collect(3, 0, false, PruningOpts::default().with_flags("comp_zero,comp_proj"));
         assert_eq!(trim.len(), 1);
-        assert_eq!(trim[0], Grf::comp(Grf::Succ, vec![Grf::Zero(0)]));
+        assert_eq!(trim[0], Grf::comp(Grf::succ_atom(), vec![Grf::zero_atom(0)]));
     }
 
     #[test]
@@ -1675,7 +1670,7 @@ mod tests {
         assert!(!pruned.iter().any(|g| *g == m_zero2), "M(Z2) should be pruned");
         assert!(!pruned.iter().any(|g| *g == m_proj21), "M(P(2,1)) should be pruned");
         assert!(!pruned.iter().any(|g| *g == m_proj22), "M(P(2,2)) should be pruned (all Proj pruned)");
-        assert!(pruned.iter().all(|g| !matches!(g, Grf::Min(_))), "no size-2 Min survives at arity 1");
+        assert!(pruned.iter().all(|g| !matches!(&g.kind, GrfKind::Min(_))), "no size-2 Min survives at arity 1");
     }
 
     #[test]
@@ -1684,9 +1679,9 @@ mod tests {
         for arity in 0..=2 {
             let pruned = collect(2, arity, true, PruningOpts::default().with_flags("min_trivial,min_dom"));
             assert!(
-                pruned.iter().all(|g| !matches!(g, Grf::Min(_))),
+                pruned.iter().all(|g| !matches!(&g.kind, GrfKind::Min(_))),
                 "all size-2 Min expressions should be pruned at arity={arity}, got: {:?}",
-                pruned.iter().filter(|g| matches!(g, Grf::Min(_))).collect::<Vec<_>>()
+                pruned.iter().filter(|g| matches!(&g.kind, GrfKind::Min(_))).collect::<Vec<_>>()
             );
         }
     }

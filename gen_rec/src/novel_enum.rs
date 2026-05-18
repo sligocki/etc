@@ -46,7 +46,7 @@ use crate::sim_nat::SmallNat;
 use crate::fingerprint::{
     canonical_inputs_n, compute_fp, fp_is_complete, verification_inputs, Fingerprint,
 };
-use crate::grf::Grf;
+use crate::grf::{Grf, GrfKind};
 use std::collections::{HashMap, HashSet};
 
 /// A memoized novel-function enumerator.
@@ -214,12 +214,12 @@ impl NovelEnumerator {
 
         if size == 1 {
             // Atoms
-            out.push(Grf::Zero(arity));
+            out.push(Grf::zero_atom(arity));
             for i in 1..=arity {
-                out.push(Grf::Proj(arity, i));
+                out.push(Grf::proj_atom(arity, i));
             }
             if arity == 1 {
-                out.push(Grf::Succ);
+                out.push(Grf::succ_atom());
             }
             return out;
         }
@@ -242,7 +242,7 @@ impl NovelEnumerator {
                     let mut arg_combos: Vec<Vec<Grf>> = Vec::new();
                     self.enum_arg_combos(arity, m, gs_total, Some(&forced), &mut Vec::new(), &mut arg_combos);
                     for args in arg_combos {
-                        out.push(Grf::Comp(Box::new(head_clone.clone()), args, arity));
+                        out.push(Grf::new(GrfKind::Comp(Box::new(head_clone.clone()), args, arity)));
                     }
                 }
             }
@@ -306,7 +306,7 @@ impl NovelEnumerator {
         if forced.map_or(false, |f| f[pos]) {
             // Forced position: only Zero(arg_arity) with size 1.
             if total_size >= count {
-                current.push(Grf::Zero(arg_arity));
+                current.push(Grf::zero_atom(arg_arity));
                 self.enum_arg_combos(arg_arity, count - 1, total_size - 1, forced, current, out);
                 current.pop();
             }
@@ -414,12 +414,12 @@ impl NovelEnumerator {
 
         // size == 1 is only reached when threshold == 0; emit atoms directly.
         if size == 1 {
-            callback(&Grf::Zero(arity));
+            callback(&Grf::zero_atom(arity));
             for i in 1..=arity {
-                callback(&Grf::Proj(arity, i));
+                callback(&Grf::proj_atom(arity, i));
             }
             if arity == 1 {
-                callback(&Grf::Succ);
+                callback(&Grf::succ_atom());
             }
             return;
         }
@@ -436,7 +436,7 @@ impl NovelEnumerator {
                     self.stream_novel_arg_combos(
                         arity, m, gs_total, threshold, &mut Vec::new(),
                         &mut |args: &[Grf]| {
-                            callback(&Grf::Comp(Box::new(head.clone()), args.to_vec(), arity));
+                            callback(&Grf::new(GrfKind::Comp(Box::new(head.clone()), args.to_vec(), arity)));
                         },
                     );
                 }

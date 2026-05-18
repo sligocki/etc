@@ -1,5 +1,5 @@
 use crate::fingerprint::FingerprintDb;
-use crate::grf::Grf;
+use crate::grf::{Grf, GrfKind};
 
 // ---------------------------------------------------------------------------
 // Inline-proj constraint system
@@ -129,18 +129,18 @@ impl InlineConstraints {
 /// Build `InlineConstraints` for `f` bottom-up in O(f.size()).
 pub fn compute_inline_constraints(f: &Grf) -> InlineConstraints {
     let arity = f.arity();
-    match f {
-        Grf::Zero(_) | Grf::Proj(_, _) => InlineConstraints {
+    match &f.kind {
+        GrfKind::Zero(_) | GrfKind::Proj(_, _) => InlineConstraints {
             slots: vec![SlotConstraint::Free; arity],
             requires_new_arity: None,
         },
 
-        Grf::Succ => InlineConstraints {
+        GrfKind::Succ => InlineConstraints {
             slots: vec![SlotConstraint::Required(1)],
             requires_new_arity: Some(1),
         },
 
-        Grf::Comp(_, gs, k) => {
+        GrfKind::Comp(_, gs, k) => {
             let mut slots = vec![SlotConstraint::Free; *k];
             let mut req_arity: Option<usize> = None;
             for g in gs {
@@ -154,7 +154,7 @@ pub fn compute_inline_constraints(f: &Grf) -> InlineConstraints {
             InlineConstraints { slots, requires_new_arity: req_arity }
         }
 
-        Grf::Rec(g, h_inner) => {
+        GrfKind::Rec(g, h_inner) => {
             // f = R(g, h_inner), arity = k where g.arity()=k-1, h_inner.arity()=k+1.
             let k = arity;
             let mut slots = vec![SlotConstraint::Free; k];
@@ -200,7 +200,7 @@ pub fn compute_inline_constraints(f: &Grf) -> InlineConstraints {
             InlineConstraints { slots, requires_new_arity: req_arity }
         }
 
-        Grf::Min(inner) => {
+        GrfKind::Min(inner) => {
             // f = M(inner), arity = k where inner.arity() = k+1.
             // inner's slot 0 is fixed synthetic search var → rewiring_for_inner[0] = 1.
             let ic = compute_inline_constraints(inner);
@@ -235,38 +235,38 @@ pub fn compute_inline_constraints(f: &Grf) -> InlineConstraints {
 ///   a "rest" variable is rewired into the counter slot.
 pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf> {
     debug_assert_eq!(rewiring.len(), f.arity());
-    match f {
-        Grf::Zero(_) => Some(Grf::Zero(new_arity)),
+    match &f.kind {
+        GrfKind::Zero(_) => Some(Grf::zero_atom(new_arity)),
 
         // Succ has a fixed 1-arity signature; the rewiring must be a no-op.
-        Grf::Succ => {
+        GrfKind::Succ => {
             if new_arity == 1 && rewiring == [1] {
-                Some(Grf::Succ)
+                Some(Grf::succ_atom())
             } else {
                 None
             }
         }
 
-        Grf::Proj(_, i) => {
+        GrfKind::Proj(_, i) => {
             let j = rewiring[i - 1];
             if j == 0 {
-                Some(Grf::Zero(new_arity))
+                Some(Grf::zero_atom(new_arity))
             } else {
-                Some(Grf::Proj(new_arity, j))
+                Some(Grf::proj_atom(new_arity, j))
             }
         }
 
         // Each argument gi has the same outer arity as f, so apply the same rewiring.
         // The head h is fed by the outputs of gi and never sees the outer params directly.
-        Grf::Comp(h, gs, _) => {
+        GrfKind::Comp(h, gs, _) => {
             let new_gs = gs
                 .iter()
                 .map(|g| inline_proj(g, new_arity, rewiring))
                 .collect::<Option<Vec<_>>>()?;
-            Some(Grf::Comp(h.clone(), new_gs, new_arity))
+            Some(Grf::new(GrfKind::Comp(h.clone(), new_gs, new_arity)))
         }
 
-        Grf::Rec(g, h) => {
+        GrfKind::Rec(g, h) => {
             // f = R(g, h) where g has arity k and h has arity k+2, f has arity k+1.
             // The counter (f's param 1) must remain at slot 1; otherwise the recursion
             // structure breaks down and we cannot inline.
@@ -308,10 +308,10 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
 
             let new_g = inline_proj(g, new_arity_g, &rewiring_for_g)?;
             let new_h = inline_proj(h, new_arity_h, &rewiring_for_h)?;
-            Some(Grf::Rec(Box::new(new_g), Box::new(new_h)))
+            Some(Grf::rec(new_g, new_h))
         }
 
-        Grf::Min(inner) => {
+        GrfKind::Min(inner) => {
             // f = M(inner) where inner has arity f.arity() + 1.
             // inner's param 1  =  search variable (synthetic) → stays at slot 1
             // inner's param m (m >= 2)  =  f's param m-1  →  rewiring[m-2] + 1, or 0 if zero
@@ -323,7 +323,7 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
             }
 
             let new_inner = inline_proj(inner, new_arity_inner, &rewiring_for_inner)?;
-            Some(Grf::Min(Box::new(new_inner)))
+            Some(Grf::min(new_inner))
         }
     }
 }
@@ -337,18 +337,20 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
 ///
 /// Returns the optimized GRF, or the original unchanged if no opportunity was found.
 pub fn opt_inline_proj(f: Grf) -> Grf {
-    match f {
-        // Atoms have no sub-expressions to descend into.
-        Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => f,
+    // Atoms have no sub-expressions to descend into.
+    if matches!(&f.kind, GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)) {
+        return f;
+    }
 
-        Grf::Comp(h, gs, k) => {
+    match f.kind {
+        GrfKind::Comp(h, gs, k) => {
             // Collect the rewiring if every argument is a Proj or Zero.
             // Proj(_, i) → slot i (1-based); Zero(_) → 0 (constant zero).
             let rewiring: Option<Vec<usize>> = gs
                 .iter()
-                .map(|g| match g {
-                    Grf::Proj(_, i) => Some(*i),
-                    Grf::Zero(_) => Some(0),
+                .map(|g| match &g.kind {
+                    GrfKind::Proj(_, i) => Some(*i),
+                    GrfKind::Zero(_) => Some(0),
                     _ => None,
                 })
                 .collect();
@@ -365,15 +367,14 @@ pub fn opt_inline_proj(f: Grf) -> Grf {
             // Can't inline at this level — recurse into the head and each arg.
             let new_h = opt_inline_proj(*h);
             let new_gs = gs.into_iter().map(opt_inline_proj).collect();
-            Grf::Comp(Box::new(new_h), new_gs, k)
+            Grf::new(GrfKind::Comp(Box::new(new_h), new_gs, k))
         }
 
-        Grf::Rec(g, h) => Grf::Rec(
-            Box::new(opt_inline_proj(*g)),
-            Box::new(opt_inline_proj(*h)),
-        ),
+        GrfKind::Rec(g, h) => Grf::rec(opt_inline_proj(*g), opt_inline_proj(*h)),
 
-        Grf::Min(inner) => Grf::Min(Box::new(opt_inline_proj(*inner))),
+        GrfKind::Min(inner) => Grf::min(opt_inline_proj(*inner)),
+
+        _ => unreachable!(),
     }
 }
 
@@ -393,18 +394,22 @@ pub fn opt_fingerprint(f: Grf, db: &FingerprintDb) -> Grf {
     }
 
     // No match at this level — recurse into children.
-    match f {
-        Grf::Zero(_) | Grf::Succ | Grf::Proj(_, _) => f,
+    if matches!(&f.kind, GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)) {
+        return f;
+    }
 
-        Grf::Comp(h, gs, k) => {
+    match f.kind {
+        GrfKind::Comp(h, gs, k) => {
             let new_h = opt_fingerprint(*h, db);
             let new_gs = gs.into_iter().map(|g| opt_fingerprint(g, db)).collect();
-            Grf::Comp(Box::new(new_h), new_gs, k)
+            Grf::new(GrfKind::Comp(Box::new(new_h), new_gs, k))
         }
 
-        Grf::Rec(g, h) => Grf::rec(opt_fingerprint(*g, db), opt_fingerprint(*h, db)),
+        GrfKind::Rec(g, h) => Grf::rec(opt_fingerprint(*g, db), opt_fingerprint(*h, db)),
 
-        Grf::Min(inner) => Grf::min(opt_fingerprint(*inner, db)),
+        GrfKind::Min(inner) => Grf::min(opt_fingerprint(*inner, db)),
+
+        _ => unreachable!(),
     }
 }
 
@@ -787,7 +792,7 @@ mod tests {
 
         let pred = grf!("R(Z0, P(2,1))");
         // C(Pred, C(Pred, P(3,2)))
-        let before = Grf::comp(pred.clone(), vec![Grf::comp(pred, vec![Grf::Proj(3,2)])]);
+        let before = Grf::comp(pred.clone(), vec![Grf::comp(pred, vec![Grf::proj_atom(3, 2)])]);
         let after = opt_fingerprint(before.clone(), &db);
 
         assert_eq!(after, grf!("C(R(Z0, R(Z1, P(3,1))), P(3,2))"));
@@ -847,10 +852,10 @@ mod tests {
 
                 stream_grf(size, arity, false, opts, &mut |grf| {
                     total += 1;
-                    if let Grf::Comp(h, gs, k) = grf {
-                        let rewiring: Option<Vec<usize>> = gs.iter().map(|g| match g {
-                            Grf::Proj(_, i) => Some(*i),
-                            Grf::Zero(_) => Some(0),
+                    if let GrfKind::Comp(h, gs, k) = &grf.kind {
+                        let rewiring: Option<Vec<usize>> = gs.iter().map(|g| match &g.kind {
+                            GrfKind::Proj(_, i) => Some(*i),
+                            GrfKind::Zero(_) => Some(0),
                             _ => None,
                         }).collect();
                         if let Some(rw) = rewiring {

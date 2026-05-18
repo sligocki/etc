@@ -57,6 +57,9 @@ AckRep := RepFirst[Ack]
 # Omega() = AckRep(2, 2) = Ack(Ack(3, 2), 2) > f_ω(2 ^^ 2 ^^ 5)
 Omega := C(DiagS[AckRep], K[1])
 
+# Omega2() = AckRep(3, 2) > f_ω^2(2 ^^ 2 ^^ 5)
+Omega2 := C(C(AckRep, S, P1), K[2])
+
 # AckRepRep(n, m) = (\x. AckRep(x, m))^n (m+1)
 # AckRepRep(n, 2) > f_{ω+1}^{n-?}(?)
 AckRepRep := RepFirst[AckRep]

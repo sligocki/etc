@@ -6,7 +6,7 @@
 
 use base::{RMonus, Mod2, Div2, Shift, K}
 use bool_zero::{Sgn}
-use func_rep::{RepSucc, DiagRep, DiagS}
+use func_rep::{RepSucc, RepFirst, DiagRep, DiagS}
 
 # Div2k(k,n) = floor(n / 2^k)
 Div2k := R(P1, C(Div2, P2))
@@ -36,6 +36,9 @@ AckLoop := R(P1, AckStep^3)
 #              (Instead of a branching hydra, it is a linear worm)
 #   Starting from list x, repeat AckStep until the list is empty/all 0s.
 #   It is known that AckWorm([n]) grows faster than all PRF.
+# AckWorm([3]) = 7
+# AckWorm([4]) = 41 2^38 - 1 > 10^13
+# AckWorm([5]) > 2 ^^ (2^2^100) > 2 ^^ 2 ^^ 5
 AckWorm := M(AckLoop)
 
 # InitList(n,_) : List ending in a value ≥ n
@@ -43,16 +46,24 @@ AckWorm := M(AckLoop)
 InitList := DiagRep[RepSucc[S]]
 
 # Ack(n,_) > AckWorm([n]) > f_ω(n-2)
+# Ack(n,2) = AckWorm([n+2]) > f_ω(n)
 # Ack(2,2) = AckWorm([4]) = 41 2^38 - 1
 Ack := C(AckWorm, InitList)
 
-# FOmega(n) = (\x. Ack(x,x))^{n+1} (n+1)
-FOmega := C(R(P1, C(Ack, P2, P2)), S, S)
-# Omega() > f_ω(10^13)
-Omega := C(FOmega, K[1])
+# AckRep(n, m) = (\x. Ack(x, m))^n (m+1)
+# AckRep(n, 2) > f_ω^n(3)
+AckRep := RepFirst[Ack]
 
-# Graham() > Graham's number
-Graham := C(DiagS[DiagRep[DiagRep[Ack]]], K[1])
+# Omega() = AckRep(2, 2) = Ack(Ack(3, 2), 2) > f_ω(2 ^^ 2 ^^ 5)
+Omega := C(DiagS[AckRep], K[1])
+
+# AckRepRep(n, m) = (\x. AckRep(x, m))^n (m+1)
+# AckRepRep(n, 2) > f_{ω+1}^{n-?}(?)
+AckRepRep := RepFirst[AckRep]
+
+# Graham() = AckRepRep(2, 2) = AckRep(AckRep(3, 2), 2) > AckRep(f_ω^3(3), 2)
+#   >> f_ω^65(3) > Graham's number
+Graham := C(DiagS[AckRepRep], K[1])
 
 
 # Tests

@@ -1,25 +1,85 @@
 # Weak Goodstein
 # By Racheline
 # https://discord.com/channels/960643023006490684/1447627603698647303/1505794435663794266
+#
+# This is a process of alternately inserting 0s into the binary expansion of a number and then subtracting 1.
+# The indexes where these insertions happen at each step is decided by `Seq(n)`. For certain sequences
+# (like the one dirived from A002262), this process is always guaranteed to end and (in this case) has
+# a growth rate of f_{ω+1}.
 
-use base::{K, Pred, RMonus, Mult, ModS, Pow2P}
+use base::{K, RMonus, Mult, ModS, Pow2P}
 
-# HalfEven(2k) = k
-# HalfEven(2k+1) = 2k+1
-HalfEven := C(R(Z, C(S, R(P1, R(R(P2, P1), P2)))), P1, Pred)
+# Repeatedly counting up from 0 resetting after reaching a num for the first time:
+# 0, 0, 1, 0, 1, 2, 0, 1, 2, 3, 0, 1, 2, 3, 4, 0, ...
+A002262 := C(R(P1, C(R(P1, P1), RMonus, P2)), P1, P1)
 
-# HalfOdd(2k+1) = k
-HalfOdd := C(R(Z, R(P1, R(R(P2, P1), P2))), P1, P1)
+# The sequence of locations to insert 0s
+Seq := R(Z, C(R(S, C(S, P1)), C(RMonus, A002262, P2), P1))
 
-A025480 := C(HalfOdd, C(R(P1, C(HalfEven, P2)), S, S))
+# Insert a 0 at location Seq(x) into y and then subtract 1
+# Computed as Next(x, y) = 2y - ((y % 2^Seq(x)) + 1) = 2(y - (y % 2^Seq(x))) + (y % 2^Seq(x)) - 1
+Next := C(RMonus, C(S, C(ModS, P2, C(Pow2P, Seq))), C(Mult[2], P2))
 
-Seq := C(RMonus, A025480, P1)
-
-Next := C(RMonus, C(S, C(ModS, P2, C(Pow2P, C(Seq, P1)))), C(Mult[2], P2))
-
+# Repeat Next until it reaches 0
 WG := M(R(S, Next))
 
+# One level up the FGH
+# Fw2(x, y) = WG^x(y+1)
 Fw2 := R(S, C(WG, P2))
 
-# G() > Graham's number
+# G() = Fw2(2,2) = WG^2(3) > Graham's number
 G := C(C(Fw2, S, S), K[1])
+
+
+# Tests
+# Repeated count up
+A002262(0) == 0
+A002262(1) == 0
+A002262(2) == 1
+A002262(3) == 0
+A002262(4) == 1
+A002262(5) == 2
+A002262(6) == 0
+A002262(7) == 1
+A002262(8) == 2
+A002262(9) == 3
+A002262(10) == 0
+
+Seq(0) == 0
+Seq(1) == 1
+Seq(2) == 1
+Seq(3) == 3
+Seq(4) == 3
+Seq(5) == 2
+
+# WG(0):
+#   x Seq(x) : ...
+#   0 0 : 1| : 1|0 : 0|1
+Next(0, 1) == 1
+#   1 1 : |1 : |0|1 : |0|0
+Next(1, 1) == 0
+WG(0) == 2
+
+# WG(1):
+#   0 0 : 10| : 10|0 : 1|1
+Next(0, 2) == 3
+#   1 1 : 1|1 : 1|0|1 : 1|0|0
+Next(1, 3) == 4
+#   2 1 : 1|0|0 : 1|0|00 : |1|11
+Next(2, 4) == 7
+#   3 3 : |1|11 : |0|1|11 : |0|1|10
+Next(3, 7) == 6
+#   4 3 : |0|1|10 : |0|01|10 : |0|01|01
+Next(4, 6) == 5
+#   5 2 : |0|01|01 : |0|01|001 : |0|01|000
+Next(5, 5) == 8
+#   6 6 : |0|01|000 : |0|0|01|000 : |0|0|00|111
+Next(6, 8) == 7
+#   7 6 : |0|0|00|111 : |0|00|00|111 : |0|00|00|110
+Next(7, 7) == 6
+#   9 _ : |0|00|000|0100
+Next(9, 5) == 4
+#   13 _ : |0|00|000|0000|0000
+Next(13, 1) == 0
+#   WG(1) = 14
+WG(1) == 14

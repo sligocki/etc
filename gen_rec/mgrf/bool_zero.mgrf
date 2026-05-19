@@ -3,7 +3,7 @@
 ## Uses encoding 0 -> True, >0 -> False
 ## This convension is convenient for M(f) so that it runs until the f(n) == True
 
-use base::{K}
+use base::{K, RMonus, RMonusS}
 
 # Bool atoms
 True := Z
@@ -25,6 +25,11 @@ Iff := R(P1, R(R(S, Z), P3))
 
 # Integer equality
 Equals := C(R(P1, R(R(P2, P1), P2)), P1, P2, P1)
+
+GreaterEq := RMonus
+Greater := RMonusS
+LessEq := C(GreaterEq, P2, P1)
+Less := C(Greater, P2, P1)
 
 
 # Tests
@@ -87,3 +92,16 @@ Equals(0,1) == 1
 Equals(1,0) == 1
 Equals(13,5) == 6     # != 0
 Equals(42,29) == 30   # != 0
+
+GreaterEq(0, 0) == 0
+GreaterEq(1, 0) == 0
+GreaterEq(0, 1) == 1  # != 0
+Greater(0, 0) == 1  # != 0
+Greater(1, 0) == 0
+Greater(0, 1) == 2  # != 0
+LessEq(0, 0) == 0
+LessEq(1, 0) == 1  # != 0
+LessEq(0, 1) == 0
+Less(0, 0) == 1  # != 0
+Less(1, 0) == 2  # != 0
+Less(0, 1) == 0

@@ -19,7 +19,9 @@ Monus[n+1] := R(Z, Monus[n])
 Pred := Monus[1]
 
 # RMonus(x,y) = y∸x
-RMonus := R(P(1,1), C(R(Z0, P(2,1)), P(3,2)))
+RMonus := R(P1, C(Pred, P2))
+# RMonusS(x,y) = y+1 ∸ x
+RMonusS := R(S, C(Pred, P2))
 
 # Multiplication
 
@@ -132,8 +134,15 @@ Monus[3](13) == 10
 
 RMonus(0,1) == 1
 RMonus(1,0) == 0
+RMonus(1,1) == 0
 RMonus(8,13) == 5
 RMonus(13,8) == 0
+
+RMonusS(0,1) == 2
+RMonusS(1,0) == 0
+RMonusS(1,1) == 1
+RMonusS(8,13) == 6
+RMonusS(13,8) == 0
 
 Mult[2](0) == 0
 Mult[2](1) == 2

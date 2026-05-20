@@ -394,52 +394,53 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
     debug_assert_eq!(h.arity(), inners.len());
     debug_assert!(inners.iter().all(|s| s.arity() == arity));
 
-    // Base case: all Affine
-    if let ClosedForm::Affine(h_af) = h {
-        if let Some(inner_afs) = inners
-            .iter()
-            .map(|s| if let ClosedForm::Affine(af) = s { Some(af.clone()) } else { None })
-            .collect::<Option<Vec<_>>>()
-        {
-            return Some(ClosedForm::Affine(compose_affine(h_af, &inner_afs)?));
+    // First check if ANY inner is Piecewise. If so, we distribute on its branching variable.
+    // Find j: the branching variable all Piecewise inners agree on.
+    let mut j_opt: Option<usize> = None;
+    for inner in inners {
+        if let ClosedForm::Piecewise(pw) = inner {
+            let j2 = pw.branch_index + 1;
+            match j_opt {
+                None => j_opt = Some(j2),
+                Some(j1) if j1 != j2 => return None, // Piecewise inners disagree
+                _ => {}
+            }
         }
     }
 
+    if let Some(j) = j_opt {
+        if arity == 0 {
+            return None;
+        }
+        // Correctness: pos_face_at for Affine adjusts the constant, so Affine
+        // inners depending on xj are fine. Piecewise inners on a *different*
+        // variable are returned unchanged by pos_face_at, which is only valid
+        // when they do not depend on xj.
+        for inner in inners {
+            if let ClosedForm::Piecewise(pw) = inner {
+                if pw.branch_index + 1 != j && !closed_form_ignores_arg(inner, j) {
+                    return None;
+                }
+            }
+        }
+        let zero_inners: Vec<ClosedForm> = inners.iter().map(|s| zero_face_at(s, j)).collect();
+        let pos_inners: Vec<ClosedForm> = inners.iter().map(|s| pos_face_at(s, j)).collect();
+        let zero_sem = compose(h, &zero_inners, arity - 1)?;
+        let pos_sem = compose(h, &pos_inners, arity)?;
+        return Some(make_piecewise(arity, j - 1, zero_sem, pos_sem));
+    }
+
+    // At this point, NO inner is Piecewise. All inners are Affine!
     match h {
-        ClosedForm::Affine(_) => {
-            // h is affine but some inner is Piecewise.
-            // Find j: the branching variable all Piecewise inners agree on.
-            if arity == 0 {
-                return None;
-            }
-            let mut j_opt: Option<usize> = None;
-            for inner in inners {
-                if let ClosedForm::Piecewise(pw) = inner {
-                    let j2 = pw.branch_index + 1;
-                    match j_opt {
-                        None => j_opt = Some(j2),
-                        Some(j1) if j1 != j2 => return None, // Piecewise inners disagree
-                        _ => {}
-                    }
-                }
-            }
-            let j = j_opt.unwrap_or(1);
-            // Correctness: pos_face_at for Affine adjusts the constant, so Affine
-            // inners depending on xj are fine.  Piecewise inners on a *different*
-            // variable are returned unchanged by pos_face_at, which is only valid
-            // when they do not depend on xj.
-            for inner in inners {
-                if let ClosedForm::Piecewise(pw) = inner {
-                    if pw.branch_index + 1 != j && !closed_form_ignores_arg(inner, j) {
-                        return None;
-                    }
-                }
-            }
-            let zero_inners: Vec<ClosedForm> = inners.iter().map(|s| zero_face_at(s, j)).collect();
-            let pos_inners: Vec<ClosedForm> = inners.iter().map(|s| pos_face_at(s, j)).collect();
-            let zero_sem = compose(h, &zero_inners, arity - 1)?;
-            let pos_sem = compose(h, &pos_inners, arity)?;
-            Some(make_piecewise(arity, j - 1, zero_sem, pos_sem))
+        ClosedForm::Affine(h_af) => {
+            let inner_afs: Vec<AffineFn> = inners
+                .iter()
+                .map(|s| match s {
+                    ClosedForm::Affine(af) => af.clone(),
+                    _ => unreachable!(),
+                })
+                .collect();
+            Some(ClosedForm::Affine(compose_affine(h_af, &inner_afs)?))
         }
         ClosedForm::Piecewise(pw) => {
             // If h always returns 0, so does the composition.
@@ -1013,9 +1014,10 @@ mod tests {
     }
 
     #[test]
-    fn test_comp_double_piecewise_none() {
-        // pred(pred(n)) branches at n=2, not n=1 — not representable in our Piecewise.
-        assert!(closed_form_of(&grf("C(R(Z0, P(2,1)), R(Z0, P(2,1)))")).is_none());
+    fn test_comp_double_piecewise_supported() {
+        // pred(pred(n)) is now supported via nested piecewise collapsing.
+        check_vs_sim("C(R(Z0, P(2,1)), R(Z0, P(2,1)))", 5);
+        assert!(closed_form_of(&grf("C(R(Z0, P(2,1)), R(Z0, P(2,1)))")).is_some());
     }
 
     // --- Case A' (semantic acc+j detection) ---

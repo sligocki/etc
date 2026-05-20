@@ -180,13 +180,9 @@ struct DiffArgs {
 
 #[derive(Args, Debug)]
 struct CountArgs {
-    /// Maximum arity to enumerate (0..=max_arity inclusive).
-    #[arg(long, default_value_t = 2)]
-    max_arity: usize,
-
-    /// Maximum size to enumerate (inclusive).
-    #[arg(long, default_value_t = 12)]
-    max_size: usize,
+    /// Limit for cf (size + arity <= cf_limit).
+    #[arg(default_value_t = 12)]
+    cf_limit: usize,
 
     /// Include the Minimization combinator.
     #[arg(long)]
@@ -867,59 +863,75 @@ fn run_dups(args: DupsArgs) {
 
 fn run_count(args: CountArgs) {
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::ClosedFormOnly, args.allow_min);
-    for arity in 0..=args.max_arity {
-        for size in 1..=args.max_size {
+    en = en.with_cf_limit(args.cf_limit);
+
+    let max_arity = args.cf_limit.saturating_sub(1);
+    let max_size = args.cf_limit;
+
+    for arity in 0..=max_arity {
+        for size in 1..=args.cf_limit.saturating_sub(arity) {
             en.compute_size(arity, size);
         }
     }
 
     // Collect counts[size-1][arity]
-    let counts: Vec<Vec<usize>> = (1..=args.max_size)
+    let counts: Vec<Vec<Option<usize>>> = (1..=max_size)
         .map(|size| {
-            (0..=args.max_arity)
-                .map(|arity| en.candidates(arity, size).len())
+            (0..=max_arity)
+                .map(|arity| {
+                    if arity + size <= args.cf_limit {
+                        Some(en.candidates(arity, size).len())
+                    } else {
+                        None
+                    }
+                })
                 .collect()
         })
         .collect();
 
-    let col_totals: Vec<usize> = (0..=args.max_arity)
-        .map(|arity| (1..=args.max_size).map(|s| counts[s - 1][arity]).sum())
+    let col_totals: Vec<usize> = (0..=max_arity)
+        .map(|arity| (1..=max_size).filter_map(|s| counts[s - 1][arity]).sum())
         .collect();
 
     // Column width: wide enough for the largest number or "arity=N" header.
-    let col_w: Vec<usize> = (0..=args.max_arity)
+    let col_w: Vec<usize> = (0..=max_arity)
         .map(|arity| {
             let header_w = format!("arity={}", arity).len();
-            let max_val = counts.iter().map(|row| row[arity]).max().unwrap_or(0);
+            let max_val = counts.iter().filter_map(|row| row[arity]).max().unwrap_or(0);
             let val_w = max_val.to_string().len().max(col_totals[arity].to_string().len());
             header_w.max(val_w)
         })
         .collect();
 
-    let size_w = args.max_size.to_string().len().max(4); // "size" label width
+    let size_w = max_size.to_string().len().max(4); // "size" label width
 
     // Header
     print!("{:>size_w$}", "size");
-    for arity in 0..=args.max_arity {
+    for arity in 0..=max_arity {
         print!("  {:>w$}", format!("arity={}", arity), w = col_w[arity]);
     }
     println!();
-    let sep_len = size_w + (args.max_arity + 1) * (2 + col_w.iter().max().copied().unwrap_or(0) + 1);
+    let sep_len = size_w + (max_arity + 1) * (2 + col_w.iter().max().copied().unwrap_or(0) + 1);
     println!("{}", "-".repeat(sep_len.min(200)));
 
     // Rows
-    let mut cum: Vec<usize> = vec![0; args.max_arity + 1];
-    for (i, size) in (1..=args.max_size).enumerate() {
+    let mut cum: Vec<usize> = vec![0; max_arity + 1];
+    for (i, size) in (1..=max_size).enumerate() {
         print!("{:>size_w$}", size);
-        for arity in 0..=args.max_arity {
-            let n = counts[i][arity];
-            cum[arity] += n;
-            print!("  {:>w$}", n, w = col_w[arity]);
+        for arity in 0..=max_arity {
+            if let Some(n) = counts[i][arity] {
+                cum[arity] += n;
+                print!("  {:>w$}", n, w = col_w[arity]);
+            } else {
+                print!("  {:>w$}", "", w = col_w[arity]);
+            }
         }
         if args.cumulative {
             print!("   (cum:");
-            for arity in 0..=args.max_arity {
-                print!(" a{}={}", arity, cum[arity]);
+            for arity in 0..=max_arity {
+                if counts[i][arity].is_some() {
+                    print!(" a{}={}", arity, cum[arity]);
+                }
             }
             print!(")");
         }
@@ -929,7 +941,7 @@ fn run_count(args: CountArgs) {
     // Totals row
     println!("{}", "-".repeat(sep_len.min(200)));
     print!("{:>size_w$}", "sum");
-    for arity in 0..=args.max_arity {
+    for arity in 0..=max_arity {
         print!("  {:>w$}", col_totals[arity], w = col_w[arity]);
     }
     println!();

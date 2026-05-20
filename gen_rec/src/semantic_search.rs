@@ -31,12 +31,11 @@
 /// let output = search_smallest(&config, &mut spec);
 /// if let Some(r) = output.guaranteed.first() { println!("{}", r.grf); }
 /// ```
-use crate::enumerate::stream_grf;
+use crate::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use crate::fingerprint::{
     canonical_inputs, canonical_inputs_n, grid_inputs, verification_inputs,
 };
 use crate::grf::Grf;
-use crate::pruning::PruningOpts;
 use crate::simulate::{simulate, SmallNat, SimResult};
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -64,6 +63,9 @@ pub struct SearchConfig {
     pub progress: bool,
     /// Print a trace line for every candidate tested. Very verbose.
     pub trace: bool,
+    /// Cap CF caching to domains where arity+size <= LIMIT; larger domains stream
+    /// without caching.
+    pub cf_limit: Option<usize>,
 }
 
 impl Default for SearchConfig {
@@ -76,6 +78,7 @@ impl Default for SearchConfig {
             confidence_inputs: 64,
             progress: false,
             trace: false,
+            cf_limit: None,
         }
     }
 }
@@ -115,19 +118,23 @@ pub fn search_smallest(
     config: &SearchConfig,
     spec: &mut dyn FnMut(&[SmallNat], SmallNat) -> bool,
 ) -> SearchOutput {
-    let opts = PruningOpts::recommended();
     let fast_inputs = canonical_inputs(config.arity);
     let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
     let verify_inputs = verification_inputs(config.arity);
     // best partial per size: size → SearchResult with most inputs_tested
     let mut best_partial: BTreeMap<usize, SearchResult> = BTreeMap::new();
 
+    let cf_limit = config.cf_limit.unwrap_or(if config.allow_min { 15 } else { 17 });
+    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min)
+        .with_cf_limit(cf_limit);
+
     for size in 1..=config.max_size {
         let mut guaranteed: Option<SearchResult> = None;
         let mut candidates_at_size: usize = 0;
         let t_size = Instant::now();
 
-        stream_grf(size, config.arity, config.allow_min, opts, &mut |grf: &Grf| {
+        en.prepare(config.arity, size);
+        en.for_each_raw_candidate(config.arity, size, &mut |grf: &Grf| {
             if guaranteed.is_some() {
                 return;
             }
@@ -191,7 +198,6 @@ pub fn search_all_at_min(
     // Partials found before reaching min_size (those at min_size will be re-enumerated).
     let early_partials: Vec<SearchResult> = first.partials.into_iter().filter(|r| r.size < min_size).collect();
 
-    let opts = PruningOpts::recommended();
     let fast_inputs = canonical_inputs(config.arity);
     let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
     let verify_inputs = verification_inputs(config.arity);
@@ -199,7 +205,12 @@ pub fn search_all_at_min(
     // Second pass: collect ALL guaranteed matches at min_size; best partial at min_size.
     let mut all_guaranteed: Vec<SearchResult> = Vec::new();
     let mut best_at_min: Option<SearchResult> = None;
-    stream_grf(min_size, config.arity, config.allow_min, opts, &mut |grf: &Grf| {
+
+    let cf_limit = config.cf_limit.unwrap_or(if config.allow_min { 15 } else { 17 });
+    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min)
+        .with_cf_limit(cf_limit);
+    en.prepare(config.arity, min_size);
+    en.for_each_raw_candidate(config.arity, min_size, &mut |grf: &Grf| {
         if let Some((converged, timed_out)) =
             test_candidate(grf, &fast_inputs, &conf_inputs, &verify_inputs, config.max_steps, spec)
         {

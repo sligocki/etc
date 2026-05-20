@@ -14,6 +14,9 @@ use base::{K, RMonus, Mult, ModS, Pow2P}
 A002262 := C(R(P1, C(R(P1, P1), RMonus, P2)), P1, P1)
 
 # The sequence of locations to insert 0s
+# Seq(n) = x - Tri(n-x-1)
+#   where x = max {Tri(k) ≤ n}
+# 0  1 1  3 3 2  6 6 5 3  10 10 9 7 4  15 15 14 12 9 5  21 ...
 Seq := R(Z, C(R(S, C(S, P1)), C(RMonus, A002262, P2), P1))
 
 # Insert a 0 at location Seq(x) into y and then subtract 1
@@ -81,5 +84,4 @@ Next(7, 7) == 6
 Next(9, 5) == 4
 #   13 _ : |0|00|000|0000|0000
 Next(13, 1) == 0
-#   WG(1) = 14
 WG(1) == 14

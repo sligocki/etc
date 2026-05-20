@@ -294,6 +294,42 @@ const SPECS: &[SpecDef] = &[
             n == root_n*root_n
         })),
     },
+    // ZGE : 7 : RMonus
+    // ZLE : PRF10 : C(RMonus, P2, P1)
+    // ZGT : 7 : RMonusS
+    // ZGE : 10 : C(RMonusS, P2, P1)
+    SpecDef {
+        name: "z_le", default_arity: 2,
+        description: "f(x,y) = if x ≤ y then 0 else (>0)",
+        build: || Box::new(bool_spec(|a| a[0] <= a[1])),
+    },
+    SpecDef {
+        name: "wp1_ord", default_arity: 2,
+        description: "",
+        build: || Box::new(bool_spec(|a| {
+            match (a[0], a[1]) {
+                (_, 0) => true,     // n <= 0
+                (0, _) => false,    // 0 > n+1
+                (n, m) => n <= m,
+            }
+        })),
+    },
+    SpecDef {
+        name: "wp1_ord_ge", default_arity: 2,
+        description: "",
+        build: || Box::new(bool_spec(|a| {
+            match (a[0], a[1]) {
+                (0, _) => true,
+                (_, 0) => false,
+                (n, m) => n >= m,
+            }
+        })),
+    },
+    SpecDef {
+        name: "w2_ord", default_arity: 2,
+        description: "",
+        build: || Box::new(bool_spec(|a| (a[0] % 2, a[0]) <= (a[1] % 2, a[1]))),
+    },
     SpecDef {
         name: "plus_8p", default_arity: 1,
         description: "f(x) ≥ x+8",
@@ -311,15 +347,81 @@ const SPECS: &[SpecDef] = &[
         build: || Box::new(trailing_bits),
     },
     SpecDef {
-        name: "A112367", default_arity: 1,
-        description: "https://oeis.org/A112367",
-        build: || Box::new(exact_spec(|a|
-            Some(A112367[a[0] as usize])
-        )),
+        name: "A002262", default_arity: 1,
+        description: "https://oeis.org/A002262",
+        build: || Box::new(exact_spec(|a| Some(A002262(a[0])))),
+    },
+    SpecDef {
+        name: "RMonus_A002262", default_arity: 2,
+        description: "C(RMonus, A002262, P2)",
+        build: || Box::new(exact_spec(|a| Some(a[1].saturating_sub(A002262(a[0]))))),
+    },
+    SpecDef {
+        name: "tri_diff", default_arity: 1,
+        description: "",
+        build: || Box::new(exact_spec(|a| Some(tri_diff(a[0])))),
+    },
+    // RMonusTri : PRF11 : R(P1, R(Pred, C(Pred, P2)))
+    SpecDef {
+        name: "rmonus_tri", default_arity: 2,
+        description: "f(a, b) = b -. tri(a)",
+        build: || Box::new(exact_spec(|a| Some(a[1].saturating_sub(tri(a[0]))))),
+    },
+    // RMonusTriS : PRF11 : R(S, R(Pred, C(Pred, P2)))
+    SpecDef {
+        name: "rmonus_tri_s", default_arity: 2,
+        description: "f(a, b) = b+1 -. tri(a)",
+        build: || Box::new(exact_spec(|a| Some(a[1].saturating_sub(tri(a[0]))))),
+    },
+    // TriLess : Ex: 20: C(TriP, M(RMonusTriS))
+    SpecDef {
+        name: "tri_less", default_arity: 1,
+        description: "",
+        build: || Box::new(exact_spec(|a| Some(tri_less(a[0])))),
     },
 ];
 
-const A112367 : &[u64] = &[0, 0, 1, 0, 1, 3, 0, 1, 3, 6, 0, 1, 3, 6, 10, 0, 1, 3, 6, 10, 15, 0, 1, 3, 6, 10, 15, 21, 0, 1, 3, 6, 10, 15, 21, 28, 0, 1, 3, 6, 10, 15, 21, 28, 36, 0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 0, 1, 3, 6, 10];
+pub fn A002262(n: u64) -> u64 {
+    // Cast to u128 to prevent overflow when calculating 2n + 1 for large n
+    let n_128 = n as u128;
+    let k = 2 * n_128 + 1;
+
+    // .isqrt() returns the integer square root (equivalent to floor(sqrt(k)))
+    let s = k.isqrt();
+
+    // Mathematical trick: sqrt(k) is closer to s than s+1 if k <= s^2 + s
+    let t = if k <= s * s + s { s } else { s + 1 };
+
+    // Grouping as (t + 2n) - t^2 prevents intermediate subtraction underflow
+    // since t^2 is always <= t + 2n.
+    (((t + 2 * n_128) - t * t) / 2) as u64
+}
+
+/// Triangle numbers
+pub fn tri(n: u64) -> u64 {
+    n * (n+1) / 2
+}
+/// (Floor) Inverse of tri()
+/// inv_tri(n) = max {k ≥ 0 : tri(k) ≤ n}
+pub fn inv_tri(n: u64) -> u64 {
+    let mut acc = 0;
+    for k in 1.. {
+        acc += k;
+        if acc > n {
+            return k-1;
+        }
+    }
+    panic!()
+}
+/// tri_less(n) = max{tri(k) ≤ n}
+pub fn tri_less(n: u64) -> u64 {
+    tri(inv_tri(n))
+}
+pub fn tri_diff(n: u64) -> u64 {
+    let x = tri_less(n);
+    // If k == n, then formula is Tri(k) - Tri(-1), but that would underflow u64, luckily Tri(-1) = Tri(0) = 0
+    x - tri(n.saturating_sub(x+1))
+}
 
 fn list_specs() {
     eprintln!("Available specs:");

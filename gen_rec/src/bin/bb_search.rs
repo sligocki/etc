@@ -76,9 +76,14 @@ struct Args {
 
     /// Cap CF caching to domains where arity+size <= LIMIT; larger domains stream
     /// without caching. Reduces memory at large sizes at the cost of some dedup
-    /// coverage for high-arity sub-expressions. Only used with --cf.
-    #[arg(long, value_name = "LIMIT")]
+    /// Optional limit for ClosedForm caching (size + arity <= cf_limit).
+    /// Defaults to `size`, reducing memory significantly for BBµ(n) when n >= 7.
+    #[arg(long)]
     cf_limit: Option<usize>,
+
+    /// Enable dynamic RNF regeneration for massively reduced memory usage.
+    #[arg(long)]
+    dynamic_rnf: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +344,8 @@ fn main() {
         let cf_arity = if args.min_prf { 1 } else { 0 };
         let cf_size = if args.min_prf && size >= 2 { size - 1 } else { size };
         let cf_allow_min = !args.min_prf && args.allow_min;
-        let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, cf_allow_min);
+        let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, cf_allow_min)
+            .with_dynamic_rnf(args.dynamic_rnf);
         if let Some(limit) = args.cf_limit {
             en = en.with_cf_limit(limit);
         }

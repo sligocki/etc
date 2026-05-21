@@ -24,6 +24,17 @@ macro_rules! grf {
     };
 }
 
+/// Flexibility of a GRF when its arguments are rewired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Rewirability {
+    /// Fully flexible. Can map outer arguments to any indices freely.
+    Full,
+    /// Locked to argument 1 as the counter. (e.g. Rec)
+    CounterLocked,
+    /// Locked to arity 1 and argument 1. (e.g. Succ)
+    SuccLocked,
+}
+
 /// The structural variant of a GRF node (renamed from `Grf` to allow the wrapper struct).
 ///
 /// Each combinator stores child `Grf` nodes (which carry the lazy ClosedForm cache).
@@ -342,6 +353,21 @@ impl Grf {
         let mut order = Vec::new();
         grf_outer_arg_dfs(self, &identity, &mut seen, &mut order);
         order
+    }
+
+    /// Checks if this GRF is strictly in Rewire Normal Form (RNF).
+    /// That is, it uses all arguments, and their first occurrences appear in canonical order `[1..n]`.
+    pub fn is_rnf(&self) -> bool {
+        self.used_args().len() == self.arity() && self.canonical_arg_order() == (1..=self.arity()).collect::<Vec<_>>()
+    }
+
+    /// Returns the rewiring flexibility of this GRF.
+    pub fn rewirability(&self) -> Rewirability {
+        match &self.kind {
+            GrfKind::Zero(_) | GrfKind::Proj(_, _) | GrfKind::Comp(_, _, _) | GrfKind::Min(_) => Rewirability::Full,
+            GrfKind::Rec(_, _) => Rewirability::CounterLocked,
+            GrfKind::Succ => Rewirability::SuccLocked,
+        }
     }
 
     /// Returns true if this is a Primitive Recursive Function (no Min anywhere).

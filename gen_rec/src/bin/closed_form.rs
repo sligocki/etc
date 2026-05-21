@@ -191,6 +191,10 @@ struct CountArgs {
     /// Show cumulative totals per arity in addition to per-size counts.
     #[arg(long)]
     cumulative: bool,
+
+    /// Enable dynamic RNF regeneration for reduced memory usage.
+    #[arg(long)]
+    dynamic_rnf: bool,
 }
 
 // =============================================================================
@@ -862,8 +866,9 @@ fn run_dups(args: DupsArgs) {
 // =============================================================================
 
 fn run_count(args: CountArgs) {
-    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::ClosedFormOnly, args.allow_min);
-    en = en.with_cf_limit(args.cf_limit);
+    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::ClosedFormOnly, args.allow_min)
+        .with_dynamic_rnf(args.dynamic_rnf)
+        .with_cf_limit(args.cf_limit);
 
     let max_arity = args.cf_limit.saturating_sub(1);
     let max_size = args.cf_limit;

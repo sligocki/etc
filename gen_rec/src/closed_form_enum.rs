@@ -41,6 +41,8 @@ pub struct ClosedFormEnumerator {
     /// Larger domains are streamed on demand without caching, bounding memory use.
     /// Default: `usize::MAX` (no limit, original behavior).
     pub cf_limit: usize,
+    /// If true, only strictly RNF GRFs are memoized, and non-RNF variants are regenerated dynamically.
+    pub dynamic_rnf: bool,
 }
 
 impl ClosedFormEnumerator {
@@ -54,6 +56,7 @@ impl ClosedFormEnumerator {
             allow_min,
             opts,
             cf_limit: usize::MAX,
+            dynamic_rnf: false,
         }
     }
 
@@ -64,6 +67,12 @@ impl ClosedFormEnumerator {
         let opts = PruningOpts::recommended()
             .with_flags("min_dom,inline_proj,comp_rnf,rec_step_p2");
         Self::new(mode, allow_min, opts)
+    }
+
+    /// Enable dynamic RNF regeneration for reduced memory usage.
+    pub fn with_dynamic_rnf(mut self, enabled: bool) -> Self {
+        self.dynamic_rnf = enabled;
+        self
     }
 
     /// Set the arity+size threshold above which domains are streamed instead of cached.
@@ -96,6 +105,9 @@ impl ClosedFormEnumerator {
         let mut novel: Vec<Grf> = Vec::new();
 
         for grf in candidates {
+            if self.dynamic_rnf && !grf.is_rnf() {
+                continue;
+            }
             match (closed_form_of(&grf), self.mode) {
                 (Some(cf), _) => {
                     let seen = self.seen_closed.entry(arity).or_default();
@@ -150,17 +162,93 @@ impl ClosedFormEnumerator {
         let memo = &self.memo;
         let allow_min = self.allow_min;
         let opts = self.opts;
+        let dynamic_rnf = self.dynamic_rnf;
         for_each_grf_core(
             size, arity, allow_min, opts,
             &|s, a, cb| {
-                if let Some(grfs) = memo.get(&(a, s)) {
-                    for grf in grfs { cb(grf); }
+                if dynamic_rnf && a + s <= self.cf_limit {
+                    // Direct rewirings (s_inner == s)
+                    for k in 0..=a {
+                        if let Some(grfs) = memo.get(&(k, s)) {
+                            for rnf_grf in grfs {
+                                Self::generate_valid_rewirings(rnf_grf, a, false, cb);
+                            }
+                        }
+                    }
+                    
+                    // Wrapped rewirings (s_inner < s)
+                    for s_inner in 1..s {
+                        for k in 0..=s_inner { // k is the arity of the inner function
+                            if s_inner + 1 + k == s {
+                                if let Some(grfs) = memo.get(&(k, s_inner)) {
+                                    for rnf_grf in grfs {
+                                        Self::generate_valid_rewirings(rnf_grf, a, true, cb);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    stream_grf(s, a, allow_min, opts, &mut |grf| cb(grf));
+                    if let Some(grfs) = memo.get(&(a, s)) {
+                        for grf in grfs { cb(grf); }
+                    } else {
+                        stream_grf(s, a, allow_min, opts, &mut |grf| cb(grf));
+                    }
                 }
             },
             &mut |grf| callback(grf),
         );
+    }
+
+    fn generate_valid_rewirings<F: FnMut(&Grf) + ?Sized>(
+        rnf_grf: &Grf,
+        target_arity: usize,
+        wrapped_only: bool,
+        cb: &mut F,
+    ) {
+        let k = rnf_grf.arity();
+        if k > target_arity {
+            return;
+        }
+        let mut rewiring = vec![0; k];
+        let mut used = vec![false; target_arity + 1];
+
+        fn backtrack<F: FnMut(&Grf) + ?Sized>(
+            rnf_grf: &Grf,
+            target_arity: usize,
+            rewiring: &mut [usize],
+            used: &mut [bool],
+            idx: usize,
+            wrapped_only: bool,
+            cb: &mut F,
+        ) {
+            if idx == rewiring.len() {
+                if wrapped_only {
+                    if crate::optimize::inline_proj(rnf_grf, target_arity, rewiring).is_none() {
+                        let projs = rewiring
+                            .iter()
+                            .map(|&i| Grf::proj_atom(target_arity, i))
+                            .collect();
+                        cb(&Grf::new(crate::grf::GrfKind::Comp(Box::new(rnf_grf.clone()), projs, target_arity)));
+                    }
+                } else {
+                    if let Some(g) = crate::optimize::inline_proj(rnf_grf, target_arity, rewiring) {
+                        cb(&g);
+                    }
+                }
+                return;
+            }
+            for i in 1..=target_arity {
+                if !used[i] {
+                    used[i] = true;
+                    rewiring[idx] = i;
+                    backtrack(rnf_grf, target_arity, rewiring, used, idx + 1, wrapped_only, cb);
+                    used[i] = false;
+                }
+            }
+        }
+
+        backtrack(rnf_grf, target_arity, &mut rewiring, &mut used, 0, wrapped_only, cb);
     }
 
     /// Convenience wrapper around `for_each_raw_candidate` that collects into a Vec.

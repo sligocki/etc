@@ -28,7 +28,7 @@ struct Args {
     size: usize,
 
     /// Directory for result files
-    results_dir: PathBuf,
+    results_dir: Option<PathBuf>,
 
     /// Maximum steps per simulation before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
@@ -281,14 +281,20 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
     let size = args.size;
 
     // Results directory.
-    fs::create_dir_all(&args.results_dir).expect("failed to create results directory");
+    if let Some(ref dir) = args.results_dir { fs::create_dir_all(dir).expect("failed to create results directory"); }
 
     // Open holdout file for streaming writes.
-    let holdout_path = args.results_dir.join("holdout.grl");
-    let holdout_file = fs::File::create(&holdout_path).expect("failed to create holdout.grl");
-    let mut holdout_writer = BufWriter::new(holdout_file);
-    io_grl::write_grl_header(&mut holdout_writer,
-        &format!("BBµ holdouts: mode={mode_str}, size={size}, budget={}", args.max_steps)).unwrap();
+    let mut holdout_writer: Box<dyn std::io::Write> = if let Some(ref dir) = args.results_dir {
+        let holdout_path = dir.join("holdout.grl");
+        let holdout_file = fs::File::create(&holdout_path).expect("failed to create holdout.grl");
+        Box::new(BufWriter::new(holdout_file))
+    } else {
+        Box::new(std::io::sink())
+    };
+    if args.results_dir.is_some() {
+        io_grl::write_grl_header(&mut holdout_writer,
+            &format!("BBµ holdouts: mode={mode_str}, size={size}, budget={}", args.max_steps)).unwrap();
+    }
 
     // Alias formatter for terminal output.
     let alias_db = alias_db_for_stdout(6, args.no_alias);
@@ -311,7 +317,7 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         mode_str, size, args.max_steps, opts,
     );
     println!("  threads={}, batch={}, top_k={}", rayon::current_num_threads(), args.batch_size, args.top_k);
-    println!("  results: {}/", args.results_dir.display());
+    if let Some(ref dir) = args.results_dir { println!("  results: {}/", dir.display()); } else { println!("  results: none"); }
     println!("{}", "=".repeat(90));
 
     let start = Instant::now();
@@ -444,56 +450,58 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         println!("  #{}: score={}  steps={}  {}", rank + 1, score, fmt_si(*steps), fmt_alias(expr));
     }
 
-    // Write halt file.
-    let halt_path = args.results_dir.join("halt.max.grl");
-    let mut halt_w = BufWriter::new(
-        fs::File::create(&halt_path).expect("failed to create halt.max.grl")
-    );
-    io_grl::write_grl_header(&mut halt_w,
-        &format!("BBµ search: mode={mode_str}, size={size}, budget={}, top-k={}",
-                 args.max_steps, args.top_k)).unwrap();
-    for (score, steps, base_steps, expr) in acc.top_k.iter_desc() {
-        io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
-            expr: expr.clone(), status: Some(Status::Halt),
-            steps: Some(*steps), base_steps: Some(base_steps.to_u64_sat()), score: Some(score.to_u64_sat()),
-            unknown_reason: None,
-        }).unwrap();
-    }
-    halt_w.flush().unwrap();
+    if let Some(ref dir) = args.results_dir {
+        // Write halt file.
+        let halt_path = dir.join("halt.max.grl");
+        let mut halt_w = BufWriter::new(
+            fs::File::create(&halt_path).expect("failed to create halt.max.grl")
+        );
+        io_grl::write_grl_header(&mut halt_w,
+            &format!("BBµ search: mode={mode_str}, size={size}, budget={}, top-k={}",
+                     args.max_steps, args.top_k)).unwrap();
+        for (score, steps, base_steps, expr) in acc.top_k.iter_desc() {
+            io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
+                expr: expr.clone(), status: Some(Status::Halt),
+                steps: Some(*steps), base_steps: Some(base_steps.to_u64_sat()), score: Some(score.to_u64_sat()),
+                unknown_reason: None,
+            }).unwrap();
+        }
+        halt_w.flush().unwrap();
 
-    // Write config file.
-    let config_path = args.results_dir.join("config.json");
-    let mut cfg_w = BufWriter::new(
-        fs::File::create(&config_path).expect("failed to create config.json")
-    );
-    let best_json = acc.top_k.best_score()
-        .map_or("null".to_string(), |v| v.to_string());
-    writeln!(cfg_w, "{{").unwrap();
-    writeln!(cfg_w, "  \"size\": {},",            size).unwrap();
-    writeln!(cfg_w, "  \"mode\": \"{mode_str}\",").unwrap();
-    writeln!(cfg_w, "  \"max_steps\": {},",       args.max_steps).unwrap();
-    writeln!(cfg_w, "  \"batch_size\": {},",      args.batch_size).unwrap();
-    writeln!(cfg_w, "  \"top_k\": {},",           args.top_k).unwrap();
-    writeln!(cfg_w, "  \"allow_min\": {},",       args.allow_min).unwrap();
-    writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
-    writeln!(cfg_w, "  \"cf\": {},",              args.cf).unwrap();
-    match args.cf_limit {
-        Some(limit) => writeln!(cfg_w, "  \"cf_limit\": {},", limit).unwrap(),
-        None        => writeln!(cfg_w, "  \"cf_limit\": null,").unwrap(),
-    }
-    writeln!(cfg_w, "  \"opts\": \"{}\",",           opts.stream_opt_names().join(",")).unwrap();
-    writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
-    writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();
-    writeln!(cfg_w, "  \"total_holdouts\": {},",  acc.holdouts).unwrap();
-    writeln!(cfg_w, "  \"total_diverged\": {},",  acc.diverged).unwrap();
-    writeln!(cfg_w, "  \"elapsed_secs\": {:.3},", elapsed).unwrap();
-    writeln!(cfg_w, "  \"best_score\": {}",       best_json).unwrap();
-    writeln!(cfg_w, "}}").unwrap();
-    cfg_w.flush().unwrap();
+        // Write config file.
+        let config_path = dir.join("config.json");
+        let mut cfg_w = BufWriter::new(
+            fs::File::create(&config_path).expect("failed to create config.json")
+        );
+        let best_json = acc.top_k.best_score()
+            .map_or("null".to_string(), |v| v.to_string());
+        writeln!(cfg_w, "{{").unwrap();
+        writeln!(cfg_w, "  \"size\": {},",            size).unwrap();
+        writeln!(cfg_w, "  \"mode\": \"{mode_str}\",").unwrap();
+        writeln!(cfg_w, "  \"max_steps\": {},",       args.max_steps).unwrap();
+        writeln!(cfg_w, "  \"batch_size\": {},",      args.batch_size).unwrap();
+        writeln!(cfg_w, "  \"top_k\": {},",           args.top_k).unwrap();
+        writeln!(cfg_w, "  \"allow_min\": {},",       args.allow_min).unwrap();
+        writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
+        writeln!(cfg_w, "  \"cf\": {},",              args.cf).unwrap();
+        match args.cf_limit {
+            Some(limit) => writeln!(cfg_w, "  \"cf_limit\": {},", limit).unwrap(),
+            None        => writeln!(cfg_w, "  \"cf_limit\": null,").unwrap(),
+        }
+        writeln!(cfg_w, "  \"opts\": \"{}\",",           opts.stream_opt_names().join(",")).unwrap();
+        writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
+        writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();
+        writeln!(cfg_w, "  \"total_holdouts\": {},",  acc.holdouts).unwrap();
+        writeln!(cfg_w, "  \"total_diverged\": {},",  acc.diverged).unwrap();
+        writeln!(cfg_w, "  \"elapsed_secs\": {:.3},", elapsed).unwrap();
+        writeln!(cfg_w, "  \"best_score\": {}",       best_json).unwrap();
+        writeln!(cfg_w, "}}").unwrap();
+        cfg_w.flush().unwrap();
 
-    println!();
-    println!("Results written to {}/", args.results_dir.display());
-    println!("  halt.max.grl: {} entries", acc.top_k.entries.len());
-    println!("  holdout.grl:  {} entries", acc.holdouts);
-    println!("  config.json");
+        println!();
+        println!("Results written to {}/", dir.display());
+        println!("  halt.max.grl: {} entries", acc.top_k.entries.len());
+        println!("  holdout.grl:  {} entries", acc.holdouts);
+        println!("  config.json");
+    }
 }

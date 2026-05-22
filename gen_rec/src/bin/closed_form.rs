@@ -275,6 +275,12 @@ fn format_cf_named(cf: &ClosedForm, names: &[String]) -> String {
             let zero_str = format_cf_named(&pw.zero_branch, &zero_names);
             format!("({bname}=0 ? {zero_str} : {pos_str}@{bname}-1)")
         }
+        ClosedForm::Monus(a1, a2) => {
+            format!("({} ∸ {})", format_cf_named(a1, names), format_cf_named(a2, names))
+        }
+        ClosedForm::NegMod(a1, a2, a3) => {
+            format!("({} - {}) %< {}", format_cf_named(a1, names), format_cf_named(a2, names), format_cf_named(a3, names))
+        }
     }
 }
 
@@ -362,6 +368,8 @@ fn holdout_reason(grf: &Grf) -> String {
                 match closed_form_of(g) {
                     None => "Rec[A]: base not sem".into(),
                     Some(ClosedForm::Piecewise(_)) => "Rec[A]: base is piecewise".into(),
+                    Some(ClosedForm::Monus(_, _)) => "Rec[A]: base is Monus".into(),
+                    Some(ClosedForm::NegMod(_, _, _)) => "Rec[A]: base is NegMod".into(),
                     Some(ClosedForm::Affine(_)) => "Rec[A]: unexpected (should be covered)".into(),
                 }
             } else if !uses_acc {
@@ -375,6 +383,8 @@ fn holdout_reason(grf: &Grf) -> String {
                         }
                         Some(ClosedForm::Affine(_)) => "Rec[B]: step has nonzero acc coeff".into(),
                         Some(ClosedForm::Piecewise(_)) => "Rec[B]: step is piecewise".into(),
+                        Some(ClosedForm::Monus(_, _)) => "Rec[B]: step is Monus".into(),
+                        Some(ClosedForm::NegMod(_, _, _)) => "Rec[B]: step is NegMod".into(),
                     }
                 }
             } else {
@@ -382,6 +392,8 @@ fn holdout_reason(grf: &Grf) -> String {
                     None => "Rec: step uses acc, not sem".into(),
                     Some(ClosedForm::Affine(_)) => "Rec: step uses acc, affine (not acc+k)".into(),
                     Some(ClosedForm::Piecewise(_)) => "Rec: step uses acc, piecewise".into(),
+                    Some(ClosedForm::Monus(_, _)) => "Rec: step uses acc, Monus".into(),
+                    Some(ClosedForm::NegMod(_, _, _)) => "Rec: step uses acc, NegMod".into(),
                 }
             }
         }
@@ -390,12 +402,16 @@ fn holdout_reason(grf: &Grf) -> String {
                 match closed_form_of(g) {
                     None => return format!("Comp: arg[{}] → {}", i + 1, holdout_reason(g)),
                     Some(ClosedForm::Piecewise(_)) => return "Comp: arg is piecewise".into(),
+                    Some(ClosedForm::Monus(_, _)) => return "Comp: arg is Monus".into(),
+                    Some(ClosedForm::NegMod(_, _, _)) => return "Comp: arg is NegMod".into(),
                     Some(ClosedForm::Affine(_)) => {}
                 }
             }
             match closed_form_of(h) {
                 None => format!("Comp: head → {}", holdout_reason(h)),
                 Some(ClosedForm::Piecewise(_)) => "Comp: head is piecewise".into(),
+                Some(ClosedForm::Monus(_, _)) => "Comp: head is Monus".into(),
+                Some(ClosedForm::NegMod(_, _, _)) => "Comp: head is NegMod".into(),
                 Some(ClosedForm::Affine(_)) => "Comp: all affine (unexpected)".into(),
             }
         }

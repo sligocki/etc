@@ -158,6 +158,12 @@ fn fmt_rule_rhs(sem: &ClosedForm, vars: &[String]) -> String {
             let pos_rhs = fmt_rule_rhs(&pw.pos_branch, &pos_vars);
             format!("({x}=0 ? {zero_rhs} : {pos_rhs})")
         }
+        ClosedForm::Monus(a1, a2) => {
+            format!("({} ∸ {})", fmt_rule_rhs(a1, vars), fmt_rule_rhs(a2, vars))
+        }
+        ClosedForm::NegMod(a1, a2, a3) => {
+            format!("({} - {}) %< {}", fmt_rule_rhs(a1, vars), fmt_rule_rhs(a2, vars), fmt_rule_rhs(a3, vars))
+        }
     }
 }
 
@@ -206,6 +212,12 @@ fn emit_rules(fn_name: &str, sem: &ClosedForm, args: &[String], depths: &[usize]
             let mut new_depths = depths.to_vec();
             new_depths[bi] += 1;
             emit_rules(fn_name, &pw.pos_branch, args, &new_depths);
+        }
+        ClosedForm::Monus(a1, a2) => {
+            println!("  {}({}) = ({} ∸ {})", fn_name, args.join(", "), fmt_rule_rhs(a1, args), fmt_rule_rhs(a2, args));
+        }
+        ClosedForm::NegMod(a1, a2, a3) => {
+            println!("  {}({}) = ({} - {}) %< {}", fn_name, args.join(", "), fmt_rule_rhs(a1, args), fmt_rule_rhs(a2, args), fmt_rule_rhs(a3, args));
         }
     }
 }

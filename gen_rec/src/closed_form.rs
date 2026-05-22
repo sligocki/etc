@@ -99,6 +99,8 @@ impl PiecewiseFn {
 pub enum ClosedForm {
     Affine(AffineFn),
     Piecewise(PiecewiseFn),
+    Monus(Box<ClosedForm>, Box<ClosedForm>),
+    NegMod(Box<ClosedForm>, Box<ClosedForm>, Box<ClosedForm>),
 }
 
 impl ClosedForm {
@@ -106,6 +108,8 @@ impl ClosedForm {
         match self {
             ClosedForm::Affine(af) => af.arity,
             ClosedForm::Piecewise(pw) => pw.arity,
+            ClosedForm::Monus(a1, _) => a1.arity(),
+            ClosedForm::NegMod(a1, _, _) => a1.arity(),
         }
     }
 
@@ -122,6 +126,24 @@ impl ClosedForm {
         loop {
             match current {
                 ClosedForm::Affine(af) => return af.eval(&buf),
+
+ClosedForm::Monus(a1, a2) => {
+                    let v1 = a1.eval(&buf)?;
+                    let v2 = a2.eval(&buf)?;
+                    return if v1 >= v2 { Some(v1.checked_sub(v2).unwrap()) } else { Some(N::zero()) };
+                }
+                ClosedForm::NegMod(a1, a2, a3) => {
+                    let v1 = a1.eval(&buf)?;
+                    let v2 = a2.eval(&buf)?;
+                    let v3 = a3.eval(&buf)?;
+                    if v1 >= v2 {
+                        return Some(v1.checked_sub(v2).unwrap());
+                    } else {
+                        let diff = v2.checked_sub(v1).unwrap();
+                        let rem = diff.checked_rem(v3.clone())?;
+                        return if rem.is_zero() { Some(N::zero()) } else { Some(v3.checked_sub(rem)?) };
+                    }
+                }
                 ClosedForm::Piecewise(pw) => {
                     let bi = pw.branch_index;
                     if buf[bi].is_zero() {
@@ -160,6 +182,63 @@ impl ClosedForm {
                         _ => None,
                     };
                 }
+
+ClosedForm::Monus(a1, a2) => {
+                    if let (ClosedForm::Affine(af1), ClosedForm::Affine(af2)) = (&**a1, &**a2) {
+                        let a = af1.coeffs[1];
+                        let c = af2.coeffs[1];
+                        
+                        // Evaluate the rest of the affine function (constant + outer_args)
+                        let mut full = Vec::with_capacity(outer.len() + 1);
+                        full.push(N::zero());
+                        full.extend(outer.iter().cloned());
+                        
+                        let b = af1.eval(&full)?;
+                        let d = af2.eval(&full)?;
+
+                        if a <= c {
+                            if b <= d {
+                                return Some(N::zero());
+                            } else if a == c {
+                                return None; // They never cross
+                            } else {
+                                let diff_c = c - a;
+                                let diff_d = b.checked_sub(d).unwrap();
+                                // ceiling division: (diff_d + diff_c - 1) / diff_c
+                                // wait, SimNat only has u64 conversion or we can do it via to_u64_sat?
+                                // wait, the formula is N::from_u64( diff_d.to_u64_sat().div_ceil(diff_c) )
+                                return Some(N::from_u64(diff_d.to_u64_sat().div_ceil(diff_c)));
+                            }
+                        } else {
+                            if b <= d {
+                                return Some(N::zero());
+                            } else {
+                                return None; // They never cross
+                            }
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+                ClosedForm::NegMod(a1, a2, a3) => {
+                    if let (ClosedForm::Affine(af1), ClosedForm::Affine(af2), ClosedForm::Affine(af3)) = (&**a1, &**a2, &**a3) {
+                        let a = af1.coeffs[1];
+                        let c = af2.coeffs[1];
+                        
+                        let mut full = Vec::with_capacity(outer.len() + 1);
+                        full.push(N::zero());
+                        full.extend(outer.iter().cloned());
+                        
+                        let b = af1.eval(&full)?;
+                        let d = af2.eval(&full)?;
+                        
+                        if a >= c && b >= d {
+                            if a == c && b == d { return Some(N::zero()); }
+                            return None;
+                        }
+                    }
+                    return None;
+                }
                 ClosedForm::Piecewise(pw) => {
                     let bi = pw.branch_index;
                     if bi == 0 {
@@ -194,6 +273,8 @@ impl ClosedForm {
         match self {
             ClosedForm::Affine(af) => ClosedForm::Affine(af.lift(arity)),
             ClosedForm::Piecewise(pw) => ClosedForm::Piecewise(pw.lift(arity)),
+            ClosedForm::Monus(a1, a2) => ClosedForm::Monus(Box::new(a1.lift(arity)), Box::new(a2.lift(arity))),
+            ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(Box::new(a1.lift(arity)), Box::new(a2.lift(arity)), Box::new(a3.lift(arity))),
         }
     }
 }
@@ -310,7 +391,34 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
         }
     }
 
-    // Case E: h is Piecewise on an outer argument (branch_index ≥ 2, i.e. not counter/acc).
+
+    // Case E: h ignores counter (arg 1) and is Piecewise branching on acc (arg 2 in h, which is arg 1 in h_prime).
+    if closed_form_ignores_arg(sem_h, 1) {
+        if let Some(h_prime) = drop_arg(sem_h, 1) {
+            if let ClosedForm::Piecewise(pw) = &h_prime {
+                if pw.branch_index == 0 {
+                    if let ClosedForm::Affine(af) = &*pw.pos_branch {
+                        if af.coeffs[0] == 0 && af.coeffs[1] == 1 && af.coeffs[2..].iter().all(|&c| c == 0) {
+                            let g_lifted = prepend_arg(sem_g);
+                            let n_proj = ClosedForm::Affine(AffineFn::proj(k_outer, 1));
+                            
+                            if is_always_zero(&pw.zero_branch) {
+                                return Some(ClosedForm::Monus(Box::new(g_lifted), Box::new(n_proj)));
+                            } else {
+                                let reset_lifted = prepend_arg(&pw.zero_branch);
+                                let succ_cf = ClosedForm::Affine(AffineFn::succ());
+                                if let Some(modulus) = compose(&succ_cf, &[reset_lifted], k_outer) {
+                                    return Some(ClosedForm::NegMod(Box::new(g_lifted), Box::new(n_proj), Box::new(modulus)));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Case F: h is Piecewise on an outer argument (branch_index ≥ 2, i.e. not counter/acc).
     //
     // h branches on outer arg j_b = bi (1-based in b's args).  Peel one Piecewise layer:
     //   zero-slice (b's arg j_b = 0): recurse with g_zero and h.zero_branch, arity k_outer-1.
@@ -373,6 +481,8 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
             closed_form_ignores_arg(&pw.zero_branch, idx_in_zero)
                 && closed_form_ignores_arg(&pw.pos_branch, idx)
         }
+        ClosedForm::Monus(a1, a2) => closed_form_ignores_arg(a1, idx) && closed_form_ignores_arg(a2, idx),
+        ClosedForm::NegMod(a1, a2, a3) => closed_form_ignores_arg(a1, idx) && closed_form_ignores_arg(a2, idx) && closed_form_ignores_arg(a3, idx),
     }
 }
 
@@ -433,13 +543,13 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
     // At this point, NO inner is Piecewise. All inners are Affine!
     match h {
         ClosedForm::Affine(h_af) => {
-            let inner_afs: Vec<AffineFn> = inners
-                .iter()
-                .map(|s| match s {
-                    ClosedForm::Affine(af) => af.clone(),
-                    _ => unreachable!(),
-                })
-                .collect();
+            let mut inner_afs = Vec::with_capacity(inners.len());
+            for s in inners {
+                match s {
+                    ClosedForm::Affine(af) => inner_afs.push(af.clone()),
+                    _ => return None, // Cannot compose Affine outside of Monus/NegMod yet
+                }
+            }
             Some(ClosedForm::Affine(compose_affine(h_af, &inner_afs)?))
         }
         ClosedForm::Piecewise(pw) => {
@@ -517,6 +627,8 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
             let pos_sem = compose(&pw.pos_branch, &pos_inners, arity)?;
             Some(make_piecewise(arity, j - 1, zero_sem, pos_sem))
         }
+        ClosedForm::Monus(a1, a2) => Some(make_monus(compose(a1, inners, arity)?, compose(a2, inners, arity)?)),
+        ClosedForm::NegMod(a1, a2, a3) => Some(make_neg_mod(compose(a1, inners, arity)?, compose(a2, inners, arity)?, compose(a3, inners, arity)?)),
     }
 }
 
@@ -548,6 +660,8 @@ fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 })
             }
         }
+        ClosedForm::Monus(a1, a2) => ClosedForm::Monus(Box::new(zero_face_at(a1, j)), Box::new(zero_face_at(a2, j))),
+        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(Box::new(zero_face_at(a1, j)), Box::new(zero_face_at(a2, j)), Box::new(zero_face_at(a3, j))),
     }
 }
 
@@ -583,6 +697,8 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 })
             }
         }
+        ClosedForm::Monus(a1, a2) => ClosedForm::Monus(Box::new(pos_face_at(a1, j)), Box::new(pos_face_at(a2, j))),
+        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(Box::new(pos_face_at(a1, j)), Box::new(pos_face_at(a2, j)), Box::new(pos_face_at(a3, j))),
     }
 }
 
@@ -621,6 +737,8 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
             zero_branch: Box::new(prepend_arg(&pw.zero_branch)),
             pos_branch: Box::new(prepend_arg(&pw.pos_branch)),
         }),
+        ClosedForm::Monus(a1, a2) => ClosedForm::Monus(Box::new(prepend_arg(a1)), Box::new(prepend_arg(a2))),
+        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(Box::new(prepend_arg(a1)), Box::new(prepend_arg(a2)), Box::new(prepend_arg(a3))),
     }
 }
 
@@ -649,6 +767,7 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
             }
             h_prime_is_stable(&pw.zero_branch) && h_prime_is_stable(&pw.pos_branch)
         }
+        ClosedForm::Monus(_, _) | ClosedForm::NegMod(_, _, _) => false,
     }
 }
 
@@ -657,6 +776,8 @@ fn is_always_zero(sem: &ClosedForm) -> bool {
     match sem {
         ClosedForm::Affine(af) => af.coeffs.iter().all(|&c| c == 0),
         ClosedForm::Piecewise(pw) => is_always_zero(&pw.zero_branch) && is_always_zero(&pw.pos_branch),
+        ClosedForm::Monus(a1, _) => is_always_zero(a1),
+        ClosedForm::NegMod(_, _, _) => false,
     }
 }
 
@@ -708,6 +829,8 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
                 pos_branch: Box::new(new_pos),
             }))
         }
+        ClosedForm::Monus(a1, a2) => Some(ClosedForm::Monus(Box::new(drop_arg(a1, idx)?), Box::new(drop_arg(a2, idx)?))),
+        ClosedForm::NegMod(a1, a2, a3) => Some(ClosedForm::NegMod(Box::new(drop_arg(a1, idx)?), Box::new(drop_arg(a2, idx)?), Box::new(drop_arg(a3, idx)?))),
     }
 }
 
@@ -720,6 +843,39 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
 /// pos_branch(args_with_bi=0) == zero_branch(args_without_bi) for all other args.
 /// The piecewise is then a pure affine: the same as pos_branch but with the constant
 /// adjusted to pos_branch.c0 − pos_branch.coeffs[bi+1].
+fn make_monus(a1: ClosedForm, a2: ClosedForm) -> ClosedForm {
+    if let (ClosedForm::Affine(af1), ClosedForm::Affine(af2)) = (&a1, &a2) {
+        if af1.arity == 0 && af2.arity == 0 {
+            let v1 = af1.coeffs[0];
+            let v2 = af2.coeffs[0];
+            let res = v1.saturating_sub(v2);
+            return ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![res] });
+        }
+    }
+    ClosedForm::Monus(Box::new(a1), Box::new(a2))
+}
+
+fn make_neg_mod(a1: ClosedForm, a2: ClosedForm, a3: ClosedForm) -> ClosedForm {
+    if let (ClosedForm::Affine(af1), ClosedForm::Affine(af2), ClosedForm::Affine(af3)) = (&a1, &a2, &a3) {
+        if af1.arity == 0 && af2.arity == 0 && af3.arity == 0 {
+            let v1 = af1.coeffs[0];
+            let v2 = af2.coeffs[0];
+            let v3 = af3.coeffs[0];
+            if v3 != 0 {
+                let res = if v1 >= v2 {
+                    v1 - v2
+                } else {
+                    let diff = v2 - v1;
+                    let rem = diff % v3;
+                    if rem == 0 { 0 } else { v3 - rem }
+                };
+                return ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![res] });
+            }
+        }
+    }
+    ClosedForm::NegMod(Box::new(a1), Box::new(a2), Box::new(a3))
+}
+
 fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, pos_branch: ClosedForm) -> ClosedForm {
     if let Some(dropped) = drop_arg(&pos_branch, branch_index + 1) {
         if dropped == zero_branch {

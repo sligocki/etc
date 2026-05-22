@@ -1,6 +1,5 @@
 use gen_rec::grf::Grf;
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
-use gen_rec::closed_form::closed_form_of;
 
 fn main() {
     let alt = "C(P(2,2), C(S, Z0), Z0)".parse::<Grf>().unwrap();

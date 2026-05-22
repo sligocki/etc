@@ -303,6 +303,7 @@ const SPECS: &[SpecDef] = &[
         description: "f(x,y) = if x ≤ y then 0 else (>0)",
         build: || Box::new(bool_spec(|a| a[0] <= a[1])),
     },
+    // PRF14 : C(R(P1, Z), R(Z, R(P2, C(R(Z, P1), P2))), P2)
     SpecDef {
         name: "wp1_ord", default_arity: 2,
         description: "",
@@ -314,6 +315,7 @@ const SPECS: &[SpecDef] = &[
             }
         })),
     },
+    // PRF14 : C(R(P1, C(R(P1, P1), R(P3, P3), P2)), P1, P1, P2)
     SpecDef {
         name: "wp1_ord_ge", default_arity: 2,
         description: "",
@@ -349,12 +351,12 @@ const SPECS: &[SpecDef] = &[
     SpecDef {
         name: "A002262", default_arity: 1,
         description: "https://oeis.org/A002262",
-        build: || Box::new(exact_spec(|a| Some(A002262(a[0])))),
+        build: || Box::new(exact_spec(|a| Some(a002262(a[0])))),
     },
     SpecDef {
         name: "RMonus_A002262", default_arity: 2,
         description: "C(RMonus, A002262, P2)",
-        build: || Box::new(exact_spec(|a| Some(a[1].saturating_sub(A002262(a[0]))))),
+        build: || Box::new(exact_spec(|a| Some(a[1].saturating_sub(a002262(a[0]))))),
     },
     SpecDef {
         name: "tri_diff", default_arity: 1,
@@ -381,7 +383,7 @@ const SPECS: &[SpecDef] = &[
     },
 ];
 
-pub fn A002262(n: u64) -> u64 {
+pub fn a002262(n: u64) -> u64 {
     // Cast to u128 to prevent overflow when calculating 2n + 1 for large n
     let n_128 = n as u128;
     let k = 2 * n_128 + 1;

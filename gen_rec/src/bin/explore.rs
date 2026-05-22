@@ -99,128 +99,7 @@ fn fmt_subst(grf: &Grf, names: &BTreeMap<String, String>) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Semantic formula display
-// ---------------------------------------------------------------------------
 
-static ARG_NAMES: &[&str] = &["x", "y", "z", "w", "v", "u", "t", "s", "r", "q", "p"];
-
-fn arg_name(pos: usize) -> &'static str {
-    ARG_NAMES.get(pos).copied().unwrap_or("x")
-}
-
-fn decrement_n(v: &str, n: usize) -> String {
-    match n {
-        0 => v.to_string(),
-        1 => format!("{}-1", v),
-        n => format!("{}-{}", v, n),
-    }
-}
-
-fn term_str(c: u64, v: &str) -> String {
-    if c == 1 {
-        v.to_string()
-    } else {
-        format!("{}*{}", c, v)
-    }
-}
-
-fn fmt_affine_expr(af: &AffineFn, vars: &[String]) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    for (i, &c) in af.coeffs[1..].iter().enumerate() {
-        if c != 0 {
-            parts.push(term_str(c, &vars[i]));
-        }
-    }
-    if af.coeffs[0] != 0 {
-        parts.push(af.coeffs[0].to_string());
-    }
-    if parts.is_empty() {
-        return "0".to_string();
-    }
-    parts.join(" + ")
-}
-
-/// Format a rule's RHS. For Affine: formula. For Piecewise (rare zero_branch): inline ternary.
-fn fmt_rule_rhs(sem: &ClosedForm, vars: &[String]) -> String {
-    match sem {
-        ClosedForm::Affine(af) => fmt_affine_expr(af, vars),
-        ClosedForm::Piecewise(pw) => {
-            let bi = pw.branch_index;
-            let x = vars[bi].as_str();
-            let zero_vars: Vec<String> = vars.iter().enumerate()
-                .filter(|&(j, _)| j != bi)
-                .map(|(_, v)| v.clone())
-                .collect();
-            let zero_rhs = fmt_rule_rhs(&pw.zero_branch, &zero_vars);
-            let mut pos_vars = vars.to_vec();
-            pos_vars[bi] = decrement_n(x, 1);
-            let pos_rhs = fmt_rule_rhs(&pw.pos_branch, &pos_vars);
-            format!("({x}=0 ? {zero_rhs} : {pos_rhs})")
-        }
-        ClosedForm::Monus(a1, a2) => {
-            format!("({} ∸ {})", fmt_rule_rhs(a1, vars), fmt_rule_rhs(a2, vars))
-        }
-        ClosedForm::NegMod(a1, a2, a3) => {
-            format!("({} - {}) %< {}", fmt_rule_rhs(a1, vars), fmt_rule_rhs(a2, vars), fmt_rule_rhs(a3, vars))
-        }
-    }
-}
-
-/// Print multi-line pattern-matching rules for a ClosedForm, prefixed with fn_name.
-fn print_closed_form_rules(fn_name: &str, sem: &ClosedForm) {
-    let args: Vec<String> = (0..sem.arity()).map(|i| arg_name(i).to_string()).collect();
-    let depths = vec![0usize; sem.arity()];
-    emit_rules(fn_name, sem, &args, &depths);
-}
-
-fn emit_rules(fn_name: &str, sem: &ClosedForm, args: &[String], depths: &[usize]) {
-    match sem {
-        ClosedForm::Affine(af) => {
-            let formula_args: Vec<String> = args.iter().zip(depths.iter())
-                .map(|(name, &d)| decrement_n(name, d))
-                .collect();
-            let lhs: Vec<String> = args
-                .iter()
-                .enumerate()
-                .map(|(j, name)| {
-                    if closed_form_ignores_arg(sem, j + 1) { "_".to_string() } else { name.clone() }
-                })
-                .collect();
-            println!("  {}({}) = {}", fn_name, lhs.join(", "), fmt_affine_expr(af, &formula_args));
-        }
-        ClosedForm::Piecewise(pw) => {
-            let bi = pw.branch_index;
-            let zero_lhs: Vec<String> = args.iter().enumerate().map(|(j, name)| {
-                if j == bi {
-                    depths[bi].to_string()
-                } else {
-                    let j_in_zero = if j < bi { j } else { j - 1 };
-                    if closed_form_ignores_arg(&pw.zero_branch, j_in_zero + 1) {
-                        "_".to_string()
-                    } else {
-                        name.clone()
-                    }
-                }
-            }).collect();
-            let zero_vars: Vec<String> = args.iter().enumerate()
-                .filter(|&(j, _)| j != bi)
-                .map(|(_, name)| name.clone())
-                .collect();
-            println!("  {}({}) = {}", fn_name, zero_lhs.join(", "),
-                     fmt_rule_rhs(&pw.zero_branch, &zero_vars));
-            let mut new_depths = depths.to_vec();
-            new_depths[bi] += 1;
-            emit_rules(fn_name, &pw.pos_branch, args, &new_depths);
-        }
-        ClosedForm::Monus(a1, a2) => {
-            println!("  {}({}) = ({} ∸ {})", fn_name, args.join(", "), fmt_rule_rhs(a1, args), fmt_rule_rhs(a2, args));
-        }
-        ClosedForm::NegMod(a1, a2, a3) => {
-            println!("  {}({}) = ({} - {}) %< {}", fn_name, args.join(", "), fmt_rule_rhs(a1, args), fmt_rule_rhs(a2, args), fmt_rule_rhs(a3, args));
-        }
-    }
-}
 
 fn main() {
     let args = Args::parse();
@@ -294,7 +173,7 @@ fn main() {
             );
 
             if let Some(sem) = sub.closed_form() {
-                print_closed_form_rules(&name, sem);
+                sem.print_rules(&name);
             } else if !args.no_sim {
                 print_io_table(sub, args.grid, args.max_steps);
             }
@@ -313,7 +192,7 @@ fn main() {
     );
     let root_name = idx_to_name(order.len());
     if let Some(sem) = grf.closed_form() {
-        print_closed_form_rules(&root_name, sem);
+        sem.print_rules(&root_name);
     } else if !args.no_sim {
         print_io_table(&grf, args.grid, args.max_steps);
     }

@@ -1525,3 +1525,149 @@ mod tests {
         check_all(4, 7);
     }
 }
+
+// --- Formatting ---
+
+static ARG_NAMES: &[&str] = &["x", "y", "z", "w", "v", "u", "t", "s", "r", "q", "p"];
+
+pub fn default_arg_names(arity: usize) -> Vec<String> {
+    if arity <= ARG_NAMES.len() {
+        (0..arity).map(|i| ARG_NAMES[i].to_string()).collect()
+    } else {
+        (1..=arity).map(|i| format!("x{i}")).collect()
+    }
+}
+
+pub fn default_arg_names_x(arity: usize) -> Vec<String> {
+    (1..=arity).map(|i| format!("x{i}")).collect()
+}
+
+fn decrement_n(v: &str, n: usize) -> String {
+    match n {
+        0 => v.to_string(),
+        1 => format!("{}-1", v),
+        n => format!("{}-{}", v, n),
+    }
+}
+
+fn term_str(c: u64, v: &str) -> String {
+    if c == 1 {
+        v.to_string()
+    } else {
+        format!("{c}·{v}")
+    }
+}
+
+impl AffineFn {
+    pub fn format_expr(&self, vars: &[String]) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.coeffs[0] != 0 || self.arity == 0 {
+            parts.push(self.coeffs[0].to_string());
+        }
+        for (i, &c) in self.coeffs[1..].iter().enumerate() {
+            if c != 0 {
+                parts.push(term_str(c, &vars[i]));
+            }
+        }
+        if parts.is_empty() {
+            "0".to_string()
+        } else {
+            parts.join(" + ")
+        }
+    }
+}
+
+impl ClosedForm {
+    /// Format this form as a single-line inline string (e.g. for `closed_form list`)
+    pub fn format_inline(&self, vars: &[String]) -> String {
+        match self {
+            ClosedForm::Affine(af) => af.format_expr(vars),
+            ClosedForm::Piecewise(pw) => {
+                let bi = pw.branch_index;
+                let x = vars[bi].as_str();
+                let zero_vars: Vec<String> = vars.iter().enumerate()
+                    .filter(|&(j, _)| j != bi)
+                    .map(|(_, v)| v.clone())
+                    .collect();
+                let zero_rhs = pw.zero_branch.format_inline(&zero_vars);
+                let mut pos_vars = vars.to_vec();
+                pos_vars[bi] = decrement_n(x, 1);
+                let pos_rhs = pw.pos_branch.format_inline(&pos_vars);
+                format!("({x}=0 ? {zero_rhs} : {pos_rhs})")
+            }
+            ClosedForm::Monus(a1, a2) => {
+                let s1 = a1.format_inline(vars);
+                let s2 = a2.format_inline(vars);
+                format!("({s1} ∸ {s2})")
+            }
+            ClosedForm::NegMod(a1, a2, a3) => {
+                let s1 = a1.format_inline(vars);
+                let s2 = a2.format_inline(vars);
+                
+                let s3 = match **a3 {
+                    ClosedForm::Affine(ref af) if af.coeffs[1..].iter().filter(|&&c| c != 0).count() + (if af.coeffs[0] != 0 { 1 } else { 0 }) > 1 => {
+                        format!("({})", a3.format_inline(vars))
+                    }
+                    _ => a3.format_inline(vars)
+                };
+                format!("({s1} - {s2}) %< {s3}")
+            }
+        }
+    }
+
+    /// Print multi-line pattern-matching rules for this form (e.g. for `explore`)
+    pub fn print_rules(&self, fn_name: &str) {
+        let args = default_arg_names(self.arity());
+        let depths = vec![0usize; self.arity()];
+        self.emit_rules(fn_name, &args, &depths);
+    }
+
+    fn emit_rules(&self, fn_name: &str, args: &[String], depths: &[usize]) {
+        match self {
+            ClosedForm::Affine(af) => {
+                let formula_args: Vec<String> = args.iter().zip(depths.iter())
+                    .map(|(name, &d)| decrement_n(name, d))
+                    .collect();
+                let lhs: Vec<String> = args.iter().enumerate().map(|(j, name)| {
+                    if closed_form_ignores_arg(self, j + 1) { "_".to_string() } else { name.clone() }
+                }).collect();
+                println!("  {}({}) = {}", fn_name, lhs.join(", "), af.format_expr(&formula_args));
+            }
+            ClosedForm::Piecewise(pw) => {
+                let bi = pw.branch_index;
+                let zero_lhs: Vec<String> = args.iter().enumerate().map(|(j, name)| {
+                    if j == bi {
+                        depths[bi].to_string()
+                    } else {
+                        let j_in_zero = if j < bi { j } else { j - 1 };
+                        if closed_form_ignores_arg(&pw.zero_branch, j_in_zero + 1) {
+                            "_".to_string()
+                        } else {
+                            name.clone()
+                        }
+                    }
+                }).collect();
+                let zero_vars: Vec<String> = args.iter().enumerate()
+                    .filter(|&(j, _)| j != bi)
+                    .map(|(_, name)| name.clone())
+                    .collect();
+                println!("  {}({}) = {}", fn_name, zero_lhs.join(", "), pw.zero_branch.format_inline(&zero_vars));
+                let mut new_depths = depths.to_vec();
+                new_depths[bi] += 1;
+                pw.pos_branch.emit_rules(fn_name, args, &new_depths);
+            }
+            ClosedForm::Monus(a1, a2) => {
+                println!("  {}({}) = ({} ∸ {})", fn_name, args.join(", "), a1.format_inline(args), a2.format_inline(args));
+            }
+            ClosedForm::NegMod(a1, a2, a3) => {
+                let s3 = match **a3 {
+                    ClosedForm::Affine(ref af) if af.coeffs[1..].iter().filter(|&&c| c != 0).count() + (if af.coeffs[0] != 0 { 1 } else { 0 }) > 1 => {
+                        format!("({})", a3.format_inline(args))
+                    }
+                    _ => a3.format_inline(args)
+                };
+                println!("  {}({}) = ({} - {}) %< {}", fn_name, args.join(", "), a1.format_inline(args), a2.format_inline(args), s3);
+            }
+        }
+    }
+}

@@ -239,49 +239,7 @@ fn elapsed_str(start: Instant) -> String {
 /// Variable names are threaded through the recursion so that zero_branch of a Piecewise
 /// branching on x_i is displayed with x_i removed (outer x_{i+1} shows as x_{i+1}, not x_i).
 fn format_cf(cf: &ClosedForm) -> String {
-    let names: Vec<String> = (1..=cf.arity()).map(|i| format!("x{i}")).collect();
-    format_cf_named(cf, &names)
-}
-
-fn format_cf_named(cf: &ClosedForm, names: &[String]) -> String {
-    match cf {
-        ClosedForm::Affine(af) => {
-            let mut terms: Vec<String> = Vec::new();
-            if af.coeffs[0] != 0 || af.arity == 0 {
-                terms.push(af.coeffs[0].to_string());
-            }
-            for (i, &c) in af.coeffs[1..].iter().enumerate() {
-                let xi = &names[i];
-                match c {
-                    0 => {}
-                    1 => terms.push(xi.clone()),
-                    _ => terms.push(format!("{c}·{xi}")),
-                }
-            }
-            if terms.is_empty() {
-                "0".to_string()
-            } else {
-                terms.join(" + ")
-            }
-        }
-        ClosedForm::Piecewise(pw) => {
-            let bi = pw.branch_index; // 0-indexed
-            let bname = &names[bi];
-            // pos_branch: same variable names as outer (bi-th arg is decremented, not removed).
-            let pos_str = format_cf_named(&pw.pos_branch, names);
-            // zero_branch: remove names[bi] from the list (that arg is absent in the zero case).
-            let zero_names: Vec<String> =
-                names.iter().enumerate().filter(|&(i, _)| i != bi).map(|(_, n)| n.clone()).collect();
-            let zero_str = format_cf_named(&pw.zero_branch, &zero_names);
-            format!("({bname}=0 ? {zero_str} : {pos_str}@{bname}-1)")
-        }
-        ClosedForm::Monus(a1, a2) => {
-            format!("({} ∸ {})", format_cf_named(a1, names), format_cf_named(a2, names))
-        }
-        ClosedForm::NegMod(a1, a2, a3) => {
-            format!("({} - {}) %< {}", format_cf_named(a1, names), format_cf_named(a2, names), format_cf_named(a3, names))
-        }
-    }
+    cf.format_inline(&gen_rec::closed_form::default_arg_names_x(cf.arity()))
 }
 
 /// Sample output values for a ClosedForm: arity 0-2 get compact strings.

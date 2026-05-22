@@ -1,0 +1,19 @@
+# Well-ordering functions
+
+use base::{Mod2}
+use bool_zero::{Greater, GreaterEq, Less, LessEq}
+
+# Order type Omega (naive ordering of nat)
+WGE := GreaterEq
+WGT := Greater
+WLE := LessEq
+WLT := Less
+
+# Order type Omega+1 (0 > n+1)
+Wp1LE := C(R(P1, C(R(P1, P1), R(P3, P3), P2)), P2, P2, P1)
+Wp1LT := C(R(S, P3), P2, R(Z, R(P2, C(Pred, P2))))
+Wp1GE := C(R(P1, C(R(P1, P1), R(P3, P3), P2)), P1, P1, P2)
+Wp1GT := C(R(P1, Z3), R(Z, C(Pred, R(P2, P3))), R(S, P3))
+
+# Order type Omega2 (odd > even)
+W2G := C(R(R(GreaterEq, Z), C(R(K[1], C(GreaterEq, P3, P4)), P3, P4, P5)), C(Mod2, P1), C(Mod2, P2), P1, P2)

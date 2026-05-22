@@ -11,7 +11,6 @@ use gen_rec::alias::AliasDb;
 use gen_rec::sim_nat::SmallNat;
 use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_table::print_io_table;
-use gen_rec::closed_form::{closed_form_ignores_arg, AffineFn, ClosedForm};
 
 #[derive(Parser, Debug)]
 #[command(about = "Explore a GRF by naming its R/M sub-expressions and showing I/O tables")]

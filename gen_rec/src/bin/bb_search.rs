@@ -1,13 +1,13 @@
 /// Enumerate 0-arity GRFs of a given size and track BBµ champions.
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
-use gen_rec::sim_nat::SmallNat;
+use gen_rec::sim_nat::{SimNat, SmallNat, BigNat};
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::stream_grf;
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
-use gen_rec::simulate::{simulate, SimResult, SimSteps};
+use gen_rec::simulate::{SimResult, SimSteps};
 use rayon::prelude::*;
 use std::fs;
 use std::io::{BufWriter, Write};
@@ -32,7 +32,7 @@ struct Args {
 
     /// Maximum steps per simulation before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
-    max_steps: SmallNat,
+    max_steps: u64,
 
     /// Include Minimization combinator (default: PRF only).
     #[arg(long)]
@@ -84,6 +84,9 @@ struct Args {
     /// Enable dynamic RNF regeneration for massively reduced memory usage.
     #[arg(long)]
     dynamic_rnf: bool,
+
+    #[arg(long)]
+    bignat: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,21 +95,21 @@ struct Args {
 
 /// Tracks the top-K individual halting GRFs by score.
 /// Entries are (score, steps, base_steps, raw_expr) sorted ascending; best at end.
-struct TopK {
+struct TopK<N: SimNat> {
     k: usize,
-    entries: Vec<(SmallNat, SmallNat, SmallNat, String)>,
+    entries: Vec<(N, u64, N, String)>,
 }
 
-impl TopK {
+impl<N: SimNat> TopK<N> {
     fn new(k: usize) -> Self {
         TopK { k, entries: Vec::new() }
     }
 
-    fn best_score(&self) -> Option<SmallNat> {
-        self.entries.last().map(|(s, _, _, _)| *s)
+    fn best_score(&self) -> Option<N> {
+        self.entries.last().map(|(s, _, _, _)| s.clone())
     }
 
-    fn insert(&mut self, score: SmallNat, steps: SmallNat, base_steps: SmallNat, expr: String) {
+    fn insert(&mut self, score: N, steps: u64, base_steps: N, expr: String) {
         if self.entries.len() >= self.k && score < self.entries[0].0 {
             return;
         }
@@ -117,13 +120,13 @@ impl TopK {
         }
     }
 
-    fn merge_from(&mut self, other: TopK) {
+    fn merge_from(&mut self, other: TopK<N>) {
         for (score, steps, base_steps, expr) in other.entries {
             self.insert(score, steps, base_steps, expr);
         }
     }
 
-    fn iter_desc(&self) -> impl Iterator<Item = &(SmallNat, SmallNat, SmallNat, String)> {
+    fn iter_desc(&self) -> impl Iterator<Item = &(N, u64, N, String)> {
         self.entries.iter().rev()
     }
 }
@@ -132,8 +135,8 @@ impl TopK {
 // Accumulator: mutable run state
 // ---------------------------------------------------------------------------
 
-struct Accumulator {
-    top_k: TopK,
+struct Accumulator<N: SimNat> {
+    top_k: TopK<N>,
     total: usize,
     holdouts: usize,
     diverged: usize,
@@ -142,10 +145,10 @@ struct Accumulator {
     sim_nanos: u64,
 }
 
-impl Accumulator {
+impl<N: SimNat> Accumulator<N> {
     fn new(k: usize) -> Self {
         Accumulator {
-            top_k: TopK::new(k),
+            top_k: TopK::<N>::new(k),
             total: 0,
             holdouts: 0,
             diverged: 0,
@@ -160,19 +163,19 @@ impl Accumulator {
 // Batch processing
 // ---------------------------------------------------------------------------
 
-struct BatchResult {
-    top_k: TopK,
-    holdouts: Vec<(SmallNat, String, Option<&'static str>)>,
+struct BatchResult<N: SimNat> {
+    top_k: TopK<N>,
+    holdouts: Vec<(u64, String, Option<&'static str>)>,
     diverged: usize,
     total_steps: SmallNat,
 }
 
-fn process_batch(batch: &[Grf], max_steps: SmallNat, k: usize) -> BatchResult {
+fn process_batch<N: SimNat + Send + Sync>(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult<N> {
     // Strings not allocated in worker threads — avoids macOS nano-zone
     // cross-thread free errors ("pointer being freed was not allocated").
-    let outcomes: Vec<(SimResult, SimSteps)> = batch
+    let outcomes: Vec<(SimResult<N>, SimSteps<N>)> = batch
         .par_iter()
-        .map(|grf| simulate(grf, &[], max_steps))
+        .map(|grf| gen_rec::simulate::simulate_opts::<N>(grf, &[], if max_steps == 0 { None } else { Some(max_steps) }, gen_rec::simulate::SimOpts::default()))
         .collect();
 
     let mut top_k = TopK::new(k);
@@ -194,11 +197,11 @@ fn process_batch(batch: &[Grf], max_steps: SmallNat, k: usize) -> BatchResult {
     BatchResult { top_k, holdouts, diverged, total_steps }
 }
 
-fn flush_batch<W: Write>(
+fn flush_batch<W: Write, N: SimNat + Send + Sync>(
     batch: &mut Vec<Grf>,
-    acc: &mut Accumulator,
+    acc: &mut Accumulator<N>,
     holdout_w: &mut W,
-    max_steps: SmallNat,
+    max_steps: u64,
     k: usize,
 ) {
     if batch.is_empty() {
@@ -229,7 +232,7 @@ fn flush_batch<W: Write>(
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
-fn fmt_si(n: SmallNat) -> String {
+fn fmt_si(n: u64) -> String {
     if n < 1_000 { format!("{}", n) } else { fmt_si_f64(n as f64) }
 }
 
@@ -253,6 +256,14 @@ fn fmt_si_f64(n: f64) -> String {
 
 fn main() {
     let args = Args::parse();
+    if args.bignat {
+        run_search::<BigNat>(&args);
+    } else {
+        run_search::<SmallNat>(&args);
+    }
+}
+
+fn run_search<N: SimNat + Send + Sync>(args: &Args) {
 
     let mut opts = PruningOpts::recommended();
     opts.min_dom = true;
@@ -307,7 +318,7 @@ fn main() {
     let progress_interval = Duration::from_secs(args.progress_secs);
     let mut last_progress = start;
 
-    let mut acc = Accumulator::new(args.top_k);
+    let mut acc = Accumulator::<N>::new(args.top_k);
     let mut batch: Vec<Grf> = Vec::with_capacity(args.batch_size);
 
     // Macro-like helper to flush and maybe print progress.
@@ -323,13 +334,13 @@ fn main() {
                 if has_min {
                     println!(
                         "[t={:.1}s] best={}  fns={}  holdouts={}  diverged={}  steps={}  ({} steps/s)",
-                        t, best_s, fmt_si(acc.total as SmallNat), fmt_si(acc.holdouts as SmallNat),
-                        fmt_si(acc.diverged as SmallNat), steps_s, rate_s,
+                        t, best_s, fmt_si(acc.total as u64), fmt_si(acc.holdouts as u64),
+                        fmt_si(acc.diverged as u64), steps_s, rate_s,
                     );
                 } else {
                     println!(
                         "[t={:.1}s] best={}  fns={}  holdouts={}  steps={}  ({} steps/s)",
-                        t, best_s, fmt_si(acc.total as SmallNat), fmt_si(acc.holdouts as SmallNat),
+                        t, best_s, fmt_si(acc.total as u64), fmt_si(acc.holdouts as u64),
                         steps_s, rate_s,
                     );
                 }
@@ -444,7 +455,7 @@ fn main() {
     for (score, steps, base_steps, expr) in acc.top_k.iter_desc() {
         io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
             expr: expr.clone(), status: Some(Status::Halt),
-            steps: Some(*steps), base_steps: Some(*base_steps), score: Some(*score),
+            steps: Some(*steps), base_steps: Some(base_steps.to_u64_sat()), score: Some(score.to_u64_sat()),
             unknown_reason: None,
         }).unwrap();
     }

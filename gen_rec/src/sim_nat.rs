@@ -30,6 +30,7 @@ pub trait SimNat:
     fn is_zero(&self) -> bool;
     /// Saturating addition in place (used for `base_approx` accumulation).
     fn checked_rem(self, rhs: Self) -> Option<Self>;
+    fn checked_div_ceil_u64(self, rhs: u64) -> Option<Self>;
     fn saturating_add_assign(&mut self, rhs: Self);
     /// Saturating addition by value. Default impl uses `saturating_add_assign`.
     fn saturating_add(mut self, rhs: Self) -> Self {
@@ -50,6 +51,7 @@ impl SimNat for SmallNat {
     fn to_u64_sat(&self) -> u64 { *self }
     fn is_zero(&self) -> bool { *self == 0 }
     fn checked_rem(self, rhs: Self) -> Option<Self> { self.checked_rem(rhs) }
+    fn checked_div_ceil_u64(self, rhs: u64) -> Option<Self> { if rhs == 0 { None } else { Some(self.div_ceil(rhs)) } }
     fn saturating_add_assign(&mut self, rhs: Self) { *self = u64::saturating_add(*self, rhs); }
 }
 
@@ -69,5 +71,6 @@ impl SimNat for BigNat {
     fn to_u64_sat(&self) -> u64 { self.to_u64().unwrap_or(u64::MAX) }
     fn is_zero(&self) -> bool { *self == 0u64 }
     fn checked_rem(self, rhs: Self) -> Option<Self> { if rhs == 0u64 { None } else { Some(self % rhs) } }
+    fn checked_div_ceil_u64(self, rhs: u64) -> Option<Self> { if rhs == 0 { None } else { let num = self + (rhs - 1); Some(num / rhs) } }
     fn saturating_add_assign(&mut self, rhs: Self) { *self += rhs; }
 }

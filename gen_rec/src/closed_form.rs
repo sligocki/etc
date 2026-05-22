@@ -1,4 +1,5 @@
 use crate::sim_nat::SimNat;
+use crate::simulate::SimResult;
 use crate::grf::{Grf, GrfKind};
 
 /// Affine function over natural numbers: c0 + c1*x1 + ... + ck*xk.
@@ -166,7 +167,7 @@ ClosedForm::Monus(a1, a2) => {
     ///   all i, so we just pick it. Handled iteratively to avoid O(n) stack depth.
     /// - Piecewise on search var (bi = 0): check i=0 via zero_branch; if nonzero,
     ///   M = 1 + M(pos_branch) for the i>0 case.
-    pub fn compute_min<N: SimNat>(&self, outer_args: &[N]) -> Option<N> {
+    pub fn compute_min<N: SimNat>(&self, outer_args: &[N]) -> SimResult<N> {
         let mut cf: &ClosedForm = self;
         let mut outer: Vec<N> = outer_args.to_vec();
         loop {
@@ -178,8 +179,8 @@ ClosedForm::Monus(a1, a2) => {
                     full.push(N::zero());
                     full.extend(outer.iter().cloned());
                     return match af.eval(&full) {
-                        Some(v) if v.is_zero() => Some(N::zero()),
-                        _ => None,
+                        Some(v) if v.is_zero() => SimResult::Value(N::zero()),
+                        _ => SimResult::Diverge,
                     };
                 }
 
@@ -193,51 +194,94 @@ ClosedForm::Monus(a1, a2) => {
                         full.push(N::zero());
                         full.extend(outer.iter().cloned());
                         
-                        let b = af1.eval(&full)?;
-                        let d = af2.eval(&full)?;
+                        let b = match af1.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
+                        let d = match af2.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
 
                         if a <= c {
                             if b <= d {
-                                return Some(N::zero());
+                                return SimResult::Value(N::zero());
                             } else if a == c {
-                                return None; // They never cross
+                                return SimResult::Diverge; // They never cross
                             } else {
                                 let diff_c = c - a;
                                 let diff_d = b.checked_sub(d).unwrap();
-                                // ceiling division: (diff_d + diff_c - 1) / diff_c
-                                // wait, SimNat only has u64 conversion or we can do it via to_u64_sat?
-                                // wait, the formula is N::from_u64( diff_d.to_u64_sat().div_ceil(diff_c) )
-                                return Some(N::from_u64(diff_d.to_u64_sat().div_ceil(diff_c)));
+                                return match diff_d.checked_div_ceil_u64(diff_c) { Some(v) => SimResult::Value(v), None => SimResult::ValueOverflow };
                             }
                         } else {
                             if b <= d {
-                                return Some(N::zero());
+                                return SimResult::Value(N::zero());
                             } else {
-                                return None; // They never cross
+                                return SimResult::Diverge; // They never cross
                             }
                         }
                     } else {
-                        return None;
+                        return SimResult::Diverge;
                     }
                 }
-                ClosedForm::NegMod(a1, a2, a3) => {
+                                ClosedForm::NegMod(a1, a2, a3) => {
                     if let (ClosedForm::Affine(af1), ClosedForm::Affine(af2), ClosedForm::Affine(af3)) = (&**a1, &**a2, &**a3) {
                         let a = af1.coeffs[1];
                         let c = af2.coeffs[1];
+                        let e = af3.coeffs[1];
                         
                         let mut full = Vec::with_capacity(outer.len() + 1);
                         full.push(N::zero());
                         full.extend(outer.iter().cloned());
                         
-                        let b = af1.eval(&full)?;
-                        let d = af2.eval(&full)?;
-                        
-                        if a >= c && b >= d {
-                            if a == c && b == d { return Some(N::zero()); }
-                            return None;
+                        let b = match af1.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
+                        let d = match af2.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
+                        let f = match af3.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
+
+                        if a == 1 && c == 0 && e == 0 {
+                            if f.is_zero() { return SimResult::Diverge; }
+                            if b >= d {
+                                if b == d { return SimResult::Value(N::zero()); }
+                                return SimResult::Diverge;
+                            }
+                            let x = d.checked_sub(b).unwrap();
+                            return match x.checked_rem(f) {
+                                Some(v) => SimResult::Value(v),
+                                None => SimResult::ValueOverflow, // unreachable as f != 0
+                            };
+                        } else if a == 0 && c == 1 && e == 0 {
+                            if f.is_zero() { return SimResult::Diverge; }
+                            if b >= d {
+                                return SimResult::Value(b.checked_sub(d).unwrap());
+                            } else {
+                                let x = d.checked_sub(b).unwrap();
+                                let x_mod = match x.checked_rem(f.clone()) {
+                                    Some(v) => v,
+                                    None => return SimResult::ValueOverflow, // unreachable as f != 0
+                                };
+                                if x_mod.is_zero() {
+                                    return SimResult::Value(N::zero());
+                                } else {
+                                    return SimResult::Value(f.checked_sub(x_mod).unwrap());
+                                }
+                            }
+                        } else {
+                            let mut i = N::zero();
+                            let mut steps = 0;
+                            while steps < 1_000 {
+                                let v1 = match i.clone().checked_mul_u64(a).and_then(|m| m.checked_add(b.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                let v2 = match i.clone().checked_mul_u64(c).and_then(|m| m.checked_add(d.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                let v3 = match i.clone().checked_mul_u64(e).and_then(|m| m.checked_add(f.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                if v1 >= v2 {
+                                    if v1 == v2 { return SimResult::Value(i); }
+                                } else {
+                                    if v3.is_zero() { return SimResult::Diverge; }
+                                    let diff = v2.checked_sub(v1).unwrap();
+                                    if diff.checked_rem(v3).unwrap().is_zero() {
+                                        return SimResult::Value(i);
+                                    }
+                                }
+                                i = match i.succ() { Some(v) => v, None => return SimResult::ValueOverflow };
+                                steps += 1;
+                            }
+                            return SimResult::OutOfSteps;
                         }
                     }
-                    return None;
+                    return SimResult::OutOfSteps;
                 }
                 ClosedForm::Piecewise(pw) => {
                     let bi = pw.branch_index;
@@ -246,11 +290,17 @@ ClosedForm::Monus(a1, a2) => {
                         // i=0: check if zero_branch(outer) = 0.
                         if let Some(v) = pw.zero_branch.eval(&outer) {
                             if v.is_zero() {
-                                return Some(N::zero());
+                                return SimResult::Value(N::zero());
                             }
                         }
                         // i>0: cf(i, outer) = pos_branch(i-1, outer), so M(cf) = 1 + M(pos_branch).
-                        return pw.pos_branch.compute_min(&outer).and_then(|j| j.succ());
+                        return match pw.pos_branch.compute_min(&outer) {
+                            SimResult::Value(j) => match j.succ() {
+                                Some(succ) => SimResult::Value(succ),
+                                None => SimResult::ValueOverflow,
+                            },
+                            other => other,
+                        };
                     } else {
                         // Branch on outer_args[bi-1] (0-based in outer). This outer arg
                         // is the same for all i, so we can choose the branch unconditionally.
@@ -1234,12 +1284,12 @@ mod tests {
         // AffineFn: f(i, x) = x. At i=0: f=x. If x=0 → min=0; else diverge.
         let cf = closed_form_of(&grf("P(2,2)")).unwrap(); // P(2,2)(i,x) = x
         assert!(matches!(cf, ClosedForm::Affine(_)));
-        assert_eq!(cf.compute_min::<u64>(&[0]), Some(0));
-        assert_eq!(cf.compute_min::<u64>(&[3]), None);
+        assert_eq!(cf.compute_min::<u64>(&[0]), SimResult::Value(0));
+        assert_eq!(cf.compute_min::<u64>(&[3]), SimResult::Diverge);
 
         // f(i, x) = i + 1 (Succ of search var). f(0,...) = 1 always → diverge.
         let cf2 = closed_form_of(&grf("S")).unwrap(); // S(i) = i+1
-        assert_eq!(cf2.compute_min::<u64>(&[]), None);
+        assert_eq!(cf2.compute_min::<u64>(&[]), SimResult::Diverge);
     }
 
     #[test]
@@ -1247,12 +1297,12 @@ mod tests {
         // Predecessor R(Z0, P(2,1)) has arity 1: f(i)=pred(i). pred(0)=0 → M()=0.
         let cf = closed_form_of(&grf("R(Z0, P(2,1))")).unwrap();
         assert!(matches!(cf, ClosedForm::Piecewise(ref pw) if pw.branch_index == 0));
-        assert_eq!(cf.compute_min::<u64>(&[]), Some(0));
+        assert_eq!(cf.compute_min::<u64>(&[]), SimResult::Value(0));
 
         // R(C(S,Z0), Z2): arity 1. base=1, step always returns 0 → f(0)=1, f(1)=0 → M()=1.
         let cf2 = closed_form_of(&grf("R(C(S,Z0), Z2)")).unwrap();
         assert!(matches!(cf2, ClosedForm::Piecewise(ref pw) if pw.branch_index == 0));
-        assert_eq!(cf2.compute_min::<u64>(&[]), Some(1));
+        assert_eq!(cf2.compute_min::<u64>(&[]), SimResult::Value(1));
     }
 
     #[test]
@@ -1262,9 +1312,9 @@ mod tests {
         // M(f)(y): pred(0)=0 → Some(0); pred(1)=0 → Some(0); pred(3)=2 → None.
         let cf = closed_form_of(&grf("C(R(Z0,P(2,1)),P(2,2))")).unwrap();
         assert!(matches!(cf, ClosedForm::Piecewise(ref pw) if pw.branch_index == 1));
-        assert_eq!(cf.compute_min::<u64>(&[0]), Some(0));
-        assert_eq!(cf.compute_min::<u64>(&[1]), Some(0));
-        assert_eq!(cf.compute_min::<u64>(&[3]), None);
+        assert_eq!(cf.compute_min::<u64>(&[0]), SimResult::Value(0));
+        assert_eq!(cf.compute_min::<u64>(&[1]), SimResult::Value(0));
+        assert_eq!(cf.compute_min::<u64>(&[3]), SimResult::Diverge);
     }
 
     #[test]
@@ -1273,8 +1323,8 @@ mod tests {
         // cf(1,y) = y
         // cf(_,_) = 0
         let cf = closed_form_of(&grf("R(S, R(P(2,2), Z4))")).unwrap();
-        assert_eq!(cf.compute_min::<u64>(&[0]), Some(1));
-        assert_eq!(cf.compute_min::<u64>(&[1]), Some(2));
+        assert_eq!(cf.compute_min::<u64>(&[0]), SimResult::Value(1));
+        assert_eq!(cf.compute_min::<u64>(&[1]), SimResult::Value(2));
     }
 
     #[test]
@@ -1283,8 +1333,8 @@ mod tests {
         // cf(1,y) = y
         // cf(_,_) = 1
         let cf = closed_form_of(&grf("R(S, R(P(2,2), C(S, Z4)))")).unwrap();
-        assert_eq!(cf.compute_min::<u64>(&[0]), Some(1));
-        assert_eq!(cf.compute_min::<u64>(&[1]), None);
+        assert_eq!(cf.compute_min::<u64>(&[0]), SimResult::Value(1));
+        assert_eq!(cf.compute_min::<u64>(&[1]), SimResult::Diverge);
     }
 
     #[test]

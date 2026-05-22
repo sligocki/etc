@@ -171,10 +171,11 @@ where
     // Fast-forward: if f has a ClosedForm, use compute_min for an exact O(1)-or-O(n) answer.
     if opts.min_fast_forward && opts.use_closed_form {
         if let Some(cf) = f.closed_form() {
-            return match cf.compute_min(args) {
-                Some(v) => (SimResult::Value(v), steps),
-                None => (SimResult::Diverge, steps),
-            };
+            let res = cf.compute_min(args);
+            if matches!(res, SimResult::Value(_) | SimResult::Diverge | SimResult::ValueOverflow) {
+                return (res, steps);
+            }
+            // If OutOfSteps or anything else, fall through to simulation
         }
     }
 

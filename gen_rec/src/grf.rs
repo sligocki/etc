@@ -270,11 +270,18 @@ impl Grf {
             GrfKind::Proj(_, i) => *i == j,
             GrfKind::Rec(g, h) => {
                 if j == 1 {
-                    // Counter positive (n ≥ 1): h fires at least once. If h always
-                    // returns positive, done. The g.is_never_zero() + h.is_positive_for_pos_arg(2)
-                    // case is already covered by is_never_zero() above (which was extended
-                    // to include that pattern), so here we only need h.is_never_zero().
-                    h.is_never_zero()
+                    if h.is_never_zero() {
+                        return true;
+                    }
+                    if g.arity() == 0 && h.is_positive_for_pos_arg(2) {
+                        let (res, _) = crate::simulate::simulate(self, &[1], 100);
+                        if let crate::simulate::SimResult::Value(v) = res {
+                            if v > 0 {
+                                return true;
+                            }
+                        }
+                    }
+                    false
                 } else {
                     // Rec's outer arg j (j ≥ 2) maps to g's arg (j-1).
                     // Base (n=0): g positive when g's arg (j-1) positive.
@@ -890,7 +897,6 @@ mod tests {
 
     // TODO: Support
     #[test]
-    #[ignore = "Not Implemented"]
     fn test_always_pos_rec_eventually() {
         // From min_prf 12 holdout: M(C(R(Z0, R(S, R(P(2,2), C(S, P(4,2))))), S))
         let a = grf!("R(Z0, R(S, R(P(2,2), C(S, P(4,2)))))");

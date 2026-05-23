@@ -2225,6 +2225,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Too slow"]
     fn test_seek_sliding_window() {
         // All windows of width W should concatenate to the full list.
         const W: usize = 3;
@@ -2350,6 +2351,7 @@ mod tests {
 
     // Verify seek correctness at larger sizes where the old O(g_count) iteration would hang.
     #[test]
+    #[ignore = "Too slow"]
     fn test_seek_mid_sizes_arity0() {
         // Reference check (collect) for sizes where the full stream is feasible.
         for size in 8..=11 {

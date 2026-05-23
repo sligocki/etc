@@ -9,6 +9,7 @@ pub mod io_table;
 pub mod mgrf;
 pub mod novel_db;
 pub mod novel_enum;
+pub mod math;
 pub mod optimize;
 pub mod pruning;
 pub mod semantic_search;

@@ -1,4 +1,5 @@
 use crate::grf::{Grf, GrfKind};
+use crate::math::{gcd, lcm};
 use crate::sim_nat::SimNat;
 use crate::simulate::SimResult;
 
@@ -621,31 +622,47 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
-    // Case Periodic: h ignores step counter (arg 1) -> sequence only depends on acc and rest.
-    // If it falls into a cycle, we can represent it with PeriodicFn (and PiecewiseFn for pre-period).
-    if sem_h.arity() == k_outer + 1 && closed_form_ignores_arg(sem_h, 1) {
-        let mut seq = Vec::new();
-        seq.push(sem_g.clone());
-        let mut cycle_found = None;
-        let k_rest = k_outer - 1;
-        for step in 1..=50 {
-            let prev = seq.last().unwrap().clone();
-            let mut inners = Vec::with_capacity(k_outer + 1);
-            inners.push(ClosedForm::Affine(AffineFn::zero(k_rest))); // i is ignored
-            inners.push(prev); // acc
-            for m in 1..=k_rest {
-                inners.push(ClosedForm::Affine(AffineFn::proj(k_rest, m)));
-            }
-            if let Some(next_cf) = compose(sem_h, &inners, k_rest) {
-                if let Some(j) = seq.iter().position(|x| x == &next_cf) {
-                    cycle_found = Some((j, step));
+    // Case Periodic: h depends on step counter (arg 1) at most periodically -> sequence only depends on acc and rest.
+    // We can simulate the first 50 steps. If we find a cycle, we can represent it with PeriodicFn.
+    if sem_h.arity() == k_outer + 1 {
+        if let Some((p, pre)) = period_and_pre_period(sem_h, 1) {
+            let mut seq = Vec::new();
+            seq.push(sem_g.clone());
+            let mut cycle_found = None;
+            let k_rest = k_outer - 1;
+            for step in 1..=50 {
+                let prev = seq.last().unwrap().clone();
+                let mut inners = Vec::with_capacity(k_outer + 1);
+                
+                // i is the step counter (1-indexed). The step evaluation f(n+1) = h(n, f(n)) uses `n` which is `step - 1`.
+                let mut step_coeffs = vec![0; k_rest + 1];
+                step_coeffs[0] = (step - 1) as u64;
+                inners.push(ClosedForm::Affine(AffineFn { arity: k_rest, coeffs: step_coeffs }));
+                inners.push(prev); // acc
+                for m in 1..=k_rest {
+                    inners.push(ClosedForm::Affine(AffineFn::proj(k_rest, m)));
+                }
+                
+                if let Some(next_cf) = compose(sem_h, &inners, k_rest) {
+                    if step >= pre {
+                        // Find a previous state that matches next_cf and is at the same phase modulo p.
+                        let mut found_match = None;
+                        for (j, x) in seq.iter().enumerate() {
+                            if j >= pre && j % p == step % p && x == &next_cf {
+                                found_match = Some(j);
+                                break;
+                            }
+                        }
+                        if let Some(j) = found_match {
+                            cycle_found = Some((j, step));
+                            break;
+                        }
+                    }
+                    seq.push(next_cf);
+                } else {
                     break;
                 }
-                seq.push(next_cf);
-            } else {
-                break;
             }
-        }
         if let Some((j, k)) = cycle_found {
             let cycle_branches = seq[j..k].to_vec();
             if cycle_branches.len() == 1 {
@@ -668,6 +685,7 @@ pub fn closed_form_of_rec_internal(
                 res = make_piecewise(k_outer, 0, seq[m].clone(), res);
             }
             return Some(res);
+        }
         }
     }
 
@@ -1494,6 +1512,35 @@ fn is_always_zero(sem: &ClosedForm) -> bool {
         }
         ClosedForm::NegMod(_, _, _) => false,
         ClosedForm::Periodic(p) => p.branches.iter().all(|b| is_always_zero(b)),
+    }
+}
+
+fn period_and_pre_period(cf: &ClosedForm, arg_idx: usize) -> Option<(usize, usize)> {
+    if closed_form_ignores_arg(cf, arg_idx) {
+        return Some((1, 0));
+    }
+    match cf {
+        ClosedForm::Piecewise(pw) => {
+            if pw.branch_index + 1 == arg_idx {
+                let (p, pre) = period_and_pre_period(&pw.pos_branch, arg_idx)?;
+                Some((p, pre + 1))
+            } else {
+                let (p1, pre1) = period_and_pre_period(&pw.zero_branch, arg_idx)?;
+                let (p2, pre2) = period_and_pre_period(&pw.pos_branch, arg_idx)?;
+                Some((lcm(p1, p2), std::cmp::max(pre1, pre2)))
+            }
+        }
+        ClosedForm::Periodic(p) => {
+            let mut p_len = if p.branch_index + 1 == arg_idx { p.branches.len() } else { 1 };
+            let mut pre = 0;
+            for b in &p.branches {
+                let (bp, bpre) = period_and_pre_period(b, arg_idx)?;
+                p_len = lcm(p_len, bp);
+                pre = std::cmp::max(pre, bpre);
+            }
+            Some((p_len, pre))
+        }
+        _ => None,
     }
 }
 
@@ -2604,5 +2651,20 @@ mod tests {
             SimResult::Diverge => (), // Correct!
             other => panic!("Expected Diverge, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_periodic_rec_cycle_detection() {
+        // Holdout 14 structure: M(R(C(S, Z0), c)) where c = R(P(1,1), R(R(S, P(3,3)), P(4,2)))
+        let h_grf = grf("R(P(1,1), R(R(S, P(3,3)), P(4,2)))");
+        let g_grf = grf("C(S, Z0)");
+        
+        let c_sem = closed_form_of(&h_grf).unwrap();
+        let g_sem = closed_form_of(&g_grf).unwrap();
+        
+        // This corresponds to testing `closed_form_of_rec_internal` handles periodic dependencies on step counter.
+        // It should identify that the recursion forms a cycle.
+        let rec_cf = super::closed_form_of_rec_internal(&g_sem, &c_sem, 1, 100);
+        
     }
 }

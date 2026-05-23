@@ -120,6 +120,39 @@ pub enum ClosedForm {
 }
 
 impl ClosedForm {
+    /// Computes the mathematical minimum of `self(args) - args[arg_idx]`.
+    ///
+    /// This seamlessly handles `Monus[k]` behavior by recursively stepping through Piecewise
+    /// zero/pos branches, extracting the algebraic constant difference securely.
+    pub fn min_diff_from_arg(&self, arg_idx: usize) -> Option<i64> {
+        match self {
+            ClosedForm::Affine(aff) => {
+                // To guarantee `self - arg >= C`, the coefficient for `arg` must be exactly 1,
+                // and all other coefficients must be >= 0. Since AffineFn uses u64, all coeffs are >= 0.
+                if aff.coeffs.get(arg_idx + 1).copied()? != 1 {
+                    return None;
+                }
+                Some(aff.coeffs[0] as i64)
+            }
+            ClosedForm::Piecewise(pw) => {
+                if pw.branch_index == arg_idx {
+                    // For zero_branch, arg_idx evaluates to 0. So self - arg = self - 0.
+                    let z_min = match &*pw.zero_branch {
+                        ClosedForm::Affine(aff) => aff.coeffs[0] as i64,
+                        _ => return None,
+                    };
+
+                    // For pos_branch, it receives (arg - 1).
+                    // So self - arg = pos_branch(arg - 1) - (arg - 1) - 1.
+                    let p_min = pw.pos_branch.min_diff_from_arg(arg_idx)?;
+                    Some(z_min.min(p_min - 1))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
     pub fn ast_size(&self) -> usize {
         match self {
             ClosedForm::Affine(_) => 1,

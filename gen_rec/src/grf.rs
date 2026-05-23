@@ -218,6 +218,32 @@ impl Grf {
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
 
     /// Returns a static lower bound for this function across all inputs.
+
+    /// Returns the minimum mathematically guaranteed value of `self(args) - other(args)`.
+    pub fn guaranteed_diff(&self, other: &Grf) -> Option<i64> {
+        let cf_self = crate::closed_form::closed_form_of(self)?;
+        let cf_other = crate::closed_form::closed_form_of(other)?;
+
+        if let (
+            crate::closed_form::ClosedForm::Affine(aff_s),
+            crate::closed_form::ClosedForm::Affine(aff_o),
+        ) = (cf_self, cf_other)
+        {
+            // Both are affine. Ensure self's linear coefficients are >= other's linear coefficients.
+            if aff_s.coeffs.len() < aff_o.coeffs.len() {
+                // If self has fewer args (impossible if they have the same arity, but just in case)
+                return None;
+            }
+            for i in 1..aff_o.coeffs.len() {
+                if aff_s.coeffs[i] < aff_o.coeffs[i] {
+                    return None;
+                }
+            }
+            // What if self has more coeffs? They are >= 0, so self(args) will just be even larger.
+            return Some((aff_s.coeffs[0] as i64) - (aff_o.coeffs[0] as i64));
+        }
+        None
+    }
     pub fn min_val(&self) -> u64 {
         match &self.kind {
             GrfKind::Zero(_) => 0,
@@ -290,6 +316,36 @@ impl Grf {
                 // C(+, ...) -> +
                 if h.is_never_zero() {
                     return true;
+                }
+
+                // Positivity traps for Monus Descent bounds
+                if let GrfKind::Rec(g_h, h_h) = &h.kind {
+                    if let Some(cf_h) = crate::closed_form::closed_form_of(h_h) {
+                        if let Some(d_h) = cf_h.min_diff_from_arg(1) {
+                            if d_h >= -1 {
+                                // h_h subtracts at most 1 from the accumulator per step.
+                                if let Some(cf_g) = crate::closed_form::closed_form_of(g_h) {
+                                    // Check all arguments to see if g_h projects them >= 0
+                                    for k in 0..gs.len() {
+                                        if let Some(d_g) = cf_g.min_diff_from_arg(k) {
+                                            if d_g >= 0 {
+                                                // So h(n, rest) >= rest[k] - n.
+                                                // C(h, gs) >= gs[k+1] - gs[0].
+                                                if let Some(gs_k) = gs.get(k + 1) {
+                                                    if let Some(diff) = gs_k.guaranteed_diff(&gs[0])
+                                                    {
+                                                        if diff >= 1 {
+                                                            return true;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // If any inner argument is strictly positive and the outer function
@@ -978,5 +1034,14 @@ mod tests {
 
         let c = grf!("C(R(Z0, R(P(1,1), C(S, P(3,2)))), C(S, S))");
         assert!(c.is_never_zero());
+    }
+
+    #[test]
+    fn test_monus_descent_bounds() {
+        // M(C(R(P(1,1), C(R(P(1,1), P(3,1)), P(3,2), P(3,1))), P(1,1), S))
+        // This evaluates to b(n, n+1) where b(n, y) = y - n.
+        // It is NEVER ZERO since b(n, n+1) = 1.
+        let f = grf!("C(R(P(1,1), C(R(P(1,1), P(3,1)), P(3,2), P(3,1))), P(1,1), S)");
+        assert!(f.is_never_zero());
     }
 }

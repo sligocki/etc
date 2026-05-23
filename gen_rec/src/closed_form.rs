@@ -189,95 +189,172 @@ impl ClosedForm {
                     let f_raw = match af3.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
                     let f = match f_raw.clone().checked_add(N::one()) { Some(v) => v, None => return SimResult::ValueOverflow };
 
-                    if e == 0 && f_raw.is_zero() {
-                        if a <= c {
-                            if b <= d {
-                                return SimResult::Value(N::zero());
-                            } else if a == c {
-                                return SimResult::Diverge;
+                    let mut min_i: Option<N> = None;
+                    
+                    let mut update_min = |candidate: N| {
+                        match &min_i {
+                            Some(min) => if candidate < *min { min_i = Some(candidate); },
+                            None => min_i = Some(candidate),
+                        }
+                    };
+
+                    let (a_is_pos, a_val) = if c >= a { (true, c - a) } else { (false, a - c) };
+                    let (b_is_pos, b_val) = if b >= d { (true, b.clone().checked_sub(d.clone()).unwrap()) } else { (false, d.clone().checked_sub(b.clone()).unwrap()) };
+
+                    if e > 0 {
+                        // Subcase 1: A - k*e > 0
+                        if a_is_pos {
+                            let max_k = a_val / e;
+                            for k in 0..=max_k {
+                                let den = a_val - k * e;
+                                if den > 0 {
+                                    let k_f = match f.clone().checked_mul_u64(k) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    let (num_is_pos, num_val) = if b_is_pos {
+                                        (true, match b_val.clone().checked_add(k_f) { Some(v) => v, None => return SimResult::ValueOverflow })
+                                    } else {
+                                        if k_f >= b_val {
+                                            (true, k_f.checked_sub(b_val.clone()).unwrap())
+                                        } else {
+                                            (false, b_val.clone().checked_sub(k_f).unwrap())
+                                        }
+                                    };
+                                    
+                                    if num_is_pos {
+                                        if let Some(rem) = num_val.clone().checked_rem(N::from_u64(den)) {
+                                            if rem.is_zero() {
+                                                if let Some(i) = num_val.checked_div_ceil_u64(den) {
+                                                    update_min(i);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Subcase 2: A - k*e < 0
+                        if !b_is_pos || b_val.is_zero() {
+                            let mut k = 0;
+                            loop {
+                                let k_f = match f.clone().checked_mul_u64(k) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                if k_f > b_val {
+                                    break;
+                                }
+                                
+                                let den_is_pos = if a_is_pos {
+                                    a_val > k * e
+                                } else {
+                                    false
+                                };
+                                
+                                if !den_is_pos {
+                                    let den_val = if a_is_pos {
+                                        (k * e) - a_val
+                                    } else {
+                                        a_val + (k * e)
+                                    };
+                                    
+                                    if den_val > 0 {
+                                        let num_val = b_val.clone().checked_sub(k_f).unwrap();
+                                        if let Some(rem) = num_val.clone().checked_rem(N::from_u64(den_val)) {
+                                            if rem.is_zero() {
+                                                if let Some(i) = num_val.checked_div_ceil_u64(den_val) {
+                                                    update_min(i);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                k += 1;
+                            }
+                        }
+
+                        // Subcase 3: A - k*e == 0
+                        if a_is_pos && a_val % e == 0 {
+                            let k = a_val / e;
+                            let k_f = match f.clone().checked_mul_u64(k) { Some(v) => v, None => return SimResult::ValueOverflow };
+                            let num_is_zero = if b_is_pos {
+                                b_val.is_zero() && k_f.is_zero()
                             } else {
-                                let diff_c = c - a;
-                                let diff_d = b.checked_sub(d).unwrap();
-                                return match diff_d.checked_div_ceil_u64(diff_c) { Some(v) => SimResult::Value(v), None => SimResult::ValueOverflow };
+                                b_val == k_f
+                            };
+                            
+                            if num_is_zero {
+                                update_min(N::zero());
+                            }
+                        }
+                    } else {
+                        // e == 0
+                        if a_is_pos && a_val == 0 {
+                            if !b_is_pos || b_val.is_zero() {
+                                if let Some(rem) = b_val.clone().checked_rem(f.clone()) {
+                                    if rem.is_zero() {
+                                        update_min(N::zero());
+                                    }
+                                }
+                            }
+                        } else if a_is_pos {
+                            if a_val == 1 {
+                                if b_is_pos {
+                                    update_min(b_val);
+                                } else {
+                                    let rem = b_val.clone().checked_rem(f.clone()).unwrap();
+                                    if rem.is_zero() {
+                                        update_min(N::zero());
+                                    } else {
+                                        update_min(f.clone().checked_sub(rem).unwrap());
+                                    }
+                                }
+                            } else {
+                                let mut i = N::zero();
+                                let mut steps = 0;
+                                while steps < 10_000 {
+                                    let v1 = match i.clone().checked_mul_u64(a).and_then(|m| m.checked_add(b.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    let v2 = match i.clone().checked_mul_u64(c).and_then(|m| m.checked_add(d.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    if v1 >= v2 {
+                                        if v1 == v2 { update_min(i.clone()); break; }
+                                    } else {
+                                        let diff = v2.checked_sub(v1).unwrap();
+                                        if diff.checked_rem(f.clone()).unwrap().is_zero() {
+                                            update_min(i.clone()); break;
+                                        }
+                                    }
+                                    i = match i.checked_add(N::one()) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    steps += 1;
+                                }
                             }
                         } else {
-                            if b <= d {
-                                return SimResult::Value(N::zero());
+                            if a_val == 1 {
+                                if !b_is_pos || b_val.is_zero() {
+                                    let rem = b_val.clone().checked_rem(f.clone()).unwrap();
+                                    update_min(rem);
+                                }
                             } else {
-                                return SimResult::Diverge;
+                                let mut i = N::zero();
+                                let mut steps = 0;
+                                while steps < 10_000 {
+                                    let v1 = match i.clone().checked_mul_u64(a).and_then(|m| m.checked_add(b.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    let v2 = match i.clone().checked_mul_u64(c).and_then(|m| m.checked_add(d.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    if v1 >= v2 {
+                                        if v1 == v2 { update_min(i.clone()); break; }
+                                    } else {
+                                        let diff = v2.checked_sub(v1).unwrap();
+                                        if diff.checked_rem(f.clone()).unwrap().is_zero() {
+                                            update_min(i.clone()); break;
+                                        }
+                                    }
+                                    i = match i.checked_add(N::one()) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    steps += 1;
+                                }
                             }
                         }
                     }
 
-                    // We are solving for the smallest i >= 0 such that NegMod(v1, v2, v3) == 0,
-                    // where v1 = a*i + b, v2 = c*i + d, v3 = e*i + f.
-                    // Recall NegMod(v1, v2, v3) is:
-                    //   if v1 >= v2 { v1 - v2 }
-                    //   else        { (v1 - v2) mod v3 } (mathematical modulo)
-                    if a == 1 && c == 0 && e == 0 {
-                        // Branch 1: Search variable `i` is only in v1 (v1 = i + b, v2 = d, v3 = f).
-                        // If i + b >= d, value is i + b - d.
-                        // If i + b < d, value is (i + b - d) mod f.
-                        // If b == d, then i = 0 -> 0
-                        if b == d { return SimResult::Value(N::zero()); }
-                        // If b > d, it strictly increases from b - d > 0 and never hits 0.
-                        if b > d { return SimResult::Diverge; }
-                        // Since b < d, initially i + b < d. In this region, value is (i + b - d) mod f.
-                        // We need i + b - d ≡ 0 (mod f), which means i ≡ d - b (mod f).
-                        // The smallest such i >= 0 is exactly (d - b) % f.
-                        // Note: If (d - b) % f == d - b, it falls exactly on the boundary i + b = d,
-                        // where value is i + b - d = 0, which is also a valid root.
-                        let x = d.checked_sub(b).unwrap();
-                        return match x.checked_rem(f) {
-                            Some(v) => SimResult::Value(v),
-                            None => panic!("Should be unreachable as f != 0"),
-                        };
-                    } else if a == 0 && c == 1 && e == 0 {
-                        // Branch 2: Search variable `i` is only in v2 (v1 = b, v2 = i + d, v3 = f).
-                        // If b >= i + d, value is b - (i + d).
-                        // If b < i + d, value is (b - (i + d)) mod f.
-                        if b >= d {
-                            // For small i, b >= i + d, and value is b - i - d.
-                            // This hits 0 exactly at i = b - d.
-                            // For i < b - d, the value is strictly positive, so b - d is the smallest root.
-                            return SimResult::Value(b.checked_sub(d).unwrap());
-                        } else {
-                            // b < d, so for all i >= 0, b < i + d.
-                            // The value is always (b - (i + d)) mod f.
-                            // We need b - i - d ≡ 0 (mod f), which means i ≡ b - d ≡ -(d - b) (mod f).
-                            // The smallest i >= 0 is f - ((d - b) % f), or 0 if (d - b) % f == 0.
-                            let x = d.checked_sub(b).unwrap();
-                            let x_mod = match x.checked_rem(f.clone()) {
-                                Some(v) => v,
-                                None => panic!("Should be unreachable as f != 0"),
-                            };
-                            if x_mod.is_zero() {
-                                return SimResult::Value(N::zero());
-                            } else {
-                                return SimResult::Value(f.checked_sub(x_mod).unwrap());
-                            }
-                        }
+                    if let Some(i) = min_i {
+                        return SimResult::Value(i);
+                    } else if e > 0 || a_val == 1 || a_val == 0 {
+                        return SimResult::Diverge;
                     } else {
-                        // Branch 3: Fallback simulator
-                        // If the coefficients aren't a known O(1) solvable pattern, simulate up to 1000 steps.
-                        let mut i = N::zero();
-                        let mut steps = 0;
-                        while steps < 1_000 {
-                            let v1 = match i.clone().checked_mul_u64(a).and_then(|m| m.checked_add(b.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
-                            let v2 = match i.clone().checked_mul_u64(c).and_then(|m| m.checked_add(d.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
-                            let v3 = match i.clone().checked_mul_u64(e).and_then(|m| m.checked_add(f.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
-                            if v1 >= v2 {
-                                if v1 == v2 { return SimResult::Value(i); }
-                            } else {
-                                let diff = v2.checked_sub(v1).unwrap();
-                                if diff.checked_rem(v3).unwrap().is_zero() {
-                                    return SimResult::Value(i);
-                                }
-                            }
-                            i = match i.checked_add(N::one()) { Some(v) => v, None => return SimResult::ValueOverflow };
-                            steps += 1;
-                        }
-                        // If we can't find it in 1k steps, give up.
                         return SimResult::OutOfSteps;
                     }
                 }

@@ -39,7 +39,27 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let grf = match AliasDb::default().resolve(&args.expr) {
+    let expr_str = if let Some((file_path, idx_str)) = args.expr.rsplit_once(':') {
+        if let Ok(idx) = idx_str.parse::<usize>() {
+            if std::path::Path::new(file_path).exists() {
+                let content = std::fs::read_to_string(file_path).expect("Failed to read file");
+                let entries = gen_rec::io_grl::parse_grf_entries(&content);
+                if idx >= entries.len() {
+                    eprintln!("error: index {} out of bounds for file {} ({} entries)", idx, file_path, entries.len());
+                    std::process::exit(1);
+                }
+                entries[idx].expr.clone()
+            } else {
+                args.expr.clone()
+            }
+        } else {
+            args.expr.clone()
+        }
+    } else {
+        args.expr.clone()
+    };
+
+    let grf = match AliasDb::default().resolve(&expr_str) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("error: {e}");

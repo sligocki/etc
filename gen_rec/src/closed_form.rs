@@ -1,5 +1,5 @@
 use crate::grf::{Grf, GrfKind};
-use crate::math::{gcd, lcm};
+use crate::math::lcm;
 use crate::sim_nat::SimNat;
 use crate::simulate::SimResult;
 
@@ -663,29 +663,14 @@ pub fn closed_form_of_rec_internal(
                     break;
                 }
             }
-        if let Some((j, k)) = cycle_found {
-            let cycle_branches = seq[j..k].to_vec();
-            if cycle_branches.len() == 1 {
-                let mut res = prepend_arg(&cycle_branches[0]);
+            if let Some((j, k)) = cycle_found {
+                let mut res = make_periodic(k_outer, 0, &seq[j..k]);
+                // Wrap in Piecewise for pre-period (in reverse order)
                 for m in (0..j).rev() {
                     res = make_piecewise(k_outer, 0, seq[m].clone(), res);
                 }
                 return Some(res);
             }
-            let mut res = ClosedForm::Periodic(PeriodicFn {
-                arity: k_outer,
-                branch_index: 0,
-                branches: cycle_branches
-                    .into_iter()
-                    .map(|b| Box::new(prepend_arg(&b)))
-                    .collect(),
-            });
-            // Wrap in Piecewise for pre-period (in reverse order)
-            for m in (0..j).rev() {
-                res = make_piecewise(k_outer, 0, seq[m].clone(), res);
-            }
-            return Some(res);
-        }
         }
     }
 
@@ -1745,6 +1730,22 @@ fn make_piecewise(
         zero_branch: Box::new(zero_branch),
         pos_branch: Box::new(pos_branch),
     })
+}
+
+fn make_periodic(arity: usize, branch_index: usize, cycle_branches: &[ClosedForm]) -> ClosedForm {
+    // If all branches are identical, no need to wrap it in Periodic
+    if cycle_branches.iter().all(|x| x == &cycle_branches[0]) {
+        prepend_arg(&cycle_branches[0])
+    } else {
+        ClosedForm::Periodic(PeriodicFn {
+            arity,
+            branch_index,
+            branches: cycle_branches
+                .into_iter()
+                .map(|b| Box::new(prepend_arg(&b)))
+                .collect(),
+        })
+    }
 }
 
 /// Compose an outer affine function with a slice of inner affine functions.

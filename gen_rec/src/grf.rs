@@ -233,6 +233,15 @@ impl Grf {
                 if h.is_never_zero() {
                     return true;
                 }
+                
+                // If any inner argument is strictly positive and the outer function
+                // preserves positivity for that argument, the result is strictly positive.
+                for (i, gi) in gs.iter().enumerate() {
+                    if gi.is_never_zero() && h.is_positive_for_pos_arg(i + 1) {
+                        return true;
+                    }
+                }
+
                 // C(R(_, +), +, _, ...) -> +
                 // C(R(_, h_step), gs) -> + when h_step and all gs are always positive:
                 // gs[0] is never zero so the counter n >= 1, meaning R always steps at

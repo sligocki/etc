@@ -328,15 +328,28 @@ impl Grf {
                                     // Check all arguments to see if g_h projects them >= 0
                                     for k in 0..gs.len() {
                                         if let Some(d_g) = cf_g.min_diff_from_arg(k) {
-                                            if d_g >= 0 {
-                                                // So h(n, rest) >= rest[k] - n.
-                                                // C(h, gs) >= gs[k+1] - gs[0].
-                                                if let Some(gs_k) = gs.get(k + 1) {
-                                                    if let Some(diff) = gs_k.guaranteed_diff(&gs[0])
-                                                    {
-                                                        if diff >= 1 {
-                                                            return true;
-                                                        }
+                                            if let Some(gs_k) = gs.get(k + 1) {
+                                                if let Some(diff) = gs_k.guaranteed_diff(&gs[0]) {
+                                                    if diff + d_g >= 1 {
+                                                        return true;
+                                                    }
+                                                    if diff + d_g == 0 || diff + d_g == -1 {
+                                                        if let crate::closed_form::ClosedForm::Piecewise(pw) = &cf_h {
+                                                                if let crate::closed_form::ClosedForm::Affine(z_aff) = &*pw.zero_branch {
+                                                                    if z_aff.coeffs[0] >= 1 {
+                                                                        return true;
+                                                                    }
+                                                                    for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
+                                                                        if c > 0 {
+                                                                            if let Some(g_arg) = gs.get(i - 1) {
+                                                                                if g_arg.min_val() > 0 || g_arg.is_never_zero() {
+                                                                                    return true;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                     }
                                                 }
                                             }
@@ -1042,6 +1055,27 @@ mod tests {
         // This evaluates to b(n, n+1) where b(n, y) = y - n.
         // It is NEVER ZERO since b(n, n+1) = 1.
         let f = grf!("C(R(P(1,1), C(R(P(1,1), P(3,1)), P(3,2), P(3,1))), P(1,1), S)");
+        assert!(f.is_never_zero());
+    }
+
+    #[test]
+    fn test_monus_descent_with_dg_bound() {
+        // M(C(R(S, C(R(P(1,1), P(3,1)), P(3,2), P(3,1))), P(1,1), P(1,1)))
+        // b = R(S, h_b). g_b = S. d_g = 1.
+        // gs = [P(1,1), P(1,1)]. diff = 0.
+        // diff + d_g = 1 >= 1.
+        let f = grf!("C(R(S, C(R(P(1,1), P(3,1)), P(3,2), P(3,1))), P(1,1), P(1,1))");
+        assert!(f.is_never_zero());
+    }
+
+    #[test]
+    fn test_monus_descent_bounce_logic() {
+        // M(C(R(P(1,1), C(R(S, P(3,1)), P(3,2), P(3,1))), S, P(1,1)))
+        // b = R(P(1,1), h_b). g_b = P(1,1). d_g = 0.
+        // gs = [S, P(1,1)]. diff = -1.
+        // diff + d_g = -1.
+        // This dips to 0, so the bounce logic extracts cf_h.zero_branch(gs) = gs[0] + 1 >= 1.
+        let f = grf!("C(R(P(1,1), C(R(S, P(3,1)), P(3,2), P(3,1))), S, P(1,1))");
         assert!(f.is_never_zero());
     }
 }

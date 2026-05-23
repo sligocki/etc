@@ -1425,7 +1425,7 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
             h_prime_is_stable(&pw.zero_branch) && h_prime_is_stable(&pw.pos_branch)
         }
         ClosedForm::NegMod(_, _, _) => false,
-        ClosedForm::Periodic(p) => false,
+        ClosedForm::Periodic(_) => false,
     }
 }
 

@@ -1119,23 +1119,44 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
             // Distribute the outer Piecewise over the inner Piecewise.
             if let ClosedForm::Piecewise(pw_inner) = g_branch {
                 let j = pw_inner.branch_index + 1; // 1-based variable
-                let others_ok = inners.iter().enumerate().filter(|(i, _)| *i != bi).all(|(_, inner)| {
-                    if let ClosedForm::Piecewise(pw2) = inner {
-                        pw2.branch_index + 1 == j || closed_form_ignores_arg(inner, j)
-                    } else {
-                        true // Affine adjusts constant
-                    }
-                });
+                let others_ok =
+                    inners
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != bi)
+                        .all(|(_, inner)| {
+                            if let ClosedForm::Piecewise(pw2) = inner {
+                                pw2.branch_index + 1 == j || closed_form_ignores_arg(inner, j)
+                            } else {
+                                true // Affine adjusts constant
+                            }
+                        });
                 if others_ok {
-                    let zero_inners: Vec<ClosedForm> = inners.iter().enumerate().map(|(i, inner)| {
-                        if i == bi { *pw_inner.zero_branch.clone() } else { zero_face_at(inner, j) }
-                    }).collect();
-                    let pos_inners: Vec<ClosedForm> = inners.iter().enumerate().map(|(i, inner)| {
-                        if i == bi { *pw_inner.pos_branch.clone() } else { pos_face_at(inner, j) }
-                    }).collect();
+                    let zero_inners: Vec<ClosedForm> = inners
+                        .iter()
+                        .enumerate()
+                        .map(|(i, inner)| {
+                            if i == bi {
+                                *pw_inner.zero_branch.clone()
+                            } else {
+                                zero_face_at(inner, j)
+                            }
+                        })
+                        .collect();
+                    let pos_inners: Vec<ClosedForm> = inners
+                        .iter()
+                        .enumerate()
+                        .map(|(i, inner)| {
+                            if i == bi {
+                                *pw_inner.pos_branch.clone()
+                            } else {
+                                pos_face_at(inner, j)
+                            }
+                        })
+                        .collect();
                     if let (Some(z_sem), Some(p_sem)) = (
                         compose(h, &zero_inners, arity.saturating_sub(1)),
-                        compose(h, &pos_inners, arity)
+                        compose(h, &pos_inners, arity),
                     ) {
                         return Some(make_piecewise(arity, j - 1, z_sem, p_sem));
                     }
@@ -2733,7 +2754,7 @@ mod tests {
         let f = grf("M(C(R(P(1,1), C(R(S, P(3,3)), P(3,2), P(3,1))), S, Z1))");
         let cf = closed_form_of(&f);
         assert!(cf.is_none()); // M() does not have a closed form, it diverges.
-        // However, we can test that the inner R(...) has a closed form!
+                               // However, we can test that the inner R(...) has a closed form!
         let inner = grf("R(P(1,1), C(R(S, P(3,3)), P(3,2), P(3,1)))");
         let inner_cf = closed_form_of(&inner);
         assert!(inner_cf.is_some(), "Inner GRF should have a closed form");

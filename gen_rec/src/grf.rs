@@ -887,4 +887,19 @@ mod tests {
         let d = grf!("R(C(S, Z0), R(S, R(P(2,2), C(S, P(4,2)))))");
         assert!(d.is_never_zero());
     }
+
+    // TODO: Support
+    #[test]
+    #[ignore = "Not Implemented"]
+    fn test_always_pos_rec_eventually() {
+        // From min_prf 12 holdout: M(C(R(Z0, R(S, R(P(2,2), C(S, P(4,2))))), S))
+        let a = grf!("R(Z0, R(S, R(P(2,2), C(S, P(4,2)))))");
+        // a(0) = 0
+        // a(1) = 1 > 0
+        // a(n+2) = c(n+1) + n > 0
+        assert!(a.is_positive_for_pos_arg(1));
+
+        let b = grf!("C(R(Z0, R(S, R(P(2,2), C(S, P(4,2))))), S)");
+        assert!(b.is_never_zero());
+    }
 }

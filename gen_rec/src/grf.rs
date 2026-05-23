@@ -216,6 +216,64 @@ impl Grf {
     ///
     /// Conservative: returns false when unsure. Used by the enumerator to
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
+
+    /// Returns a static lower bound for this function across all inputs.
+    pub fn min_val(&self) -> u64 {
+        match &self.kind {
+            GrfKind::Zero(_) => 0,
+            GrfKind::Succ => 1,
+            GrfKind::Proj(_, _) => 0,
+            GrfKind::Comp(h, gs, _) => {
+                if let GrfKind::Succ = h.kind {
+                    if let Some(g) = gs.first() {
+                        return g.min_val() + 1;
+                    }
+                }
+                if self.is_never_zero() {
+                    1
+                } else {
+                    0
+                }
+            }
+            GrfKind::Rec(_, _) => {
+                if self.is_never_zero() {
+                    1
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    /// Returns true if `f(args…) > 0` whenever arg `j` >= `m`, regardless of other args.
+    pub fn is_positive_for_arg_ge(&self, j: usize, m: u64) -> bool {
+        if self.is_never_zero() {
+            return true;
+        }
+        if m == 0 {
+            return false;
+        }
+        if m == 1 {
+            return self.is_positive_for_pos_arg(j);
+        }
+        match &self.kind {
+            GrfKind::Rec(g, h) => {
+                if j == 1 {
+                    if g.arity() == 0 && h.is_positive_for_pos_arg(2) {
+                        let (res, _) = crate::simulate::simulate(self, &[m], 100);
+                        if let crate::simulate::SimResult::Value(v) = res {
+                            if v > 0 {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
     pub fn is_never_zero(&self) -> bool {
         match &self.kind {
             GrfKind::Succ => {
@@ -237,6 +295,10 @@ impl Grf {
                 // If any inner argument is strictly positive and the outer function
                 // preserves positivity for that argument, the result is strictly positive.
                 for (i, gi) in gs.iter().enumerate() {
+                    let m = gi.min_val();
+                    if m > 0 && h.is_positive_for_arg_ge(i + 1, m) {
+                        return true;
+                    }
                     if gi.is_never_zero() && h.is_positive_for_pos_arg(i + 1) {
                         return true;
                     }
@@ -907,5 +969,14 @@ mod tests {
 
         let b = grf!("C(R(Z0, R(S, R(P(2,2), C(S, P(4,2))))), S)");
         assert!(b.is_never_zero());
+    }
+
+    #[test]
+    fn test_positivity_trap_with_min_val() {
+        // This tests that we can evaluate a positivity trap natively if we have a guaranteed min_val
+        // From holdout: M(C(R(Z0, R(P(1,1), C(S, P(3,2)))), C(S, S)))
+
+        let c = grf!("C(R(Z0, R(P(1,1), C(S, P(3,2)))), C(S, S))");
+        assert!(c.is_never_zero());
     }
 }

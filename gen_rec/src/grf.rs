@@ -233,7 +233,7 @@ impl Grf {
                 if h.is_never_zero() {
                     return true;
                 }
-                
+
                 // If any inner argument is strictly positive and the outer function
                 // preserves positivity for that argument, the result is strictly positive.
                 for (i, gi) in gs.iter().enumerate() {

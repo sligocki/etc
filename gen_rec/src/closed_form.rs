@@ -81,7 +81,6 @@ pub struct PeriodicFn {
     pub branches: Vec<Box<ClosedForm>>,
 }
 
-
 impl PiecewiseFn {
     pub fn eval<N: SimNat>(&self, args: &[N]) -> Option<N> {
         assert_eq!(args.len(), self.arity);
@@ -622,7 +621,6 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
-    
     // Case Periodic: h ignores step counter (arg 1) -> sequence only depends on acc and rest.
     // If it falls into a cycle, we can represent it with PeriodicFn (and PiecewiseFn for pre-period).
     if sem_h.arity() == k_outer + 1 && closed_form_ignores_arg(sem_h, 1) {
@@ -660,7 +658,10 @@ pub fn closed_form_of_rec_internal(
             let mut res = ClosedForm::Periodic(PeriodicFn {
                 arity: k_outer,
                 branch_index: 0,
-                branches: cycle_branches.into_iter().map(|b| Box::new(prepend_arg(&b))).collect(),
+                branches: cycle_branches
+                    .into_iter()
+                    .map(|b| Box::new(prepend_arg(&b)))
+                    .collect(),
             });
             // Wrap in Piecewise for pre-period (in reverse order)
             for m in (0..j).rev() {
@@ -984,9 +985,13 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
                 && affine_ignores_arg(a3, idx)
         }
         ClosedForm::Periodic(p) => {
-            if idx == p.branch_index + 1 { false } else {
+            if idx == p.branch_index + 1 {
+                false
+            } else {
                 let j_inner = if idx <= p.branch_index { idx } else { idx - 1 };
-                p.branches.iter().all(|b| closed_form_ignores_arg(b, j_inner))
+                p.branches
+                    .iter()
+                    .all(|b| closed_form_ignores_arg(b, j_inner))
             }
         }
     }
@@ -1147,7 +1152,13 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                     let val = af.coeffs[0] as usize;
                     return compose(&p.branches[val % p.branches.len()], &inners, arity);
                 }
-                let non_zeros: Vec<_> = af.coeffs.iter().enumerate().skip(1).filter(|(_, &c)| c != 0).collect();
+                let non_zeros: Vec<_> = af
+                    .coeffs
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter(|(_, &c)| c != 0)
+                    .collect();
                 if non_zeros.len() == 1 && *non_zeros[0].1 == 1 {
                     let j = non_zeros[0].0;
                     let const_val = af.coeffs[0] as usize;
@@ -1160,7 +1171,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                     return Some(ClosedForm::Periodic(PeriodicFn {
                         arity,
                         branch_index: j - 1,
-                        branches: new_branches
+                        branches: new_branches,
                     }));
                 }
             }
@@ -1244,11 +1255,23 @@ fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
             if j == b {
                 zero_face_at(&p.branches[0], j)
             } else {
-                let new_branches = p.branches.iter().map(|br| Box::new(zero_face_at(br, j))).collect();
-                let new_bi = if j < b { p.branch_index - 1 } else { p.branch_index };
-                ClosedForm::Periodic(PeriodicFn { arity: p.arity - 1, branch_index: new_bi, branches: new_branches })
+                let new_branches = p
+                    .branches
+                    .iter()
+                    .map(|br| Box::new(zero_face_at(br, j)))
+                    .collect();
+                let new_bi = if j < b {
+                    p.branch_index - 1
+                } else {
+                    p.branch_index
+                };
+                ClosedForm::Periodic(PeriodicFn {
+                    arity: p.arity - 1,
+                    branch_index: new_bi,
+                    branches: new_branches,
+                })
             }
-        },
+        }
     }
 }
 
@@ -1295,12 +1318,24 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 for i in 0..p_len {
                     shifted.push(Box::new(pos_face_at(&p.branches[(i + 1) % p_len], j)));
                 }
-                ClosedForm::Periodic(PeriodicFn { arity: p.arity, branch_index: p.branch_index, branches: shifted })
+                ClosedForm::Periodic(PeriodicFn {
+                    arity: p.arity,
+                    branch_index: p.branch_index,
+                    branches: shifted,
+                })
             } else {
-                let new_branches = p.branches.iter().map(|br| Box::new(pos_face_at(br, j))).collect();
-                ClosedForm::Periodic(PeriodicFn { arity: p.arity, branch_index: p.branch_index, branches: new_branches })
+                let new_branches = p
+                    .branches
+                    .iter()
+                    .map(|br| Box::new(pos_face_at(br, j)))
+                    .collect();
+                ClosedForm::Periodic(PeriodicFn {
+                    arity: p.arity,
+                    branch_index: p.branch_index,
+                    branches: new_branches,
+                })
             }
-        },
+        }
     }
 }
 
@@ -1413,7 +1448,10 @@ fn is_always_pos_on_branch_k(sem: &ClosedForm, k: usize, p_len: usize) -> bool {
                 true
             } else {
                 if k != 0 {
-                    if af.coeffs.len() > 1 && af.coeffs[1] > 0 && af.coeffs.iter().skip(2).all(|&c| c == 0) {
+                    if af.coeffs.len() > 1
+                        && af.coeffs[1] > 0
+                        && af.coeffs.iter().skip(2).all(|&c| c == 0)
+                    {
                         return true;
                     }
                 }
@@ -1427,17 +1465,21 @@ fn is_always_pos_on_branch_k(sem: &ClosedForm, k: usize, p_len: usize) -> bool {
                 } else {
                     true
                 };
-                let pos_ok = is_always_pos_on_branch_k(&pw.pos_branch, (p_len + k - 1) % p_len, p_len);
+                let pos_ok =
+                    is_always_pos_on_branch_k(&pw.pos_branch, (p_len + k - 1) % p_len, p_len);
                 zero_ok && pos_ok
             } else {
-                is_always_pos_on_branch_k(&pw.zero_branch, k, p_len) && is_always_pos_on_branch_k(&pw.pos_branch, k, p_len)
+                is_always_pos_on_branch_k(&pw.zero_branch, k, p_len)
+                    && is_always_pos_on_branch_k(&pw.pos_branch, k, p_len)
             }
         }
         ClosedForm::Periodic(p) => {
             if p.branch_index == 0 {
                 is_always_pos_on_branch_k(&p.branches[k % p.branches.len()], k, p_len)
             } else {
-                p.branches.iter().all(|b| is_always_pos_on_branch_k(b, k, p_len))
+                p.branches
+                    .iter()
+                    .all(|b| is_always_pos_on_branch_k(b, k, p_len))
             }
         }
         ClosedForm::NegMod(_, _, _) => false,
@@ -1533,13 +1575,25 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
             drop_arg_affine(a3, idx)?,
         )),
         ClosedForm::Periodic(p) => {
-            if idx == p.branch_index + 1 { None } else {
+            if idx == p.branch_index + 1 {
+                None
+            } else {
                 let mut new_branches = Vec::new();
-                for b in &p.branches { new_branches.push(Box::new(drop_arg(b, idx)?)); }
-                let new_bi = if idx <= p.branch_index { p.branch_index - 1 } else { p.branch_index };
-                Some(ClosedForm::Periodic(PeriodicFn { arity: p.arity - 1, branch_index: new_bi, branches: new_branches }))
+                for b in &p.branches {
+                    new_branches.push(Box::new(drop_arg(b, idx)?));
+                }
+                let new_bi = if idx <= p.branch_index {
+                    p.branch_index - 1
+                } else {
+                    p.branch_index
+                };
+                Some(ClosedForm::Periodic(PeriodicFn {
+                    arity: p.arity - 1,
+                    branch_index: new_bi,
+                    branches: new_branches,
+                }))
             }
-        },
+        }
     }
 }
 
@@ -1763,7 +1817,12 @@ impl ClosedForm {
             ClosedForm::Periodic(p) => {
                 let mut cases = Vec::new();
                 for (i, b) in p.branches.iter().enumerate() {
-                    cases.push(format!("{}@{}%{}", b.format_inline(vars), i, p.branches.len()));
+                    cases.push(format!(
+                        "{}@{}%{}",
+                        b.format_inline(vars),
+                        i,
+                        p.branches.len()
+                    ));
                 }
                 format!("Periodic({}; {})", vars[p.branch_index], cases.join(", "))
             }
@@ -1861,12 +1920,27 @@ impl ClosedForm {
                 let bi = p.branch_index;
                 let p_len = p.branches.len();
                 for i in 0..p_len {
-                    let lhs: Vec<String> = args.iter().enumerate().map(|(j, name)| {
-                        if j == bi { format!("{} + {}k", i, p_len) } else {
-                            if closed_form_ignores_arg(&p.branches[i], j + 1) { "_".to_string() } else { name.clone() }
-                        }
-                    }).collect();
-                    println!("  {}({}) = {}", fn_name, lhs.join(", "), p.branches[i].format_inline(args));
+                    let lhs: Vec<String> = args
+                        .iter()
+                        .enumerate()
+                        .map(|(j, name)| {
+                            if j == bi {
+                                format!("{} + {}k", i, p_len)
+                            } else {
+                                if closed_form_ignores_arg(&p.branches[i], j + 1) {
+                                    "_".to_string()
+                                } else {
+                                    name.clone()
+                                }
+                            }
+                        })
+                        .collect();
+                    println!(
+                        "  {}({}) = {}",
+                        fn_name,
+                        lhs.join(", "),
+                        p.branches[i].format_inline(args)
+                    );
                 }
             }
             ClosedForm::NegMod(a1, a2, a3) => {
@@ -2480,15 +2554,24 @@ mod tests {
     #[test]
     fn test_periodic_always_pos() {
         // Create an Affine fn: f(x) = 1 + x (coeffs: [1, 1])
-        let f1 = ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] });
+        let f1 = ClosedForm::Affine(AffineFn {
+            arity: 1,
+            coeffs: vec![1, 1],
+        });
         // f(x) = x (coeffs: [0, 1])
-        let f2 = ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] });
-        
+        let f2 = ClosedForm::Affine(AffineFn {
+            arity: 1,
+            coeffs: vec![0, 1],
+        });
+
         // Piecewise: x=0 ? 1 : x
         let pw = ClosedForm::Piecewise(PiecewiseFn {
             arity: 1,
             branch_index: 0,
-            zero_branch: Box::new(ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![1] })),
+            zero_branch: Box::new(ClosedForm::Affine(AffineFn {
+                arity: 0,
+                coeffs: vec![1],
+            })),
             pos_branch: Box::new(f2.clone()),
         });
 

@@ -1263,7 +1263,7 @@ fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 make_piecewise(pw.arity - 1, new_bi, new_zero, new_pos)
             }
         }
-        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(
+        ClosedForm::NegMod(a1, a2, a3) => make_neg_mod(
             zero_face_at_affine(a1, j),
             zero_face_at_affine(a2, j),
             zero_face_at_affine(a3, j),
@@ -1323,7 +1323,7 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 make_piecewise(pw.arity, pw.branch_index, new_zero, new_pos)
             }
         }
-        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(
+        ClosedForm::NegMod(a1, a2, a3) => make_neg_mod(
             pos_face_at_affine(a1, j),
             pos_face_at_affine(a2, j),
             pos_face_at_affine(a3, j),
@@ -1650,6 +1650,21 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
 /// adjusted to pos_branch.c0 − pos_branch.coeffs[bi+1].
 
 fn make_neg_mod(af1: AffineFn, af2: AffineFn, af3: AffineFn) -> ClosedForm {
+    if af1.coeffs.iter().all(|&c| c == 0) && af3.coeffs.iter().all(|&c| c == 0) {
+        return ClosedForm::Affine(AffineFn {
+            arity: af1.arity,
+            coeffs: vec![0; af1.arity + 1],
+        });
+    }
+    if af2.coeffs.iter().all(|&c| c == 0) {
+        return ClosedForm::Affine(af1);
+    }
+    if af1.coeffs == af2.coeffs {
+        return ClosedForm::Affine(AffineFn {
+            arity: af1.arity,
+            coeffs: vec![0; af1.arity + 1],
+        });
+    }
     if af1.arity == 0 && af2.arity == 0 && af3.arity == 0 {
         let v1 = af1.coeffs[0];
         let v2 = af2.coeffs[0];
@@ -1999,11 +2014,23 @@ impl ClosedForm {
                 }
             }
             ClosedForm::NegMod(a1, a2, a3) => {
+                let lhs: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(j, name)| {
+                        if closed_form_ignores_arg(self, j + 1) {
+                            "_".to_string()
+                        } else {
+                            name.clone()
+                        }
+                    })
+                    .collect();
+
                 if a3.coeffs.iter().all(|&c| c == 0) {
                     println!(
                         "  {}({}) = ({} ∸ {})",
                         fn_name,
-                        args.join(", "),
+                        lhs.join(", "),
                         a1.format_expr(args),
                         a2.format_expr(args)
                     );
@@ -2023,7 +2050,7 @@ impl ClosedForm {
                 println!(
                     "  {}({}) = ({} - {}) %< {}",
                     fn_name,
-                    args.join(", "),
+                    lhs.join(", "),
                     a1.format_expr(args),
                     a2.format_expr(args),
                     s3

@@ -325,8 +325,7 @@ fn holdout_reason(grf: &Grf) -> String {
             if acc_k {
                 match closed_form_of(g) {
                     None => "Rec[A]: base not sem".into(),
-                    Some(ClosedForm::Piecewise(_)) => "Rec[A]: base is piecewise".into(),
-                    Some(ClosedForm::Monus(_, _)) => "Rec[A]: base is Monus".into(),
+                    Some(ClosedForm::Piecewise(_)) => "Rec[A]: base is Piecewise".into(),
                     Some(ClosedForm::NegMod(_, _, _)) => "Rec[A]: base is NegMod".into(),
                     Some(ClosedForm::Affine(_)) => "Rec[A]: unexpected (should be covered)".into(),
                 }
@@ -340,8 +339,7 @@ fn holdout_reason(grf: &Grf) -> String {
                             "Rec[B]: step ok (unexpected)".into()
                         }
                         Some(ClosedForm::Affine(_)) => "Rec[B]: step has nonzero acc coeff".into(),
-                        Some(ClosedForm::Piecewise(_)) => "Rec[B]: step is piecewise".into(),
-                        Some(ClosedForm::Monus(_, _)) => "Rec[B]: step is Monus".into(),
+                        Some(ClosedForm::Piecewise(_)) => "Rec[B]: step is Piecewise".into(),
                         Some(ClosedForm::NegMod(_, _, _)) => "Rec[B]: step is NegMod".into(),
                     }
                 }
@@ -349,8 +347,7 @@ fn holdout_reason(grf: &Grf) -> String {
                 match sem_h {
                     None => "Rec: step uses acc, not sem".into(),
                     Some(ClosedForm::Affine(_)) => "Rec: step uses acc, affine (not acc+k)".into(),
-                    Some(ClosedForm::Piecewise(_)) => "Rec: step uses acc, piecewise".into(),
-                    Some(ClosedForm::Monus(_, _)) => "Rec: step uses acc, Monus".into(),
+                    Some(ClosedForm::Piecewise(_)) => "Rec: step uses acc, Piecewise".into(),
                     Some(ClosedForm::NegMod(_, _, _)) => "Rec: step uses acc, NegMod".into(),
                 }
             }
@@ -359,16 +356,14 @@ fn holdout_reason(grf: &Grf) -> String {
             for (i, g) in gs.iter().enumerate() {
                 match closed_form_of(g) {
                     None => return format!("Comp: arg[{}] → {}", i + 1, holdout_reason(g)),
-                    Some(ClosedForm::Piecewise(_)) => return "Comp: arg is piecewise".into(),
-                    Some(ClosedForm::Monus(_, _)) => return "Comp: arg is Monus".into(),
+                    Some(ClosedForm::Piecewise(_)) => return "Comp: arg is Piecewise".into(),
                     Some(ClosedForm::NegMod(_, _, _)) => return "Comp: arg is NegMod".into(),
                     Some(ClosedForm::Affine(_)) => {}
                 }
             }
             match closed_form_of(h) {
                 None => format!("Comp: head → {}", holdout_reason(h)),
-                Some(ClosedForm::Piecewise(_)) => "Comp: head is piecewise".into(),
-                Some(ClosedForm::Monus(_, _)) => "Comp: head is Monus".into(),
+                Some(ClosedForm::Piecewise(_)) => "Comp: head is Piecewise".into(),
                 Some(ClosedForm::NegMod(_, _, _)) => "Comp: head is NegMod".into(),
                 Some(ClosedForm::Affine(_)) => "Comp: all affine (unexpected)".into(),
             }

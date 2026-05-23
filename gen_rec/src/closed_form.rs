@@ -539,6 +539,74 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
         }
     }
 
+
+
+    // Case G: h is Piecewise branching on acc (arg 2 in h), and pos_branch ignores acc.
+    if let ClosedForm::Piecewise(pw) = sem_h {
+        if pw.branch_index == 1 {
+            let h_p = &pw.pos_branch;
+            let h_z = &pw.zero_branch;
+            
+            if closed_form_ignores_arg(h_p, 2) {
+                if let Some(h_p_no_acc) = drop_arg(h_p, 2) {
+                    let mut cur_f = sem_g.clone();
+                    let mut prefix = Vec::new();
+                    let mut trapped = false;
+                    
+                    for step in 0..10 {
+                        prefix.push(cur_f.clone());
+                        if is_always_pos(&cur_f) {
+                            // Verify that h_p_no_acc(step) is strictly positive,
+                            // to ensure it stays trapped forever.
+                            let mut tail_inners = Vec::with_capacity(k_outer);
+                            tail_inners.push(ClosedForm::Affine({ let mut af = AffineFn::zero(k_outer - 1); af.coeffs[0] = step as u64; af }));
+                            for i in 1..k_outer {
+                                tail_inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
+                            }
+                            if let Some(tail_at_step) = compose(&h_p_no_acc, &tail_inners, k_outer - 1) {
+                                if is_always_pos(&tail_at_step) {
+                                    trapped = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if is_always_zero(&cur_f) {
+                            let mut inners = Vec::with_capacity(k_outer);
+                            inners.push(ClosedForm::Affine({ let mut af = AffineFn::zero(k_outer - 1); af.coeffs[0] = step as u64; af }));
+                            for i in 1..k_outer {
+                                inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
+                            }
+                            if let Some(next_f) = compose(h_z, &inners, k_outer - 1) {
+                                cur_f = next_f;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    if trapped {
+                        let shift = prefix.len() as u64 - 1;
+                        let mut inners = Vec::with_capacity(k_outer);
+                        inners.push(ClosedForm::Affine({ let mut af = AffineFn::proj(k_outer, 1); af.coeffs[0] = shift; af }));
+                        for i in 2..=k_outer {
+                            inners.push(ClosedForm::Affine(AffineFn::proj(k_outer, i)));
+                        }
+                        
+                        if let Some(mut tail) = compose(&h_p_no_acc, &inners, k_outer) {
+                            for p in prefix.into_iter().rev() {
+                                tail = make_piecewise(k_outer, 0, p, tail);
+                            }
+                            return Some(tail);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Case F: h is Piecewise on an outer argument (branch_index ≥ 2, i.e. not counter/acc).
     //
     // h branches on outer arg j_b = bi (1-based in b's args).  Peel one Piecewise layer:
@@ -920,6 +988,14 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
 }
 
 /// Returns true when `sem` evaluates to 0 for all natural-number inputs.
+fn is_always_pos(sem: &ClosedForm) -> bool {
+    match sem {
+        ClosedForm::Affine(af) => af.coeffs[0] > 0,
+        ClosedForm::Piecewise(pw) => is_always_pos(&pw.zero_branch) && is_always_pos(&pw.pos_branch),
+        ClosedForm::NegMod(_, _, _) => false,
+    }
+}
+
 fn is_always_zero(sem: &ClosedForm) -> bool {
     match sem {
         ClosedForm::Affine(af) => af.coeffs.iter().all(|&c| c == 0),

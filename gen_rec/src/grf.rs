@@ -279,7 +279,7 @@ impl Grf {
                     // Rec's outer arg j (j ≥ 2) maps to g's arg (j-1).
                     // Base (n=0): g positive when g's arg (j-1) positive.
                     // Steps: h positive when accumulator (arg 2) positive (or when j -> j+1 pos)
-                    let h_pos = h.is_positive_for_pos_arg(2) || h.is_positive_for_pos_arg(j+1);
+                    let h_pos = h.is_positive_for_pos_arg(2) || h.is_positive_for_pos_arg(j + 1);
                     g.is_positive_for_pos_arg(j - 1) && h_pos
                 }
             }

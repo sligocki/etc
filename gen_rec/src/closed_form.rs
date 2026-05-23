@@ -120,6 +120,15 @@ pub enum ClosedForm {
 }
 
 impl ClosedForm {
+    pub fn ast_size(&self) -> usize {
+        match self {
+            ClosedForm::Affine(_) => 1,
+            ClosedForm::Piecewise(pw) => 1 + pw.zero_branch.ast_size() + pw.pos_branch.ast_size(),
+            ClosedForm::Periodic(p) => 1 + p.branches.iter().map(|b| b.ast_size()).sum::<usize>(),
+            ClosedForm::NegMod(_, _, _) => 4,
+        }
+    }
+
     pub fn arity(&self) -> usize {
         match self {
             ClosedForm::Affine(af) => af.arity,
@@ -528,11 +537,11 @@ impl ClosedForm {
             ClosedForm::NegMod(a1, a2, a3) => {
                 ClosedForm::NegMod(a1.lift(arity), a2.lift(arity), a3.lift(arity))
             }
-            ClosedForm::Periodic(p) => ClosedForm::Periodic(PeriodicFn {
+            ClosedForm::Periodic(p) => make_periodic(
                 arity,
-                branch_index: p.branch_index,
-                branches: p.branches.iter().map(|b| Box::new(b.lift(arity))).collect(),
-            }),
+                p.branch_index,
+                p.branches.iter().map(|b| Box::new(b.lift(arity))).collect(),
+            ),
         }
     }
 }
@@ -633,17 +642,23 @@ pub fn closed_form_of_rec_internal(
             for step in 1..=50 {
                 let prev = seq.last().unwrap().clone();
                 let mut inners = Vec::with_capacity(k_outer + 1);
-                
+
                 // i is the step counter (1-indexed). The step evaluation f(n+1) = h(n, f(n)) uses `n` which is `step - 1`.
                 let mut step_coeffs = vec![0; k_rest + 1];
                 step_coeffs[0] = (step - 1) as u64;
-                inners.push(ClosedForm::Affine(AffineFn { arity: k_rest, coeffs: step_coeffs }));
+                inners.push(ClosedForm::Affine(AffineFn {
+                    arity: k_rest,
+                    coeffs: step_coeffs,
+                }));
                 inners.push(prev); // acc
                 for m in 1..=k_rest {
                     inners.push(ClosedForm::Affine(AffineFn::proj(k_rest, m)));
                 }
-                
+
                 if let Some(next_cf) = compose(sem_h, &inners, k_rest) {
+                    if next_cf.ast_size() > 100 {
+                        break;
+                    }
                     if step >= pre {
                         // Find a previous state that matches next_cf and is at the same phase modulo p.
                         let mut found_match = None;
@@ -664,7 +679,11 @@ pub fn closed_form_of_rec_internal(
                 }
             }
             if let Some((j, k)) = cycle_found {
-                let mut res = make_periodic(k_outer, 0, &seq[j..k]);
+                let mut res = make_periodic(
+                    k_outer,
+                    0,
+                    seq[j..k].iter().map(|b| Box::new(prepend_arg(b))).collect(),
+                );
                 // Wrap in Piecewise for pre-period (in reverse order)
                 for m in (0..j).rev() {
                     res = make_piecewise(k_outer, 0, seq[m].clone(), res);
@@ -1171,11 +1190,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                         let chosen = (i + const_val) % p_len;
                         new_branches.push(Box::new(compose(&p.branches[chosen], &inners, arity)?));
                     }
-                    return Some(ClosedForm::Periodic(PeriodicFn {
-                        arity,
-                        branch_index: j - 1,
-                        branches: new_branches,
-                    }));
+                    return Some(make_periodic(arity, j - 1, new_branches));
                 }
             }
             return None;
@@ -1321,22 +1336,14 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 for i in 0..p_len {
                     shifted.push(Box::new(pos_face_at(&p.branches[(i + 1) % p_len], j)));
                 }
-                ClosedForm::Periodic(PeriodicFn {
-                    arity: p.arity,
-                    branch_index: p.branch_index,
-                    branches: shifted,
-                })
+                make_periodic(p.arity, p.branch_index, shifted)
             } else {
                 let new_branches = p
                     .branches
                     .iter()
                     .map(|br| Box::new(pos_face_at(br, j)))
                     .collect();
-                ClosedForm::Periodic(PeriodicFn {
-                    arity: p.arity,
-                    branch_index: p.branch_index,
-                    branches: new_branches,
-                })
+                make_periodic(p.arity, p.branch_index, new_branches)
             }
         }
     }
@@ -1394,11 +1401,14 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
             prepend_arg_affine(a2),
             prepend_arg_affine(a3),
         ),
-        ClosedForm::Periodic(p) => ClosedForm::Periodic(PeriodicFn {
-            arity: p.arity + 1,
-            branch_index: p.branch_index + 1,
-            branches: p.branches.clone(),
-        }),
+        ClosedForm::Periodic(p) => make_periodic(
+            p.arity + 1,
+            p.branch_index + 1,
+            p.branches
+                .iter()
+                .map(|b| Box::new(prepend_arg(b)))
+                .collect(),
+        ),
     }
 }
 
@@ -1516,7 +1526,11 @@ fn period_and_pre_period(cf: &ClosedForm, arg_idx: usize) -> Option<(usize, usiz
             }
         }
         ClosedForm::Periodic(p) => {
-            let mut p_len = if p.branch_index + 1 == arg_idx { p.branches.len() } else { 1 };
+            let mut p_len = if p.branch_index + 1 == arg_idx {
+                p.branches.len()
+            } else {
+                1
+            };
             let mut pre = 0;
             for b in &p.branches {
                 let (bp, bpre) = period_and_pre_period(b, arg_idx)?;
@@ -1619,11 +1633,7 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
                 } else {
                     p.branch_index
                 };
-                Some(ClosedForm::Periodic(PeriodicFn {
-                    arity: p.arity - 1,
-                    branch_index: new_bi,
-                    branches: new_branches,
-                }))
+                Some(make_periodic(p.arity - 1, new_bi, new_branches))
             }
         }
     }
@@ -1732,18 +1742,15 @@ fn make_piecewise(
     })
 }
 
-fn make_periodic(arity: usize, branch_index: usize, cycle_branches: &[ClosedForm]) -> ClosedForm {
-    // If all branches are identical, no need to wrap it in Periodic
-    if cycle_branches.iter().all(|x| x == &cycle_branches[0]) {
-        prepend_arg(&cycle_branches[0])
+/// Creates a Periodic function, simplifying to a single branch if all branches are identical.
+fn make_periodic(arity: usize, branch_index: usize, branches: Vec<Box<ClosedForm>>) -> ClosedForm {
+    if branches.iter().all(|b| **b == *branches[0]) {
+        *branches.into_iter().next().unwrap()
     } else {
         ClosedForm::Periodic(PeriodicFn {
             arity,
             branch_index,
-            branches: cycle_branches
-                .into_iter()
-                .map(|b| Box::new(prepend_arg(&b)))
-                .collect(),
+            branches,
         })
     }
 }
@@ -2659,13 +2666,12 @@ mod tests {
         // Holdout 14 structure: M(R(C(S, Z0), c)) where c = R(P(1,1), R(R(S, P(3,3)), P(4,2)))
         let h_grf = grf("R(P(1,1), R(R(S, P(3,3)), P(4,2)))");
         let g_grf = grf("C(S, Z0)");
-        
+
         let c_sem = closed_form_of(&h_grf).unwrap();
         let g_sem = closed_form_of(&g_grf).unwrap();
-        
+
         // This corresponds to testing `closed_form_of_rec_internal` handles periodic dependencies on step counter.
         // It should identify that the recursion forms a cycle.
         let rec_cf = super::closed_form_of_rec_internal(&g_sem, &c_sem, 1, 100);
-        
     }
 }

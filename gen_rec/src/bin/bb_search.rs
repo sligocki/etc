@@ -1,12 +1,12 @@
 /// Enumerate 0-arity GRFs of a given size and track BBµ champions.
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
-use gen_rec::sim_nat::{SimNat, SmallNat, BigNat};
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::stream_grf;
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
+use gen_rec::sim_nat::{BigNat, SimNat, SmallNat};
 use gen_rec::simulate::{SimResult, SimSteps};
 use rayon::prelude::*;
 use std::fs;
@@ -102,7 +102,10 @@ struct TopK<N: SimNat> {
 
 impl<N: SimNat> TopK<N> {
     fn new(k: usize) -> Self {
-        TopK { k, entries: Vec::new() }
+        TopK {
+            k,
+            entries: Vec::new(),
+        }
     }
 
     fn best_score(&self) -> Option<N> {
@@ -170,31 +173,57 @@ struct BatchResult<N: SimNat> {
     total_steps: SmallNat,
 }
 
-fn process_batch<N: SimNat + Send + Sync>(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult<N> {
+fn process_batch<N: SimNat + Send + Sync>(
+    batch: &[Grf],
+    max_steps: u64,
+    k: usize,
+) -> BatchResult<N> {
     // Strings not allocated in worker threads — avoids macOS nano-zone
     // cross-thread free errors ("pointer being freed was not allocated").
     let outcomes: Vec<(SimResult<N>, SimSteps<N>)> = batch
         .par_iter()
-        .map(|grf| gen_rec::simulate::simulate_opts::<N>(grf, &[], if max_steps == 0 { None } else { Some(max_steps) }, gen_rec::simulate::SimOpts::default()))
+        .map(|grf| {
+            gen_rec::simulate::simulate_opts::<N>(
+                grf,
+                &[],
+                if max_steps == 0 {
+                    None
+                } else {
+                    Some(max_steps)
+                },
+                gen_rec::simulate::SimOpts::default(),
+            )
+        })
         .collect();
 
     let mut top_k = TopK::new(k);
     let mut holdouts = Vec::new();
     let mut diverged = 0usize;
-    let mut total_steps : SmallNat = 0;
+    let mut total_steps: SmallNat = 0;
 
     for (idx, (result, sim_steps)) in outcomes.into_iter().enumerate() {
         let steps = sim_steps.sim;
         total_steps += steps;
         match result {
-            SimResult::OutOfSteps => holdouts.push((steps, batch[idx].to_string(), Some("OutOfSteps"))),
+            SimResult::OutOfSteps => {
+                holdouts.push((steps, batch[idx].to_string(), Some("OutOfSteps")))
+            }
             SimResult::Diverge => diverged += 1,
-            SimResult::Value(v) => top_k.insert(v, steps, sim_steps.base_approx, batch[idx].to_string()),
+            SimResult::Value(v) => {
+                top_k.insert(v, steps, sim_steps.base_approx, batch[idx].to_string())
+            }
             SimResult::ArityMismatch => panic!("arity mismatch in bb_search for {}", batch[idx]),
-            SimResult::ValueOverflow => holdouts.push((steps, batch[idx].to_string(), Some("Overflow"))),
+            SimResult::ValueOverflow => {
+                holdouts.push((steps, batch[idx].to_string(), Some("Overflow")))
+            }
         }
     }
-    BatchResult { top_k, holdouts, diverged, total_steps }
+    BatchResult {
+        top_k,
+        holdouts,
+        diverged,
+        total_steps,
+    }
 }
 
 fn flush_batch<W: Write, N: SimNat + Send + Sync>(
@@ -219,10 +248,18 @@ fn flush_batch<W: Write, N: SimNat + Send + Sync>(
         }
     }
     for (steps, expr, reason) in br.holdouts {
-        io_grl::write_grf_entry(holdout_w, &GrfEntry {
-            expr, status: Some(Status::Unknown), steps: Some(steps), base_steps: None, score: None,
-            unknown_reason: reason.map(|r| r.to_string()),
-        }).unwrap();
+        io_grl::write_grf_entry(
+            holdout_w,
+            &GrfEntry {
+                expr,
+                status: Some(Status::Unknown),
+                steps: Some(steps),
+                base_steps: None,
+                score: None,
+                unknown_reason: reason.map(|r| r.to_string()),
+            },
+        )
+        .unwrap();
     }
     acc.top_k.merge_from(br.top_k);
     batch.clear();
@@ -233,7 +270,11 @@ fn flush_batch<W: Write, N: SimNat + Send + Sync>(
 // ---------------------------------------------------------------------------
 
 fn fmt_si(n: u64) -> String {
-    if n < 1_000 { format!("{}", n) } else { fmt_si_f64(n as f64) }
+    if n < 1_000 {
+        format!("{}", n)
+    } else {
+        fmt_si_f64(n as f64)
+    }
 }
 
 fn fmt_si_f64(n: f64) -> String {
@@ -264,7 +305,6 @@ fn main() {
 }
 
 fn run_search<N: SimNat + Send + Sync>(args: &Args) {
-
     let mut opts = PruningOpts::recommended();
     opts.min_dom = true;
     if let Some(ref s) = args.opts {
@@ -274,14 +314,26 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         });
     }
     let mode_str = {
-        let base = if args.min_prf { "min_prf" } else if args.allow_min { "grf" } else { "prf" };
-        if args.cf { format!("{base}+cf") } else { base.to_string() }
+        let base = if args.min_prf {
+            "min_prf"
+        } else if args.allow_min {
+            "grf"
+        } else {
+            "prf"
+        };
+        if args.cf {
+            format!("{base}+cf")
+        } else {
+            base.to_string()
+        }
     };
     let has_min = args.allow_min || args.min_prf;
     let size = args.size;
 
     // Results directory.
-    if let Some(ref dir) = args.results_dir { fs::create_dir_all(dir).expect("failed to create results directory"); }
+    if let Some(ref dir) = args.results_dir {
+        fs::create_dir_all(dir).expect("failed to create results directory");
+    }
 
     // Open holdout file for streaming writes.
     let mut holdout_writer: Box<dyn std::io::Write> = if let Some(ref dir) = args.results_dir {
@@ -292,15 +344,22 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         Box::new(std::io::sink())
     };
     if args.results_dir.is_some() {
-        io_grl::write_grl_header(&mut holdout_writer,
-            &format!("BBµ holdouts: mode={mode_str}, size={size}, budget={}", args.max_steps)).unwrap();
+        io_grl::write_grl_header(
+            &mut holdout_writer,
+            &format!(
+                "BBµ holdouts: mode={mode_str}, size={size}, budget={}",
+                args.max_steps
+            ),
+        )
+        .unwrap();
     }
 
     // Alias formatter for terminal output.
     let alias_db = alias_db_for_stdout(6, args.no_alias);
     let fmt_alias = |expr: &str| -> String {
         match &alias_db {
-            Some(db) => expr.parse::<Grf>()
+            Some(db) => expr
+                .parse::<Grf>()
                 .map(|g| db.alias(&g))
                 .unwrap_or_else(|_| expr.to_string()),
             None => expr.to_string(),
@@ -316,8 +375,17 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         "BBµ search: 0-arity {}, size={}, max_steps={}, opts={:?}",
         mode_str, size, args.max_steps, opts,
     );
-    println!("  threads={}, batch={}, top_k={}", rayon::current_num_threads(), args.batch_size, args.top_k);
-    if let Some(ref dir) = args.results_dir { println!("  results: {}/", dir.display()); } else { println!("  results: none"); }
+    println!(
+        "  threads={}, batch={}, top_k={}",
+        rayon::current_num_threads(),
+        args.batch_size,
+        args.top_k
+    );
+    if let Some(ref dir) = args.results_dir {
+        println!("  results: {}/", dir.display());
+    } else {
+        println!("  results: none");
+    }
     println!("{}", "=".repeat(90));
 
     let start = Instant::now();
@@ -359,7 +427,11 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
 
     if args.cf && !(args.min_prf && size < 2) {
         let cf_arity = if args.min_prf { 1 } else { 0 };
-        let cf_size = if args.min_prf && size >= 2 { size - 1 } else { size };
+        let cf_size = if args.min_prf && size >= 2 {
+            size - 1
+        } else {
+            size
+        };
         let cf_allow_min = !args.min_prf && args.allow_min;
         let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, cf_allow_min)
             .with_dynamic_rnf(args.dynamic_rnf);
@@ -370,34 +442,62 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         en.for_each_raw_candidate(cf_arity, cf_size, &mut |grf| {
             if args.min_prf {
                 if opts.min_dom {
-                    if !grf.used_args().contains(&1) { return; }
-                    if grf.is_never_zero() { return; }
+                    if !grf.used_args().contains(&1) {
+                        return;
+                    }
+                    if grf.is_never_zero() {
+                        return;
+                    }
                 }
             }
-            let g = if args.min_prf { Grf::min(grf.clone()) } else { grf.clone() };
+            let g = if args.min_prf {
+                Grf::min(grf.clone())
+            } else {
+                grf.clone()
+            };
             let cur = idx;
             idx += 1;
-            if cur < seek_start || cur >= seek_start + seek_count { return; }
+            if cur < seek_start || cur >= seek_start + seek_count {
+                return;
+            }
             acc.total += 1;
             batch.push(g);
             if batch.len() >= args.batch_size {
-                flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
+                flush_batch(
+                    &mut batch,
+                    &mut acc,
+                    &mut holdout_writer,
+                    args.max_steps,
+                    args.top_k,
+                );
                 maybe_progress!();
             }
         });
     } else if args.min_prf && size >= 2 {
         stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
             if opts.min_dom {
-                if !f.used_args().contains(&1) { return; }
-                if f.is_never_zero() { return; }
+                if !f.used_args().contains(&1) {
+                    return;
+                }
+                if f.is_never_zero() {
+                    return;
+                }
             }
             let cur = idx;
             idx += 1;
-            if cur < seek_start || cur >= seek_start + seek_count { return; }
+            if cur < seek_start || cur >= seek_start + seek_count {
+                return;
+            }
             acc.total += 1;
             batch.push(Grf::min(f.clone()));
             if batch.len() >= args.batch_size {
-                flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
+                flush_batch(
+                    &mut batch,
+                    &mut acc,
+                    &mut holdout_writer,
+                    args.max_steps,
+                    args.top_k,
+                );
                 maybe_progress!();
             }
         });
@@ -405,16 +505,30 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         stream_grf(size, 0, args.allow_min, opts, &mut |grf: &Grf| {
             let cur = idx;
             idx += 1;
-            if cur < seek_start || cur >= seek_start + seek_count { return; }
+            if cur < seek_start || cur >= seek_start + seek_count {
+                return;
+            }
             acc.total += 1;
             batch.push(grf.clone());
             if batch.len() >= args.batch_size {
-                flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
+                flush_batch(
+                    &mut batch,
+                    &mut acc,
+                    &mut holdout_writer,
+                    args.max_steps,
+                    args.top_k,
+                );
                 maybe_progress!();
             }
         });
     }
-    flush_batch(&mut batch, &mut acc, &mut holdout_writer, args.max_steps, args.top_k);
+    flush_batch(
+        &mut batch,
+        &mut acc,
+        &mut holdout_writer,
+        args.max_steps,
+        args.top_k,
+    );
     holdout_writer.flush().unwrap();
 
     let elapsed = start.elapsed().as_secs_f64();
@@ -422,7 +536,10 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
     let enum_secs = elapsed - sim_secs;
 
     // Terminal summary.
-    let best_str = acc.top_k.best_score().map_or("-".to_string(), |v| v.to_string());
+    let best_str = acc
+        .top_k
+        .best_score()
+        .map_or("-".to_string(), |v| v.to_string());
     if has_min {
         println!(
             "n={}: best={}, {} holdouts, {} diverged, {} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
@@ -446,55 +563,80 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
 
     const TERMINAL_DISPLAY: usize = 10;
     for (rank, (score, steps, _base_steps, expr)) in acc.top_k.iter_desc().enumerate() {
-        if rank >= TERMINAL_DISPLAY { break; }
-        println!("  #{}: score={}  steps={}  {}", rank + 1, score, fmt_si(*steps), fmt_alias(expr));
+        if rank >= TERMINAL_DISPLAY {
+            break;
+        }
+        println!(
+            "  #{}: score={}  steps={}  {}",
+            rank + 1,
+            score,
+            fmt_si(*steps),
+            fmt_alias(expr)
+        );
     }
 
     if let Some(ref dir) = args.results_dir {
         // Write halt file.
         let halt_path = dir.join("halt.max.grl");
-        let mut halt_w = BufWriter::new(
-            fs::File::create(&halt_path).expect("failed to create halt.max.grl")
-        );
-        io_grl::write_grl_header(&mut halt_w,
-            &format!("BBµ search: mode={mode_str}, size={size}, budget={}, top-k={}",
-                     args.max_steps, args.top_k)).unwrap();
+        let mut halt_w =
+            BufWriter::new(fs::File::create(&halt_path).expect("failed to create halt.max.grl"));
+        io_grl::write_grl_header(
+            &mut halt_w,
+            &format!(
+                "BBµ search: mode={mode_str}, size={size}, budget={}, top-k={}",
+                args.max_steps, args.top_k
+            ),
+        )
+        .unwrap();
         for (score, steps, base_steps, expr) in acc.top_k.iter_desc() {
-            io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
-                expr: expr.clone(), status: Some(Status::Halt),
-                steps: Some(*steps), base_steps: Some(base_steps.to_u64_sat()), score: Some(score.to_u64_sat()),
-                unknown_reason: None,
-            }).unwrap();
+            io_grl::write_grf_entry(
+                &mut halt_w,
+                &GrfEntry {
+                    expr: expr.clone(),
+                    status: Some(Status::Halt),
+                    steps: Some(*steps),
+                    base_steps: Some(base_steps.to_u64_sat()),
+                    score: Some(score.to_u64_sat()),
+                    unknown_reason: None,
+                },
+            )
+            .unwrap();
         }
         halt_w.flush().unwrap();
 
         // Write config file.
         let config_path = dir.join("config.json");
-        let mut cfg_w = BufWriter::new(
-            fs::File::create(&config_path).expect("failed to create config.json")
-        );
-        let best_json = acc.top_k.best_score()
+        let mut cfg_w =
+            BufWriter::new(fs::File::create(&config_path).expect("failed to create config.json"));
+        let best_json = acc
+            .top_k
+            .best_score()
             .map_or("null".to_string(), |v| v.to_string());
         writeln!(cfg_w, "{{").unwrap();
-        writeln!(cfg_w, "  \"size\": {},",            size).unwrap();
+        writeln!(cfg_w, "  \"size\": {},", size).unwrap();
         writeln!(cfg_w, "  \"mode\": \"{mode_str}\",").unwrap();
-        writeln!(cfg_w, "  \"max_steps\": {},",       args.max_steps).unwrap();
-        writeln!(cfg_w, "  \"batch_size\": {},",      args.batch_size).unwrap();
-        writeln!(cfg_w, "  \"top_k\": {},",           args.top_k).unwrap();
-        writeln!(cfg_w, "  \"allow_min\": {},",       args.allow_min).unwrap();
-        writeln!(cfg_w, "  \"min_prf\": {},",         args.min_prf).unwrap();
-        writeln!(cfg_w, "  \"cf\": {},",              args.cf).unwrap();
+        writeln!(cfg_w, "  \"max_steps\": {},", args.max_steps).unwrap();
+        writeln!(cfg_w, "  \"batch_size\": {},", args.batch_size).unwrap();
+        writeln!(cfg_w, "  \"top_k\": {},", args.top_k).unwrap();
+        writeln!(cfg_w, "  \"allow_min\": {},", args.allow_min).unwrap();
+        writeln!(cfg_w, "  \"min_prf\": {},", args.min_prf).unwrap();
+        writeln!(cfg_w, "  \"cf\": {},", args.cf).unwrap();
         match args.cf_limit {
             Some(limit) => writeln!(cfg_w, "  \"cf_limit\": {},", limit).unwrap(),
-            None        => writeln!(cfg_w, "  \"cf_limit\": null,").unwrap(),
+            None => writeln!(cfg_w, "  \"cf_limit\": null,").unwrap(),
         }
-        writeln!(cfg_w, "  \"opts\": \"{}\",",           opts.stream_opt_names().join(",")).unwrap();
-        writeln!(cfg_w, "  \"threads\": {},",         rayon::current_num_threads()).unwrap();
-        writeln!(cfg_w, "  \"total_fns\": {},",       acc.total).unwrap();
-        writeln!(cfg_w, "  \"total_holdouts\": {},",  acc.holdouts).unwrap();
-        writeln!(cfg_w, "  \"total_diverged\": {},",  acc.diverged).unwrap();
+        writeln!(
+            cfg_w,
+            "  \"opts\": \"{}\",",
+            opts.stream_opt_names().join(",")
+        )
+        .unwrap();
+        writeln!(cfg_w, "  \"threads\": {},", rayon::current_num_threads()).unwrap();
+        writeln!(cfg_w, "  \"total_fns\": {},", acc.total).unwrap();
+        writeln!(cfg_w, "  \"total_holdouts\": {},", acc.holdouts).unwrap();
+        writeln!(cfg_w, "  \"total_diverged\": {},", acc.diverged).unwrap();
         writeln!(cfg_w, "  \"elapsed_secs\": {:.3},", elapsed).unwrap();
-        writeln!(cfg_w, "  \"best_score\": {}",       best_json).unwrap();
+        writeln!(cfg_w, "  \"best_score\": {}", best_json).unwrap();
         writeln!(cfg_w, "}}").unwrap();
         cfg_w.flush().unwrap();
 

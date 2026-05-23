@@ -28,7 +28,7 @@ pub enum Status {
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Status::Halt    => write!(f, "Halt"),
+            Status::Halt => write!(f, "Halt"),
             Status::Diverge => write!(f, "Diverge"),
             Status::Unknown => write!(f, "Unknown"),
         }
@@ -39,21 +39,21 @@ impl std::str::FromStr for Status {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, ()> {
         match s {
-            "Halt"    => Ok(Status::Halt),
+            "Halt" => Ok(Status::Halt),
             "Diverge" => Ok(Status::Diverge),
             "Unknown" => Ok(Status::Unknown),
-            _         => Err(()),
+            _ => Err(()),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct GrfEntry {
-    pub expr:           String,
-    pub status:         Option<Status>,
-    pub steps:          Option<SmallNat>,
-    pub base_steps:     Option<SmallNat>,
-    pub score:          Option<SmallNat>,
+    pub expr: String,
+    pub status: Option<Status>,
+    pub steps: Option<SmallNat>,
+    pub base_steps: Option<SmallNat>,
+    pub score: Option<SmallNat>,
     pub unknown_reason: Option<String>,
 }
 
@@ -88,18 +88,32 @@ fn parse_line(line: &str) -> GrfEntry {
     let first = parts.next().unwrap_or("").trim();
     if let Ok(steps) = first.parse::<SmallNat>() {
         let expr = parts.next().map(str::trim).unwrap_or("").to_string();
-        GrfEntry { expr, status: None, steps: Some(steps), base_steps: None, score: None, unknown_reason: None }
+        GrfEntry {
+            expr,
+            status: None,
+            steps: Some(steps),
+            base_steps: None,
+            score: None,
+            unknown_reason: None,
+        }
     } else {
-        GrfEntry { expr: line.to_string(), status: None, steps: None, base_steps: None, score: None, unknown_reason: None }
+        GrfEntry {
+            expr: line.to_string(),
+            status: None,
+            steps: None,
+            base_steps: None,
+            score: None,
+            unknown_reason: None,
+        }
     }
 }
 
 fn parse_kv_line(line: &str) -> GrfEntry {
-    let mut expr           = String::new();
-    let mut status         = None;
-    let mut steps          = None;
-    let mut base_steps     = None;
-    let mut score          = None;
+    let mut expr = String::new();
+    let mut status = None;
+    let mut steps = None;
+    let mut base_steps = None;
+    let mut score = None;
     let mut unknown_reason = None;
 
     for token in line.split_whitespace() {
@@ -119,7 +133,14 @@ fn parse_kv_line(line: &str) -> GrfEntry {
         // other unknown keys are ignored
     }
 
-    GrfEntry { expr, status, steps, base_steps, score, unknown_reason }
+    GrfEntry {
+        expr,
+        status,
+        steps,
+        base_steps,
+        score,
+        unknown_reason,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,13 +162,26 @@ pub fn write_grl_header(w: &mut dyn Write, comment: &str) -> io::Result<()> {
 /// token remains a single whitespace-delimited token on the line.
 pub fn write_grf_entry(w: &mut dyn Write, entry: &GrfEntry) -> io::Result<()> {
     let compact = entry.expr.replace(", ", ",");
-    assert!(!compact.contains(' '), "grl expr still has spaces after replace: {compact}");
+    assert!(
+        !compact.contains(' '),
+        "grl expr still has spaces after replace: {compact}"
+    );
     write!(w, "grf={}", compact)?;
-    if let Some(s) = entry.status            { write!(w, " status={}", s)?; }
-    if let Some(r) = &entry.unknown_reason   { write!(w, " unknown_reason={}", r)?; }
-    if let Some(n) = entry.steps             { write!(w, " steps={}", n)?; }
-    if let Some(n) = entry.base_steps        { write!(w, " base_steps={}", n)?; }
-    if let Some(v) = entry.score             { write!(w, " score={}", v)?; }
+    if let Some(s) = entry.status {
+        write!(w, " status={}", s)?;
+    }
+    if let Some(r) = &entry.unknown_reason {
+        write!(w, " unknown_reason={}", r)?;
+    }
+    if let Some(n) = entry.steps {
+        write!(w, " steps={}", n)?;
+    }
+    if let Some(n) = entry.base_steps {
+        write!(w, " base_steps={}", n)?;
+    }
+    if let Some(v) = entry.score {
+        write!(w, " score={}", v)?;
+    }
     writeln!(w)
 }
 
@@ -213,11 +247,11 @@ mod tests {
     #[test]
     fn roundtrip_write_parse() {
         let entry = GrfEntry {
-            expr:           "R(Z0,P(2,1))".to_string(),
-            status:         Some(Status::Unknown),
-            steps:          Some(99999),
-            base_steps:     None,
-            score:          None,
+            expr: "R(Z0,P(2,1))".to_string(),
+            status: Some(Status::Unknown),
+            steps: Some(99999),
+            base_steps: None,
+            score: None,
             unknown_reason: None,
         };
         let mut buf = Vec::new();
@@ -235,11 +269,11 @@ mod tests {
     #[test]
     fn roundtrip_base_steps() {
         let entry = GrfEntry {
-            expr:           "M(R(P(1,1),S))".to_string(),
-            status:         Some(Status::Halt),
-            steps:          Some(42),
-            base_steps:     Some(113),
-            score:          Some(7),
+            expr: "M(R(P(1,1),S))".to_string(),
+            status: Some(Status::Halt),
+            steps: Some(42),
+            base_steps: Some(113),
+            score: Some(7),
             unknown_reason: None,
         };
         let mut buf = Vec::new();
@@ -260,17 +294,20 @@ mod tests {
         // write_grf_entry strips spaces so the grf= token is whitespace-free,
         // matching what Grf::Display produces (e.g. "R(Z0, P(2,1))").
         let entry = GrfEntry {
-            expr:           "M(C(R(Z1, P(3,2)), S))".to_string(),
-            status:         Some(Status::Unknown),
-            steps:          Some(100000),
-            base_steps:     None,
-            score:          None,
+            expr: "M(C(R(Z1, P(3,2)), S))".to_string(),
+            status: Some(Status::Unknown),
+            steps: Some(100000),
+            base_steps: None,
+            score: None,
             unknown_reason: None,
         };
         let mut buf = Vec::new();
         write_grf_entry(&mut buf, &entry).unwrap();
         let line = String::from_utf8(buf).unwrap();
-        let grf_token = line.split_whitespace().find(|t| t.starts_with("grf=")).unwrap();
+        let grf_token = line
+            .split_whitespace()
+            .find(|t| t.starts_with("grf="))
+            .unwrap();
         assert_eq!(grf_token, "grf=M(C(R(Z1,P(3,2)),S))");
         let back = parse_grf_entries(&line);
         assert_eq!(back[0].expr, "M(C(R(Z1,P(3,2)),S))");

@@ -5,10 +5,10 @@
 ///   mgrf_show mgrf/erdos.mgrf
 ///   mgrf_show mgrf/erdos.mgrf --fp-max-size 8
 use clap::Parser;
-use gen_rec::sim_nat::SmallNat;
 use gen_rec::fingerprint::FingerprintDb;
 use gen_rec::mgrf::parse_mgrf_file;
 use gen_rec::optimize::{opt_fingerprint, opt_inline_proj};
+use gen_rec::sim_nat::SmallNat;
 use gen_rec::simulate::simulate;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -43,8 +43,7 @@ fn main() {
         .unwrap_or_else(|e| panic!("Cannot read {:?}: {}", args.file, e));
 
     let base_dir = args.file.parent();
-    let file = parse_mgrf_file(&content, base_dir)
-        .unwrap_or_else(|e| panic!("Parse error: {}", e));
+    let file = parse_mgrf_file(&content, base_dir).unwrap_or_else(|e| panic!("Parse error: {}", e));
 
     let db = if args.fp_max_size > 0 {
         eprint!(
@@ -70,7 +69,13 @@ fn main() {
         println!("{:<22}  {:>5}  {:>6}", "macro", "kind", "info");
         println!("{}", "-".repeat(38));
         for (name, param_arity, body) in &file.grf_macro_defs {
-            println!("{:<22}  {:>5}  par={} body={}", name, "grf", param_arity, body.size());
+            println!(
+                "{:<22}  {:>5}  par={} body={}",
+                name,
+                "grf",
+                param_arity,
+                body.size()
+            );
         }
         for (name, num_cases) in &file.num_macro_defs {
             println!("{:<22}  {:>5}  cases={}", name, "num", num_cases);
@@ -85,7 +90,10 @@ fn main() {
     }
 
     if db.is_some() {
-        println!("{:<22}  {:>4}  {:>5}  {:>5}  {:>5}", "name", "ar", "raw", "ip", "fp");
+        println!(
+            "{:<22}  {:>4}  {:>5}  {:>5}  {:>5}",
+            "name", "ar", "raw", "ip", "fp"
+        );
         println!("{}", "-".repeat(45));
     } else {
         println!("{:<22}  {:>4}  {:>5}  {:>5}", "name", "ar", "raw", "ip");
@@ -100,7 +108,14 @@ fn main() {
 
         if let Some(ref db) = db {
             let fp = opt_fingerprint(ip, db);
-            println!("{:<22}  {:>4}  {:>5}  {:>5}  {:>5}", name, ar, raw, ip_size, fp.size());
+            println!(
+                "{:<22}  {:>4}  {:>5}  {:>5}  {:>5}",
+                name,
+                ar,
+                raw,
+                ip_size,
+                fp.size()
+            );
         } else {
             println!("{:<22}  {:>4}  {:>5}  {:>5}", name, ar, raw, ip_size);
         }
@@ -118,8 +133,17 @@ fn main() {
     let mut failed = 0usize;
 
     for tc in &file.tests {
-        let args_str = tc.args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
-        let grf = match tc.grf.as_ref().or_else(|| grf_map.get(tc.name.as_str()).copied()) {
+        let args_str = tc
+            .args
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let grf = match tc
+            .grf
+            .as_ref()
+            .or_else(|| grf_map.get(tc.name.as_str()).copied())
+        {
             Some(g) => g,
             None => {
                 println!("FAIL  {} -- undefined GRF", tc.name);
@@ -131,15 +155,18 @@ fn main() {
         let got: Option<SmallNat> = result.into_value();
         let ok = match (got, tc.expected) {
             (Some(g), Some(exp)) => g == exp,
-            (None,    None)      => true,
-            _                    => false,
+            (None, None) => true,
+            _ => false,
         };
         if ok {
             passed += 1;
         } else {
             let got_str = got.map_or("⊥".to_string(), |v| v.to_string());
             let exp_str = tc.expected.map_or("⊥".to_string(), |v| v.to_string());
-            println!("FAIL  {}({}) == {} -- got {}", tc.name, args_str, exp_str, got_str);
+            println!(
+                "FAIL  {}({}) == {} -- got {}",
+                tc.name, args_str, exp_str, got_str
+            );
             failed += 1;
         }
     }

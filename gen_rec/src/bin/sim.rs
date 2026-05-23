@@ -12,10 +12,12 @@ use std::time::{Duration, Instant};
 use chrono::Local;
 use clap::Parser;
 use gen_rec::alias::AliasDb;
-use gen_rec::sim_nat::SmallNat;
 use gen_rec::grf::GrfKind;
 use gen_rec::io_table::print_sweep_table;
-use gen_rec::simulate::{simulate, simulate_min, simulate_with_fallback, SimOpts, SimResult, SimSteps};
+use gen_rec::sim_nat::SmallNat;
+use gen_rec::simulate::{
+    simulate, simulate_min, simulate_with_fallback, SimOpts, SimResult, SimSteps,
+};
 
 #[derive(Parser, Debug)]
 #[command(about = "Simulate a single GRF expression")]
@@ -45,7 +47,12 @@ fn main() {
                 let content = std::fs::read_to_string(file_path).expect("Failed to read file");
                 let entries = gen_rec::io_grl::parse_grf_entries(&content);
                 if idx >= entries.len() {
-                    eprintln!("error: index {} out of bounds for file {} ({} entries)", idx, file_path, entries.len());
+                    eprintln!(
+                        "error: index {} out of bounds for file {} ({} entries)",
+                        idx,
+                        file_path,
+                        entries.len()
+                    );
                     std::process::exit(1);
                 }
                 entries[idx].expr.clone()
@@ -70,19 +77,23 @@ fn main() {
     let arity = grf.arity();
 
     // Parse inputs: numbers or "_" wildcards.
-    let parsed: Vec<Option<SmallNat>> = args.inputs.iter().map(|s| {
-        if s == "_" {
-            None
-        } else {
-            match s.parse::<SmallNat>() {
-                Ok(v) => Some(v),
-                Err(_) => {
-                    eprintln!("error: invalid input '{}' (expected a number or '_')", s);
-                    std::process::exit(1);
+    let parsed: Vec<Option<SmallNat>> = args
+        .inputs
+        .iter()
+        .map(|s| {
+            if s == "_" {
+                None
+            } else {
+                match s.parse::<SmallNat>() {
+                    Ok(v) => Some(v),
+                    Err(_) => {
+                        eprintln!("error: invalid input '{}' (expected a number or '_')", s);
+                        std::process::exit(1);
+                    }
                 }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     // No args given with arity > 0 → full sweep.
     let template: Vec<Option<SmallNat>> = if parsed.is_empty() && arity > 0 {
@@ -102,7 +113,9 @@ fn main() {
         std::process::exit(1);
     }
 
-    let sweep_indices: Vec<usize> = template.iter().enumerate()
+    let sweep_indices: Vec<usize> = template
+        .iter()
+        .enumerate()
         .filter(|(_, v)| v.is_none())
         .map(|(i, _)| i)
         .collect();
@@ -119,52 +132,87 @@ fn main() {
         }
         println!("---");
         let (result, steps) = if let GrfKind::Min(f) = &grf.kind {
-            let step_budget = if args.max_steps == 0 { None } else { Some(args.max_steps) };
+            let step_budget = if args.max_steps == 0 {
+                None
+            } else {
+                Some(args.max_steps)
+            };
             let start = Instant::now();
             let mut last_progress = Instant::now();
-            simulate_min(f, &concrete, step_budget, SimOpts::default(), &mut |n, result, total_steps: SimSteps| {
-                if last_progress.elapsed() >= Duration::from_secs(5) {
-                    let f_val = match result {
-                        SimResult::Value(v) => v.to_string(),
-                        SimResult::Diverge => "Diverge".to_string(),
-                        SimResult::OutOfSteps => "?".to_string(),
-                        SimResult::ArityMismatch => "arity mismatch".to_string(),
-                        SimResult::ValueOverflow => "!overflow".to_string(),
-                    };
-                    eprintln!(
-                        "[{}] elapsed={:.1}s  n={}  f(n)={}  steps={}  base={}",
-                        Local::now().format("%H:%M:%S"),
-                        start.elapsed().as_secs_f64(),
-                        n,
-                        f_val,
-                        total_steps.sim,
-                        total_steps.base_approx,
-                    );
-                    last_progress = Instant::now();
-                }
-            })
+            simulate_min(
+                f,
+                &concrete,
+                step_budget,
+                SimOpts::default(),
+                &mut |n, result, total_steps: SimSteps| {
+                    if last_progress.elapsed() >= Duration::from_secs(5) {
+                        let f_val = match result {
+                            SimResult::Value(v) => v.to_string(),
+                            SimResult::Diverge => "Diverge".to_string(),
+                            SimResult::OutOfSteps => "?".to_string(),
+                            SimResult::ArityMismatch => "arity mismatch".to_string(),
+                            SimResult::ValueOverflow => "!overflow".to_string(),
+                        };
+                        eprintln!(
+                            "[{}] elapsed={:.1}s  n={}  f(n)={}  steps={}  base={}",
+                            Local::now().format("%H:%M:%S"),
+                            start.elapsed().as_secs_f64(),
+                            n,
+                            f_val,
+                            total_steps.sim,
+                            total_steps.base_approx,
+                        );
+                        last_progress = Instant::now();
+                    }
+                },
+            )
         } else {
             simulate(&grf, &concrete, args.max_steps)
         };
         match result {
-            SimResult::Value(v) => println!("result: {}  ({} steps, {} base)", v, steps.sim, steps.base_approx),
+            SimResult::Value(v) => println!(
+                "result: {}  ({} steps, {} base)",
+                v, steps.sim, steps.base_approx
+            ),
             SimResult::Diverge => println!("result: diverges  ({} steps)", steps.sim),
             SimResult::OutOfSteps => {
-                let limit = if args.max_steps == 0 { "unlimited".to_string() } else { args.max_steps.to_string() };
-                println!("result: timed out after {} steps (limit: {})", steps.sim, limit);
+                let limit = if args.max_steps == 0 {
+                    "unlimited".to_string()
+                } else {
+                    args.max_steps.to_string()
+                };
+                println!(
+                    "result: timed out after {} steps (limit: {})",
+                    steps.sim, limit
+                );
             }
             SimResult::ArityMismatch => {
-                eprintln!("error: arity mismatch — GRF expects {} args, got {}", grf.arity(), concrete.len());
+                eprintln!(
+                    "error: arity mismatch — GRF expects {} args, got {}",
+                    grf.arity(),
+                    concrete.len()
+                );
                 std::process::exit(1);
             }
             SimResult::ValueOverflow => {
-                let (big_result, big_steps) = simulate_with_fallback(&grf, &concrete, args.max_steps);
+                let (big_result, big_steps) =
+                    simulate_with_fallback(&grf, &concrete, args.max_steps);
                 match big_result {
-                    SimResult::Value(v) => println!("result: {}  ({} steps, {} base)", v, big_steps.sim, big_steps.base_approx),
+                    SimResult::Value(v) => println!(
+                        "result: {}  ({} steps, {} base)",
+                        v, big_steps.sim, big_steps.base_approx
+                    ),
                     SimResult::Diverge => println!("result: diverges  ({} steps)", big_steps.sim),
                     SimResult::OutOfSteps => {
-                        let limit = if args.max_steps == 0 { "unlimited".to_string() } else { args.max_steps.to_string() };
-                        println!("result: timed out after {} steps (limit: {})", big_steps.sim, limit);
+                        let limit = if args.max_steps == 0 {
+                            "unlimited".to_string()
+                        } else {
+                            args.max_steps.to_string()
+                        };
+                        println!(
+                            "result: timed out after {} steps (limit: {})",
+                            big_steps.sim, limit
+                        );
                     }
                     SimResult::ArityMismatch | SimResult::ValueOverflow => unreachable!(),
                 }
@@ -177,19 +225,32 @@ fn main() {
     println!("expr  : {}", grf);
     println!("arity : {}", arity);
     println!("size  : {}", grf.size());
-    let sweep_str: Vec<String> = sweep_indices.iter()
+    let sweep_str: Vec<String> = sweep_indices
+        .iter()
         .map(|i| format!("x{}=0..={}", i + 1, args.max_val))
         .collect();
-    let fixed_str: Vec<String> = template.iter().enumerate()
+    let fixed_str: Vec<String> = template
+        .iter()
+        .enumerate()
         .filter(|(_, v)| v.is_some())
         .map(|(i, v)| format!("x{}={}", i + 1, v.unwrap()))
         .collect();
     if fixed_str.is_empty() {
         println!("sweep : {}", sweep_str.join(", "));
     } else {
-        println!("sweep : {}  (fixed: {})", sweep_str.join(", "), fixed_str.join(", "));
+        println!(
+            "sweep : {}  (fixed: {})",
+            sweep_str.join(", "),
+            fixed_str.join(", ")
+        );
     }
     println!("---");
 
-    print_sweep_table(&grf, &template, &sweep_indices, args.max_val, args.max_steps);
+    print_sweep_table(
+        &grf,
+        &template,
+        &sweep_indices,
+        args.max_val,
+        args.max_steps,
+    );
 }

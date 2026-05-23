@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 
 use clap::Parser;
 use gen_rec::alias::AliasDb;
-use gen_rec::sim_nat::SmallNat;
 use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_table::print_io_table;
+use gen_rec::sim_nat::SmallNat;
 
 #[derive(Parser, Debug)]
 #[command(about = "Explore a GRF by naming its R/M sub-expressions and showing I/O tables")]
@@ -98,8 +98,6 @@ fn fmt_subst(grf: &Grf, names: &BTreeMap<String, String>) -> String {
     }
 }
 
-
-
 fn main() {
     let args = Args::parse();
 
@@ -109,7 +107,12 @@ fn main() {
                 let content = std::fs::read_to_string(file_path).expect("Failed to read file");
                 let entries = gen_rec::io_grl::parse_grf_entries(&content);
                 if idx >= entries.len() {
-                    eprintln!("error: index {} out of bounds for file {} ({} entries)", idx, file_path, entries.len());
+                    eprintln!(
+                        "error: index {} out of bounds for file {} ({} entries)",
+                        idx,
+                        file_path,
+                        entries.len()
+                    );
                     std::process::exit(1);
                 }
                 entries[idx].expr.clone()
@@ -133,7 +136,12 @@ fn main() {
 
     let prf_tag = if grf.is_prf() { "PRF" } else { "GRF" };
     println!("Expression: {}", grf);
-    println!("Arity: {} | Size: {} | {}", grf.arity(), grf.size(), prf_tag);
+    println!(
+        "Arity: {} | Size: {} | {}",
+        grf.arity(),
+        grf.size(),
+        prf_tag
+    );
 
     // Collect R/M sub-expressions in post-order.
     let mut seen: BTreeMap<String, Grf> = BTreeMap::new();
@@ -173,7 +181,11 @@ fn main() {
             let subst = fmt_subst(sub, &partial_names);
             let prf = if sub.is_prf() { ", PRF" } else { "" };
             let used = sub.used_args();
-            let used_str: String = used.iter().map(|j| j.to_string()).collect::<Vec<_>>().join(",");
+            let used_str: String = used
+                .iter()
+                .map(|j| j.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
             let used_tag = if used.is_empty() {
                 String::new()
             } else {

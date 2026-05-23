@@ -9,9 +9,9 @@
 ///   cargo run --bin sim_all -- holdout.grl 1000000000 next.grl --progress-interval 10
 use chrono::Local;
 use clap::Parser;
-use gen_rec::sim_nat::SmallNat;
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
+use gen_rec::sim_nat::SmallNat;
 use gen_rec::simulate::simulate;
 use std::fs;
 use std::io::{BufWriter, Write};
@@ -82,22 +82,27 @@ fn main() {
             args.input.display(),
             args.steps
         ),
-    ).unwrap();
+    )
+    .unwrap();
 
-    let max_steps = if args.steps == 0 { SmallNat::MAX } else { args.steps };
+    let max_steps = if args.steps == 0 {
+        SmallNat::MAX
+    } else {
+        args.steps
+    };
 
     let start = Instant::now();
     let mut last_progress = start;
     let progress_interval = std::time::Duration::from_secs(args.progress_interval);
 
-    let mut n_total      = 0usize;
-    let mut n_halted     = 0usize;
-    let mut n_diverged   = 0usize;
-    let mut n_holdouts   = 0usize;
-    let mut n_skipped    = 0usize;
-    let mut max_score : SmallNat = 0;
-    let mut max_halt_steps : SmallNat = 0;
-    let mut total_steps : SmallNat = 0;
+    let mut n_total = 0usize;
+    let mut n_halted = 0usize;
+    let mut n_diverged = 0usize;
+    let mut n_holdouts = 0usize;
+    let mut n_skipped = 0usize;
+    let mut max_score: SmallNat = 0;
+    let mut max_halt_steps: SmallNat = 0;
+    let mut total_steps: SmallNat = 0;
 
     for entry in entries {
         // Skip entries already known to diverge.
@@ -128,8 +133,12 @@ fn main() {
         let (out_status, out_score, out_base_steps, out_unknown_reason) = match result {
             gen_rec::simulate::SimResult::Value(v) => {
                 n_halted += 1;
-                if v > max_score { max_score = v; }
-                if steps_taken > max_halt_steps { max_halt_steps = steps_taken; }
+                if v > max_score {
+                    max_score = v;
+                }
+                if steps_taken > max_halt_steps {
+                    max_halt_steps = steps_taken;
+                }
                 (Status::Halt, Some(v), Some(sim_steps.base_approx), None)
             }
             gen_rec::simulate::SimResult::Diverge => {
@@ -149,19 +158,27 @@ fn main() {
             }
         };
 
-        io_grl::write_grf_entry(&mut out, &GrfEntry {
-            expr:           entry.expr,
-            status:         Some(out_status),
-            steps:          Some(steps_taken),
-            base_steps:     out_base_steps,
-            score:          out_score,
-            unknown_reason: out_unknown_reason.map(|r| r.to_string()),
-        }).unwrap();
+        io_grl::write_grf_entry(
+            &mut out,
+            &GrfEntry {
+                expr: entry.expr,
+                status: Some(out_status),
+                steps: Some(steps_taken),
+                base_steps: out_base_steps,
+                score: out_score,
+                unknown_reason: out_unknown_reason.map(|r| r.to_string()),
+            },
+        )
+        .unwrap();
 
         // Progress report.
         if args.progress_interval > 0 && last_progress.elapsed() >= progress_interval {
             let elapsed_s = start.elapsed().as_secs();
-            let pct = if n_input > 0 { 100 * n_total / n_input } else { 0 };
+            let pct = if n_input > 0 {
+                100 * n_total / n_input
+            } else {
+                0
+            };
             println!(
                 "[{}] elapsed: {} | {}/{} ({}%) | halted: {} | holdouts: {} | diverged: {} | max_score: {}",
                 Local::now().format("%H:%M:%S"),

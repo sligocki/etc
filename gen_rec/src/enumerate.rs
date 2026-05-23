@@ -147,7 +147,9 @@ pub(crate) fn for_each_grf_core(
                         // fires. The strictly-smaller C(g, f2,...) is generated separately.
                         if opts.rec_zero_arg
                             && h_is_rec
-                            && gs.first().map_or(false, |g| matches!(&g.kind, GrfKind::Zero(_)))
+                            && gs
+                                .first()
+                                .map_or(false, |g| matches!(&g.kind, GrfKind::Zero(_)))
                         {
                             return;
                         }
@@ -155,11 +157,14 @@ pub(crate) fn for_each_grf_core(
                         // is equivalent to inline_proj(h, k, rewiring), which is smaller.
                         // O(m) check using precomputed constraints.
                         if let Some(ref ic) = inline_c {
-                            let rewiring: Option<Vec<usize>> = gs.iter().map(|g| match &g.kind {
-                                GrfKind::Proj(_, i) => Some(*i),
-                                GrfKind::Zero(_) => Some(0),
-                                _ => None,
-                            }).collect();
+                            let rewiring: Option<Vec<usize>> = gs
+                                .iter()
+                                .map(|g| match &g.kind {
+                                    GrfKind::Proj(_, i) => Some(*i),
+                                    GrfKind::Zero(_) => Some(0),
+                                    _ => None,
+                                })
+                                .collect();
                             if let Some(rw) = rewiring {
                                 if ic.allows(&rw, arity) {
                                     return;
@@ -207,14 +212,22 @@ pub(crate) fn for_each_grf_core(
     if allow_min {
         sub(n, arity + 1, &mut |f: &Grf| {
             if opts.min_trivial {
-                if matches!(&f.kind, GrfKind::Zero(_)) { return; }
-                if matches!(&f.kind, GrfKind::Proj(_, _)) { return; }
+                if matches!(&f.kind, GrfKind::Zero(_)) {
+                    return;
+                }
+                if matches!(&f.kind, GrfKind::Proj(_, _)) {
+                    return;
+                }
             }
             if opts.min_dom {
                 // (a) f ignores the search variable (arg 1 of f): M(f) is a restriction of Z_{arity}.
-                if !f.used_args().contains(&1) { return; }
+                if !f.used_args().contains(&1) {
+                    return;
+                }
                 // (b) f never returns 0: M(f) always diverges, dominated by Z_{arity}.
-                if f.is_never_zero() { return; }
+                if f.is_never_zero() {
+                    return;
+                }
             }
             callback(&Grf::min(f.clone()));
         });
@@ -231,7 +244,10 @@ fn for_each_grf(
     callback: &mut dyn FnMut(&Grf),
 ) {
     for_each_grf_core(
-        size, arity, allow_min, opts,
+        size,
+        arity,
+        allow_min,
+        opts,
         &|s, a, cb| for_each_grf(s, a, allow_min, opts, cb),
         callback,
     )
@@ -313,9 +329,15 @@ fn for_each_args(
     callback: &mut dyn FnMut(&[Grf]),
 ) {
     for_each_args_core(
-        remaining_size, remaining_count, arity, allow_min, opts,
+        remaining_size,
+        remaining_count,
+        arity,
+        allow_min,
+        opts,
         &|s, a, cb| for_each_grf(s, a, allow_min, opts, cb),
-        forced, current, callback,
+        forced,
+        current,
+        callback,
     )
 }
 
@@ -442,7 +464,9 @@ fn seek_grfs(
                 } else {
                     base
                 }
-            } else { 0 };
+            } else {
+                0
+            };
             let n_pre_rec_heads = n_non_rec_heads.saturating_sub(n_min_heads);
             let pre_rec_block = n_pre_rec_heads.saturating_mul(args_all);
             let rec_block = n_rec_heads.saturating_mul(args_rec);
@@ -454,17 +478,39 @@ fn seek_grfs(
                 let max_heads = (*rem / args_all + 2).min(n_pre_rec_heads - head_skip);
                 let mut local_skip = head_skip;
                 let mut local_rem = max_heads;
-                seek_pre_rec_heads(hsize, m, allow_min, opts, &mut local_skip, &mut local_rem,
+                seek_pre_rec_heads(
+                    hsize,
+                    m,
+                    allow_min,
+                    opts,
+                    &mut local_skip,
+                    &mut local_rem,
                     &mut |h: &Grf| {
-                        if *rem == 0 { return; }
+                        if *rem == 0 {
+                            return;
+                        }
                         let h_box = Box::new(h.clone());
                         let mut args = Vec::with_capacity(m);
-                        seek_args(gs_total, m, arity, allow_min, opts, false,
-                            skip, rem, &mut args,
+                        seek_args(
+                            gs_total,
+                            m,
+                            arity,
+                            allow_min,
+                            opts,
+                            false,
+                            skip,
+                            rem,
+                            &mut args,
                             &mut |gs: &[Grf]| {
-                                callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
-                            });
-                    });
+                                callback(&Grf::new(GrfKind::Comp(
+                                    h_box.clone(),
+                                    gs.to_vec(),
+                                    arity,
+                                )));
+                            },
+                        );
+                    },
+                );
             } else if *skip >= pre_rec_block {
                 *skip -= pre_rec_block;
             }
@@ -476,18 +522,39 @@ fn seek_grfs(
                 let max_heads = (*rem / args_rec + 2).min(n_rec_heads - head_skip);
                 let mut local_skip = head_skip;
                 let mut local_rem = max_heads;
-                seek_rec_only(hsize, m, allow_min, opts, &mut local_skip, &mut local_rem,
+                seek_rec_only(
+                    hsize,
+                    m,
+                    allow_min,
+                    opts,
+                    &mut local_skip,
+                    &mut local_rem,
                     &mut |h: &Grf| {
-                        if *rem == 0 { return; }
+                        if *rem == 0 {
+                            return;
+                        }
                         let h_box = Box::new(h.clone());
                         let mut args = Vec::with_capacity(m);
-                        seek_args(gs_total, m, arity, allow_min, opts,
+                        seek_args(
+                            gs_total,
+                            m,
+                            arity,
+                            allow_min,
+                            opts,
                             opts.rec_zero_arg,
-                            skip, rem, &mut args,
+                            skip,
+                            rem,
+                            &mut args,
                             &mut |gs: &[Grf]| {
-                                callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
-                            });
-                    });
+                                callback(&Grf::new(GrfKind::Comp(
+                                    h_box.clone(),
+                                    gs.to_vec(),
+                                    arity,
+                                )));
+                            },
+                        );
+                    },
+                );
             } else if *skip >= rec_block {
                 *skip -= rec_block;
             }
@@ -504,33 +571,75 @@ fn seek_grfs(
                     if opts.min_trivial && hsize == 2 {
                         // inner_size == 1: all Zero and Proj pruned; only Succ survives (when ar==1).
                         let ar = m + 1;
-                        let valid_inners: Vec<Grf> =
-                            if ar == 1 { vec![Grf::succ_atom()] } else { vec![] };
+                        let valid_inners: Vec<Grf> = if ar == 1 {
+                            vec![Grf::succ_atom()]
+                        } else {
+                            vec![]
+                        };
                         for f in &valid_inners {
-                            if *rem == 0 || local_rem == 0 { break; }
-                            if local_skip > 0 { local_skip -= 1; continue; }
+                            if *rem == 0 || local_rem == 0 {
+                                break;
+                            }
+                            if local_skip > 0 {
+                                local_skip -= 1;
+                                continue;
+                            }
                             let h_box = Box::new(Grf::min(f.clone()));
                             let mut args = Vec::with_capacity(m);
-                            seek_args(gs_total, m, arity, allow_min, opts, false,
-                                skip, rem, &mut args,
+                            seek_args(
+                                gs_total,
+                                m,
+                                arity,
+                                allow_min,
+                                opts,
+                                false,
+                                skip,
+                                rem,
+                                &mut args,
                                 &mut |gs: &[Grf]| {
-                                    callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
-                                });
+                                    callback(&Grf::new(GrfKind::Comp(
+                                        h_box.clone(),
+                                        gs.to_vec(),
+                                        arity,
+                                    )));
+                                },
+                            );
                             local_rem -= 1;
                         }
                     } else {
-                        seek_grfs(hsize - 1, m + 1, allow_min, opts,
-                            &mut local_skip, &mut local_rem,
+                        seek_grfs(
+                            hsize - 1,
+                            m + 1,
+                            allow_min,
+                            opts,
+                            &mut local_skip,
+                            &mut local_rem,
                             &mut |f: &Grf| {
-                                if *rem == 0 { return; }
+                                if *rem == 0 {
+                                    return;
+                                }
                                 let h_box = Box::new(Grf::min(f.clone()));
                                 let mut args = Vec::with_capacity(m);
-                                seek_args(gs_total, m, arity, allow_min, opts, false,
-                                    skip, rem, &mut args,
+                                seek_args(
+                                    gs_total,
+                                    m,
+                                    arity,
+                                    allow_min,
+                                    opts,
+                                    false,
+                                    skip,
+                                    rem,
+                                    &mut args,
                                     &mut |gs: &[Grf]| {
-                                        callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
-                                    });
-                            });
+                                        callback(&Grf::new(GrfKind::Comp(
+                                            h_box.clone(),
+                                            gs.to_vec(),
+                                            arity,
+                                        )));
+                                    },
+                                );
+                            },
+                        );
                     }
                 } else {
                     *skip -= min_block;
@@ -545,7 +654,11 @@ fn seek_grfs(
         if !(opts.comp_null_null && arity == 0) {
             let h_count_raw = count_grf(n, 0, allow_min, opts);
             // comp_zero prunes C(Z0): Z0 is the only 0-arity size-1 form.
-            let h_count = if opts.comp_zero && n == 1 { h_count_raw.saturating_sub(1) } else { h_count_raw };
+            let h_count = if opts.comp_zero && n == 1 {
+                h_count_raw.saturating_sub(1)
+            } else {
+                h_count_raw
+            };
             if *skip >= h_count {
                 *skip -= h_count;
             } else {
@@ -568,7 +681,11 @@ fn seek_grfs(
             let h_total = count_grf(hsize, arity + 1, allow_min, opts);
             // At n==2 (size=3), both g and h are atoms, and per-g pruning applies.
             let pruned_in_block = (if opts.rec_zero_base && n == 2 { 2 } else { 0 })
-                + (if opts.rec_proj_base && n == 2 { 2 * (arity - 1) } else { 0 });
+                + (if opts.rec_proj_base && n == 2 {
+                    2 * (arity - 1)
+                } else {
+                    0
+                });
             let gsize_block = g_total
                 .saturating_mul(h_total)
                 .saturating_sub(pruned_in_block);
@@ -588,22 +705,38 @@ fn seek_grfs(
                     }
                     let g_is_zero = matches!(&g.kind, GrfKind::Zero(_));
                     let g_proj_idx: Option<usize> = if opts.rec_proj_base {
-                        if let GrfKind::Proj(_, i) = &g.kind { Some(*i) } else { None }
+                        if let GrfKind::Proj(_, i) = &g.kind {
+                            Some(*i)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     };
-                    let pruned_h = if opts.rec_zero_base && g_is_zero { 2 }
-                        else if g_proj_idx.is_some() { 2 }
-                        else { 0 };
+                    let pruned_h = if opts.rec_zero_base && g_is_zero {
+                        2
+                    } else if g_proj_idx.is_some() {
+                        2
+                    } else {
+                        0
+                    };
                     let h_count = h_total.saturating_sub(pruned_h);
                     if *skip >= h_count {
                         *skip -= h_count;
                         return;
                     }
                     if pruned_h == 0 {
-                        seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                            callback(&Grf::rec(g.clone(), h.clone()));
-                        });
+                        seek_grfs(
+                            hsize,
+                            arity + 1,
+                            allow_min,
+                            opts,
+                            skip,
+                            rem,
+                            &mut |h: &Grf| {
+                                callback(&Grf::rec(g.clone(), h.clone()));
+                            },
+                        );
                     } else {
                         let ar1 = arity + 1;
                         let valid_hs: Vec<Grf> = if opts.rec_zero_base && g_is_zero {
@@ -616,8 +749,11 @@ fn seek_grfs(
                             let gi = g_proj_idx.unwrap();
                             std::iter::once(Grf::zero_atom(ar1))
                                 .chain((1..=ar1).filter_map(move |j| {
-                                    if j == 2 || j == gi + 2 { None }
-                                    else { Some(Grf::proj_atom(ar1, j)) }
+                                    if j == 2 || j == gi + 2 {
+                                        None
+                                    } else {
+                                        Some(Grf::proj_atom(ar1, j))
+                                    }
                                 }))
                                 .collect()
                         };
@@ -642,14 +778,30 @@ fn seek_grfs(
                 let max_needed = (*rem / h_total + 2).min(g_total - g_skip_count);
                 let mut local_skip = g_skip_count;
                 let mut local_rem = max_needed;
-                seek_grfs(gsize, arity - 1, allow_min, opts, &mut local_skip, &mut local_rem, &mut |g: &Grf| {
-                    if *rem == 0 {
-                        return;
-                    }
-                    seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                        callback(&Grf::rec(g.clone(), h.clone()));
-                    });
-                });
+                seek_grfs(
+                    gsize,
+                    arity - 1,
+                    allow_min,
+                    opts,
+                    &mut local_skip,
+                    &mut local_rem,
+                    &mut |g: &Grf| {
+                        if *rem == 0 {
+                            return;
+                        }
+                        seek_grfs(
+                            hsize,
+                            arity + 1,
+                            allow_min,
+                            opts,
+                            skip,
+                            rem,
+                            &mut |h: &Grf| {
+                                callback(&Grf::rec(g.clone(), h.clone()));
+                            },
+                        );
+                    },
+                );
             }
         }
     }
@@ -661,8 +813,12 @@ fn seek_grfs(
             // Only Succ survives, and only when ar == 1.
             let ar = arity + 1;
             if ar == 1 && *rem > 0 {
-                if *skip > 0 { *skip -= 1; }
-                else { callback(&Grf::min(Grf::succ_atom())); *rem -= 1; }
+                if *skip > 0 {
+                    *skip -= 1;
+                } else {
+                    callback(&Grf::min(Grf::succ_atom()));
+                    *rem -= 1;
+                }
             }
         } else {
             seek_grfs(n, arity + 1, allow_min, opts, skip, rem, &mut |f: &Grf| {
@@ -692,8 +848,14 @@ fn seek_pre_rec_heads(
     let n_min_heads = if allow_min && size >= 2 {
         let inner_size = size - 1;
         let base = count_grf(inner_size, arity + 1, allow_min, opts);
-        if opts.min_trivial && inner_size == 1 { base.saturating_sub(1 + (arity + 1)) } else { base }
-    } else { 0 };
+        if opts.min_trivial && inner_size == 1 {
+            base.saturating_sub(1 + (arity + 1))
+        } else {
+            base
+        }
+    } else {
+        0
+    };
     let total = count_as_head(size, arity, allow_min, opts)
         .saturating_sub(count_rec_only(size, arity, allow_min, opts))
         .saturating_sub(n_min_heads);
@@ -741,7 +903,11 @@ fn seek_pre_rec_heads(
             }
             let args2_rec = if opts.rec_zero_arg && gs2_total >= 1 {
                 args2_all.saturating_sub(count_many_fast(
-                    gs2_total - 1, m2 - 1, arity, allow_min, opts,
+                    gs2_total - 1,
+                    m2 - 1,
+                    arity,
+                    allow_min,
+                    opts,
                 ))
             } else {
                 args2_all
@@ -759,25 +925,46 @@ fn seek_pre_rec_heads(
             // (Inner head counts are bounded by count_as_head(h2size, m2), typically small
             // relative to the outer head counts we optimised above.)
             for_each_grf(h2size, m2, allow_min, opts, &mut |h2: &Grf| {
-                if *rem == 0 { return; }
-                if opts.comp_zero && matches!(&h2.kind, GrfKind::Zero(_)) { return; }
-                if opts.comp_proj && matches!(&h2.kind, GrfKind::Proj(_, _)) { return; }
+                if *rem == 0 {
+                    return;
+                }
+                if opts.comp_zero && matches!(&h2.kind, GrfKind::Zero(_)) {
+                    return;
+                }
+                if opts.comp_proj && matches!(&h2.kind, GrfKind::Proj(_, _)) {
+                    return;
+                }
                 if opts.comp_assoc {
                     if let GrfKind::Comp(_, inner_gs, _) = &h2.kind {
-                        if inner_gs.len() == 1 { return; }
+                        if inner_gs.len() == 1 {
+                            return;
+                        }
                     }
                 }
                 let h2_is_rec = matches!(&h2.kind, GrfKind::Rec(_, _));
                 let per_h2_args = if h2_is_rec { args2_rec } else { args2_all };
-                if *skip >= per_h2_args { *skip -= per_h2_args; return; }
+                if *skip >= per_h2_args {
+                    *skip -= per_h2_args;
+                    return;
+                }
                 let h2_box = Box::new(h2.clone());
                 let mut args2 = Vec::with_capacity(m2);
                 seek_args(
-                    gs2_total, m2, arity, allow_min, opts,
+                    gs2_total,
+                    m2,
+                    arity,
+                    allow_min,
+                    opts,
                     h2_is_rec && opts.rec_zero_arg,
-                    skip, rem, &mut args2,
+                    skip,
+                    rem,
+                    &mut args2,
                     &mut |gs2: &[Grf]| {
-                        callback(&Grf::new(GrfKind::Comp(h2_box.clone(), gs2.to_vec(), arity)));
+                        callback(&Grf::new(GrfKind::Comp(
+                            h2_box.clone(),
+                            gs2.to_vec(),
+                            arity,
+                        )));
                     },
                 );
             });
@@ -790,7 +977,11 @@ fn seek_pre_rec_heads(
         // comp_null_null: prunes C0(h)
         if !(opts.comp_null_null && arity == 0) {
             let h2_count_raw = count_grf(n, 0, allow_min, opts);
-            let h2_count = if opts.comp_zero && n == 1 { h2_count_raw.saturating_sub(1) } else { h2_count_raw };
+            let h2_count = if opts.comp_zero && n == 1 {
+                h2_count_raw.saturating_sub(1)
+            } else {
+                h2_count_raw
+            };
             if *skip >= h2_count {
                 *skip -= h2_count;
             } else if h2_count > 0 {
@@ -830,8 +1021,14 @@ fn seek_rec_only(
         let g_total = count_grf(gsize, arity - 1, allow_min, opts);
         let h_total = count_grf(hsize, arity + 1, allow_min, opts);
         let pruned_in_block = (if opts.rec_zero_base && n == 2 { 2 } else { 0 })
-            + (if opts.rec_proj_base && n == 2 { 2 * (arity - 1) } else { 0 });
-        let block = g_total.saturating_mul(h_total).saturating_sub(pruned_in_block);
+            + (if opts.rec_proj_base && n == 2 {
+                2 * (arity - 1)
+            } else {
+                0
+            });
+        let block = g_total
+            .saturating_mul(h_total)
+            .saturating_sub(pruned_in_block);
         if *skip >= block {
             *skip -= block;
             continue;
@@ -839,22 +1036,43 @@ fn seek_rec_only(
         if n == 2 {
             // Sequential — same as the n==2 branch in the Rec section of seek_grfs.
             for_each_grf(gsize, arity - 1, allow_min, opts, &mut |g: &Grf| {
-                if *rem == 0 { return; }
+                if *rem == 0 {
+                    return;
+                }
                 let g_is_zero = matches!(&g.kind, GrfKind::Zero(_));
                 let g_proj_idx: Option<usize> = if opts.rec_proj_base {
-                    if let GrfKind::Proj(_, i) = &g.kind { Some(*i) } else { None }
+                    if let GrfKind::Proj(_, i) = &g.kind {
+                        Some(*i)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };
-                let pruned_h = if opts.rec_zero_base && g_is_zero { 2 }
-                    else if g_proj_idx.is_some() { 2 }
-                    else { 0 };
+                let pruned_h = if opts.rec_zero_base && g_is_zero {
+                    2
+                } else if g_proj_idx.is_some() {
+                    2
+                } else {
+                    0
+                };
                 let h_count = h_total.saturating_sub(pruned_h);
-                if *skip >= h_count { *skip -= h_count; return; }
+                if *skip >= h_count {
+                    *skip -= h_count;
+                    return;
+                }
                 if pruned_h == 0 {
-                    seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                        callback(&Grf::rec(g.clone(), h.clone()));
-                    });
+                    seek_grfs(
+                        hsize,
+                        arity + 1,
+                        allow_min,
+                        opts,
+                        skip,
+                        rem,
+                        &mut |h: &Grf| {
+                            callback(&Grf::rec(g.clone(), h.clone()));
+                        },
+                    );
                 } else {
                     let ar1 = arity + 1;
                     let valid_hs: Vec<Grf> = if opts.rec_zero_base && g_is_zero {
@@ -865,14 +1083,22 @@ fn seek_rec_only(
                         let gi = g_proj_idx.unwrap();
                         std::iter::once(Grf::zero_atom(ar1))
                             .chain((1..=ar1).filter_map(move |j| {
-                                if j == 2 || j == gi + 2 { None }
-                                else { Some(Grf::proj_atom(ar1, j)) }
+                                if j == 2 || j == gi + 2 {
+                                    None
+                                } else {
+                                    Some(Grf::proj_atom(ar1, j))
+                                }
                             }))
                             .collect()
                     };
                     for h in &valid_hs {
-                        if *rem == 0 { return; }
-                        if *skip > 0 { *skip -= 1; continue; }
+                        if *rem == 0 {
+                            return;
+                        }
+                        if *skip > 0 {
+                            *skip -= 1;
+                            continue;
+                        }
                         callback(&Grf::rec(g.clone(), h.clone()));
                         *rem -= 1;
                     }
@@ -885,13 +1111,30 @@ fn seek_rec_only(
             let max_needed = (*rem / h_total + 2).min(g_total - g_skip_count);
             let mut local_skip = g_skip_count;
             let mut local_rem = max_needed;
-            seek_grfs(gsize, arity - 1, allow_min, opts, &mut local_skip, &mut local_rem,
+            seek_grfs(
+                gsize,
+                arity - 1,
+                allow_min,
+                opts,
+                &mut local_skip,
+                &mut local_rem,
                 &mut |g: &Grf| {
-                    if *rem == 0 { return; }
-                    seek_grfs(hsize, arity + 1, allow_min, opts, skip, rem, &mut |h: &Grf| {
-                        callback(&Grf::rec(g.clone(), h.clone()));
-                    });
-                });
+                    if *rem == 0 {
+                        return;
+                    }
+                    seek_grfs(
+                        hsize,
+                        arity + 1,
+                        allow_min,
+                        opts,
+                        skip,
+                        rem,
+                        &mut |h: &Grf| {
+                            callback(&Grf::rec(g.clone(), h.clone()));
+                        },
+                    );
+                },
+            );
         }
     }
 }
@@ -970,7 +1213,8 @@ fn seek_args(
         // Inside this size-x block: iterate g's, skipping whole rest_count groups.
         if is_first && x == 1 {
             // Enumerate non-Zero size-1 atoms in canonical order.
-            let mut non_zero_atoms: Vec<Grf> = (1..=arity).map(|i| Grf::proj_atom(arity, i)).collect();
+            let mut non_zero_atoms: Vec<Grf> =
+                (1..=arity).map(|i| Grf::proj_atom(arity, i)).collect();
             if arity == 1 {
                 non_zero_atoms.push(Grf::succ_atom());
             }
@@ -1007,25 +1251,33 @@ fn seek_args(
             let max_needed = (*rem / rest_count + 2).min(g_valid_count - g_skip_count);
             let mut local_skip = g_skip_count;
             let mut local_rem = max_needed;
-            seek_grfs(x, arity, allow_min, opts, &mut local_skip, &mut local_rem, &mut |g: &Grf| {
-                if *rem == 0 {
-                    return;
-                }
-                current.push(g.clone());
-                seek_args(
-                    remaining_size - x,
-                    remaining_count - 1,
-                    arity,
-                    allow_min,
-                    opts,
-                    false,
-                    skip,
-                    rem,
-                    current,
-                    callback,
-                );
-                current.pop();
-            });
+            seek_grfs(
+                x,
+                arity,
+                allow_min,
+                opts,
+                &mut local_skip,
+                &mut local_rem,
+                &mut |g: &Grf| {
+                    if *rem == 0 {
+                        return;
+                    }
+                    current.push(g.clone());
+                    seek_args(
+                        remaining_size - x,
+                        remaining_count - 1,
+                        arity,
+                        allow_min,
+                        opts,
+                        false,
+                        skip,
+                        rem,
+                        current,
+                        callback,
+                    );
+                    current.pop();
+                },
+            );
         }
     }
 }
@@ -1233,7 +1485,11 @@ fn compute_count(size: usize, arity: usize, allow_min: bool, opts: PruningOpts) 
         // min_trivial: at n==1, prune Zero(arity+1) and all Proj(arity+1,_).
         // That's 1 + (arity+1) forms. Inner count at n==1 = 1 + (arity+1) + [arity+1==1],
         // so remaining is [arity+1==1] (just Succ when inner arity is 1). No underflow.
-        let pruned = if opts.min_trivial && n == 1 { 1 + (arity + 1) } else { 0 };
+        let pruned = if opts.min_trivial && n == 1 {
+            1 + (arity + 1)
+        } else {
+            0
+        };
         total = total.saturating_add(inner.saturating_sub(pruned));
     }
 
@@ -1380,9 +1636,17 @@ mod tests {
 
     #[test]
     fn test_skip_trivial_removes_zero_proj_comps() {
-        let trim = collect(3, 0, false, PruningOpts::default().with_flags("comp_zero,comp_proj"));
+        let trim = collect(
+            3,
+            0,
+            false,
+            PruningOpts::default().with_flags("comp_zero,comp_proj"),
+        );
         assert_eq!(trim.len(), 1);
-        assert_eq!(trim[0], Grf::comp(Grf::succ_atom(), vec![Grf::zero_atom(0)]));
+        assert_eq!(
+            trim[0],
+            Grf::comp(Grf::succ_atom(), vec![Grf::zero_atom(0)])
+        );
     }
 
     #[test]
@@ -1390,7 +1654,12 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=2 {
                 let full = count_grf(size, arity, false, PruningOpts::default());
-                let trim = count_grf(size, arity, false, PruningOpts::default().with_flags("comp_zero,comp_proj"));
+                let trim = count_grf(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("comp_zero,comp_proj"),
+                );
                 assert!(
                     trim <= full,
                     "skip_trivial produced more GRFs at size={size} arity={arity}"
@@ -1433,7 +1702,12 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=2 {
                 let full = count_grf(size, arity, false, PruningOpts::default());
-                let assoc = count_grf(size, arity, false, PruningOpts::default().with_flags("comp_assoc"));
+                let assoc = count_grf(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("comp_assoc"),
+                );
                 assert!(
                     assoc <= full,
                     "comp_assoc produced more GRFs at size={size} arity={arity}"
@@ -1446,8 +1720,18 @@ mod tests {
     fn test_comp_assoc_all_opts_fewer_than_skip_trivial() {
         for size in 1..=8 {
             for arity in 0..=2 {
-                let st = count_grf(size, arity, false, PruningOpts::default().with_flags("comp_zero,comp_proj"));
-                let all = count_grf(size, arity, false, PruningOpts::recommended().for_counting());
+                let st = count_grf(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("comp_zero,comp_proj"),
+                );
+                let all = count_grf(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::recommended().for_counting(),
+                );
                 assert!(
                     all <= st,
                     "recommended opts produced more GRFs than comp_zero+comp_proj at size={size} arity={arity}"
@@ -1473,7 +1757,12 @@ mod tests {
         use std::collections::HashSet;
         for size in 1..=7 {
             for arity in 0..=2 {
-                let all = collect(size, arity, false, PruningOpts::default().with_flags("comp_assoc"));
+                let all = collect(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("comp_assoc"),
+                );
                 let unique: HashSet<Grf> = all.iter().cloned().collect();
                 assert_eq!(
                     all.len(),
@@ -1491,7 +1780,12 @@ mod tests {
     #[test]
     fn test_skip_rec_zero_base_removes_specific_forms() {
         // R(Z0, Z2) and R(Z0, P(2,2)) should be pruned (≡ Z1).
-        let pruned = collect(3, 1, false, PruningOpts::default().with_flags("rec_zero_base"));
+        let pruned = collect(
+            3,
+            1,
+            false,
+            PruningOpts::default().with_flags("rec_zero_base"),
+        );
         let rz0z2 = "R(Z0, Z2)".parse::<Grf>().unwrap();
         let rz0p22 = "R(Z0, P(2,2))".parse::<Grf>().unwrap();
         assert!(
@@ -1516,7 +1810,12 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=2 {
                 let full = count_grf(size, arity, false, PruningOpts::default());
-                let pruned = count_grf(size, arity, false, PruningOpts::default().with_flags("rec_zero_base"));
+                let pruned = count_grf(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("rec_zero_base"),
+                );
                 assert!(
                     pruned <= full,
                     "skip_rec_zero_base produced more GRFs at size={size} arity={arity}"
@@ -1529,7 +1828,12 @@ mod tests {
     fn test_skip_rec_zero_arg_removes_specific_form() {
         // C(R(Z0, Z2), Z0) should be removed (head is Rec, first arg is Zero).
         // It is equivalent to the strictly smaller C(Z0) = Z0 (size 1).
-        let pruned = collect(5, 0, false, PruningOpts::default().with_flags("rec_zero_arg"));
+        let pruned = collect(
+            5,
+            0,
+            false,
+            PruningOpts::default().with_flags("rec_zero_arg"),
+        );
         let target = "C(R(Z0, Z2), Z0)".parse::<Grf>().unwrap();
         assert!(
             !pruned.iter().any(|g| *g == target),
@@ -1543,7 +1847,12 @@ mod tests {
             full.iter().any(|g| *g == non_pruned),
             "C(R(Z0,Z2),C(S,Z0)) must exist in full set"
         );
-        let with_rule = collect(7, 0, false, PruningOpts::default().with_flags("rec_zero_arg"));
+        let with_rule = collect(
+            7,
+            0,
+            false,
+            PruningOpts::default().with_flags("rec_zero_arg"),
+        );
         assert!(
             with_rule.iter().any(|g| *g == non_pruned),
             "C(R(Z0,Z2),C(S,Z0)) should not be pruned (first arg is not Zero)"
@@ -1555,7 +1864,12 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=2 {
                 let full = count_grf(size, arity, false, PruningOpts::default());
-                let pruned = count_grf(size, arity, false, PruningOpts::default().with_flags("rec_zero_arg"));
+                let pruned = count_grf(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("rec_zero_arg"),
+                );
                 assert!(
                     pruned <= full,
                     "skip_rec_zero_arg produced more GRFs at size={size} arity={arity}"
@@ -1569,7 +1883,12 @@ mod tests {
     #[test]
     fn test_skip_inline_proj_removes_specific_forms() {
         // C(R(Z1, P(3,3)), P(4,1), P(4,4)) — all args are Proj, inlineable → R(Z3, P(5,5)).
-        let pruned = collect(6, 4, false, PruningOpts::default().with_flags("inline_proj"));
+        let pruned = collect(
+            6,
+            4,
+            false,
+            PruningOpts::default().with_flags("inline_proj"),
+        );
         let target = "C(R(Z1,P(3,3)),P(4,1),P(4,4))".parse::<Grf>().unwrap();
         assert!(
             !pruned.iter().any(|g| *g == target),
@@ -1577,7 +1896,12 @@ mod tests {
         );
 
         // C(S, P(1,1)) — arity-1, single Proj arg, inlines to S.  Should be pruned.
-        let pruned3 = collect(3, 1, false, PruningOpts::default().with_flags("inline_proj"));
+        let pruned3 = collect(
+            3,
+            1,
+            false,
+            PruningOpts::default().with_flags("inline_proj"),
+        );
         let target3 = "C(S,P(1,1))".parse::<Grf>().unwrap();
         assert!(
             !pruned3.iter().any(|g| *g == target3),
@@ -1594,7 +1918,12 @@ mod tests {
 
         // C(S, P(2,1)) — arity-2, but S has arity 1 so new_arity would be 2 ≠ 1.
         // inline_proj(S, 2, [1]) returns None → NOT pruned.
-        let pruned3_ar2 = collect(3, 2, false, PruningOpts::default().with_flags("inline_proj"));
+        let pruned3_ar2 = collect(
+            3,
+            2,
+            false,
+            PruningOpts::default().with_flags("inline_proj"),
+        );
         let target_ar2 = "C(S,P(2,1))".parse::<Grf>().unwrap();
         assert!(
             pruned3_ar2.iter().any(|g| *g == target_ar2),
@@ -1608,7 +1937,12 @@ mod tests {
             full.iter().any(|g| *g == not_pruned),
             "C(R(Z1,P(3,3)),C(S,P(4,1)),P(4,4)) must exist without pruning"
         );
-        let pruned8 = collect(8, 4, false, PruningOpts::default().with_flags("inline_proj"));
+        let pruned8 = collect(
+            8,
+            4,
+            false,
+            PruningOpts::default().with_flags("inline_proj"),
+        );
         assert!(
             pruned8.iter().any(|g| *g == not_pruned),
             "C(R(Z1,P(3,3)),C(S,P(4,1)),P(4,4)) should NOT be pruned (non-P/Z arg)"
@@ -1620,7 +1954,13 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=2 {
                 let full = collect(size, arity, false, PruningOpts::default()).len();
-                let pruned = collect(size, arity, false, PruningOpts::default().with_flags("inline_proj")).len();
+                let pruned = collect(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("inline_proj"),
+                )
+                .len();
                 assert!(
                     pruned <= full,
                     "skip_inline_proj produced more GRFs at size={size} arity={arity}"
@@ -1632,13 +1972,26 @@ mod tests {
     #[test]
     #[should_panic(expected = "'inline_proj'")]
     fn count_grf_panics_on_skip_inline_proj() {
-        count_grf(5, 1, false, PruningOpts::default().with_flags("inline_proj"));
+        count_grf(
+            5,
+            1,
+            false,
+            PruningOpts::default().with_flags("inline_proj"),
+        );
     }
 
     #[test]
     #[should_panic(expected = "'inline_proj'")]
     fn seek_stream_grf_panics_on_skip_inline_proj() {
-        seek_stream_grf(5, 1, false, PruningOpts::default().with_flags("inline_proj"), 0, 1, &mut |_| {});
+        seek_stream_grf(
+            5,
+            1,
+            false,
+            PruningOpts::default().with_flags("inline_proj"),
+            0,
+            1,
+            &mut |_| {},
+        );
     }
 
     // --- min_trivial ---
@@ -1651,12 +2004,27 @@ mod tests {
         let m_zero = "M(Z1)".parse::<Grf>().unwrap();
         let m_proj1 = "M(P(1,1))".parse::<Grf>().unwrap();
         let m_succ = "M(S)".parse::<Grf>().unwrap();
-        assert!(full.iter().any(|g| *g == m_zero), "M(Z1) must appear without pruning");
-        assert!(full.iter().any(|g| *g == m_proj1), "M(P(1,1)) must appear without pruning");
-        assert!(!pruned.iter().any(|g| *g == m_zero), "M(Z1) should be pruned by skip_min_trivial_zero");
-        assert!(!pruned.iter().any(|g| *g == m_proj1), "M(P(1,1)) should be pruned by skip_min_trivial_zero");
+        assert!(
+            full.iter().any(|g| *g == m_zero),
+            "M(Z1) must appear without pruning"
+        );
+        assert!(
+            full.iter().any(|g| *g == m_proj1),
+            "M(P(1,1)) must appear without pruning"
+        );
+        assert!(
+            !pruned.iter().any(|g| *g == m_zero),
+            "M(Z1) should be pruned by skip_min_trivial_zero"
+        );
+        assert!(
+            !pruned.iter().any(|g| *g == m_proj1),
+            "M(P(1,1)) should be pruned by skip_min_trivial_zero"
+        );
         // M(S) = M(Succ) at arity 0: Succ is not Zero or Proj, so it survives.
-        assert!(pruned.iter().any(|g| *g == m_succ), "M(S) should NOT be pruned by skip_min_trivial_zero");
+        assert!(
+            pruned.iter().any(|g| *g == m_succ),
+            "M(S) should NOT be pruned by skip_min_trivial_zero"
+        );
     }
 
     #[test]
@@ -1667,21 +2035,41 @@ mod tests {
         let m_zero2 = "M(Z2)".parse::<Grf>().unwrap();
         let m_proj21 = "M(P(2,1))".parse::<Grf>().unwrap();
         let m_proj22 = "M(P(2,2))".parse::<Grf>().unwrap();
-        assert!(!pruned.iter().any(|g| *g == m_zero2), "M(Z2) should be pruned");
-        assert!(!pruned.iter().any(|g| *g == m_proj21), "M(P(2,1)) should be pruned");
-        assert!(!pruned.iter().any(|g| *g == m_proj22), "M(P(2,2)) should be pruned (all Proj pruned)");
-        assert!(pruned.iter().all(|g| !matches!(&g.kind, GrfKind::Min(_))), "no size-2 Min survives at arity 1");
+        assert!(
+            !pruned.iter().any(|g| *g == m_zero2),
+            "M(Z2) should be pruned"
+        );
+        assert!(
+            !pruned.iter().any(|g| *g == m_proj21),
+            "M(P(2,1)) should be pruned"
+        );
+        assert!(
+            !pruned.iter().any(|g| *g == m_proj22),
+            "M(P(2,2)) should be pruned (all Proj pruned)"
+        );
+        assert!(
+            pruned.iter().all(|g| !matches!(&g.kind, GrfKind::Min(_))),
+            "no size-2 Min survives at arity 1"
+        );
     }
 
     #[test]
     fn test_skip_min_dominated_removes_all_size2_min() {
         // With both flags, NO M(atom) survives for any arity — smallest novel Min has size ≥ 4.
         for arity in 0..=2 {
-            let pruned = collect(2, arity, true, PruningOpts::default().with_flags("min_trivial,min_dom"));
+            let pruned = collect(
+                2,
+                arity,
+                true,
+                PruningOpts::default().with_flags("min_trivial,min_dom"),
+            );
             assert!(
                 pruned.iter().all(|g| !matches!(&g.kind, GrfKind::Min(_))),
                 "all size-2 Min expressions should be pruned at arity={arity}, got: {:?}",
-                pruned.iter().filter(|g| matches!(&g.kind, GrfKind::Min(_))).collect::<Vec<_>>()
+                pruned
+                    .iter()
+                    .filter(|g| matches!(&g.kind, GrfKind::Min(_)))
+                    .collect::<Vec<_>>()
             );
         }
     }
@@ -1691,8 +2079,19 @@ mod tests {
         // count_grf must agree with stream_grf count under skip_min_trivial_zero.
         for size in 1..=8 {
             for arity in 0..=2 {
-                let stream_count = collect(size, arity, true, PruningOpts::default().with_flags("min_trivial")).len();
-                let count = count_grf(size, arity, true, PruningOpts::default().with_flags("min_trivial"));
+                let stream_count = collect(
+                    size,
+                    arity,
+                    true,
+                    PruningOpts::default().with_flags("min_trivial"),
+                )
+                .len();
+                let count = count_grf(
+                    size,
+                    arity,
+                    true,
+                    PruningOpts::default().with_flags("min_trivial"),
+                );
                 assert_eq!(
                     count, stream_count,
                     "count/stream mismatch at size={size} arity={arity} skip_min_trivial_zero"
@@ -1706,8 +2105,17 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=2 {
                 let full = collect(size, arity, true, PruningOpts::default()).len();
-                let pruned = collect(size, arity, true, PruningOpts::default().with_flags("min_trivial")).len();
-                assert!(pruned <= full, "skip_min_trivial_zero produced more at size={size} arity={arity}");
+                let pruned = collect(
+                    size,
+                    arity,
+                    true,
+                    PruningOpts::default().with_flags("min_trivial"),
+                )
+                .len();
+                assert!(
+                    pruned <= full,
+                    "skip_min_trivial_zero produced more at size={size} arity={arity}"
+                );
             }
         }
     }
@@ -1715,7 +2123,15 @@ mod tests {
     #[test]
     #[should_panic(expected = "'min_dom'")]
     fn seek_stream_grf_panics_on_skip_min_dominated() {
-        seek_stream_grf(5, 1, true, PruningOpts::default().with_flags("min_trivial,min_dom"), 0, 1, &mut |_| {});
+        seek_stream_grf(
+            5,
+            1,
+            true,
+            PruningOpts::default().with_flags("min_trivial,min_dom"),
+            0,
+            1,
+            &mut |_| {},
+        );
     }
 
     // --- seek_stream_grf matches stream_grf slices ---
@@ -1882,9 +2298,15 @@ mod tests {
                 let mut start = 0;
                 while start < full.len() {
                     let count = W.min(full.len() - start);
-                    seek_stream_grf(size, arity, false, PruningOpts::default(), start, count, &mut |g| {
-                        reconstructed.push(g.clone())
-                    });
+                    seek_stream_grf(
+                        size,
+                        arity,
+                        false,
+                        PruningOpts::default(),
+                        start,
+                        count,
+                        &mut |g| reconstructed.push(g.clone()),
+                    );
                     start += count;
                 }
                 assert_eq!(
@@ -1939,7 +2361,14 @@ mod tests {
                 let start = (total / frac).saturating_sub(1);
                 check_seek(size, 0, false, PruningOpts::default(), start, 5);
             }
-            check_seek(size, 0, false, PruningOpts::default(), total.saturating_sub(3), 5);
+            check_seek(
+                size,
+                0,
+                false,
+                PruningOpts::default(),
+                total.saturating_sub(3),
+                5,
+            );
         }
     }
 
@@ -1955,18 +2384,35 @@ mod tests {
             }
             let start = total / 4;
             let mut batch: Vec<Grf> = Vec::new();
-            seek_stream_grf(size, 0, false, PruningOpts::default(), start, 10, &mut |g| {
-                batch.push(g.clone());
-            });
+            seek_stream_grf(
+                size,
+                0,
+                false,
+                PruningOpts::default(),
+                start,
+                10,
+                &mut |g| {
+                    batch.push(g.clone());
+                },
+            );
             assert_eq!(batch.len(), 10);
             for (i, grf) in batch.iter().enumerate() {
                 let mut single: Vec<Grf> = Vec::new();
-                seek_stream_grf(size, 0, false, PruningOpts::default(), start + i, 1, &mut |g| {
-                    single.push(g.clone());
-                });
+                seek_stream_grf(
+                    size,
+                    0,
+                    false,
+                    PruningOpts::default(),
+                    start + i,
+                    1,
+                    &mut |g| {
+                        single.push(g.clone());
+                    },
+                );
                 assert_eq!(single.len(), 1);
                 assert_eq!(
-                    &single[0], grf,
+                    &single[0],
+                    grf,
                     "self-consistency failure: size={size} rank={}",
                     start + i
                 );
@@ -1981,7 +2427,12 @@ mod tests {
         // C(R(P(1,1),P(3,2)), P(2,1), P(2,1)): head R(P(1,1),P(3,2)) has arity 2 (m=2),
         // step is P(3,2). Equivalent to C(P(1,1), P(2,1)) which is strictly smaller.
         let full = collect(6, 2, false, PruningOpts::default());
-        let pruned = collect(6, 2, false, PruningOpts::default().with_flags("rec_step_p2"));
+        let pruned = collect(
+            6,
+            2,
+            false,
+            PruningOpts::default().with_flags("rec_step_p2"),
+        );
         let target = "C(R(P(1,1),P(3,2)),P(2,1),P(2,1))".parse::<Grf>().unwrap();
         assert!(full.iter().any(|g| *g == target), "must exist in full set");
         assert!(
@@ -1995,7 +2446,12 @@ mod tests {
         // C(R(Z0,P(2,2)), P(1,1)): m=1. R(Z0,P(2,2)) ignores its arg and returns 0,
         // so the whole Comp ≡ Z1. Should be pruned.
         let full = collect(5, 1, false, PruningOpts::default());
-        let pruned = collect(5, 1, false, PruningOpts::default().with_flags("rec_step_p2"));
+        let pruned = collect(
+            5,
+            1,
+            false,
+            PruningOpts::default().with_flags("rec_step_p2"),
+        );
         let target = "C(R(Z0,P(2,2)),P(1,1))".parse::<Grf>().unwrap();
         assert!(full.iter().any(|g| *g == target), "must exist in full set");
         assert!(
@@ -2009,7 +2465,12 @@ mod tests {
         // C(R(P(1,1),P(3,1)), P(2,1), P(2,2)): step is P(3,1) (counter), not P2. NOT pruned.
         // R(P(1,1),P(3,1)) has arity 2, so it heads a Comp with m=2. Size = 1+1+1=3.
         // Full Comp size = 1+3+1+1 = 6, arity 2.
-        let pruned = collect(6, 2, false, PruningOpts::default().with_flags("rec_step_p2"));
+        let pruned = collect(
+            6,
+            2,
+            false,
+            PruningOpts::default().with_flags("rec_step_p2"),
+        );
         let target = "C(R(P(1,1),P(3,1)),P(2,1),P(2,2))".parse::<Grf>().unwrap();
         assert!(
             pruned.iter().any(|g| *g == target),
@@ -2022,7 +2483,13 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=3 {
                 let full = collect(size, arity, false, PruningOpts::default()).len();
-                let pruned = collect(size, arity, false, PruningOpts::default().with_flags("rec_step_p2")).len();
+                let pruned = collect(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("rec_step_p2"),
+                )
+                .len();
                 assert!(
                     pruned <= full,
                     "rec_step_p2 produced more GRFs at size={size} arity={arity}"
@@ -2034,7 +2501,12 @@ mod tests {
     #[test]
     #[should_panic(expected = "'rec_step_p2'")]
     fn count_grf_panics_on_rec_step_p2() {
-        count_grf(5, 1, false, PruningOpts::default().with_flags("rec_step_p2"));
+        count_grf(
+            5,
+            1,
+            false,
+            PruningOpts::default().with_flags("rec_step_p2"),
+        );
     }
 
     // --- rec_proj_base ---
@@ -2043,28 +2515,52 @@ mod tests {
     fn test_rec_proj_base_removes_p2_step() {
         // R(P(1,1), P(3,2)): h = P(3,2) echoes acc → result = base = x₁ ≡ P(2,2).
         let full = collect(3, 2, false, PruningOpts::default());
-        let pruned = collect(3, 2, false, PruningOpts::default().with_flags("rec_proj_base"));
+        let pruned = collect(
+            3,
+            2,
+            false,
+            PruningOpts::default().with_flags("rec_proj_base"),
+        );
         let target = "R(P(1,1),P(3,2))".parse::<Grf>().unwrap();
         assert!(full.iter().any(|g| *g == target), "must exist in full set");
-        assert!(!pruned.iter().any(|g| *g == target), "R(P_i,P2) should be pruned");
+        assert!(
+            !pruned.iter().any(|g| *g == target),
+            "R(P_i,P2) should be pruned"
+        );
     }
 
     #[test]
     fn test_rec_proj_base_removes_base_echo() {
         // R(P(1,1), P(3,3)): h = P(3,3) returns x₁ = base ≡ P(2,2).
         let full = collect(3, 2, false, PruningOpts::default());
-        let pruned = collect(3, 2, false, PruningOpts::default().with_flags("rec_proj_base"));
+        let pruned = collect(
+            3,
+            2,
+            false,
+            PruningOpts::default().with_flags("rec_proj_base"),
+        );
         let target = "R(P(1,1),P(3,3))".parse::<Grf>().unwrap();
         assert!(full.iter().any(|g| *g == target), "must exist in full set");
-        assert!(!pruned.iter().any(|g| *g == target), "R(P_i,P_{{i+2}}) should be pruned");
+        assert!(
+            !pruned.iter().any(|g| *g == target),
+            "R(P_i,P_{{i+2}}) should be pruned"
+        );
     }
 
     #[test]
     fn test_rec_proj_base_keeps_non_matching() {
         // R(P(1,1), P(3,1)): h = P(3,1) returns the counter, not acc or base. NOT pruned.
-        let pruned = collect(3, 2, false, PruningOpts::default().with_flags("rec_proj_base"));
+        let pruned = collect(
+            3,
+            2,
+            false,
+            PruningOpts::default().with_flags("rec_proj_base"),
+        );
         let target = "R(P(1,1),P(3,1))".parse::<Grf>().unwrap();
-        assert!(pruned.iter().any(|g| *g == target), "R(P,P1) should not be pruned");
+        assert!(
+            pruned.iter().any(|g| *g == target),
+            "R(P,P1) should not be pruned"
+        );
     }
 
     #[test]
@@ -2072,8 +2568,17 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=3 {
                 let full = collect(size, arity, false, PruningOpts::default()).len();
-                let pruned = collect(size, arity, false, PruningOpts::default().with_flags("rec_proj_base")).len();
-                assert!(pruned <= full, "rec_proj_base produced more GRFs at size={size} arity={arity}");
+                let pruned = collect(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("rec_proj_base"),
+                )
+                .len();
+                assert!(
+                    pruned <= full,
+                    "rec_proj_base produced more GRFs at size={size} arity={arity}"
+                );
             }
         }
     }
@@ -2085,8 +2590,10 @@ mod tests {
             for arity in 0..=3 {
                 let streamed = collect(size, arity, false, opts).len();
                 let counted = count_grf(size, arity, false, opts);
-                assert_eq!(counted, streamed,
-                    "count/stream mismatch with rec_proj_base at size={size} arity={arity}");
+                assert_eq!(
+                    counted, streamed,
+                    "count/stream mismatch with rec_proj_base at size={size} arity={arity}"
+                );
             }
         }
     }
@@ -2094,7 +2601,15 @@ mod tests {
     #[test]
     #[should_panic(expected = "'rec_step_p2'")]
     fn seek_stream_grf_panics_on_rec_step_p2() {
-        seek_stream_grf(5, 1, false, PruningOpts::default().with_flags("rec_step_p2"), 0, 1, &mut |_| {});
+        seek_stream_grf(
+            5,
+            1,
+            false,
+            PruningOpts::default().with_flags("rec_step_p2"),
+            0,
+            1,
+            &mut |_| {},
+        );
     }
 
     // Verify that seek at the exact position that previously caused a hang returns correct GRFs
@@ -2112,7 +2627,11 @@ mod tests {
         seek_stream_grf(size, 0, false, opts, start, count, &mut |g| {
             batch.push(g.clone());
         });
-        assert_eq!(batch.len(), count, "expected {count} GRFs from seek at rank {start}");
+        assert_eq!(
+            batch.len(),
+            count,
+            "expected {count} GRFs from seek at rank {start}"
+        );
 
         // Each GRF must also be produced by a count=1 seek at its individual rank.
         for (i, grf) in batch.iter().enumerate() {
@@ -2122,7 +2641,8 @@ mod tests {
             });
             assert_eq!(single.len(), 1);
             assert_eq!(
-                &single[0], grf,
+                &single[0],
+                grf,
                 "seek rank {} disagrees with window element {}",
                 start + i,
                 i
@@ -2141,14 +2661,19 @@ mod tests {
         let pruned = collect(4, 2, false, PruningOpts::default().with_flags("comp_rnf"));
         let bad = "C(P(2,2),Z2,Z2)".parse::<Grf>().unwrap();
         assert!(full.iter().any(|g| *g == bad), "must exist without pruning");
-        assert!(!pruned.iter().any(|g| *g == bad), "P(2,2) as head has unused arg 1 → pruned");
+        assert!(
+            !pruned.iter().any(|g| *g == bad),
+            "P(2,2) as head has unused arg 1 → pruned"
+        );
     }
 
     #[test]
     fn test_skip_comp_not_rnf_phase1_keeps_all_args_used() {
         // R(P(1,1), C(S,P(3,2))) = add, arity 2, uses both args 1 and 2. Must survive.
         let pruned = collect(8, 2, false, PruningOpts::default().with_flags("comp_rnf"));
-        let add_head = "C(R(P(1,1),C(S,P(3,2))),P(2,1),P(2,2))".parse::<Grf>().unwrap();
+        let add_head = "C(R(P(1,1),C(S,P(3,2))),P(2,1),P(2,2))"
+            .parse::<Grf>()
+            .unwrap();
         assert!(
             pruned.iter().any(|g| *g == add_head),
             "add as Comp head (uses both args) must not be pruned"
@@ -2164,7 +2689,10 @@ mod tests {
         let full = collect(7, 3, false, PruningOpts::default());
         let pruned = collect(7, 3, false, PruningOpts::default().with_flags("comp_rnf"));
         let non_canon = "C(R(P(2,2),P(4,3)),Z3,Z3,Z3)".parse::<Grf>().unwrap();
-        assert!(full.iter().any(|g| *g == non_canon), "must exist without pruning");
+        assert!(
+            full.iter().any(|g| *g == non_canon),
+            "must exist without pruning"
+        );
         assert!(
             !pruned.iter().any(|g| *g == non_canon),
             "non-canonical Rec head should be pruned by Phase 2"
@@ -2176,7 +2704,13 @@ mod tests {
         for size in 1..=8 {
             for arity in 0..=3 {
                 let full = collect(size, arity, false, PruningOpts::default()).len();
-                let pruned = collect(size, arity, false, PruningOpts::default().with_flags("comp_rnf")).len();
+                let pruned = collect(
+                    size,
+                    arity,
+                    false,
+                    PruningOpts::default().with_flags("comp_rnf"),
+                )
+                .len();
                 assert!(
                     pruned <= full,
                     "skip_comp_not_rnf produced more GRFs at size={size} arity={arity}"
@@ -2194,6 +2728,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "'comp_rnf'")]
     fn seek_stream_grf_panics_on_skip_comp_not_rnf() {
-        seek_stream_grf(5, 1, false, PruningOpts::default().with_flags("comp_rnf"), 0, 1, &mut |_| {});
+        seek_stream_grf(
+            5,
+            1,
+            false,
+            PruningOpts::default().with_flags("comp_rnf"),
+            0,
+            1,
+            &mut |_| {},
+        );
     }
 }

@@ -146,15 +146,21 @@ fn main() {
     );
 
     // ── save ──────────────────────────────────────────────────────────────────
-    let save_path = args
-        .save
-        .clone()
-        .or_else(|| args.db_dir.as_ref().map(|d| db_filename(d, args.arity, args.allow_min)));
+    let save_path = args.save.clone().or_else(|| {
+        args.db_dir
+            .as_ref()
+            .map(|d| db_filename(d, args.arity, args.allow_min))
+    });
 
     if let Some(path) = save_path {
-        if let Err(e) =
-            save_novel_file(&path, args.allow_min, args.max_size, args.max_steps, &map, &[])
-        {
+        if let Err(e) = save_novel_file(
+            &path,
+            args.allow_min,
+            args.max_size,
+            args.max_steps,
+            &map,
+            &[],
+        ) {
             eprintln!("error: could not save to {}: {e}", path.display());
             std::process::exit(1);
         }

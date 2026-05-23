@@ -192,14 +192,28 @@ fn main() {
         let db = if let Some(ref path) = args.db_path {
             eprint!("Loading fingerprint DB from {}... ", path.display());
             match fingerprint_db_from_file(path, args.max_steps) {
-                Ok(db) => { eprintln!("done."); db }
-                Err(e) => { eprintln!(); eprintln!("error: {e}"); std::process::exit(1); }
+                Ok(db) => {
+                    eprintln!("done.");
+                    db
+                }
+                Err(e) => {
+                    eprintln!();
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
             }
         } else if let Some(ref dir) = args.db_dir {
             eprint!("Loading fingerprint DB from {}/ ... ", dir.display());
             match fingerprint_db_from_dir(dir, args.max_steps) {
-                Ok(db) => { eprintln!("done."); db }
-                Err(e) => { eprintln!(); eprintln!("error: {e}"); std::process::exit(1); }
+                Ok(db) => {
+                    eprintln!("done.");
+                    db
+                }
+                Err(e) => {
+                    eprintln!();
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
             }
         } else {
             eprint!(

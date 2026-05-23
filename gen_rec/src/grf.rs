@@ -5,7 +5,7 @@ use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 use std::sync::OnceLock;
 
-use crate::closed_form::{ClosedForm, closed_form_of};
+use crate::closed_form::{closed_form_of, ClosedForm};
 use crate::sim_nat::SmallNat;
 
 /// Parse a GRF from a format string, panicking on error.
@@ -83,7 +83,10 @@ impl Clone for Grf {
         if let Some(v) = self.cf.get() {
             let _ = cf.set(v.clone());
         }
-        Grf { kind: self.kind.clone(), cf }
+        Grf {
+            kind: self.kind.clone(),
+            cf,
+        }
     }
 }
 
@@ -109,7 +112,10 @@ impl Hash for Grf {
 
 impl Grf {
     pub(crate) fn new(kind: GrfKind) -> Self {
-        Grf { kind, cf: OnceLock::new() }
+        Grf {
+            kind,
+            cf: OnceLock::new(),
+        }
     }
 
     // --- Atom constructors ---
@@ -212,7 +218,9 @@ impl Grf {
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
         match &self.kind {
-            GrfKind::Succ => { return true; }
+            GrfKind::Succ => {
+                return true;
+            }
             GrfKind::Rec(g, h) => {
                 // R(g, h)(n, rest): base g(rest), then h applies n times accumulating.
                 // Positive for all n iff: g never zero AND h positive when accumulator positive.
@@ -358,13 +366,16 @@ impl Grf {
     /// Checks if this GRF is strictly in Rewire Normal Form (RNF).
     /// That is, it uses all arguments, and their first occurrences appear in canonical order `[1..n]`.
     pub fn is_rnf(&self) -> bool {
-        self.used_args().len() == self.arity() && self.canonical_arg_order() == (1..=self.arity()).collect::<Vec<_>>()
+        self.used_args().len() == self.arity()
+            && self.canonical_arg_order() == (1..=self.arity()).collect::<Vec<_>>()
     }
 
     /// Returns the rewiring flexibility of this GRF.
     pub fn rewirability(&self) -> Rewirability {
         match &self.kind {
-            GrfKind::Zero(_) | GrfKind::Proj(_, _) | GrfKind::Comp(_, _, _) | GrfKind::Min(_) => Rewirability::Full,
+            GrfKind::Zero(_) | GrfKind::Proj(_, _) | GrfKind::Comp(_, _, _) | GrfKind::Min(_) => {
+                Rewirability::Full
+            }
             GrfKind::Rec(_, _) => Rewirability::CounterLocked,
             GrfKind::Succ => Rewirability::SuccLocked,
         }
@@ -490,12 +501,7 @@ impl Grf {
 ///
 /// `map[i-1]` is the outer-arg index for inner arg `i`; 0 means synthetic
 /// (not an outer arg, e.g. Rec's accumulator or Min's search variable).
-fn grf_outer_arg_dfs(
-    g: &Grf,
-    map: &[usize],
-    seen: &mut Vec<bool>,
-    order: &mut Vec<usize>,
-) {
+fn grf_outer_arg_dfs(g: &Grf, map: &[usize], seen: &mut Vec<bool>, order: &mut Vec<usize>) {
     match &g.kind {
         GrfKind::Proj(_, i) => {
             let outer = map[i - 1];
@@ -522,7 +528,7 @@ fn grf_outer_arg_dfs(
         }
         GrfKind::Rec(base, step) => {
             let k = base.arity() + 1; // outer arity of this Rec
-            // Counter = outer map[0]; always encountered first for Rec.
+                                      // Counter = outer map[0]; always encountered first for Rec.
             let outer_counter = map[0];
             if outer_counter > 0 && !seen[outer_counter] {
                 seen[outer_counter] = true;
@@ -661,17 +667,17 @@ mod tests {
     #[test]
     fn test_is_positive_for_pos_arg() {
         // Atoms
-        assert!(grf!("S").is_positive_for_pos_arg(1));        // Succ always positive
-        assert!(grf!("P(1,1)").is_positive_for_pos_arg(1));   // Proj to arg1
-        assert!(grf!("P(2,2)").is_positive_for_pos_arg(2));   // Proj to arg2
-        assert!(!grf!("Z0").is_positive_for_pos_arg(1));       // always 0
-        assert!(!grf!("P(2,2)").is_positive_for_pos_arg(1));  // returns arg2, not arg1
+        assert!(grf!("S").is_positive_for_pos_arg(1)); // Succ always positive
+        assert!(grf!("P(1,1)").is_positive_for_pos_arg(1)); // Proj to arg1
+        assert!(grf!("P(2,2)").is_positive_for_pos_arg(2)); // Proj to arg2
+        assert!(!grf!("Z0").is_positive_for_pos_arg(1)); // always 0
+        assert!(!grf!("P(2,2)").is_positive_for_pos_arg(1)); // returns arg2, not arg1
 
         // Rec j=1: true iff step is never_zero (counter > 0 → h fires once)
-        assert!(grf!("R(Z0, S)").is_positive_for_pos_arg(1));  // step=S never_zero
+        assert!(grf!("R(Z0, S)").is_positive_for_pos_arg(1)); // step=S never_zero
         assert!(grf!("R(P(1,1), C(S,P(3,2)))").is_positive_for_pos_arg(1)); // step C(S,...) never_zero
         assert!(!grf!("R(P(1,1), P(3,2))").is_positive_for_pos_arg(1)); // step P(3,2) not never_zero, g not never_zero
-        // R(S, P(3,2)): is_never_zero (P2 echoes acc which started at S(x)≥1), so positive for any j
+                                                                        // R(S, P(3,2)): is_never_zero (P2 echoes acc which started at S(x)≥1), so positive for any j
         assert!(grf!("R(S, P(3,2))").is_positive_for_pos_arg(1));
         // R(S, P(3,3)): step returns outer arg (not acc), so NOT always positive even for n≥1
         assert!(!grf!("R(S, P(3,3))").is_positive_for_pos_arg(1));

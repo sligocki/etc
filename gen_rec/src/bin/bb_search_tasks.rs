@@ -5,11 +5,11 @@
 ///   run    — execute one or all pending tasks, writing per-task result files
 ///   merge  — aggregate result files into a per-size champion summary
 use clap::{Args, Parser, Subcommand};
-use gen_rec::sim_nat::SmallNat;
+use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::enumerate::{count_grf, seek_stream_grf};
 use gen_rec::grf::Grf;
-use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::pruning::PruningOpts;
+use gen_rec::sim_nat::SmallNat;
 use gen_rec::simulate::simulate;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -155,7 +155,8 @@ mod pruning_serde {
     use std::collections::BTreeMap;
 
     pub fn serialize<S: Serializer>(opts: &PruningOpts, s: S) -> Result<S::Ok, S::Error> {
-        FLAGS.iter()
+        FLAGS
+            .iter()
             .filter(|m| m.count_compat)
             .map(|m| (m.name, (m.get)(opts)))
             .collect::<BTreeMap<_, _>>()
@@ -612,7 +613,10 @@ fn cmd_sim(args: SimArgs) {
 
 // ── merge ─────────────────────────────────────────────────────────────────────
 
-fn merge_hist(mut combined: HashMap<SmallNat, SmallNat>, other: &HashMap<SmallNat, SmallNat>) -> HashMap<SmallNat, SmallNat> {
+fn merge_hist(
+    mut combined: HashMap<SmallNat, SmallNat>,
+    other: &HashMap<SmallNat, SmallNat>,
+) -> HashMap<SmallNat, SmallNat> {
     for (key, value) in other {
         combined
             .entry(*key)
@@ -625,16 +629,23 @@ fn merge_hist(mut combined: HashMap<SmallNat, SmallNat>, other: &HashMap<SmallNa
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 fn fmt_count(n: SmallNat) -> String {
-    if n < 1_000 { return n.to_string(); }
-    if n < 1_000_000 { return format!("{:.1}k", n as f64 / 1_000.0); }
-    if n < 1_000_000_000 { return format!("{:.1}M", n as f64 / 1_000_000.0); }
+    if n < 1_000 {
+        return n.to_string();
+    }
+    if n < 1_000_000 {
+        return format!("{:.1}k", n as f64 / 1_000.0);
+    }
+    if n < 1_000_000_000 {
+        return format!("{:.1}M", n as f64 / 1_000_000.0);
+    }
     format!("{:.1}B", n as f64 / 1_000_000_000.0)
 }
 
 /// Print a bar chart.  Bar length uses log₁₀(count+1) so rare entries stay visible.
 fn print_bar_chart_log(rows: &[(&str, SmallNat)], total: SmallNat) {
     const BAR_WIDTH: usize = 40;
-    let max_log = rows.iter()
+    let max_log = rows
+        .iter()
         .map(|r| (r.1 as f64 + 1.0).log10())
         .fold(0.0_f64, f64::max)
         .max(1.0);
@@ -643,11 +654,19 @@ fn print_bar_chart_log(rows: &[(&str, SmallNat)], total: SmallNat) {
         let log_val = (*count as f64 + 1.0).log10();
         let bar_len = ((log_val / max_log) * BAR_WIDTH as f64).round() as usize;
         let bar: String = "█".repeat(bar_len);
-        let pct = if total > 0 { *count as f64 / total as f64 * 100.0 } else { 0.0 };
+        let pct = if total > 0 {
+            *count as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        };
         println!(
             "  {:<lw$}  {:<bw$}  {:>12}  ({:.2}%)",
-            label, bar, fmt_count(*count), pct,
-            lw = label_w, bw = BAR_WIDTH,
+            label,
+            bar,
+            fmt_count(*count),
+            pct,
+            lw = label_w,
+            bw = BAR_WIDTH,
         );
     }
 }
@@ -665,18 +684,28 @@ fn print_pow2_hist(title: &str, hist: HashMap<SmallNat, SmallNat>) {
         .collect();
     let mut buckets: Vec<SmallNat> = vec![0; breakpoints.len() + 1];
     for (&val, &count) in &hist {
-        if separate_zero && val == 0 { continue; }
-        let idx = breakpoints.iter().position(|(bp, _)| val <= *bp)
+        if separate_zero && val == 0 {
+            continue;
+        }
+        let idx = breakpoints
+            .iter()
+            .position(|(bp, _)| val <= *bp)
             .unwrap_or(breakpoints.len());
         buckets[idx] += count;
     }
     let last_label = format!(">{}", fmt_count(1u64 << max_k));
     let mut rows: Vec<(String, SmallNat)> = Vec::new();
-    if separate_zero { rows.push(("=0".to_string(), zero_count)); }
-    for (i, (_, label)) in breakpoints.iter().enumerate() {
-        if buckets[i] > 0 { rows.push((label.clone(), buckets[i])); }
+    if separate_zero {
+        rows.push(("=0".to_string(), zero_count));
     }
-    if *buckets.last().unwrap() > 0 { rows.push((last_label, *buckets.last().unwrap())); }
+    for (i, (_, label)) in breakpoints.iter().enumerate() {
+        if buckets[i] > 0 {
+            rows.push((label.clone(), buckets[i]));
+        }
+    }
+    if *buckets.last().unwrap() > 0 {
+        rows.push((last_label, *buckets.last().unwrap()));
+    }
     let display: Vec<(&str, SmallNat)> = rows.iter().map(|(l, c)| (l.as_str(), *c)).collect();
     println!("{}  (log scale, total: {})", title, fmt_count(total));
     print_bar_chart_log(&display, total);
@@ -755,7 +784,9 @@ fn cmd_summarize(args: SummarizeArgs) {
 
     // Build top-N list: deduplicate by expr, sort by score desc.
     let mut seen_exprs = std::collections::HashSet::new();
-    let mut top_entries: Vec<(SmallNat, String)> = s.notable.iter()
+    let mut top_entries: Vec<(SmallNat, String)> = s
+        .notable
+        .iter()
         .filter_map(|n| n.score.map(|sc| (sc, n.expr.clone())))
         .filter(|(_, expr)| seen_exprs.insert(expr.clone()))
         .collect();
@@ -778,7 +809,10 @@ fn cmd_summarize(args: SummarizeArgs) {
     println!("Top {} GRFs:", args.top);
     for (score, expr) in &top_entries {
         let display = match &alias_db {
-            Some(db) => expr.parse::<Grf>().map(|g| db.alias(&g)).unwrap_or_else(|_| expr.clone()),
+            Some(db) => expr
+                .parse::<Grf>()
+                .map(|g| db.alias(&g))
+                .unwrap_or_else(|_| expr.clone()),
             None => expr.clone(),
         };
         println!("  {:>6}  {}", score, display);

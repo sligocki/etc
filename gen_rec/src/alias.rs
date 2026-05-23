@@ -1,6 +1,6 @@
+use std::cmp::Reverse;
 /// GRF alias catalogue: substitutes known sub-expressions with readable names.
 use std::collections::{HashMap, HashSet};
-use std::cmp::Reverse;
 
 use crate::grf::{Grf, GrfKind};
 use crate::mgrf::{lift_grf, parse_mgrf_with_modules, MgrfFile};
@@ -9,12 +9,11 @@ use crate::mgrf::{lift_grf, parse_mgrf_with_modules, MgrfFile};
 // deduplication: a macro name present in both base.mgrf and bool_zero.mgrf
 // (via `use base:{K}`) is only emitted from base.mgrf.
 const MGRF_FILES: &[(&str, &str)] = &[
-    ("base",     include_str!("../mgrf/base.mgrf")),
+    ("base", include_str!("../mgrf/base.mgrf")),
     ("bool_zero", include_str!("../mgrf/bool_zero.mgrf")),
     ("func_rep", include_str!("../mgrf/func_rep.mgrf")),
     ("ack_worm", include_str!("../mgrf/ack_worm.mgrf")),
 ];
-
 
 struct Entry {
     alias: String,
@@ -49,12 +48,16 @@ impl AliasDb {
 
         macro_rules! push {
             ($alias:expr, $grf:expr) => {
-                entries.push(Entry { alias: $alias.to_string(), grf: $grf });
+                entries.push(Entry {
+                    alias: $alias.to_string(),
+                    grf: $grf,
+                });
             };
         }
 
         // All embedded files are available as modules so cross-file `use` resolves.
-        let modules: HashMap<String, String> = MGRF_FILES.iter()
+        let modules: HashMap<String, String> = MGRF_FILES
+            .iter()
             .map(|(name, content)| (name.to_string(), content.to_string()))
             .collect();
 
@@ -68,7 +71,10 @@ impl AliasDb {
             // and must not be overridden (e.g. bool_zero defines True := Z and False1 := S).
             for (name, grf) in &file.defs {
                 if seen_defs.insert(name.clone())
-                    && !matches!(&grf.kind, GrfKind::Succ | GrfKind::Zero(_) | GrfKind::Proj(_, _))
+                    && !matches!(
+                        &grf.kind,
+                        GrfKind::Succ | GrfKind::Zero(_) | GrfKind::Proj(_, _)
+                    )
                 {
                     push!(name.clone(), grf.clone());
                 }
@@ -84,7 +90,10 @@ impl AliasDb {
                 if seen_macros.insert(macro_name.clone()) {
                     for n in 0..=max_param {
                         if let Ok(g) = file.eval_expr(&format!("{macro_name}[{n}]")) {
-                            if !matches!(&g.kind, GrfKind::Succ | GrfKind::Zero(_) | GrfKind::Proj(_, _)) {
+                            if !matches!(
+                                &g.kind,
+                                GrfKind::Succ | GrfKind::Zero(_) | GrfKind::Proj(_, _)
+                            ) {
                                 push!(format!("{macro_name}[{n}]"), g);
                             }
                         }
@@ -119,7 +128,12 @@ impl AliasDb {
         entries.sort_by_key(|e| Reverse(e.grf.size()));
 
         let merged = MgrfFile::merge(&files.iter().collect::<Vec<_>>());
-        Self { entries, colored, files, merged }
+        Self {
+            entries,
+            colored,
+            files,
+            merged,
+        }
     }
 
     /// Parse a mgrf expression, resolving alias names and macro families.
@@ -190,7 +204,10 @@ pub fn alias_db_for_stdout(max_param: usize, no_alias: bool) -> Option<AliasDb> 
         return None;
     }
     use std::io::IsTerminal;
-    Some(AliasDb::new_colored(max_param, std::io::stdout().is_terminal()))
+    Some(AliasDb::new_colored(
+        max_param,
+        std::io::stdout().is_terminal(),
+    ))
 }
 
 #[cfg(test)]
@@ -205,11 +222,16 @@ mod tests {
         Grf::comp(Grf::succ_atom(), vec![Grf::succ_atom()])
     }
     fn add() -> Grf {
-        Grf::rec(Grf::proj_atom(1,1), Grf::comp(Grf::succ_atom(), vec![Grf::proj_atom(3,2)]))
+        Grf::rec(
+            Grf::proj_atom(1, 1),
+            Grf::comp(Grf::succ_atom(), vec![Grf::proj_atom(3, 2)]),
+        )
     }
     fn shift() -> Grf {
-        Grf::rec(Grf::proj_atom(1, 1),
-                 Grf::comp(add(), vec![Grf::proj_atom(3, 2), Grf::proj_atom(3, 2)]))
+        Grf::rec(
+            Grf::proj_atom(1, 1),
+            Grf::comp(add(), vec![Grf::proj_atom(3, 2), Grf::proj_atom(3, 2)]),
+        )
     }
     fn constant(n: usize, arity: usize) -> Grf {
         let mut f = Grf::zero_atom(arity);

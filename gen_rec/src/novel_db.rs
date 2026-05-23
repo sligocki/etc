@@ -1,3 +1,9 @@
+use crate::enumerate::stream_grf;
+use crate::fingerprint::{
+    canonical_inputs, compute_fp, fp_is_complete, Fingerprint, FingerprintDb, FpEntry,
+};
+use crate::grf::Grf;
+use crate::pruning::PruningOpts;
 /// Shared library for the novel-functions database.
 ///
 /// File format (one file per arity+allow_min combination):
@@ -10,10 +16,6 @@
 ///
 /// Canonical filenames: `a{arity}_{prf|min}.db`
 use crate::sim_nat::SmallNat;
-use crate::enumerate::stream_grf;
-use crate::fingerprint::{canonical_inputs, compute_fp, fp_is_complete, Fingerprint, FingerprintDb, FpEntry};
-use crate::grf::Grf;
-use crate::pruning::PruningOpts;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -109,7 +111,11 @@ pub fn load_novel_file(path: &Path) -> io::Result<(NovelDbMeta, NovelMap, Vec<(u
                     max_steps = v.parse().unwrap_or(10_000);
                 }
             }
-            meta = Some(NovelDbMeta { allow_min, max_size, max_steps });
+            meta = Some(NovelDbMeta {
+                allow_min,
+                max_size,
+                max_steps,
+            });
             continue;
         }
 
@@ -130,7 +136,11 @@ pub fn load_novel_file(path: &Path) -> io::Result<(NovelDbMeta, NovelMap, Vec<(u
         let size: usize = size_s.parse().map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("{}: line {}: bad size '{size_s}'", path.display(), lineno + 1),
+                format!(
+                    "{}: line {}: bad size '{size_s}'",
+                    path.display(),
+                    lineno + 1
+                ),
             )
         })?;
 
@@ -212,7 +222,10 @@ pub fn retry_timed_out(
     for (size, grf_str) in entries {
         let grf: Grf = match grf_str.parse() {
             Ok(g) => g,
-            Err(_) => { still_timed_out.push((size, grf_str)); continue; }
+            Err(_) => {
+                still_timed_out.push((size, grf_str));
+                continue;
+            }
         };
         let fp = compute_fp(&grf, &inputs, max_steps as SmallNat);
         if fp_is_complete(&fp) {
@@ -248,9 +261,14 @@ pub fn save_novel_file(
     }
     let file = std::fs::File::create(path)?;
     let mut w = io::BufWriter::new(file);
-    writeln!(w, "allow_min={allow_min} max_size={max_size} max_steps={max_steps}")?;
-    let mut entries: Vec<(&Fingerprint, usize, &str)> =
-        map.iter().map(|(fp, (s, g))| (fp, *s, g.as_str())).collect();
+    writeln!(
+        w,
+        "allow_min={allow_min} max_size={max_size} max_steps={max_steps}"
+    )?;
+    let mut entries: Vec<(&Fingerprint, usize, &str)> = map
+        .iter()
+        .map(|(fp, (s, g))| (fp, *s, g.as_str()))
+        .collect();
     entries.sort_by_key(|(_, s, g)| (*s, *g));
     for (fp, size, grf) in entries {
         writeln!(w, "{size}\t{grf}\t{}", format_fp(fp))?;
@@ -297,7 +315,11 @@ pub fn extend_novel_map(
 ) -> EnumStats {
     let opts = PruningOpts::recommended();
     let inputs = canonical_inputs(arity);
-    let mut stats = EnumStats { total_tested: 0, total_new: 0, timed_out_entries: Vec::new() };
+    let mut stats = EnumStats {
+        total_tested: 0,
+        total_new: 0,
+        timed_out_entries: Vec::new(),
+    };
 
     for size in start_size..=max_size {
         let mut n_enum = 0usize;
@@ -325,7 +347,10 @@ pub fn extend_novel_map(
         if progress {
             eprintln!(
                 "size {:>3}: {:>8} enumerated, {:>5} novel  ({} total)",
-                size, n_enum, n_new, map.len()
+                size,
+                n_enum,
+                n_new,
+                map.len()
             );
         }
     }

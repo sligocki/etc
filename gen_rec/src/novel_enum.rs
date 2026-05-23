@@ -1,3 +1,7 @@
+use crate::fingerprint::{
+    canonical_inputs_n, compute_fp, fp_is_complete, verification_inputs, Fingerprint,
+};
+use crate::grf::{Grf, GrfKind};
 /// Novel-sub-expression enumerator.
 ///
 /// Instead of enumerating every GRF of a given size and fingerprinting each one,
@@ -43,10 +47,6 @@
 /// // entries: Vec<(Fingerprint, usize, String)> for arity=2, sizes 1..=8
 /// ```
 use crate::sim_nat::SmallNat;
-use crate::fingerprint::{
-    canonical_inputs_n, compute_fp, fp_is_complete, verification_inputs, Fingerprint,
-};
-use crate::grf::{Grf, GrfKind};
 use std::collections::{HashMap, HashSet};
 
 /// A memoized novel-function enumerator.
@@ -237,12 +237,22 @@ impl NovelEnumerator {
                 for head in heads {
                     let head_clone = head.clone();
                     let h_used = head.used_args();
-                    let forced: Vec<bool> =
-                        (1..=m).map(|pos| !h_used.contains(&pos)).collect();
+                    let forced: Vec<bool> = (1..=m).map(|pos| !h_used.contains(&pos)).collect();
                     let mut arg_combos: Vec<Vec<Grf>> = Vec::new();
-                    self.enum_arg_combos(arity, m, gs_total, Some(&forced), &mut Vec::new(), &mut arg_combos);
+                    self.enum_arg_combos(
+                        arity,
+                        m,
+                        gs_total,
+                        Some(&forced),
+                        &mut Vec::new(),
+                        &mut arg_combos,
+                    );
                     for args in arg_combos {
-                        out.push(Grf::new(GrfKind::Comp(Box::new(head_clone.clone()), args, arity)));
+                        out.push(Grf::new(GrfKind::Comp(
+                            Box::new(head_clone.clone()),
+                            args,
+                            arity,
+                        )));
                     }
                 }
             }
@@ -317,7 +327,14 @@ impl NovelEnumerator {
                 if let Some(candidates) = self.memo.get(&(arg_arity, s)) {
                     for grf in candidates {
                         current.push(grf.clone());
-                        self.enum_arg_combos(arg_arity, count - 1, total_size - s, forced, current, out);
+                        self.enum_arg_combos(
+                            arg_arity,
+                            count - 1,
+                            total_size - s,
+                            forced,
+                            current,
+                            out,
+                        );
                         current.pop();
                     }
                 }
@@ -434,9 +451,17 @@ impl NovelEnumerator {
                 self.stream_from_novel_db(m, hsize, threshold, &mut |h| heads.push(h.clone()));
                 for head in heads {
                     self.stream_novel_arg_combos(
-                        arity, m, gs_total, threshold, &mut Vec::new(),
+                        arity,
+                        m,
+                        gs_total,
+                        threshold,
+                        &mut Vec::new(),
                         &mut |args: &[Grf]| {
-                            callback(&Grf::new(GrfKind::Comp(Box::new(head.clone()), args.to_vec(), arity)));
+                            callback(&Grf::new(GrfKind::Comp(
+                                Box::new(head.clone()),
+                                args.to_vec(),
+                                arity,
+                            )));
                         },
                     );
                 }
@@ -448,10 +473,14 @@ impl NovelEnumerator {
             for gsize in 1..n {
                 let hsize = n - gsize;
                 let mut bases: Vec<Grf> = Vec::new();
-                self.stream_from_novel_db(arity - 1, gsize, threshold, &mut |g| bases.push(g.clone()));
+                self.stream_from_novel_db(arity - 1, gsize, threshold, &mut |g| {
+                    bases.push(g.clone())
+                });
                 for base in &bases {
                     let mut steps: Vec<Grf> = Vec::new();
-                    self.stream_from_novel_db(arity + 1, hsize, threshold, &mut |h| steps.push(h.clone()));
+                    self.stream_from_novel_db(arity + 1, hsize, threshold, &mut |h| {
+                        steps.push(h.clone())
+                    });
                     for step in &steps {
                         callback(&Grf::rec(base.clone(), step.clone()));
                     }
@@ -494,7 +523,12 @@ impl NovelEnumerator {
             for grf in slot {
                 current.push(grf);
                 self.stream_novel_arg_combos(
-                    arg_arity, count - 1, total_size - s, threshold, current, callback,
+                    arg_arity,
+                    count - 1,
+                    total_size - s,
+                    threshold,
+                    current,
+                    callback,
                 );
                 current.pop();
             }
@@ -638,9 +672,7 @@ mod tests {
     #[test]
     fn novel_enum_bb_correctness_arity0() {
         // (size, expected_bb_value)
-        let known: &[(usize, u64)] = &[
-            (1, 0), (3, 1), (5, 2), (7, 3), (8, 2), (9, 4),
-        ];
+        let known: &[(usize, u64)] = &[(1, 0), (3, 1), (5, 2), (7, 3), (8, 2), (9, 4)];
         let max_size = 9;
         let max_steps = 100_000_000;
 
@@ -659,10 +691,7 @@ mod tests {
                 })
                 .max()
                 .unwrap_or(0);
-            assert_eq!(
-                best, expected,
-                "BBµ({size}) = {best}, expected {expected}"
-            );
+            assert_eq!(best, expected, "BBµ({size}) = {best}, expected {expected}");
         }
     }
 }

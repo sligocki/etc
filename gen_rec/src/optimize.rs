@@ -37,10 +37,19 @@ impl SlotConstraint {
             (Self::Infeasible, _) | (_, Self::Infeasible) => Self::Infeasible,
             (Self::Free, x) | (x, Self::Free) => x,
             (Self::Required(a), Self::Required(b)) => {
-                if a == b { Self::Required(a) } else { Self::Infeasible }
+                if a == b {
+                    Self::Required(a)
+                } else {
+                    Self::Infeasible
+                }
             }
-            (Self::Required(a), Self::Forbidden(mask)) | (Self::Forbidden(mask), Self::Required(a)) => {
-                if a < 64 && (mask >> a) & 1 != 0 { Self::Infeasible } else { Self::Required(a) }
+            (Self::Required(a), Self::Forbidden(mask))
+            | (Self::Forbidden(mask), Self::Required(a)) => {
+                if a < 64 && (mask >> a) & 1 != 0 {
+                    Self::Infeasible
+                } else {
+                    Self::Required(a)
+                }
             }
             (Self::Forbidden(a), Self::Forbidden(b)) => Self::Forbidden(a | b),
         }
@@ -119,7 +128,9 @@ impl InlineConstraints {
             (Some(x), Some(y)) if x == y => Some(x),
             _ => {
                 // Conflicting arity requirements → mark everything infeasible.
-                for s in slots.iter_mut() { *s = SlotConstraint::Infeasible; }
+                for s in slots.iter_mut() {
+                    *s = SlotConstraint::Infeasible;
+                }
                 None
             }
         }
@@ -145,13 +156,17 @@ pub fn compute_inline_constraints(f: &Grf) -> InlineConstraints {
             let mut req_arity: Option<usize> = None;
             for g in gs {
                 let c = compute_inline_constraints(g);
-                req_arity = InlineConstraints::merge_arity_req(req_arity, c.requires_new_arity, &mut slots);
+                req_arity =
+                    InlineConstraints::merge_arity_req(req_arity, c.requires_new_arity, &mut slots);
                 for (s, gc) in slots.iter_mut().zip(c.slots) {
                     let old = std::mem::replace(s, SlotConstraint::Free);
                     *s = old.merge(gc);
                 }
             }
-            InlineConstraints { slots, requires_new_arity: req_arity }
+            InlineConstraints {
+                slots,
+                requires_new_arity: req_arity,
+            }
         }
 
         GrfKind::Rec(g, h_inner) => {
@@ -191,13 +206,18 @@ pub fn compute_inline_constraints(f: &Grf) -> InlineConstraints {
             req_arity = InlineConstraints::merge_arity_req(req_arity, h_req_arity, &mut slots);
             for (j, c) in hc.slots.into_iter().skip(2).enumerate() {
                 let outer = j + 1;
-                if outer >= k { break; }
+                if outer >= k {
+                    break;
+                }
                 let derived = c.from_h_step();
                 let old = std::mem::replace(&mut slots[outer], SlotConstraint::Free);
                 slots[outer] = old.merge(derived);
             }
 
-            InlineConstraints { slots, requires_new_arity: req_arity }
+            InlineConstraints {
+                slots,
+                requires_new_arity: req_arity,
+            }
         }
 
         GrfKind::Min(inner) => {
@@ -213,11 +233,16 @@ pub fn compute_inline_constraints(f: &Grf) -> InlineConstraints {
             // inner slot j+1 → outer slot j.
             let req_arity = ic.requires_new_arity.map(|a| a.saturating_sub(1));
             for (j, c) in ic.slots.into_iter().skip(1).enumerate() {
-                if j >= arity { break; }
+                if j >= arity {
+                    break;
+                }
                 slots[j] = c.from_h_step();
             }
 
-            InlineConstraints { slots, requires_new_arity: req_arity }
+            InlineConstraints {
+                slots,
+                requires_new_arity: req_arity,
+            }
         }
     }
 }
@@ -338,7 +363,10 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
 /// Returns the optimized GRF, or the original unchanged if no opportunity was found.
 pub fn opt_inline_proj(f: Grf) -> Grf {
     // Atoms have no sub-expressions to descend into.
-    if matches!(&f.kind, GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)) {
+    if matches!(
+        &f.kind,
+        GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)
+    ) {
         return f;
     }
 
@@ -394,7 +422,10 @@ pub fn opt_fingerprint(f: Grf, db: &FingerprintDb) -> Grf {
     }
 
     // No match at this level — recurse into children.
-    if matches!(&f.kind, GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)) {
+    if matches!(
+        &f.kind,
+        GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)
+    ) {
         return f;
     }
 
@@ -467,10 +498,7 @@ mod tests {
 
     #[test]
     fn zero() {
-        assert_eq!(
-            inline_proj(&grf!("Z2"), 5, &[1, 3]),
-            Some(grf!("Z5"))
-        );
+        assert_eq!(inline_proj(&grf!("Z2"), 5, &[1, 3]), Some(grf!("Z5")));
         // Z0 has arity 0, empty rewiring, new_arity can be anything.
         assert_eq!(inline_proj(&grf!("Z0"), 0, &[]), Some(grf!("Z0")));
         assert_eq!(inline_proj(&grf!("Z0"), 3, &[]), Some(grf!("Z3")));
@@ -530,19 +558,13 @@ mod tests {
     #[test]
     fn rec_fails_counter_remapped() {
         // rewiring[0] = 2 ≠ 1 → counter would move, must fail.
-        assert_eq!(
-            inline_proj(&grf!("R(Z1,P(3,3))"), 4, &[2, 4]),
-            None
-        );
+        assert_eq!(inline_proj(&grf!("R(Z1,P(3,3))"), 4, &[2, 4]), None);
     }
 
     #[test]
     fn rec_fails_rest_var_in_counter_slot() {
         // rewiring[1] = 1 → rest variable mapped into counter slot.
-        assert_eq!(
-            inline_proj(&grf!("R(Z1,P(3,3))"), 3, &[1, 1]),
-            None
-        );
+        assert_eq!(inline_proj(&grf!("R(Z1,P(3,3))"), 3, &[1, 1]), None);
     }
 
     #[test]
@@ -566,10 +588,7 @@ mod tests {
     fn min_updates_inner_arity() {
         // M(Z2) has arity 1. Rewire with new_arity=3, rewiring=[2].
         // rewiring_for_inner = [1, 2+1] = [1, 3]; inner Z2 → Z4.
-        assert_eq!(
-            inline_proj(&grf!("M(Z2)"), 3, &[2]),
-            Some(grf!("M(Z4)"))
-        );
+        assert_eq!(inline_proj(&grf!("M(Z2)"), 3, &[2]), Some(grf!("M(Z4)")));
     }
 
     #[test]
@@ -668,15 +687,9 @@ mod tests {
     #[test]
     fn zero_rewiring_in_proj() {
         // P(2,1) with rewiring [0, 2]: param 1 is zeroed → Zero(3)
-        assert_eq!(
-            inline_proj(&grf!("P(2,1)"), 3, &[0, 2]),
-            Some(grf!("Z3"))
-        );
+        assert_eq!(inline_proj(&grf!("P(2,1)"), 3, &[0, 2]), Some(grf!("Z3")));
         // P(2,2) with rewiring [1, 0]: param 2 is zeroed → Zero(2)
-        assert_eq!(
-            inline_proj(&grf!("P(2,2)"), 2, &[1, 0]),
-            Some(grf!("Z2"))
-        );
+        assert_eq!(inline_proj(&grf!("P(2,2)"), 2, &[1, 0]), Some(grf!("Z2")));
     }
 
     #[test]
@@ -792,7 +805,10 @@ mod tests {
 
         let pred = grf!("R(Z0, P(2,1))");
         // C(Pred, C(Pred, P(3,2)))
-        let before = Grf::comp(pred.clone(), vec![Grf::comp(pred, vec![Grf::proj_atom(3, 2)])]);
+        let before = Grf::comp(
+            pred.clone(),
+            vec![Grf::comp(pred, vec![Grf::proj_atom(3, 2)])],
+        );
         let after = opt_fingerprint(before.clone(), &db);
 
         assert_eq!(after, grf!("C(R(Z0, R(Z1, P(3,1))), P(3,2))"));
@@ -841,8 +857,10 @@ mod tests {
         use crate::pruning::PruningOpts;
 
         let opts = PruningOpts::all();
-        println!("{:<6} {:<5} {:<10} {:<10} {:<10} {:<8}",
-            "size", "arity", "total", "candidate", "prunable", "pct");
+        println!(
+            "{:<6} {:<5} {:<10} {:<10} {:<10} {:<8}",
+            "size", "arity", "total", "candidate", "prunable", "pct"
+        );
 
         for arity in 0..=2usize {
             for size in 3..=10 {
@@ -853,11 +871,14 @@ mod tests {
                 stream_grf(size, arity, false, opts, &mut |grf| {
                     total += 1;
                     if let GrfKind::Comp(h, gs, k) = &grf.kind {
-                        let rewiring: Option<Vec<usize>> = gs.iter().map(|g| match &g.kind {
-                            GrfKind::Proj(_, i) => Some(*i),
-                            GrfKind::Zero(_) => Some(0),
-                            _ => None,
-                        }).collect();
+                        let rewiring: Option<Vec<usize>> = gs
+                            .iter()
+                            .map(|g| match &g.kind {
+                                GrfKind::Proj(_, i) => Some(*i),
+                                GrfKind::Zero(_) => Some(0),
+                                _ => None,
+                            })
+                            .collect();
                         if let Some(rw) = rewiring {
                             candidate += 1;
                             if inline_proj(h, *k, &rw).is_some() {
@@ -868,8 +889,15 @@ mod tests {
                 });
 
                 let pct = if total > 0 { prunable * 100 / total } else { 0 };
-                println!("{:<6} {:<5} {:<10} {:<10} {:<10} {:<8}",
-                    size, arity, total, candidate, prunable, format!("{}%", pct));
+                println!(
+                    "{:<6} {:<5} {:<10} {:<10} {:<10} {:<8}",
+                    size,
+                    arity,
+                    total,
+                    candidate,
+                    prunable,
+                    format!("{}%", pct)
+                );
             }
         }
     }

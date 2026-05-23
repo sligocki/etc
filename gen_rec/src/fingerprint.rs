@@ -2,7 +2,7 @@
 use crate::enumerate::stream_grf;
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
-use crate::simulate::{simulate, SmallNat, SimResult};
+use crate::simulate::{simulate, SimResult, SmallNat};
 use std::collections::HashMap;
 
 /// One entry in a fingerprint: the observed outcome on a single canonical input.
@@ -42,7 +42,8 @@ impl Lcg {
     }
 
     fn next(&mut self) -> u64 {
-        self.0 = self.0
+        self.0 = self
+            .0
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         self.0
@@ -70,7 +71,9 @@ fn sampled_inputs(arity: usize, count: usize, seed: u64) -> Vec<Vec<SmallNat>> {
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::with_capacity(count);
     while result.len() < count {
-        let input: Vec<SmallNat> = (0..arity).map(|_| rng.sample_biased() as SmallNat).collect();
+        let input: Vec<SmallNat> = (0..arity)
+            .map(|_| rng.sample_biased() as SmallNat)
+            .collect();
         if seen.insert(input.clone()) {
             result.push(input);
         }
@@ -112,9 +115,7 @@ fn grid_then_random(arity: usize, count: usize, seed: u64) -> Vec<Vec<SmallNat>>
         loop {
             let next = p + 1;
             // next^arity ≤ count?
-            let product = (0..arity).try_fold(1usize, |acc, _| {
-                acc.checked_mul(next as usize)
-            });
+            let product = (0..arity).try_fold(1usize, |acc, _| acc.checked_mul(next as usize));
             match product {
                 Some(n) if n <= count => p = next,
                 _ => break,
@@ -126,11 +127,12 @@ fn grid_then_random(arity: usize, count: usize, seed: u64) -> Vec<Vec<SmallNat>>
     let mut inputs = grid_inputs(arity, per_dim);
     // inputs is already ≤ count in length; fill the rest with unique random samples.
     if inputs.len() < count {
-        let mut seen: std::collections::HashSet<Vec<SmallNat>> =
-            inputs.iter().cloned().collect();
+        let mut seen: std::collections::HashSet<Vec<SmallNat>> = inputs.iter().cloned().collect();
         let mut rng = Lcg::new(seed);
         while inputs.len() < count {
-            let input: Vec<SmallNat> = (0..arity).map(|_| rng.sample_biased() as SmallNat).collect();
+            let input: Vec<SmallNat> = (0..arity)
+                .map(|_| rng.sample_biased() as SmallNat)
+                .collect();
             if seen.insert(input.clone()) {
                 inputs.push(input);
             }
@@ -282,7 +284,9 @@ impl FingerprintDb {
     /// Insert a (fingerprint, grf) pair. Keeps the smaller GRF if one already exists.
     /// The canonical inputs for `arity` are cached on first use.
     pub fn add_entry(&mut self, arity: usize, fp: Fingerprint, grf: Grf) {
-        self.inputs.entry(arity).or_insert_with(|| canonical_inputs(arity));
+        self.inputs
+            .entry(arity)
+            .or_insert_with(|| canonical_inputs(arity));
         self.map
             .entry((arity, fp))
             .and_modify(|existing| {
@@ -330,5 +334,4 @@ impl FingerprintDb {
             None
         }
     }
-
 }

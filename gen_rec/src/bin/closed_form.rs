@@ -247,17 +247,26 @@ fn cf_preview(cf: &ClosedForm) -> String {
     let show = |v: Option<SmallNat>| v.map_or("?".to_string(), |n| n.to_string());
     match cf.arity() {
         0 => format!("f()={}", show(cf.eval(&[]))),
-        1 => (0u64..8).map(|i| show(cf.eval(&[i]))).collect::<Vec<_>>().join(" "),
+        1 => (0u64..8)
+            .map(|i| show(cf.eval(&[i])))
+            .collect::<Vec<_>>()
+            .join(" "),
         2 => {
             // f(n,0) for n=0..3, f(0,n) for n=1..3  (7 compact points)
             let mut parts = Vec::new();
             parts.push(format!(
                 "f(·,0)={}",
-                (0u64..4).map(|n| show(cf.eval(&[n, 0]))).collect::<Vec<_>>().join("")
+                (0u64..4)
+                    .map(|n| show(cf.eval(&[n, 0])))
+                    .collect::<Vec<_>>()
+                    .join("")
             ));
             parts.push(format!(
                 "f(0,·)={}",
-                (0u64..4).map(|n| show(cf.eval(&[0, n]))).collect::<Vec<_>>().join("")
+                (0u64..4)
+                    .map(|n| show(cf.eval(&[0, n])))
+                    .collect::<Vec<_>>()
+                    .join("")
             ));
             parts.join("  ")
         }
@@ -391,7 +400,10 @@ fn run_coverage(args: CoverageArgs) {
 
     for arity in 0..=args.max_arity {
         println!("=== Arity {} ===", arity);
-        println!("{:>5}  {:>8}  {:>8}  {:>6}", "size", "total", "covered", "%");
+        println!(
+            "{:>5}  {:>8}  {:>8}  {:>6}",
+            "size", "total", "covered", "%"
+        );
         println!("{}", "-".repeat(36));
 
         let mut arity_total = 0usize;
@@ -417,7 +429,9 @@ fn run_coverage(args: CoverageArgs) {
                     if arity_holdouts.len() < args.holdouts {
                         arity_holdouts.push((size, grf.to_string()));
                     }
-                    reason_examples.entry(root).or_insert_with(|| (size, grf.to_string()));
+                    reason_examples
+                        .entry(root)
+                        .or_insert_with(|| (size, grf.to_string()));
                 }
             }
             let pct = if size_total > 0 {
@@ -425,7 +439,10 @@ fn run_coverage(args: CoverageArgs) {
             } else {
                 100.0
             };
-            println!("{:>5}  {:>8}  {:>8}  {:>5.1}%", size, size_total, size_covered, pct);
+            println!(
+                "{:>5}  {:>8}  {:>8}  {:>5.1}%",
+                size, size_total, size_covered, pct
+            );
             arity_total += size_total;
             arity_covered += size_covered;
         }
@@ -436,7 +453,10 @@ fn run_coverage(args: CoverageArgs) {
             100.0
         };
         println!("{}", "-".repeat(36));
-        println!("{:>5}  {:>8}  {:>8}  {:>5.1}%", "SUM", arity_total, arity_covered, arity_pct);
+        println!(
+            "{:>5}  {:>8}  {:>8}  {:>5.1}%",
+            "SUM", arity_total, arity_covered, arity_pct
+        );
         println!();
         grand_total += arity_total;
         grand_covered += arity_covered;
@@ -451,7 +471,11 @@ fn run_coverage(args: CoverageArgs) {
                 let example = &reason_examples[*reason];
                 println!(
                     "    {:>6}  ({:>4.1}%)  {:<36}  e.g. [{}] {}",
-                    fmt_count(**count), pct, reason, example.0, example.1
+                    fmt_count(**count),
+                    pct,
+                    reason,
+                    example.0,
+                    example.1
                 );
             }
             println!();
@@ -470,7 +494,10 @@ fn run_coverage(args: CoverageArgs) {
                 if preview.is_empty() {
                     println!("    [{}]  {:<44}  {}", size, grf_str, reason);
                 } else {
-                    println!("    [{}]  {:<44}  {}  |  {}", size, grf_str, reason, preview);
+                    println!(
+                        "    [{}]  {:<44}  {}  |  {}",
+                        size, grf_str, reason, preview
+                    );
                 }
             }
             println!();
@@ -534,8 +561,15 @@ fn check_size(arity: usize, size: usize, max_steps: u64) -> (usize, usize) {
     let inputs = test_inputs(arity);
     let opts = PruningOpts::default();
     // Disable CF fast-path so we compare CF eval against raw structural simulation.
-    let sim_opts = SimOpts { use_closed_form: false, ..SimOpts::default() };
-    let step_budget = if max_steps == 0 { None } else { Some(max_steps) };
+    let sim_opts = SimOpts {
+        use_closed_form: false,
+        ..SimOpts::default()
+    };
+    let step_budget = if max_steps == 0 {
+        None
+    } else {
+        Some(max_steps)
+    };
     let mut grfs_checked = 0usize;
     let mut grfs_bad = 0usize;
     stream_grf(size, arity, false, opts, &mut |grf| {
@@ -567,7 +601,12 @@ fn check_size(arity: usize, size: usize, max_steps: u64) -> (usize, usize) {
             let (bad_args, cf_val, sim_val) = first_bad.unwrap();
             eprintln!(
                 "MISMATCH: {}  args={:?}  cf={:?}  sim={:?}  ({}/{} inputs bad)",
-                grf, bad_args, cf_val, sim_val, bad_count, inputs.len()
+                grf,
+                bad_args,
+                cf_val,
+                sim_val,
+                bad_count,
+                inputs.len()
             );
         }
     });
@@ -602,8 +641,15 @@ fn check_one_grf(grf_str: &str, explicit_args: &[u64], max_steps: u64) {
         }
         vec![explicit_args.to_vec()]
     };
-    let sim_opts = SimOpts { use_closed_form: false, ..SimOpts::default() };
-    let step_budget = if max_steps == 0 { None } else { Some(max_steps) };
+    let sim_opts = SimOpts {
+        use_closed_form: false,
+        ..SimOpts::default()
+    };
+    let step_budget = if max_steps == 0 {
+        None
+    } else {
+        Some(max_steps)
+    };
     let mut bad_count = 0usize;
     let mut first_bad: Option<(Vec<u64>, Option<u64>, Option<u64>)> = None;
     for input in &inputs {
@@ -651,13 +697,18 @@ fn run_test(args: TestArgs) {
                 if grfs_bad > 0 {
                     eprintln!(
                         "  size {:3}: {} bad GRFs  [{}]",
-                        size, grfs_bad, elapsed_str(start)
+                        size,
+                        grfs_bad,
+                        elapsed_str(start)
                     );
                     std::process::exit(1);
                 } else {
                     println!(
                         "  size {:3}: {:8} GRFs ok  (total: {})  [{}]",
-                        size, grfs_checked, grand_grfs, elapsed_str(start)
+                        size,
+                        grfs_checked,
+                        grand_grfs,
+                        elapsed_str(start)
                     );
                 }
             }
@@ -678,12 +729,17 @@ fn run_test(args: TestArgs) {
                     if grfs_bad > 0 {
                         println!(
                             "  size {:3}: {:8} GRFs, {} bad  [{}]",
-                            size, grfs_checked, grfs_bad, elapsed_str(start)
+                            size,
+                            grfs_checked,
+                            grfs_bad,
+                            elapsed_str(start)
                         );
                     } else {
                         println!(
                             "  size {:3}: {:8} GRFs ok  [{}]",
-                            size, grfs_checked, elapsed_str(start)
+                            size,
+                            grfs_checked,
+                            elapsed_str(start)
                         );
                     }
                 }
@@ -691,13 +747,22 @@ fn run_test(args: TestArgs) {
             if grand_bad > 0 {
                 eprintln!(
                     "{} bad GRFs out of {} checked (arities {}..={}, sizes 1..={})  [{}]",
-                    grand_bad, grand_grfs, arity_lo, arity_hi, max_size, elapsed_str(start)
+                    grand_bad,
+                    grand_grfs,
+                    arity_lo,
+                    arity_hi,
+                    max_size,
+                    elapsed_str(start)
                 );
                 std::process::exit(1);
             } else {
                 println!(
                     "All {} GRFs matched (arities {}..={}, sizes 1..={})  [{}]",
-                    grand_grfs, arity_lo, arity_hi, max_size, elapsed_str(start)
+                    grand_grfs,
+                    arity_lo,
+                    arity_hi,
+                    max_size,
+                    elapsed_str(start)
                 );
             }
         }
@@ -724,7 +789,11 @@ fn run_list(args: ListArgs) {
         args.arity, args.max_size, total
     );
 
-    let limit = if args.limit > 0 { args.limit } else { usize::MAX };
+    let limit = if args.limit > 0 {
+        args.limit
+    } else {
+        usize::MAX
+    };
 
     // Collect all rows first so we can compute column widths.
     let mut rows: Vec<(usize, String, String, String)> = Vec::new();
@@ -745,7 +814,10 @@ fn run_list(args: ListArgs) {
     let formula_w = rows.iter().map(|(_, _, f, _)| f.len()).max().unwrap_or(0);
 
     for (size, grf_str, formula, preview) in &rows {
-        println!("[{:2}]  {:<grf_w$}  {:<formula_w$}  {}", size, grf_str, formula, preview);
+        println!(
+            "[{:2}]  {:<grf_w$}  {:<formula_w$}  {}",
+            size, grf_str, formula, preview
+        );
     }
     if rows.len() >= limit {
         println!("... ({} total, limit {} reached)", total, args.limit);
@@ -796,7 +868,13 @@ fn run_dups(args: DupsArgs) {
     }
 
     let n_canonical = args.arity.max(1); // canonical_inputs count hint for display
-    let input_pts = if args.arity == 0 { 1 } else if args.arity == 1 { 8 } else { 32 };
+    let input_pts = if args.arity == 0 {
+        1
+    } else if args.arity == 1 {
+        8
+    } else {
+        32
+    };
     println!(
         "=== Semantic duplicates: arity {}, sizes 1..={} ===",
         args.arity, args.max_size
@@ -805,7 +883,11 @@ fn run_dups(args: DupsArgs) {
         "Comparison by ClosedForm eval on {} canonical input(s) — not proven exact.",
         input_pts
     );
-    let limit = if args.max_dups > 0 { args.max_dups } else { usize::MAX };
+    let limit = if args.max_dups > 0 {
+        args.max_dups
+    } else {
+        usize::MAX
+    };
     let shown = dup_groups.len().min(limit);
     println!(
         "{} dup group(s){}:\n",
@@ -871,8 +953,15 @@ fn run_count(args: CountArgs) {
     let col_w: Vec<usize> = (0..=max_arity)
         .map(|arity| {
             let header_w = format!("arity={}", arity).len();
-            let max_val = counts.iter().filter_map(|row| row[arity]).max().unwrap_or(0);
-            let val_w = max_val.to_string().len().max(col_totals[arity].to_string().len());
+            let max_val = counts
+                .iter()
+                .filter_map(|row| row[arity])
+                .max()
+                .unwrap_or(0);
+            let val_w = max_val
+                .to_string()
+                .len()
+                .max(col_totals[arity].to_string().len());
             header_w.max(val_w)
         })
         .collect();
@@ -949,7 +1038,6 @@ impl Diagnosis {
             Diagnosis::Unexpected => "unexpected",
         }
     }
-
 }
 
 /// Strip all whitespace from a GRF expression string for canonical comparison.
@@ -963,7 +1051,10 @@ fn normalize_grf(s: &str) -> String {
 fn is_in_memo(grf: &Grf, en: &ClosedFormEnumerator) -> bool {
     match &grf.kind {
         GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => true,
-        _ => en.candidates(grf.arity(), grf.size()).iter().any(|g| g == grf),
+        _ => en
+            .candidates(grf.arity(), grf.size())
+            .iter()
+            .any(|g| g == grf),
     }
 }
 
@@ -971,10 +1062,7 @@ fn is_in_memo(grf: &Grf, en: &ClosedFormEnumerator) -> bool {
 /// not in the CF enum memo, together with its canonical replacement and shared CF.
 ///
 /// Returns `None` if all sub-expressions (and the GRF itself) are canonical.
-fn first_non_canonical(
-    grf: &Grf,
-    en: &ClosedFormEnumerator,
-) -> Option<(Grf, Grf, ClosedForm)> {
+fn first_non_canonical(grf: &Grf, en: &ClosedFormEnumerator) -> Option<(Grf, Grf, ClosedForm)> {
     match &grf.kind {
         // Atoms are always canonical.
         GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => return None,
@@ -1024,7 +1112,11 @@ fn first_non_canonical(
 
 fn diagnose(grf: &Grf, en: &ClosedFormEnumerator) -> Diagnosis {
     match first_non_canonical(grf, en) {
-        Some((non_canon, canon, cf)) => Diagnosis::CfDedup { non_canon, canon, cf },
+        Some((non_canon, canon, cf)) => Diagnosis::CfDedup {
+            non_canon,
+            canon,
+            cf,
+        },
         None => {
             // All sub-expressions appear canonical.
             // The GRF would be generated by for_each_raw_candidate but isn't in file2.
@@ -1055,17 +1147,13 @@ fn run_diff(args: DiffArgs) {
     let entries1 = parse_grf_entries(&content1);
     let entries2 = parse_grf_entries(&content2);
 
-    let set2: HashSet<String> = entries2
-        .iter()
-        .map(|e| normalize_grf(&e.expr))
-        .collect();
+    let set2: HashSet<String> = entries2.iter().map(|e| normalize_grf(&e.expr)).collect();
 
     // GRFs in file1 but not file2 (and meeting the score threshold).
     let missing: Vec<_> = entries1
         .iter()
         .filter(|e| {
-            e.score.unwrap_or(0) >= args.min_score
-                && !set2.contains(&normalize_grf(&e.expr))
+            e.score.unwrap_or(0) >= args.min_score && !set2.contains(&normalize_grf(&e.expr))
         })
         .collect();
 
@@ -1085,13 +1173,11 @@ fn run_diff(args: DiffArgs) {
     // Parse the missing GRFs, skipping any that don't parse.
     let parsed: Vec<(Grf, SmallNat)> = missing
         .iter()
-        .filter_map(|e| {
-            match e.expr.parse::<Grf>() {
-                Ok(g) => Some((g, e.score.unwrap_or(0))),
-                Err(err) => {
-                    eprintln!("  parse error for \"{}\": {err}", e.expr);
-                    None
-                }
+        .filter_map(|e| match e.expr.parse::<Grf>() {
+            Ok(g) => Some((g, e.score.unwrap_or(0))),
+            Err(err) => {
+                eprintln!("  parse error for \"{}\": {err}", e.expr);
+                None
             }
         })
         .collect();
@@ -1121,8 +1207,16 @@ fn run_diff(args: DiffArgs) {
         let d = diagnose(grf, &en);
         *tag_counts.entry(d.tag().to_string()).or_insert(0) += 1;
 
-        if let Diagnosis::CfDedup { ref non_canon, ref canon, ref cf } = d {
-            let key = (normalize_grf(&non_canon.to_string()), normalize_grf(&canon.to_string()));
+        if let Diagnosis::CfDedup {
+            ref non_canon,
+            ref canon,
+            ref cf,
+        } = d
+        {
+            let key = (
+                normalize_grf(&non_canon.to_string()),
+                normalize_grf(&canon.to_string()),
+            );
             let entry = dedup_pairs.entry(key).or_insert((0, 0, cf.clone()));
             entry.0 += 1;
             entry.1 = entry.1.max(*score);
@@ -1142,7 +1236,10 @@ fn run_diff(args: DiffArgs) {
     }
 
     // ── Summary ──────────────────────────────────────────────────────────────
-    println!("=== Summary ({} GRFs in file1 but not file2) ===", parsed.len());
+    println!(
+        "=== Summary ({} GRFs in file1 but not file2) ===",
+        parsed.len()
+    );
 
     let mut tags: Vec<_> = tag_counts.iter().collect();
     tags.sort_by(|a, b| b.1.cmp(a.1));
@@ -1157,14 +1254,28 @@ fn run_diff(args: DiffArgs) {
         println!("CF-dedup breakdown (non-canonical sub → canonical replacement):");
 
         let mut pairs: Vec<_> = dedup_pairs.iter().collect();
-        pairs.sort_by(|a, b| b.1.0.cmp(&a.1.0).then(b.1.1.cmp(&a.1.1)));
+        pairs.sort_by(|a, b| b.1 .0.cmp(&a.1 .0).then(b.1 .1.cmp(&a.1 .1)));
 
-        let grf_w = pairs.iter().map(|((nc, _), _)| nc.len()).max().unwrap_or(0).min(60);
-        let can_w = pairs.iter().map(|((_, c), _)| c.len()).max().unwrap_or(0).min(60);
+        let grf_w = pairs
+            .iter()
+            .map(|((nc, _), _)| nc.len())
+            .max()
+            .unwrap_or(0)
+            .min(60);
+        let can_w = pairs
+            .iter()
+            .map(|((_, c), _)| c.len())
+            .max()
+            .unwrap_or(0)
+            .min(60);
         for ((non_canon, canon), (count, max_score, cf)) in &pairs {
             println!(
                 "  {:>4}x  max_score={:>3}  {:<grf_w$}  →  {:<can_w$}  CF: {}",
-                count, max_score, non_canon, canon, format_cf(cf)
+                count,
+                max_score,
+                non_canon,
+                canon,
+                format_cf(cf)
             );
         }
     }
@@ -1181,16 +1292,28 @@ fn print_diff_entry(grf: &Grf, score: SmallNat, d: &Diagnosis) {
         grf = grf,
     );
     match d {
-        Diagnosis::CfDedup { non_canon, canon, cf } => {
+        Diagnosis::CfDedup {
+            non_canon,
+            canon,
+            cf,
+        } => {
             println!(
                 "         non-canonical sub  [a={},s={}]  {}",
-                non_canon.arity(), non_canon.size(), non_canon
+                non_canon.arity(),
+                non_canon.size(),
+                non_canon
             );
             println!(
                 "         canonical equiv    [a={},s={}]  {}",
-                canon.arity(), canon.size(), canon
+                canon.arity(),
+                canon.size(),
+                canon
             );
-            println!("         shared CF              {}  ({})", format_cf(cf), cf_preview(cf));
+            println!(
+                "         shared CF              {}  ({})",
+                format_cf(cf),
+                cf_preview(cf)
+            );
         }
         Diagnosis::AllCanonical => {
             println!("         all sub-expressions canonical; absent from file2 (top-K or pre-found at smaller size)");

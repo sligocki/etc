@@ -10,7 +10,6 @@
 /// ClosedForm structural equality is *sound* (same form ⟹ same function) but not
 /// *complete* (same function may have different forms).  ClosedFormOnly mode
 /// therefore retains some redundancy compared to fingerprint-based dedup.
-
 use crate::closed_form::{closed_form_of, ClosedForm};
 use crate::enumerate::{for_each_grf_core, stream_grf};
 use crate::grf::Grf;
@@ -64,8 +63,8 @@ impl ClosedFormEnumerator {
     /// including stream-only flags (`comp_rnf`, `inline_proj`, `min_dom`,
     /// `rec_step_p2`).  Use this for BBµ search and algebraic exploration.
     pub fn with_pruning(mode: EnumMode, allow_min: bool) -> Self {
-        let opts = PruningOpts::recommended()
-            .with_flags("min_dom,inline_proj,comp_rnf,rec_step_p2");
+        let opts =
+            PruningOpts::recommended().with_flags("min_dom,inline_proj,comp_rnf,rec_step_p2");
         Self::new(mode, allow_min, opts)
     }
 
@@ -158,13 +157,21 @@ impl ClosedFormEnumerator {
     ///
     /// Call `prepare(arity, size)` first to ensure in-limit dependency domains are
     /// in the memo.  Above-limit domains are streamed on demand.
-    pub fn for_each_raw_candidate<F: FnMut(&Grf)>(&self, arity: usize, size: usize, callback: &mut F) {
+    pub fn for_each_raw_candidate<F: FnMut(&Grf)>(
+        &self,
+        arity: usize,
+        size: usize,
+        callback: &mut F,
+    ) {
         let memo = &self.memo;
         let allow_min = self.allow_min;
         let opts = self.opts;
         let dynamic_rnf = self.dynamic_rnf;
         for_each_grf_core(
-            size, arity, allow_min, opts,
+            size,
+            arity,
+            allow_min,
+            opts,
             &|s, a, cb| {
                 if dynamic_rnf && a + s <= self.cf_limit {
                     // Direct rewirings (s_inner == s)
@@ -175,10 +182,11 @@ impl ClosedFormEnumerator {
                             }
                         }
                     }
-                    
+
                     // Wrapped rewirings (s_inner < s)
                     for s_inner in 1..s {
-                        for k in 0..=s_inner { // k is the arity of the inner function
+                        for k in 0..=s_inner {
+                            // k is the arity of the inner function
                             if s_inner + 1 + k == s {
                                 if let Some(grfs) = memo.get(&(k, s_inner)) {
                                     for rnf_grf in grfs {
@@ -190,7 +198,9 @@ impl ClosedFormEnumerator {
                     }
                 } else {
                     if let Some(grfs) = memo.get(&(a, s)) {
-                        for grf in grfs { cb(grf); }
+                        for grf in grfs {
+                            cb(grf);
+                        }
                     } else {
                         stream_grf(s, a, allow_min, opts, &mut |grf| cb(grf));
                     }
@@ -229,7 +239,11 @@ impl ClosedFormEnumerator {
                             .iter()
                             .map(|&i| Grf::proj_atom(target_arity, i))
                             .collect();
-                        cb(&Grf::new(crate::grf::GrfKind::Comp(Box::new(rnf_grf.clone()), projs, target_arity)));
+                        cb(&Grf::new(crate::grf::GrfKind::Comp(
+                            Box::new(rnf_grf.clone()),
+                            projs,
+                            target_arity,
+                        )));
                     }
                 } else {
                     if let Some(g) = crate::optimize::inline_proj(rnf_grf, target_arity, rewiring) {
@@ -242,13 +256,29 @@ impl ClosedFormEnumerator {
                 if !used[i] {
                     used[i] = true;
                     rewiring[idx] = i;
-                    backtrack(rnf_grf, target_arity, rewiring, used, idx + 1, wrapped_only, cb);
+                    backtrack(
+                        rnf_grf,
+                        target_arity,
+                        rewiring,
+                        used,
+                        idx + 1,
+                        wrapped_only,
+                        cb,
+                    );
                     used[i] = false;
                 }
             }
         }
 
-        backtrack(rnf_grf, target_arity, &mut rewiring, &mut used, 0, wrapped_only, cb);
+        backtrack(
+            rnf_grf,
+            target_arity,
+            &mut rewiring,
+            &mut used,
+            0,
+            wrapped_only,
+            cb,
+        );
     }
 
     /// Convenience wrapper around `for_each_raw_candidate` that collects into a Vec.
@@ -313,14 +343,15 @@ impl ClosedFormEnumerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim_nat::SmallNat;
     use crate::closed_form::closed_form_of;
     use crate::pruning::PruningOpts;
+    use crate::sim_nat::SmallNat;
     use crate::simulate::simulate;
 
     // Mode A: ClosedFormOnly
     fn mode_a(max_size: usize) -> ClosedFormEnumerator {
-        let mut en = ClosedFormEnumerator::new(EnumMode::ClosedFormOnly, false, PruningOpts::default());
+        let mut en =
+            ClosedFormEnumerator::new(EnumMode::ClosedFormOnly, false, PruningOpts::default());
         for s in 1..=max_size {
             en.compute_size(0, s);
             en.compute_size(1, s);
@@ -339,7 +370,9 @@ mod tests {
                     assert!(
                         closed_form_of(grf).is_some(),
                         "Mode A returned non-ClosedForm GRF: {} (arity={}, size={})",
-                        grf, arity, size
+                        grf,
+                        arity,
+                        size
                     );
                 }
             }
@@ -377,7 +410,11 @@ mod tests {
                     let cf = closed_form_of(grf).unwrap();
                     let canon = en.canonical_grf_for(arity, &cf).unwrap();
                     let canon_cf = closed_form_of(canon).unwrap();
-                    assert_eq!(cf, canon_cf, "canonical_grf_for round-trip failed for {}", grf);
+                    assert_eq!(
+                        cf, canon_cf,
+                        "canonical_grf_for round-trip failed for {}",
+                        grf
+                    );
                 }
             }
         }
@@ -405,7 +442,9 @@ mod tests {
                     assert!(
                         b_set.contains(&grf.to_string()),
                         "Mode B missing Mode A candidate {} (arity={}, size={})",
-                        grf, arity, size
+                        grf,
+                        arity,
+                        size
                     );
                 }
             }

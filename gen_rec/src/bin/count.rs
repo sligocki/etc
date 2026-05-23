@@ -23,7 +23,9 @@ fn make_configs(allow_min: bool) -> Vec<(&'static str, PruningOpts, bool)> {
     let mut v = vec![("none", PruningOpts::default(), false)];
     let mut acc = PruningOpts::default();
     let applicable: Vec<_> = FLAGS.iter().filter(|m| allow_min || !m.min_only).collect();
-    let ordered = applicable.iter().filter(|m| m.count_compat)
+    let ordered = applicable
+        .iter()
+        .filter(|m| m.count_compat)
         .chain(applicable.iter().filter(|m| !m.count_compat));
     for meta in ordered {
         (meta.set)(&mut acc, true);
@@ -93,13 +95,26 @@ fn main() {
 
     println!(
         "GRF counts: arity={}, allow_min={}  (stream cols ≤ {}{})",
-        args.arity, args.allow_min, args.stream_max_size,
-        if cf_enabled { format!(", cf+ col ≤ {}", args.cf_max_size) } else { String::new() },
+        args.arity,
+        args.allow_min,
+        args.stream_max_size,
+        if cf_enabled {
+            format!(", cf+ col ≤ {}", args.cf_max_size)
+        } else {
+            String::new()
+        },
     );
 
-    let w: usize = configs.iter().map(|(n, _, _)| n.len()).max().unwrap_or(0).max(10);
+    let w: usize = configs
+        .iter()
+        .map(|(n, _, _)| n.len())
+        .max()
+        .unwrap_or(0)
+        .max(10);
     const P: usize = 6; // %red column width
-    let sep_width = 4 + 2 + w
+    let sep_width = 4
+        + 2
+        + w
         + (configs.len() - 1) * (2 + w + 2 + P)
         + if cf_enabled { 2 + 1 + 2 + w + 2 + P } else { 0 };
     println!("{}", "=".repeat(sep_width));
@@ -115,9 +130,10 @@ fn main() {
     println!();
     println!("{}", "-".repeat(sep_width));
 
-    let max_size = args.max_size
-        .max(args.stream_max_size)
-        .max(if cf_enabled { args.cf_max_size } else { 0 });
+    let max_size =
+        args.max_size
+            .max(args.stream_max_size)
+            .max(if cf_enabled { args.cf_max_size } else { 0 });
     // totals_full: accumulates all counted sizes (up to max_size for fast, stream_max for stream).
     let mut totals_full: Vec<usize> = vec![0; configs.len()];
     // totals_partial: accumulates only sizes ≤ stream_max_size for every config.
@@ -158,11 +174,15 @@ fn main() {
         }
 
         for (tot, c) in totals_full.iter_mut().zip(counts.iter()) {
-            if let Some(v) = c { *tot += v; }
+            if let Some(v) = c {
+                *tot += v;
+            }
         }
         if size <= args.stream_max_size {
             for (tot, c) in totals_partial.iter_mut().zip(counts.iter()) {
-                if let Some(v) = c { *tot += v; }
+                if let Some(v) = c {
+                    *tot += v;
+                }
             }
         }
         if counts.iter().any(|c| c.is_none()) {
@@ -180,9 +200,7 @@ fn main() {
         for i in 1..configs.len() {
             let cur_str = counts[i].map_or("-".to_string(), fmt_count);
             let pct_str = match (counts[i - 1], counts[i]) {
-                (Some(prev), Some(cur)) if prev > 0 => {
-                    fmt_pct(prev.saturating_sub(cur), prev)
-                }
+                (Some(prev), Some(cur)) if prev > 0 => fmt_pct(prev.saturating_sub(cur), prev),
                 (Some(prev), None) if prev > 0 => "     ?".to_string(),
                 _ => "     -".to_string(),
             };
@@ -229,8 +247,11 @@ fn main() {
         print!("  {:>w$}  {:>P$}", cur_str, pct_str);
     }
     if cf_enabled {
-        let cf_str = if cf_has_gap { format!("{}*", fmt_count(cf_total)) }
-            else { fmt_count(cf_total) };
+        let cf_str = if cf_has_gap {
+            format!("{}*", fmt_count(cf_total))
+        } else {
+            fmt_count(cf_total)
+        };
         let last_std_full = *totals_full.last().unwrap_or(&0);
         let pct_str = if last_std_full > 0 && cf_total <= last_std_full {
             fmt_pct(last_std_full - cf_total, last_std_full)
@@ -246,7 +267,11 @@ fn main() {
     println!("Rules (cumulative left to right):");
     for meta in FLAGS {
         if args.allow_min || !meta.min_only {
-            let note = if meta.count_compat { "" } else { "  [stream-only]" };
+            let note = if meta.count_compat {
+                ""
+            } else {
+                "  [stream-only]"
+            };
             println!("  {:<15} {}{}", meta.name, meta.desc, note);
         }
     }
@@ -255,9 +280,15 @@ fn main() {
     }
     println!("%red = % reduction vs the immediately preceding column.");
     if total_has_stream {
-        println!("* SUM marked with * covers only sizes ≤ {} for stream-only columns.", args.stream_max_size);
+        println!(
+            "* SUM marked with * covers only sizes ≤ {} for stream-only columns.",
+            args.stream_max_size
+        );
     }
     if cf_has_gap {
-        println!("* cf+ SUM marked with * covers only sizes ≤ {}.", args.cf_max_size);
+        println!(
+            "* cf+ SUM marked with * covers only sizes ≤ {}.",
+            args.cf_max_size
+        );
     }
 }

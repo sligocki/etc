@@ -70,7 +70,10 @@ enum Command {
 fn cmd_status(dir: &PathBuf) {
     let paths = match db_paths_in_dir(dir) {
         Ok(p) => p,
-        Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
     };
 
     if paths.is_empty() {
@@ -116,10 +119,16 @@ fn cmd_status(dir: &PathBuf) {
     let any_timed_out = info.iter().any(|(_, _, _, _, t)| *t > 0);
 
     if any_timed_out {
-        println!("{:<6}  {:>8}  {:>8}  {:>8}  {:>6}", "arity", "prf", "min", "entries", "t/o");
+        println!(
+            "{:<6}  {:>8}  {:>8}  {:>8}  {:>6}",
+            "arity", "prf", "min", "entries", "t/o"
+        );
         println!("{}", "-".repeat(44));
     } else {
-        println!("{:<6}  {:>8}  {:>8}  {:>8}", "arity", "prf", "min", "entries");
+        println!(
+            "{:<6}  {:>8}  {:>8}  {:>8}",
+            "arity", "prf", "min", "entries"
+        );
         println!("{}", "-".repeat(36));
     }
 
@@ -130,14 +139,28 @@ fn cmd_status(dir: &PathBuf) {
         let prf_str = prf.map_or("–".to_string(), |(_, _, sz, _, _)| sz.to_string());
         let min_str = min.map_or("–".to_string(), |(_, _, sz, _, _)| sz.to_string());
         let entries = prf.map_or(0, |(_, _, _, n, _)| *n) + min.map_or(0, |(_, _, _, n, _)| *n);
-        let entries_str = if entries == 0 { "–".to_string() } else { entries.to_string() };
+        let entries_str = if entries == 0 {
+            "–".to_string()
+        } else {
+            entries.to_string()
+        };
 
         if any_timed_out {
             let to = prf.map_or(0, |(_, _, _, _, t)| *t) + min.map_or(0, |(_, _, _, _, t)| *t);
-            let to_str = if to == 0 { "–".to_string() } else { to.to_string() };
-            println!("{:<6}  {:>8}  {:>8}  {:>8}  {:>6}", arity, prf_str, min_str, entries_str, to_str);
+            let to_str = if to == 0 {
+                "–".to_string()
+            } else {
+                to.to_string()
+            };
+            println!(
+                "{:<6}  {:>8}  {:>8}  {:>8}  {:>6}",
+                arity, prf_str, min_str, entries_str, to_str
+            );
         } else {
-            println!("{:<6}  {:>8}  {:>8}  {:>8}", arity, prf_str, min_str, entries_str);
+            println!(
+                "{:<6}  {:>8}  {:>8}  {:>8}",
+                arity, prf_str, min_str, entries_str
+            );
         }
     }
     println!();
@@ -208,19 +231,22 @@ fn run_build_job(job: &BuildJob) {
     // Retry previously-timed-out entries if the step budget has increased.
     // max_steps=0 means unlimited, which is always >= any previous finite budget.
     let budget_increased = job.max_steps == 0 || job.max_steps > prev_max_steps;
-    let (mut timed_out_list, recovered) =
-        if !prev_timed_out.is_empty() && budget_increased {
-            let new_label = if job.max_steps == 0 { "unlimited".to_string() } else { job.max_steps.to_string() };
-            eprintln!(
-                "[{label}] retrying {} timed-out entries (max_steps: {} → {}) ...",
-                prev_timed_out.len(),
-                prev_max_steps,
-                new_label,
-            );
-            retry_timed_out(prev_timed_out, &mut map, job.arity, job.max_steps)
+    let (mut timed_out_list, recovered) = if !prev_timed_out.is_empty() && budget_increased {
+        let new_label = if job.max_steps == 0 {
+            "unlimited".to_string()
         } else {
-            (prev_timed_out, 0)
+            job.max_steps.to_string()
         };
+        eprintln!(
+            "[{label}] retrying {} timed-out entries (max_steps: {} → {}) ...",
+            prev_timed_out.len(),
+            prev_max_steps,
+            new_label,
+        );
+        retry_timed_out(prev_timed_out, &mut map, job.arity, job.max_steps)
+    } else {
+        (prev_timed_out, 0)
+    };
 
     match job.max_size {
         // ── finite mode ───────────────────────────────────────────────────────
@@ -245,8 +271,7 @@ fn run_build_job(job: &BuildJob) {
                         "[{label}] novel-enum sizes 1..={max_size} (fp_inputs={}) ...",
                         job.fp_inputs,
                     );
-                    let mut en =
-                        NovelEnumerator::new(job.fp_inputs, job.max_steps, job.allow_min);
+                    let mut en = NovelEnumerator::new(job.fp_inputs, job.max_steps, job.allow_min);
                     let entries = en.run(job.arity, 1, max_size, false);
                     total_tested = entries.len(); // approximate: counts novel GRFs only
                     for (fp, size, grf_str) in entries {
@@ -275,16 +300,27 @@ fn run_build_job(job: &BuildJob) {
             }
 
             if let Err(e) = save_novel_file(
-                &target, job.allow_min, max_size, job.max_steps, &map, &timed_out_list,
+                &target,
+                job.allow_min,
+                max_size,
+                job.max_steps,
+                &map,
+                &timed_out_list,
             ) {
                 eprintln!("[{label}] error saving: {e}");
                 return;
             }
 
             let mut parts: Vec<String> = Vec::new();
-            if total_tested > 0 { parts.push(format!("{total_tested} tested")); }
-            if recovered > 0 { parts.push(format!("{recovered} t/o recovered")); }
-            if !timed_out_list.is_empty() { parts.push(format!("{} timed-out", timed_out_list.len())); }
+            if total_tested > 0 {
+                parts.push(format!("{total_tested} tested"));
+            }
+            if recovered > 0 {
+                parts.push(format!("{recovered} t/o recovered"));
+            }
+            if !timed_out_list.is_empty() {
+                parts.push(format!("{} timed-out", timed_out_list.len()));
+            }
             parts.push(format!("+{total_new} novel ({} total)", map.len()));
             println!(
                 "[{label}] done in {:.1}s: {}  → {}",
@@ -298,7 +334,10 @@ fn run_build_job(job: &BuildJob) {
         None => {
             // Print one summary line per size as we go.
             if recovered > 0 {
-                println!("[{label}] retried t/o: {recovered} recovered, {} still pending", timed_out_list.len());
+                println!(
+                    "[{label}] retried t/o: {recovered} recovered, {} still pending",
+                    timed_out_list.len()
+                );
             }
             let mut size = start_size;
             loop {
@@ -317,7 +356,12 @@ fn run_build_job(job: &BuildJob) {
                 timed_out_list.extend(stats.timed_out_entries);
 
                 if let Err(e) = save_novel_file(
-                    &target, job.allow_min, size, job.max_steps, &map, &timed_out_list,
+                    &target,
+                    job.allow_min,
+                    size,
+                    job.max_steps,
+                    &map,
+                    &timed_out_list,
                 ) {
                     eprintln!("[{label}] error saving at size {size}: {e}");
                     return;
@@ -326,7 +370,10 @@ fn run_build_job(job: &BuildJob) {
                 let mut parts: Vec<String> = Vec::new();
                 parts.push(format!("{} tested", stats.total_tested));
                 if n_timed_out_this_size > 0 {
-                    parts.push(format!("{n_timed_out_this_size} timed-out ({} total)", timed_out_list.len()));
+                    parts.push(format!(
+                        "{n_timed_out_this_size} timed-out ({} total)",
+                        timed_out_list.len()
+                    ));
                 }
                 parts.push(format!("+{} novel ({} total)", stats.total_new, map.len()));
                 println!(
@@ -364,11 +411,25 @@ fn cmd_build(
     // Build job list: PRF for all arities, then Min if requested.
     let mut job_list: Vec<BuildJob> = Vec::new();
     for &arity in arities {
-        job_list.push(BuildJob { dir: dir.clone(), arity, allow_min: false, max_size, max_steps, fp_inputs });
+        job_list.push(BuildJob {
+            dir: dir.clone(),
+            arity,
+            allow_min: false,
+            max_size,
+            max_steps,
+            fp_inputs,
+        });
     }
     if allow_min {
         for &arity in arities {
-            job_list.push(BuildJob { dir: dir.clone(), arity, allow_min: true, max_size, max_steps, fp_inputs });
+            job_list.push(BuildJob {
+                dir: dir.clone(),
+                arity,
+                allow_min: true,
+                max_size,
+                max_steps,
+                fp_inputs,
+            });
         }
     }
 
@@ -389,7 +450,11 @@ fn cmd_build(
         Some(s) => format!("max_size={s}"),
         None => "infinite".to_string(),
     };
-    let steps_label = if max_steps == 0 { "unlimited".to_string() } else { max_steps.to_string() };
+    let steps_label = if max_steps == 0 {
+        "unlimited".to_string()
+    } else {
+        max_steps.to_string()
+    };
     println!(
         "Building {} job(s) with {} thread(s), {size_desc}, max_steps={steps_label}",
         job_list.len(),
@@ -416,6 +481,8 @@ fn main() {
             max_steps,
             jobs,
             fp_inputs,
-        } => cmd_build(&dir, max_size, allow_min, &arities, max_steps, jobs, fp_inputs),
+        } => cmd_build(
+            &dir, max_size, allow_min, &arities, max_steps, jobs, fp_inputs,
+        ),
     }
 }

@@ -642,11 +642,7 @@ pub fn closed_form_of_rec_internal(
                                 let n_proj = AffineFn::proj(k_outer, 1);
                                 if let ClosedForm::Affine(reset_af) = &*pw.zero_branch {
                                     let reset_lifted = prepend_arg_affine(reset_af);
-                                    return Some(make_neg_mod(
-                                        g_lifted,
-                                        n_proj,
-                                        reset_lifted,
-                                    ));
+                                    return Some(make_neg_mod(g_lifted, n_proj, reset_lifted));
                                 }
                             }
                         }

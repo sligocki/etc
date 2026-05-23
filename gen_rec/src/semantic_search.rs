@@ -32,11 +32,9 @@
 /// if let Some(r) = output.guaranteed.first() { println!("{}", r.grf); }
 /// ```
 use crate::closed_form_enum::{ClosedFormEnumerator, EnumMode};
-use crate::fingerprint::{
-    canonical_inputs, canonical_inputs_n, grid_inputs, verification_inputs,
-};
+use crate::fingerprint::{canonical_inputs, canonical_inputs_n, grid_inputs, verification_inputs};
 use crate::grf::Grf;
-use crate::simulate::{simulate, SmallNat, SimResult};
+use crate::simulate::{simulate, SimResult, SmallNat};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -124,7 +122,9 @@ pub fn search_smallest(
     // best partial per size: size → SearchResult with most inputs_tested
     let mut best_partial: BTreeMap<usize, SearchResult> = BTreeMap::new();
 
-    let cf_limit = config.cf_limit.unwrap_or(if config.allow_min { 15 } else { 17 });
+    let cf_limit = config
+        .cf_limit
+        .unwrap_or(if config.allow_min { 15 } else { 17 });
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min)
         .with_cf_limit(cf_limit);
 
@@ -167,16 +167,32 @@ pub fn search_smallest(
 
         if let Some(r) = guaranteed {
             // Drop any partials at the same size — the guaranteed match supersedes them.
-            let partials = best_partial.into_iter().filter(|(s, _)| *s < size).map(|(_, v)| v).collect();
-            return SearchOutput { guaranteed: vec![r], partials };
+            let partials = best_partial
+                .into_iter()
+                .filter(|(s, _)| *s < size)
+                .map(|(_, v)| v)
+                .collect();
+            return SearchOutput {
+                guaranteed: vec![r],
+                partials,
+            };
         }
 
         if config.progress || config.trace {
-            eprintln!("[search arity={}] size={:>3}: {:>5} candidates  ({:.1?})", config.arity, size, candidates_at_size, t_size.elapsed());
+            eprintln!(
+                "[search arity={}] size={:>3}: {:>5} candidates  ({:.1?})",
+                config.arity,
+                size,
+                candidates_at_size,
+                t_size.elapsed()
+            );
         }
     }
 
-    SearchOutput { guaranteed: vec![], partials: best_partial.into_values().collect() }
+    SearchOutput {
+        guaranteed: vec![],
+        partials: best_partial.into_values().collect(),
+    }
 }
 
 /// Find ALL structurally-distinct guaranteed GRFs at the minimum matching size.
@@ -196,7 +212,11 @@ pub fn search_all_at_min(
     };
 
     // Partials found before reaching min_size (those at min_size will be re-enumerated).
-    let early_partials: Vec<SearchResult> = first.partials.into_iter().filter(|r| r.size < min_size).collect();
+    let early_partials: Vec<SearchResult> = first
+        .partials
+        .into_iter()
+        .filter(|r| r.size < min_size)
+        .collect();
 
     let fast_inputs = canonical_inputs(config.arity);
     let conf_inputs = canonical_inputs_n(config.arity, config.confidence_inputs);
@@ -206,20 +226,36 @@ pub fn search_all_at_min(
     let mut all_guaranteed: Vec<SearchResult> = Vec::new();
     let mut best_at_min: Option<SearchResult> = None;
 
-    let cf_limit = config.cf_limit.unwrap_or(if config.allow_min { 15 } else { 17 });
+    let cf_limit = config
+        .cf_limit
+        .unwrap_or(if config.allow_min { 15 } else { 17 });
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min)
         .with_cf_limit(cf_limit);
     en.prepare(config.arity, min_size);
     en.for_each_raw_candidate(config.arity, min_size, &mut |grf: &Grf| {
-        if let Some((converged, timed_out)) =
-            test_candidate(grf, &fast_inputs, &conf_inputs, &verify_inputs, config.max_steps, spec)
-        {
-            let r = SearchResult { grf: grf.clone(), size: min_size, inputs_tested: converged, timed_out_inputs: timed_out };
+        if let Some((converged, timed_out)) = test_candidate(
+            grf,
+            &fast_inputs,
+            &conf_inputs,
+            &verify_inputs,
+            config.max_steps,
+            spec,
+        ) {
+            let r = SearchResult {
+                grf: grf.clone(),
+                size: min_size,
+                inputs_tested: converged,
+                timed_out_inputs: timed_out,
+            };
             if timed_out == 0 {
                 all_guaranteed.push(r);
             } else {
-                let is_new_best = best_at_min.as_ref().map_or(true, |prev| converged > prev.inputs_tested);
-                if is_new_best { best_at_min = Some(r); }
+                let is_new_best = best_at_min
+                    .as_ref()
+                    .map_or(true, |prev| converged > prev.inputs_tested);
+                if is_new_best {
+                    best_at_min = Some(r);
+                }
             }
         }
     });
@@ -230,7 +266,10 @@ pub fn search_all_at_min(
     } else {
         early_partials
     };
-    SearchOutput { guaranteed: all_guaranteed, partials }
+    SearchOutput {
+        guaranteed: all_guaranteed,
+        partials,
+    }
 }
 
 /// Test a single candidate GRF against the spec.
@@ -384,12 +423,23 @@ pub fn probe_spec(
 ) -> ProbeResult {
     for inp in inputs {
         match simulate(grf, inp, max_steps).0 {
-            SimResult::Diverge => return ProbeResult::Diverged { inputs: inp.clone() },
-            SimResult::OutOfSteps | SimResult::ValueOverflow => return ProbeResult::TimedOut { inputs: inp.clone() },
+            SimResult::Diverge => {
+                return ProbeResult::Diverged {
+                    inputs: inp.clone(),
+                }
+            }
+            SimResult::OutOfSteps | SimResult::ValueOverflow => {
+                return ProbeResult::TimedOut {
+                    inputs: inp.clone(),
+                }
+            }
             SimResult::ArityMismatch => panic!("arity mismatch in probe_spec"),
             SimResult::Value(v) => {
                 if !spec(inp, v) {
-                    return ProbeResult::SpecFailed { inputs: inp.clone(), output: v };
+                    return ProbeResult::SpecFailed {
+                        inputs: inp.clone(),
+                        output: v,
+                    };
                 }
             }
         }
@@ -441,7 +491,11 @@ mod tests {
         // Successor: S, size 1.
         let mut spec = exact_spec(|args| Some(args[0] + 1));
         let output = search_smallest(&cfg(1, 5), &mut spec);
-        let result = output.guaranteed.into_iter().next().expect("should find succ");
+        let result = output
+            .guaranteed
+            .into_iter()
+            .next()
+            .expect("should find succ");
         assert_eq!(result.size, 1);
         assert_eq!(result.grf.arity(), 1);
     }
@@ -451,8 +505,16 @@ mod tests {
         // Predecessor (saturating): R(Z0, P(2,1)), size 3.
         let mut spec = exact_spec(|args| Some(args[0].saturating_sub(1)));
         let output = search_smallest(&cfg(1, 6), &mut spec);
-        let result = output.guaranteed.into_iter().next().expect("should find pred");
-        assert_eq!(result.size, 3, "pred should have size 3, got {}: {}", result.size, result.grf);
+        let result = output
+            .guaranteed
+            .into_iter()
+            .next()
+            .expect("should find pred");
+        assert_eq!(
+            result.size, 3,
+            "pred should have size 3, got {}: {}",
+            result.size, result.grf
+        );
     }
 
     #[test]
@@ -460,8 +522,16 @@ mod tests {
         // Addition: R(P(1,1), C(S, P(3,2))), size 5.
         let mut spec = exact_spec(|args| Some(args[0] + args[1]));
         let output = search_smallest(&cfg(2, 8), &mut spec);
-        let result = output.guaranteed.into_iter().next().expect("should find add");
-        assert_eq!(result.size, 5, "add should have size 5, got {}: {}", result.size, result.grf);
+        let result = output
+            .guaranteed
+            .into_iter()
+            .next()
+            .expect("should find add");
+        assert_eq!(
+            result.size, 5,
+            "add should have size 5, got {}: {}",
+            result.size, result.grf
+        );
         assert_eq!(result.grf.arity(), 2);
     }
 
@@ -471,7 +541,11 @@ mod tests {
         let mut spec = exact_spec(|args| Some(args[0] / 2));
         let output = search_smallest(&cfg(1, 12), &mut spec);
         let result = output.guaranteed.into_iter().next().unwrap();
-        assert_eq!(result.size, 12, "Found size {}: {}", result.size, result.grf);
+        assert_eq!(
+            result.size, 12,
+            "Found size {}: {}",
+            result.size, result.grf
+        );
         assert_eq!(result.grf.arity(), 1);
     }
 
@@ -481,7 +555,11 @@ mod tests {
         let mut spec = exact_spec(|args| Some(args[0].div_ceil(2)));
         let output = search_smallest(&cfg(1, 12), &mut spec);
         let result = output.guaranteed.into_iter().next().unwrap();
-        assert_eq!(result.size, 12, "Found size {}: {}", result.size, result.grf);
+        assert_eq!(
+            result.size, 12,
+            "Found size {}: {}",
+            result.size, result.grf
+        );
         assert_eq!(result.grf.arity(), 1);
     }
 
@@ -499,15 +577,25 @@ mod tests {
             ..Default::default()
         };
         let output = search_smallest(&config, &mut spec);
-        let result = output.guaranteed.into_iter().next().expect("should find pow2");
-        assert_eq!(result.size, 12, "Found size {}: {}", result.size, result.grf);
+        let result = output
+            .guaranteed
+            .into_iter()
+            .next()
+            .expect("should find pow2");
+        assert_eq!(
+            result.size, 12,
+            "Found size {}: {}",
+            result.size, result.grf
+        );
         assert_eq!(result.grf.arity(), 1);
     }
 
     // Spec shared by trailing-bits tests: f(n, x) must end in at least n ones.
     fn trailing_bits_spec(inputs: &[SmallNat], output: SmallNat) -> bool {
         let n = inputs[0];
-        if n >= 64 { return true; }
+        if n >= 64 {
+            return true;
+        }
         let mask = ((1 as SmallNat) << n as u32) - 1;
         (output & mask as SmallNat) == mask as SmallNat
     }
@@ -523,10 +611,21 @@ mod tests {
             ..Default::default()
         };
         let output = search_smallest(&config, &mut trailing_bits_spec);
-        let result = output.guaranteed.into_iter().next().expect("should find a match");
-        assert_eq!(result.size, 10, "should have size 10, got {}: {}", result.size, result.grf);
+        let result = output
+            .guaranteed
+            .into_iter()
+            .next()
+            .expect("should find a match");
+        assert_eq!(
+            result.size, 10,
+            "should have size 10, got {}: {}",
+            result.size, result.grf
+        );
         assert_eq!(result.grf.arity(), 1);
-        assert_eq!(result.grf, grf!("R(Z0, C(R(S, C(S, P(3,2))), P(2,2), P(2,2)))"));
+        assert_eq!(
+            result.grf,
+            grf!("R(Z0, C(R(S, C(S, P(3,2))), P(2,2), P(2,2)))")
+        );
     }
 
     #[test]
@@ -540,9 +639,17 @@ mod tests {
             ..Default::default()
         };
         let output = search_smallest(&config, &mut trailing_bits_spec);
-        let result = output.guaranteed.into_iter().next().expect("should find a match");
+        let result = output
+            .guaranteed
+            .into_iter()
+            .next()
+            .expect("should find a match");
         assert_eq!(result.grf.arity(), 2);
-        assert_eq!(result.size, 10, "should have size 10, got {}: {}", result.size, result.grf);
+        assert_eq!(
+            result.size, 10,
+            "should have size 10, got {}: {}",
+            result.size, result.grf
+        );
 
         let inputs: Vec<Vec<SmallNat>> = (1..=8 as SmallNat)
             .flat_map(|n| (0..=8 as SmallNat).map(move |x| vec![n, x]))
@@ -550,7 +657,8 @@ mod tests {
         assert_eq!(
             probe_spec(&result.grf, &mut trailing_bits_spec, &inputs, 0),
             ProbeResult::AllPassed(inputs.len()),
-            "result GRF {} failed exhaustive probe", result.grf
+            "result GRF {} failed exhaustive probe",
+            result.grf
         );
     }
 
@@ -569,7 +677,11 @@ mod tests {
     fn test_exhaustive_probe_expected_grf() {
         let expected = grf!("R(S, C(R(S, C(S, P(3,2))), P(3,2), P(3,2)))");
         let result = exhaustive_probe(&expected, &mut trailing_bits_spec, 6, 0);
-        assert_eq!(result, ProbeResult::AllPassed(49), "expected GRF failed exhaustive probe: {result}");
+        assert_eq!(
+            result,
+            ProbeResult::AllPassed(49),
+            "expected GRF failed exhaustive probe: {result}"
+        );
     }
 
     #[test]
@@ -581,7 +693,10 @@ mod tests {
         let grf: crate::grf::Grf = grf!("M(C(R(C(S,Z0),C(P(2,2),P(2,1),P(2,2))),P(1,1)))");
         let inputs = vec![vec![]];
         let result = probe_spec(&grf, &mut |_, _| true, &inputs, 10);
-        assert!(matches!(result, ProbeResult::Diverged { .. }), "expected diverged, got: {result}");
+        assert!(
+            matches!(result, ProbeResult::Diverged { .. }),
+            "expected diverged, got: {result}"
+        );
     }
 
     #[test]
@@ -601,15 +716,29 @@ mod tests {
             let ok = match r {
                 SimResult::Value(v) => {
                     let pass = trailing_bits_spec(inp, v);
-                    eprintln!("  {:?} -> {} ({})", inp, v, if pass { "PASS" } else { "FAIL" });
+                    eprintln!(
+                        "  {:?} -> {} ({})",
+                        inp,
+                        v,
+                        if pass { "PASS" } else { "FAIL" }
+                    );
                     pass
                 }
-                SimResult::Diverge => { eprintln!("  {:?} -> DIVERGE", inp); false }
-                SimResult::OutOfSteps => { eprintln!("  {:?} -> TIMEOUT", inp); false }
+                SimResult::Diverge => {
+                    eprintln!("  {:?} -> DIVERGE", inp);
+                    false
+                }
+                SimResult::OutOfSteps => {
+                    eprintln!("  {:?} -> TIMEOUT", inp);
+                    false
+                }
                 SimResult::ArityMismatch => panic!("arity mismatch in probe diagnostics"),
-                SimResult::ValueOverflow => { false }
+                SimResult::ValueOverflow => false,
             };
-            if !ok { eprintln!("  ^^^ REJECT on fast_inputs"); break; }
+            if !ok {
+                eprintln!("  ^^^ REJECT on fast_inputs");
+                break;
+            }
         }
 
         eprintln!("conf_inputs ({}) first 10:", conf_inputs.len());
@@ -618,7 +747,12 @@ mod tests {
             match r {
                 SimResult::Value(v) => {
                     let pass = trailing_bits_spec(inp, v);
-                    eprintln!("  {:?} -> {} ({})", inp, v, if pass { "PASS" } else { "FAIL" });
+                    eprintln!(
+                        "  {:?} -> {} ({})",
+                        inp,
+                        v,
+                        if pass { "PASS" } else { "FAIL" }
+                    );
                 }
                 SimResult::Diverge => eprintln!("  {:?} -> DIVERGE", inp),
                 SimResult::OutOfSteps => eprintln!("  {:?} -> TIMEOUT", inp),
@@ -633,7 +767,12 @@ mod tests {
             match r {
                 SimResult::Value(v) => {
                     let pass = trailing_bits_spec(inp, v);
-                    eprintln!("  {:?} -> {} ({})", inp, v, if pass { "PASS" } else { "FAIL" });
+                    eprintln!(
+                        "  {:?} -> {} ({})",
+                        inp,
+                        v,
+                        if pass { "PASS" } else { "FAIL" }
+                    );
                 }
                 SimResult::Diverge => eprintln!("  {:?} -> DIVERGE", inp),
                 SimResult::OutOfSteps => eprintln!("  {:?} -> TIMEOUT", inp),
@@ -642,8 +781,14 @@ mod tests {
             }
         }
 
-        let result = test_candidate(&expected, &fast_inputs, &conf_inputs, &verify_inputs,
-                                    max_steps, &mut trailing_bits_spec);
+        let result = test_candidate(
+            &expected,
+            &fast_inputs,
+            &conf_inputs,
+            &verify_inputs,
+            max_steps,
+            &mut trailing_bits_spec,
+        );
         eprintln!("test_candidate result: {:?}", result);
     }
 
@@ -654,27 +799,48 @@ mod tests {
         // The hard-reject on Diverge means M(P(2,2)) is rejected outright, not as partial.
         let mut spec = exact_spec(|a| Some(a[0] / 3));
         let output = search_smallest(
-            &SearchConfig { arity: 1, allow_min: true, max_size: 2, ..Default::default() },
+            &SearchConfig {
+                arity: 1,
+                allow_min: true,
+                max_size: 2,
+                ..Default::default()
+            },
             &mut spec,
         );
         assert!(
             output.guaranteed.is_empty(),
             "M(P(2,2)) should not be a guaranteed match for div3, got: {}",
-            output.guaranteed.iter().map(|r| r.grf.to_string()).collect::<Vec<_>>().join(", "),
+            output
+                .guaranteed
+                .iter()
+                .map(|r| r.grf.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
         );
     }
 
     #[test]
     fn test_search_no_match() {
         let mut spec = |_inputs: &[SmallNat], output: SmallNat| output > 100;
-        let output = search_smallest(&SearchConfig { arity: 1, max_size: 3, ..Default::default() }, &mut spec);
+        let output = search_smallest(
+            &SearchConfig {
+                arity: 1,
+                max_size: 3,
+                ..Default::default()
+            },
+            &mut spec,
+        );
         assert!(output.guaranteed.is_empty(), "should not find a match");
     }
 
     #[test]
     fn test_exact_spec_skips_none() {
         let mut spec = exact_spec(|args: &[SmallNat]| {
-            if args[0] == 0 { None } else { Some(args[0] - 1) }
+            if args[0] == 0 {
+                None
+            } else {
+                Some(args[0] - 1)
+            }
         });
         assert!(spec(&[0], 42));
         assert!(spec(&[5], 4));

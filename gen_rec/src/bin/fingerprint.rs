@@ -10,11 +10,11 @@
 ///   2. Redundancy by structural category (what does the redundant GRF look like?)
 ///   3. Redundancy by canonical target (what smaller GRF is it equivalent to?)
 use clap::Parser;
-use gen_rec::sim_nat::SmallNat;
 use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::fingerprint::{canonical_inputs, compute_fp, Fingerprint};
 use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::pruning::PruningOpts;
+use gen_rec::sim_nat::SmallNat;
 use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
@@ -49,7 +49,6 @@ struct Args {
     top_targets: usize,
 }
 
-
 /// Classify the argument-list pattern of a C(R(g,h), f1,...,fm) expression.
 ///
 /// Helps answer: *why* is this composition redundant, and is there a
@@ -75,7 +74,13 @@ fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
         // Are all projection indices distinct? (a permutation of inputs)
         let mut indices: Vec<usize> = gs
             .iter()
-            .map(|g| if let GrfKind::Proj(_, j) = &g.kind { *j } else { 0 })
+            .map(|g| {
+                if let GrfKind::Proj(_, j) = &g.kind {
+                    *j
+                } else {
+                    0
+                }
+            })
             .collect();
         indices.sort_unstable();
         indices.dedup();
@@ -87,9 +92,12 @@ fn crec_arg_pattern(gs: &[Grf]) -> &'static str {
 
     // Mixed args — classify by what the first arg (the recursion counter) is,
     // and whether any non-atom sub-expressions appear.
-    let all_atoms = gs
-        .iter()
-        .all(|g| matches!(&g.kind, GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)));
+    let all_atoms = gs.iter().all(|g| {
+        matches!(
+            &g.kind,
+            GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _)
+        )
+    });
 
     let first_is_proj = matches!(gs.first().map(|g| &g.kind), Some(GrfKind::Proj(_, _)));
     let first_is_succ = matches!(gs.first().map(|g| &g.kind), Some(GrfKind::Succ));

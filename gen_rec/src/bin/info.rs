@@ -32,21 +32,30 @@ struct Args {
 // ---------------------------------------------------------------------------
 
 fn latex_num(n: usize) -> String {
-    if n < 10 { format!("{n}") } else { format!("{{{n}}}") }
+    if n < 10 {
+        format!("{n}")
+    } else {
+        format!("{{{n}}}")
+    }
 }
 
 fn to_latex(grf: &Grf) -> String {
     match &grf.kind {
-        GrfKind::Zero(k)      => format!("Z^{}", latex_num(*k)),
-        GrfKind::Succ         => "S".to_string(),
-        GrfKind::Proj(k, i)   => format!("P^{}_{}", latex_num(*k), latex_num(*i)),
+        GrfKind::Zero(k) => format!("Z^{}", latex_num(*k)),
+        GrfKind::Succ => "S".to_string(),
+        GrfKind::Proj(k, i) => format!("P^{}_{}", latex_num(*k), latex_num(*i)),
         GrfKind::Comp(h, gs, _) => {
             let mut args = vec![to_latex(h)];
             args.extend(gs.iter().map(to_latex));
             format!("C^{}({})", latex_num(grf.arity()), args.join(", "))
         }
         GrfKind::Rec(g, h) => {
-            format!("R^{}({}, {})", latex_num(grf.arity()), to_latex(g), to_latex(h))
+            format!(
+                "R^{}({}, {})",
+                latex_num(grf.arity()),
+                to_latex(g),
+                to_latex(h)
+            )
         }
         GrfKind::Min(f) => {
             format!("M^{}({})", latex_num(grf.arity()), to_latex(f))

@@ -12,7 +12,7 @@ use clap::Parser;
 use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_grl::{self, GrfEntry};
 use gen_rec::mgrf::parse_mgrf_to_grfs;
-use gen_rec::simulate::{simulate};
+use gen_rec::simulate::simulate;
 use std::fs;
 use std::io::BufWriter;
 use std::path::PathBuf;
@@ -73,11 +73,11 @@ enum Class {
 impl std::fmt::Display for Class {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Class::HitsZero    => write!(f, "hits-zero  "),
-            Class::Decreasing  => write!(f, "decreasing "),
+            Class::HitsZero => write!(f, "hits-zero  "),
+            Class::Decreasing => write!(f, "decreasing "),
             Class::Alternating => write!(f, "alternating"),
-            Class::Timeout     => write!(f, "timeout    "),
-            Class::Monotone    => write!(f, "monotone   "),
+            Class::Timeout => write!(f, "timeout    "),
+            Class::Monotone => write!(f, "monotone   "),
         }
     }
 }
@@ -99,7 +99,11 @@ fn classify(vals: &[Option<u64>]) -> Class {
         }
     }
 
-    if any_timeout { Class::Timeout } else { Class::Monotone }
+    if any_timeout {
+        Class::Timeout
+    } else {
+        Class::Monotone
+    }
 }
 
 // Returns true iff every stride in 2..=max_stride has at least one decrease.
@@ -117,7 +121,10 @@ fn all_strides_have_decrease(vals: &[Option<u64>], max_stride: usize) -> bool {
 
 fn fmt_vals(vals: &[Option<u64>]) -> String {
     vals.iter()
-        .map(|v| match v { Some(n) => n.to_string(), None => "?".to_string() })
+        .map(|v| match v {
+            Some(n) => n.to_string(),
+            None => "?".to_string(),
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -125,10 +132,17 @@ fn fmt_vals(vals: &[Option<u64>]) -> String {
 fn process_file(path: &PathBuf, args: &Args) {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
-        Err(e) => { eprintln!("error reading {}: {}", path.display(), e); return; }
+        Err(e) => {
+            eprintln!("error reading {}: {}", path.display(), e);
+            return;
+        }
     };
 
-    let budget = if args.max_steps == 0 { u64::MAX } else { args.max_steps };
+    let budget = if args.max_steps == 0 {
+        u64::MAX
+    } else {
+        args.max_steps
+    };
 
     let mut out_writer: Option<BufWriter<fs::File>> = args.output.as_ref().map(|p| {
         let f = fs::File::create(p).unwrap_or_else(|e| {
@@ -136,17 +150,20 @@ fn process_file(path: &PathBuf, args: &Args) {
             std::process::exit(1);
         });
         let mut w = BufWriter::new(f);
-        io_grl::write_grl_header(&mut w,
-            &format!("monotone_heuristic candidates from {}", path.display())).ok();
+        io_grl::write_grl_header(
+            &mut w,
+            &format!("monotone_heuristic candidates from {}", path.display()),
+        )
+        .ok();
         w
     });
 
-    let mut total        = 0usize;
-    let mut n_hits_zero   = 0usize;
-    let mut n_decreasing  = 0usize;
+    let mut total = 0usize;
+    let mut n_hits_zero = 0usize;
+    let mut n_decreasing = 0usize;
     let mut n_alternating = 0usize;
-    let mut n_timeout     = 0usize;
-    let mut n_monotone    = 0usize;
+    let mut n_timeout = 0usize;
+    let mut n_monotone = 0usize;
     let mut timeout_lines: Vec<String> = Vec::new();
 
     println!("=== {} ===", path.display());
@@ -156,12 +173,18 @@ fn process_file(path: &PathBuf, args: &Args) {
 
         let grf: Grf = match expr.parse() {
             Ok(g) => g,
-            Err(e) => { eprintln!("parse error ({}): {}", e, expr); continue; }
+            Err(e) => {
+                eprintln!("parse error ({}): {}", e, expr);
+                continue;
+            }
         };
 
         let inner = match &grf.kind {
             GrfKind::Min(f) => f.as_ref().clone(),
-            _ => { eprintln!("expected M(...), got: {}", expr); continue; }
+            _ => {
+                eprintln!("expected M(...), got: {}", expr);
+                continue;
+            }
         };
 
         if inner.arity() != 1 {
@@ -172,7 +195,9 @@ fn process_file(path: &PathBuf, args: &Args) {
         // Skip if provably always positive: is_never_zero covers all inputs;
         // is_positive_for_pos_arg(1) covers n >= 1 (the entire min_val..max_val range
         // when min_val >= 1, which is the default 12).
-        if inner.is_never_zero() || inner.is_positive_for_pos_arg(1) { continue; }
+        if inner.is_never_zero() || inner.is_positive_for_pos_arg(1) {
+            continue;
+        }
 
         let vals: Vec<Option<u64>> = (args.min_val..args.max_val)
             .map(|n| simulate(&inner, &[n], budget).0.into_value())
@@ -180,7 +205,10 @@ fn process_file(path: &PathBuf, args: &Args) {
 
         let class = classify(&vals);
         let has_timeouts = vals.iter().any(|v| v.is_none());
-        let class = if class == Class::Decreasing && !has_timeouts && !all_strides_have_decrease(&vals, args.max_stride) {
+        let class = if class == Class::Decreasing
+            && !has_timeouts
+            && !all_strides_have_decrease(&vals, args.max_stride)
+        {
             Class::Alternating
         } else {
             class
@@ -188,11 +216,11 @@ fn process_file(path: &PathBuf, args: &Args) {
         total += 1;
 
         match class {
-            Class::HitsZero    => n_hits_zero   += 1,
-            Class::Decreasing  => n_decreasing  += 1,
+            Class::HitsZero => n_hits_zero += 1,
+            Class::Decreasing => n_decreasing += 1,
             Class::Alternating => n_alternating += 1,
-            Class::Timeout     => n_timeout     += 1,
-            Class::Monotone    => n_monotone    += 1,
+            Class::Timeout => n_timeout += 1,
+            Class::Monotone => n_monotone += 1,
         }
 
         let is_candidate = matches!(class, Class::HitsZero | Class::Decreasing)
@@ -207,14 +235,18 @@ fn process_file(path: &PathBuf, args: &Args) {
         }
         if matches!(class, Class::HitsZero | Class::Decreasing) {
             if let Some(ref mut w) = out_writer {
-                io_grl::write_grf_entry(w, &GrfEntry {
-                    expr: expr.to_string(),
-                    status: None,
-                    steps: entry.steps,
-                    base_steps: None,
-                    score: None,
-                    unknown_reason: None,
-                }).ok();
+                io_grl::write_grf_entry(
+                    w,
+                    &GrfEntry {
+                        expr: expr.to_string(),
+                        status: None,
+                        steps: entry.steps,
+                        base_steps: None,
+                        score: None,
+                        unknown_reason: None,
+                    },
+                )
+                .ok();
             }
         }
     }
@@ -246,7 +278,10 @@ fn parse_mgrf_expr(expr: &str) -> Result<Grf, String> {
 fn probe_grf(expr: &str, args: &Args) {
     let grf: Grf = match parse_mgrf_expr(expr) {
         Ok(g) => g,
-        Err(e) => { eprintln!("parse error: {}", e); return; }
+        Err(e) => {
+            eprintln!("parse error: {}", e);
+            return;
+        }
     };
 
     let inner = match &grf.kind {
@@ -265,7 +300,11 @@ fn probe_grf(expr: &str, args: &Args) {
         return;
     }
 
-    let budget = if args.max_steps == 0 { u64::MAX } else { args.max_steps };
+    let budget = if args.max_steps == 0 {
+        u64::MAX
+    } else {
+        args.max_steps
+    };
     let vals: Vec<Option<u64>> = (args.min_val..args.max_val)
         .map(|n| simulate(&inner, &[n], budget).0.into_value())
         .collect();
@@ -275,8 +314,15 @@ fn probe_grf(expr: &str, args: &Args) {
 
     let has_timeouts = vals.iter().any(|v| v.is_none());
     let base_class = classify(&vals);
-    println!("stride 1 (classify): {}{}", base_class,
-        if has_timeouts { "  [has timeouts — stride filter skipped]" } else { "" });
+    println!(
+        "stride 1 (classify): {}{}",
+        base_class,
+        if has_timeouts {
+            "  [has timeouts — stride filter skipped]"
+        } else {
+            ""
+        }
+    );
 
     if base_class == Class::Decreasing && !has_timeouts {
         println!();
@@ -286,21 +332,37 @@ fn probe_grf(expr: &str, args: &Args) {
                 .find(|&i| matches!((vals[i], vals[i + stride]), (Some(a), Some(b)) if b < a));
             if let Some(i) = witness {
                 let n = args.min_val + i as u64;
-                println!("  stride {:2}: decrease at f({})={} > f({})={}",
-                    stride, n, vals[i].unwrap(), n + stride as u64, vals[i + stride].unwrap());
+                println!(
+                    "  stride {:2}: decrease at f({})={} > f({})={}",
+                    stride,
+                    n,
+                    vals[i].unwrap(),
+                    n + stride as u64,
+                    vals[i + stride].unwrap()
+                );
             } else {
                 all_pass = false;
-                println!("  stride {:2}: NO decrease — residue classes mod {}:", stride, stride);
+                println!(
+                    "  stride {:2}: NO decrease — residue classes mod {}:",
+                    stride, stride
+                );
                 for r in 0..stride {
                     let class_vals: Vec<String> = (r..vals.len())
                         .step_by(stride)
-                        .map(|i| match vals[i] { Some(v) => v.to_string(), None => "?".to_string() })
+                        .map(|i| match vals[i] {
+                            Some(v) => v.to_string(),
+                            None => "?".to_string(),
+                        })
                         .collect();
                     println!("    [mod {} = {}]: {}", stride, r, class_vals.join(" "));
                 }
             }
         }
-        let final_class = if all_pass { Class::Decreasing } else { Class::Alternating };
+        let final_class = if all_pass {
+            Class::Decreasing
+        } else {
+            Class::Alternating
+        };
         println!();
         println!("final : {}", final_class);
     } else {
@@ -319,7 +381,10 @@ mod tests {
     fn classify_full(vals: &[Option<u64>], max_stride: usize) -> Class {
         let class = classify(vals);
         let has_timeouts = vals.iter().any(|v| v.is_none());
-        if class == Class::Decreasing && !has_timeouts && !all_strides_have_decrease(vals, max_stride) {
+        if class == Class::Decreasing
+            && !has_timeouts
+            && !all_strides_have_decrease(vals, max_stride)
+        {
             Class::Alternating
         } else {
             class
@@ -331,63 +396,96 @@ mod tests {
     #[test]
     fn stride_period2_no_decrease() {
         // stride-2 pairs are equal: (1,1), (2,2), ...
-        assert!(!all_strides_have_decrease(&sv(&[1,2,1,2,1,2,1,2,1,2]), 5));
+        assert!(!all_strides_have_decrease(
+            &sv(&[1, 2, 1, 2, 1, 2, 1, 2, 1, 2]),
+            5
+        ));
     }
 
     #[test]
     fn stride_period3_no_stride3_decrease() {
         // stride-3 pairs are equal; stride-2 does have a decrease so OR would pass this
-        assert!(!all_strides_have_decrease(&sv(&[1,2,3,1,2,3,1,2,3,1,2,3]), 5));
+        assert!(!all_strides_have_decrease(
+            &sv(&[1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3]),
+            5
+        ));
     }
 
     #[test]
     fn stride_period4_no_stride4_decrease() {
-        assert!(!all_strides_have_decrease(&sv(&[1,2,3,4,1,2,3,4,1,2,3,4]), 5));
+        assert!(!all_strides_have_decrease(
+            &sv(&[1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4]),
+            5
+        ));
     }
 
     #[test]
     fn stride_period5_no_stride5_decrease() {
-        assert!(!all_strides_have_decrease(&sv(&[1,2,3,4,5,1,2,3,4,5,1,2,3,4,5]), 5));
+        assert!(!all_strides_have_decrease(
+            &sv(&[1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5]),
+            5
+        ));
     }
 
     #[test]
     fn stride_genuine_decrease_passes_all() {
         // strictly decreasing: every stride shows a decrease
-        assert!(all_strides_have_decrease(&sv(&[100,90,80,70,60,50,40,30,20,10,9,8]), 5));
+        assert!(all_strides_have_decrease(
+            &sv(&[100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 9, 8]),
+            5
+        ));
     }
 
     // --- full classify + stride-filter tests ---
 
     #[test]
     fn classify_period2_alternating() {
-        assert_eq!(classify_full(&sv(&[1,2,1,2,1,2,1,2,1,2,1,2]), 5), Class::Alternating);
+        assert_eq!(
+            classify_full(&sv(&[1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2]), 5),
+            Class::Alternating
+        );
     }
 
     #[test]
     fn classify_period2_starting_high_alternating() {
-        assert_eq!(classify_full(&sv(&[2,1,2,1,2,1,2,1,2,1,2,1]), 5), Class::Alternating);
+        assert_eq!(
+            classify_full(&sv(&[2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1]), 5),
+            Class::Alternating
+        );
     }
 
     #[test]
     fn classify_big_small_alternating() {
         // [10 5 12 6 14 7 16 8 18 9]: stride-2 subsequences are increasing
-        assert_eq!(classify_full(&sv(&[10,5,12,6,14,7,16,8,18,9]), 5), Class::Alternating);
+        assert_eq!(
+            classify_full(&sv(&[10, 5, 12, 6, 14, 7, 16, 8, 18, 9]), 5),
+            Class::Alternating
+        );
     }
 
     #[test]
     fn classify_period3_alternating() {
         // stride-2 has a decrease (3→2), but stride-3 does not
-        assert_eq!(classify_full(&sv(&[3,1,2,3,1,2,3,1,2,3,1,2]), 5), Class::Alternating);
+        assert_eq!(
+            classify_full(&sv(&[3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2]), 5),
+            Class::Alternating
+        );
     }
 
     #[test]
     fn classify_period5_alternating() {
-        assert_eq!(classify_full(&sv(&[1,2,3,4,5,1,2,3,4,5,1,2,3,4,5]), 5), Class::Alternating);
+        assert_eq!(
+            classify_full(&sv(&[1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5]), 5),
+            Class::Alternating
+        );
     }
 
     #[test]
     fn classify_genuine_decrease_is_decreasing() {
-        assert_eq!(classify_full(&sv(&[100,90,80,70,60,50,40,30,20,10,9,8]), 5), Class::Decreasing);
+        assert_eq!(
+            classify_full(&sv(&[100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 9, 8]), 5),
+            Class::Decreasing
+        );
     }
 
     #[test]

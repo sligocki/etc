@@ -136,7 +136,7 @@ ClosedForm::Monus(a1, a2) => {
                 ClosedForm::NegMod(a1, a2, a3) => {
                     let v1 = a1.eval(&buf)?;
                     let v2 = a2.eval(&buf)?;
-                    let v3 = a3.eval(&buf)?;
+                    let v3 = a3.eval(&buf)?.checked_add(N::one())?;
                     if v1 >= v2 {
                         return Some(v1.checked_sub(v2).unwrap());
                     } else {
@@ -224,9 +224,8 @@ ClosedForm::Monus(a1, a2) => {
                     
                     let b = match af1.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
                     let d = match af2.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
-                    let f = match af3.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
-
-                    if f.is_zero() { return SimResult::Diverge; }
+                    let f_raw = match af3.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
+                    let f = match f_raw.checked_add(N::one()) { Some(v) => v, None => return SimResult::ValueOverflow };
 
                     // We are solving for the smallest i >= 0 such that NegMod(v1, v2, v3) == 0,
                     // where v1 = a*i + b, v2 = c*i + d, v3 = e*i + f.
@@ -288,7 +287,6 @@ ClosedForm::Monus(a1, a2) => {
                             if v1 >= v2 {
                                 if v1 == v2 { return SimResult::Value(i); }
                             } else {
-                                if v3.is_zero() { return SimResult::Diverge; }
                                 let diff = v2.checked_sub(v1).unwrap();
                                 if diff.checked_rem(v3).unwrap().is_zero() {
                                     return SimResult::Value(i);
@@ -476,10 +474,7 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
                                 } else {
                                     if let ClosedForm::Affine(reset_af) = &*pw.zero_branch {
                                         let reset_lifted = prepend_arg_affine(reset_af);
-                                        let succ_cf = AffineFn::succ();
-                                        if let Some(modulus) = compose_affine(&succ_cf, &[reset_lifted]) {
-                                            return Some(ClosedForm::NegMod(g_lifted, n_proj, modulus));
-                                        }
+                                        return Some(ClosedForm::NegMod(g_lifted, n_proj, reset_lifted));
                                     }
                                 }
                             }
@@ -981,17 +976,15 @@ fn make_neg_mod(af1: AffineFn, af2: AffineFn, af3: AffineFn) -> ClosedForm {
     if af1.arity == 0 && af2.arity == 0 && af3.arity == 0 {
         let v1 = af1.coeffs[0];
         let v2 = af2.coeffs[0];
-        let v3 = af3.coeffs[0];
-        if v3 != 0 {
-            let res = if v1 >= v2 {
-                v1 - v2
-            } else {
-                let diff = v2 - v1;
-                let rem = diff % v3;
-                if rem == 0 { 0 } else { v3 - rem }
-            };
-            return ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![res] });
-        }
+        let v3 = af3.coeffs[0] + 1;
+        let res = if v1 >= v2 {
+            v1 - v2
+        } else {
+            let diff = v2 - v1;
+            let rem = diff % v3;
+            if rem == 0 { 0 } else { v3 - rem }
+        };
+        return ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![res] });
     }
     ClosedForm::NegMod(af1, af2, af3)
 }
@@ -1674,10 +1667,12 @@ impl ClosedForm {
                 let s1 = a1.format_expr(vars);
                 let s2 = a2.format_expr(vars);
                 
-                let s3 = if a3.coeffs[1..].iter().filter(|&&c| c != 0).count() + (if a3.coeffs[0] != 0 { 1 } else { 0 }) > 1 {
-                    format!("({})", a3.format_expr(vars))
+                let mut a3_plus = a3.clone();
+                a3_plus.coeffs[0] += 1;
+                let s3 = if a3_plus.coeffs[1..].iter().filter(|&&c| c != 0).count() + (if a3_plus.coeffs[0] != 0 { 1 } else { 0 }) > 1 {
+                    format!("({})", a3_plus.format_expr(vars))
                 } else {
-                    a3.format_expr(vars)
+                    a3_plus.format_expr(vars)
                 };
                 format!("({s1} - {s2}) %< {s3}")
             }
@@ -1729,10 +1724,12 @@ impl ClosedForm {
                 println!("  {}({}) = ({} ∸ {})", fn_name, args.join(", "), a1.format_expr(args), a2.format_expr(args));
             }
             ClosedForm::NegMod(a1, a2, a3) => {
-                let s3 = if a3.coeffs[1..].iter().filter(|&&c| c != 0).count() + (if a3.coeffs[0] != 0 { 1 } else { 0 }) > 1 {
-                    format!("({})", a3.format_expr(args))
+                let mut a3_plus = a3.clone();
+                a3_plus.coeffs[0] += 1;
+                let s3 = if a3_plus.coeffs[1..].iter().filter(|&&c| c != 0).count() + (if a3_plus.coeffs[0] != 0 { 1 } else { 0 }) > 1 {
+                    format!("({})", a3_plus.format_expr(args))
                 } else {
-                    a3.format_expr(args)
+                    a3_plus.format_expr(args)
                 };
                 println!("  {}({}) = ({} - {}) %< {}", fn_name, args.join(", "), a1.format_expr(args), a2.format_expr(args), s3);
             }

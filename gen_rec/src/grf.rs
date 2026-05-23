@@ -278,8 +278,9 @@ impl Grf {
                 } else {
                     // Rec's outer arg j (j ≥ 2) maps to g's arg (j-1).
                     // Base (n=0): g positive when g's arg (j-1) positive.
-                    // Steps: h positive when accumulator (arg 2) positive, by induction.
-                    g.is_positive_for_pos_arg(j - 1) && h.is_positive_for_pos_arg(2)
+                    // Steps: h positive when accumulator (arg 2) positive (or when j -> j+1 pos)
+                    let h_pos = h.is_positive_for_pos_arg(2) || h.is_positive_for_pos_arg(j+1);
+                    g.is_positive_for_pos_arg(j - 1) && h_pos
                 }
             }
             GrfKind::Comp(h, gs, _) => {
@@ -870,5 +871,20 @@ mod tests {
 
         // b preserves positivity for arg 2
         assert!(b.is_positive_for_pos_arg(2));
+    }
+
+    #[test]
+    fn test_always_pos_rec_param() {
+        // From min_prf 12 holdout: M(R(C(S, Z0), R(S, R(P(2,2), C(S, P(4,2))))))
+        let a = Grf::succ_atom();
+        let b = grf!("R(P(2,2), C(S, P(4,2)))");
+        let c = Grf::rec(a.clone(), b.clone());
+
+        assert!(a.is_positive_for_pos_arg(1));
+        assert!(b.is_positive_for_pos_arg(3));
+        assert!(c.is_positive_for_pos_arg(2));
+
+        let d = grf!("R(C(S, Z0), R(S, R(P(2,2), C(S, P(4,2)))))");
+        assert!(d.is_never_zero());
     }
 }

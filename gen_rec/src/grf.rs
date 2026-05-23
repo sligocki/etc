@@ -851,4 +851,24 @@ mod tests {
         assert_eq!(grf!("C(S, C(S, C(S, P(1, 1))))").acc_plus_k(), None);
         assert_eq!(grf!("C(S, C(S, C(S, P(3, 3))))").acc_plus_k(), None);
     }
+
+    #[test]
+    fn test_is_never_zero_preservation() {
+        // C(b, P(1,1), S) is never zero where b = R(P(1,1), R(P(2,1), C(S, P(4,2))))
+        let b = grf!("R(P(1,1), R(P(2,1), C(S, P(4,2))))");
+        let inner1 = grf!("P(1,1)");
+        let inner2 = grf!("S");
+        let comp = Grf::comp(b.clone(), vec![inner1, inner2]);
+        assert!(comp.is_never_zero());
+
+        // But b itself is not never zero because its base case (P(1,1)) can be zero.
+        assert!(!b.is_never_zero());
+
+        // a = R(P(2,1), C(S, P(4,2))) preserves positivity for arg 2
+        let a = grf!("R(P(2,1), C(S, P(4,2)))");
+        assert!(a.is_positive_for_pos_arg(2));
+
+        // b preserves positivity for arg 2
+        assert!(b.is_positive_for_pos_arg(2));
+    }
 }

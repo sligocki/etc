@@ -1,6 +1,6 @@
+use crate::grf::{Grf, GrfKind};
 use crate::sim_nat::SimNat;
 use crate::simulate::SimResult;
-use crate::grf::{Grf, GrfKind};
 
 /// Affine function over natural numbers: c0 + c1*x1 + ... + ck*xk.
 ///
@@ -16,12 +16,18 @@ pub struct AffineFn {
 impl AffineFn {
     /// Constant-zero function of the given arity.
     pub fn zero(arity: usize) -> Self {
-        AffineFn { arity, coeffs: vec![0; arity + 1] }
+        AffineFn {
+            arity,
+            coeffs: vec![0; arity + 1],
+        }
     }
 
     /// The successor function S(x) = x + 1.
     pub fn succ() -> Self {
-        AffineFn { arity: 1, coeffs: vec![1, 1] }
+        AffineFn {
+            arity: 1,
+            coeffs: vec![1, 1],
+        }
     }
 
     /// The projection P^k_i(x1,...,xk) = xi (i is 1-based).
@@ -40,7 +46,9 @@ impl AffineFn {
         let mut acc: N = N::from_u64(self.coeffs[0]);
         for (i, arg) in args.iter().enumerate() {
             let c = self.coeffs[i + 1];
-            if c == 0 { continue; }
+            if c == 0 {
+                continue;
+            }
             acc = acc.checked_add(arg.clone().checked_mul_u64(c)?)?;
         }
         Some(acc)
@@ -49,7 +57,7 @@ impl AffineFn {
     pub fn lift(&self, arity: usize) -> Self {
         assert!(arity >= self.arity);
         let mut coeffs = self.coeffs.clone();
-        coeffs.resize(arity+1, 0);
+        coeffs.resize(arity + 1, 0);
         AffineFn { arity, coeffs }
     }
 }
@@ -71,8 +79,7 @@ impl PiecewiseFn {
         assert_eq!(args.len(), self.arity);
         let bi = self.branch_index;
         if args[bi].is_zero() {
-            let zero_args: Vec<N> =
-                args[..bi].iter().chain(&args[bi + 1..]).cloned().collect();
+            let zero_args: Vec<N> = args[..bi].iter().chain(&args[bi + 1..]).cloned().collect();
             self.zero_branch.eval(&zero_args)
         } else {
             let mut new_args = args.to_vec();
@@ -86,7 +93,7 @@ impl PiecewiseFn {
         PiecewiseFn {
             arity,
             branch_index: self.branch_index,
-            zero_branch: Box::new(self.zero_branch.lift(arity-1)),
+            zero_branch: Box::new(self.zero_branch.lift(arity - 1)),
             pos_branch: Box::new(self.pos_branch.lift(arity)),
         }
     }
@@ -134,7 +141,11 @@ impl ClosedForm {
                     } else {
                         let diff = v2.checked_sub(v1).unwrap();
                         let rem = diff.checked_rem(v3.clone())?;
-                        return if rem.is_zero() { Some(N::zero()) } else { Some(v3.checked_sub(rem)?) };
+                        return if rem.is_zero() {
+                            Some(N::zero())
+                        } else {
+                            Some(v3.checked_sub(rem)?)
+                        };
                     }
                 }
                 ClosedForm::Piecewise(pw) => {
@@ -179,27 +190,49 @@ impl ClosedForm {
                     let a = af1.coeffs[1];
                     let c = af2.coeffs[1];
                     let e = af3.coeffs[1];
-                    
+
                     let mut full = Vec::with_capacity(outer.len() + 1);
                     full.push(N::zero());
                     full.extend(outer.iter().cloned());
-                    
-                    let b = match af1.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
-                    let d = match af2.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
-                    let f_raw = match af3.eval(&full) { Some(v) => v, None => return SimResult::ValueOverflow };
-                    let f = match f_raw.clone().checked_add(N::one()) { Some(v) => v, None => return SimResult::ValueOverflow };
 
-                    let mut min_i: Option<N> = None;
-                    
-                    let mut update_min = |candidate: N| {
-                        match &min_i {
-                            Some(min) => if candidate < *min { min_i = Some(candidate); },
-                            None => min_i = Some(candidate),
-                        }
+                    let b = match af1.eval(&full) {
+                        Some(v) => v,
+                        None => return SimResult::ValueOverflow,
+                    };
+                    let d = match af2.eval(&full) {
+                        Some(v) => v,
+                        None => return SimResult::ValueOverflow,
+                    };
+                    let f_raw = match af3.eval(&full) {
+                        Some(v) => v,
+                        None => return SimResult::ValueOverflow,
+                    };
+                    let f = match f_raw.clone().checked_add(N::one()) {
+                        Some(v) => v,
+                        None => return SimResult::ValueOverflow,
                     };
 
-                    let (a_is_pos, a_val) = if c >= a { (true, c - a) } else { (false, a - c) };
-                    let (b_is_pos, b_val) = if b >= d { (true, b.clone().checked_sub(d.clone()).unwrap()) } else { (false, d.clone().checked_sub(b.clone()).unwrap()) };
+                    let mut min_i: Option<N> = None;
+
+                    let mut update_min = |candidate: N| match &min_i {
+                        Some(min) => {
+                            if candidate < *min {
+                                min_i = Some(candidate);
+                            }
+                        }
+                        None => min_i = Some(candidate),
+                    };
+
+                    let (a_is_pos, a_val) = if c >= a {
+                        (true, c - a)
+                    } else {
+                        (false, a - c)
+                    };
+                    let (b_is_pos, b_val) = if b >= d {
+                        (true, b.clone().checked_sub(d.clone()).unwrap())
+                    } else {
+                        (false, d.clone().checked_sub(b.clone()).unwrap())
+                    };
 
                     if e > 0 {
                         // Subcase 1: A - k*e > 0
@@ -208,9 +241,18 @@ impl ClosedForm {
                             for k in 0..=max_k {
                                 let den = a_val - k * e;
                                 if den > 0 {
-                                    let k_f = match f.clone().checked_mul_u64(k) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    let k_f = match f.clone().checked_mul_u64(k) {
+                                        Some(v) => v,
+                                        None => return SimResult::ValueOverflow,
+                                    };
                                     let (num_is_pos, num_val) = if b_is_pos {
-                                        (true, match b_val.clone().checked_add(k_f) { Some(v) => v, None => return SimResult::ValueOverflow })
+                                        (
+                                            true,
+                                            match b_val.clone().checked_add(k_f) {
+                                                Some(v) => v,
+                                                None => return SimResult::ValueOverflow,
+                                            },
+                                        )
                                     } else {
                                         if k_f >= b_val {
                                             (true, k_f.checked_sub(b_val.clone()).unwrap())
@@ -218,9 +260,11 @@ impl ClosedForm {
                                             (false, b_val.clone().checked_sub(k_f).unwrap())
                                         }
                                     };
-                                    
+
                                     if num_is_pos {
-                                        if let Some(rem) = num_val.clone().checked_rem(N::from_u64(den)) {
+                                        if let Some(rem) =
+                                            num_val.clone().checked_rem(N::from_u64(den))
+                                        {
                                             if rem.is_zero() {
                                                 if let Some(i) = num_val.checked_div_ceil_u64(den) {
                                                     update_min(i);
@@ -236,29 +280,32 @@ impl ClosedForm {
                         if !b_is_pos || b_val.is_zero() {
                             let mut k = 0;
                             loop {
-                                let k_f = match f.clone().checked_mul_u64(k) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                let k_f = match f.clone().checked_mul_u64(k) {
+                                    Some(v) => v,
+                                    None => return SimResult::ValueOverflow,
+                                };
                                 if k_f > b_val {
                                     break;
                                 }
-                                
-                                let den_is_pos = if a_is_pos {
-                                    a_val > k * e
-                                } else {
-                                    false
-                                };
-                                
+
+                                let den_is_pos = if a_is_pos { a_val > k * e } else { false };
+
                                 if !den_is_pos {
                                     let den_val = if a_is_pos {
                                         (k * e) - a_val
                                     } else {
                                         a_val + (k * e)
                                     };
-                                    
+
                                     if den_val > 0 {
                                         let num_val = b_val.clone().checked_sub(k_f).unwrap();
-                                        if let Some(rem) = num_val.clone().checked_rem(N::from_u64(den_val)) {
+                                        if let Some(rem) =
+                                            num_val.clone().checked_rem(N::from_u64(den_val))
+                                        {
                                             if rem.is_zero() {
-                                                if let Some(i) = num_val.checked_div_ceil_u64(den_val) {
+                                                if let Some(i) =
+                                                    num_val.checked_div_ceil_u64(den_val)
+                                                {
                                                     update_min(i);
                                                 }
                                             }
@@ -272,13 +319,16 @@ impl ClosedForm {
                         // Subcase 3: A - k*e == 0
                         if a_is_pos && a_val % e == 0 {
                             let k = a_val / e;
-                            let k_f = match f.clone().checked_mul_u64(k) { Some(v) => v, None => return SimResult::ValueOverflow };
+                            let k_f = match f.clone().checked_mul_u64(k) {
+                                Some(v) => v,
+                                None => return SimResult::ValueOverflow,
+                            };
                             let num_is_zero = if b_is_pos {
                                 b_val.is_zero() && k_f.is_zero()
                             } else {
                                 b_val == k_f
                             };
-                            
+
                             if num_is_zero {
                                 update_min(N::zero());
                             }
@@ -309,17 +359,38 @@ impl ClosedForm {
                                 let mut i = N::zero();
                                 let mut steps = 0;
                                 while steps < 10_000 {
-                                    let v1 = match i.clone().checked_mul_u64(a).and_then(|m| m.checked_add(b.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
-                                    let v2 = match i.clone().checked_mul_u64(c).and_then(|m| m.checked_add(d.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    let v1 = match i
+                                        .clone()
+                                        .checked_mul_u64(a)
+                                        .and_then(|m| m.checked_add(b.clone()))
+                                    {
+                                        Some(v) => v,
+                                        None => return SimResult::ValueOverflow,
+                                    };
+                                    let v2 = match i
+                                        .clone()
+                                        .checked_mul_u64(c)
+                                        .and_then(|m| m.checked_add(d.clone()))
+                                    {
+                                        Some(v) => v,
+                                        None => return SimResult::ValueOverflow,
+                                    };
                                     if v1 >= v2 {
-                                        if v1 == v2 { update_min(i.clone()); break; }
+                                        if v1 == v2 {
+                                            update_min(i.clone());
+                                            break;
+                                        }
                                     } else {
                                         let diff = v2.checked_sub(v1).unwrap();
                                         if diff.checked_rem(f.clone()).unwrap().is_zero() {
-                                            update_min(i.clone()); break;
+                                            update_min(i.clone());
+                                            break;
                                         }
                                     }
-                                    i = match i.checked_add(N::one()) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    i = match i.checked_add(N::one()) {
+                                        Some(v) => v,
+                                        None => return SimResult::ValueOverflow,
+                                    };
                                     steps += 1;
                                 }
                             }
@@ -333,17 +404,38 @@ impl ClosedForm {
                                 let mut i = N::zero();
                                 let mut steps = 0;
                                 while steps < 10_000 {
-                                    let v1 = match i.clone().checked_mul_u64(a).and_then(|m| m.checked_add(b.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
-                                    let v2 = match i.clone().checked_mul_u64(c).and_then(|m| m.checked_add(d.clone())) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    let v1 = match i
+                                        .clone()
+                                        .checked_mul_u64(a)
+                                        .and_then(|m| m.checked_add(b.clone()))
+                                    {
+                                        Some(v) => v,
+                                        None => return SimResult::ValueOverflow,
+                                    };
+                                    let v2 = match i
+                                        .clone()
+                                        .checked_mul_u64(c)
+                                        .and_then(|m| m.checked_add(d.clone()))
+                                    {
+                                        Some(v) => v,
+                                        None => return SimResult::ValueOverflow,
+                                    };
                                     if v1 >= v2 {
-                                        if v1 == v2 { update_min(i.clone()); break; }
+                                        if v1 == v2 {
+                                            update_min(i.clone());
+                                            break;
+                                        }
                                     } else {
                                         let diff = v2.checked_sub(v1).unwrap();
                                         if diff.checked_rem(f.clone()).unwrap().is_zero() {
-                                            update_min(i.clone()); break;
+                                            update_min(i.clone());
+                                            break;
                                         }
                                     }
-                                    i = match i.checked_add(N::one()) { Some(v) => v, None => return SimResult::ValueOverflow };
+                                    i = match i.checked_add(N::one()) {
+                                        Some(v) => v,
+                                        None => return SimResult::ValueOverflow,
+                                    };
                                     steps += 1;
                                 }
                             }
@@ -398,7 +490,9 @@ impl ClosedForm {
         match self {
             ClosedForm::Affine(af) => ClosedForm::Affine(af.lift(arity)),
             ClosedForm::Piecewise(pw) => ClosedForm::Piecewise(pw.lift(arity)),
-            ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(a1.lift(arity), a2.lift(arity), a3.lift(arity)),
+            ClosedForm::NegMod(a1, a2, a3) => {
+                ClosedForm::NegMod(a1.lift(arity), a2.lift(arity), a3.lift(arity))
+            }
         }
     }
 }
@@ -424,7 +518,10 @@ pub fn closed_form_of(grf: &Grf) -> Option<ClosedForm> {
 
         GrfKind::Comp(g, hs, k) => {
             let sem_g = g.closed_form()?.clone();
-            let sem_hs: Vec<ClosedForm> = hs.iter().map(|h| h.closed_form().cloned()).collect::<Option<_>>()?;
+            let sem_hs: Vec<ClosedForm> = hs
+                .iter()
+                .map(|h| h.closed_form().cloned())
+                .collect::<Option<_>>()?;
             compose(&sem_g, &sem_hs, *k)
         }
 
@@ -447,20 +544,33 @@ pub fn closed_form_of(grf: &Grf) -> Option<ClosedForm> {
 ///   A: sem_h is Affine with acc+j pattern  →  affine result
 ///   B: sem_h ignores acc (arg 2)           →  Piecewise(zero=sem_g, pos=sem_h-without-acc)
 ///   C: sem_h is Piecewise on counter       →  recurse: new_g = B_z∘g, new_h = B_p
-fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) -> Option<ClosedForm> {
+fn closed_form_of_rec(
+    sem_g: &ClosedForm,
+    sem_h: &ClosedForm,
+    k_outer: usize,
+) -> Option<ClosedForm> {
+    closed_form_of_rec_internal(sem_g, sem_h, k_outer, 1)
+}
+
+pub fn closed_form_of_rec_internal(
+    sem_g: &ClosedForm,
+    sem_h: &ClosedForm,
+    k_outer: usize,
+    split_budget: usize,
+) -> Option<ClosedForm> {
     // Case A: h(n, acc, rest) = j + acc  (j = coeffs[0], acc-coeff=1, rest-coeffs=0)
     if let ClosedForm::Affine(af_h) = sem_h {
-        if af_h.coeffs[1] == 0
-            && af_h.coeffs[2] == 1
-            && af_h.coeffs[3..].iter().all(|&c| c == 0)
-        {
+        if af_h.coeffs[1] == 0 && af_h.coeffs[2] == 1 && af_h.coeffs[3..].iter().all(|&c| c == 0) {
             if let ClosedForm::Affine(g_af) = sem_g {
                 let j = af_h.coeffs[0];
                 let mut new_coeffs = Vec::with_capacity(k_outer + 1);
                 new_coeffs.push(g_af.coeffs[0]);
                 new_coeffs.push(j);
                 new_coeffs.extend_from_slice(&g_af.coeffs[1..]);
-                return Some(ClosedForm::Affine(AffineFn { arity: k_outer, coeffs: new_coeffs }));
+                return Some(ClosedForm::Affine(AffineFn {
+                    arity: k_outer,
+                    coeffs: new_coeffs,
+                }));
             }
         }
     }
@@ -487,7 +597,9 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
             if b_z.arity() == inner_for_g_prime.len() {
                 if let Some(sem_g_prime) = compose(b_z, &inner_for_g_prime, k_rest) {
                     let b_p: &ClosedForm = &pw_h.pos_branch;
-                    if let Some(pos_branch) = closed_form_of_rec(&sem_g_prime, b_p, k_outer) {
+                    if let Some(pos_branch) =
+                        closed_form_of_rec_internal(&sem_g_prime, b_p, k_outer, split_budget)
+                    {
                         return Some(make_piecewise(k_outer, 0, sem_g.clone(), pos_branch));
                     }
                 }
@@ -515,22 +627,27 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
         }
     }
 
-
     // Case E: h ignores counter (arg 1) and is Piecewise branching on acc (arg 2 in h, which is arg 1 in h_prime).
     if closed_form_ignores_arg(sem_h, 1) {
         if let Some(h_prime) = drop_arg(sem_h, 1) {
             if let ClosedForm::Piecewise(pw) = &h_prime {
                 if pw.branch_index == 0 {
                     if let ClosedForm::Affine(af) = &*pw.pos_branch {
-                        if af.coeffs[0] == 0 && af.coeffs[1] == 1 && af.coeffs[2..].iter().all(|&c| c == 0) {
-
+                        if af.coeffs[0] == 0
+                            && af.coeffs[1] == 1
+                            && af.coeffs[2..].iter().all(|&c| c == 0)
+                        {
                             if let ClosedForm::Affine(g_af) = sem_g {
                                 let g_lifted = prepend_arg_affine(g_af);
                                 let n_proj = AffineFn::proj(k_outer, 1);
                                 if let ClosedForm::Affine(reset_af) = &*pw.zero_branch {
-                                        let reset_lifted = prepend_arg_affine(reset_af);
-                                        return Some(ClosedForm::NegMod(g_lifted, n_proj, reset_lifted));
-                                    }
+                                    let reset_lifted = prepend_arg_affine(reset_af);
+                                    return Some(make_neg_mod(
+                                        g_lifted,
+                                        n_proj,
+                                        reset_lifted,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -539,41 +656,50 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
         }
     }
 
-
-
     // Case G: h is Piecewise branching on acc (arg 2 in h), and pos_branch ignores acc.
     if let ClosedForm::Piecewise(pw) = sem_h {
         if pw.branch_index == 1 {
             let h_p = &pw.pos_branch;
             let h_z = &pw.zero_branch;
-            
+
             if closed_form_ignores_arg(h_p, 2) {
                 if let Some(h_p_no_acc) = drop_arg(h_p, 2) {
                     let mut cur_f = sem_g.clone();
                     let mut prefix = Vec::new();
                     let mut trapped = false;
-                    
+
                     for step in 0..10 {
                         prefix.push(cur_f.clone());
                         if is_always_pos(&cur_f) {
                             // Verify that h_p_no_acc(step) is strictly positive,
                             // to ensure it stays trapped forever.
                             let mut tail_inners = Vec::with_capacity(k_outer);
-                            tail_inners.push(ClosedForm::Affine({ let mut af = AffineFn::zero(k_outer - 1); af.coeffs[0] = step as u64; af }));
+                            tail_inners.push(ClosedForm::Affine({
+                                let mut af = AffineFn::zero(k_outer - 1);
+                                af.coeffs[0] = step as u64;
+                                af
+                            }));
                             for i in 1..k_outer {
-                                tail_inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
+                                tail_inners
+                                    .push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
                             }
-                            if let Some(tail_at_step) = compose(&h_p_no_acc, &tail_inners, k_outer - 1) {
+                            if let Some(tail_at_step) =
+                                compose(&h_p_no_acc, &tail_inners, k_outer - 1)
+                            {
                                 if is_always_pos(&tail_at_step) {
                                     trapped = true;
                                     break;
                                 }
                             }
                         }
-                        
+
                         if is_always_zero(&cur_f) {
                             let mut inners = Vec::with_capacity(k_outer);
-                            inners.push(ClosedForm::Affine({ let mut af = AffineFn::zero(k_outer - 1); af.coeffs[0] = step as u64; af }));
+                            inners.push(ClosedForm::Affine({
+                                let mut af = AffineFn::zero(k_outer - 1);
+                                af.coeffs[0] = step as u64;
+                                af
+                            }));
                             for i in 1..k_outer {
                                 inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
                             }
@@ -586,15 +712,19 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
                             break;
                         }
                     }
-                    
+
                     if trapped {
                         let shift = prefix.len() as u64 - 1;
                         let mut inners = Vec::with_capacity(k_outer);
-                        inners.push(ClosedForm::Affine({ let mut af = AffineFn::proj(k_outer, 1); af.coeffs[0] = shift; af }));
+                        inners.push(ClosedForm::Affine({
+                            let mut af = AffineFn::proj(k_outer, 1);
+                            af.coeffs[0] = shift;
+                            af
+                        }));
                         for i in 2..=k_outer {
                             inners.push(ClosedForm::Affine(AffineFn::proj(k_outer, i)));
                         }
-                        
+
                         if let Some(mut tail) = compose(&h_p_no_acc, &inners, k_outer) {
                             for p in prefix.into_iter().rev() {
                                 tail = make_piecewise(k_outer, 0, p, tail);
@@ -602,6 +732,70 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
                             return Some(tail);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Case G2: h is Piecewise branching on acc (arg 2 in h), and pos_branch is EXACTLY acc.
+    if let ClosedForm::Piecewise(pw) = sem_h {
+        if pw.branch_index == 1 {
+            let h_p = &pw.pos_branch;
+            let h_z = &pw.zero_branch;
+
+            let is_acc_identity = if let ClosedForm::Affine(af) = h_p.as_ref() {
+                af.coeffs.len() > 2
+                    && af.coeffs[0] == 1
+                    && af.coeffs[2] == 1
+                    && af
+                        .coeffs
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, &c)| c != 0 && *i != 0 && *i != 2)
+                        .count()
+                        == 0
+            } else {
+                false
+            };
+
+            if is_acc_identity {
+                let mut cur_f = sem_g.clone();
+                let mut prefix = Vec::new();
+                let mut trapped = false;
+
+                for step in 0..10 {
+                    prefix.push(cur_f.clone());
+                    if is_always_pos(&cur_f) {
+                        trapped = true;
+                        break;
+                    }
+
+                    if is_always_zero(&cur_f) {
+                        let mut inners = Vec::with_capacity(k_outer);
+                        inners.push(ClosedForm::Affine({
+                            let mut af = AffineFn::zero(k_outer - 1);
+                            af.coeffs[0] = step as u64;
+                            af
+                        }));
+                        for i in 1..k_outer {
+                            inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
+                        }
+                        if let Some(next_f) = compose(h_z, &inners, k_outer - 1) {
+                            cur_f = next_f;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                if trapped {
+                    let mut tail = prepend_arg(&cur_f);
+                    for p in prefix.into_iter().rev() {
+                        tail = make_piecewise(k_outer, 0, p, tail);
+                    }
+                    return Some(tail);
                 }
             }
         }
@@ -625,14 +819,40 @@ fn closed_form_of_rec(sem_g: &ClosedForm, sem_h: &ClosedForm, k_outer: usize) ->
             let g_zero = zero_face_at(sem_g, j_b - 1);
             // h.zero_branch has arity k_outer (counter + acc + rest-without-arg-j_b).
             let h_zero = pw_h.zero_branch.as_ref();
-            if let Some(zero_b) = closed_form_of_rec(&g_zero, h_zero, k_outer - 1) {
+            if let Some(zero_b) =
+                closed_form_of_rec_internal(&g_zero, h_zero, k_outer - 1, split_budget)
+            {
                 // h.pos_branch is called with b's arg j_b decremented by 1.  The base g is
                 // evaluated in that same decremented context, so shift g to compensate:
                 // g_pos(z') = g(z'+1).
                 let g_pos = pos_face_at(sem_g, j_b - 1);
                 let h_pos = pw_h.pos_branch.as_ref();
-                if let Some(pos_b) = closed_form_of_rec(&g_pos, h_pos, k_outer) {
+                if let Some(pos_b) =
+                    closed_form_of_rec_internal(&g_pos, h_pos, k_outer, split_budget)
+                {
                     return Some(make_piecewise(k_outer, j_b - 1, zero_b, pos_b));
+                }
+            }
+        }
+    }
+
+    // Fallback: Split on rest variables if budget allows
+    if split_budget > 0 {
+        // j is the 1-based index in `g` (from 1 to k_outer - 1).
+        // It corresponds to the 0-based branch_index `j` in `b`.
+        // In `h`, the same rest variable is at 1-based index `j + 2` (since h has counter and acc).
+        for j in 1..k_outer {
+            let g_zero = zero_face_at(sem_g, j);
+            let h_zero = zero_face_at(sem_h, j + 2);
+            if let Some(zero_cf) =
+                closed_form_of_rec_internal(&g_zero, &h_zero, k_outer - 1, split_budget - 1)
+            {
+                let g_pos = pos_face_at(sem_g, j);
+                let h_pos = pos_face_at(sem_h, j + 2);
+                if let Some(pos_cf) =
+                    closed_form_of_rec_internal(&g_pos, &h_pos, k_outer, split_budget - 1)
+                {
+                    return Some(make_piecewise(k_outer, j, zero_cf, pos_cf));
                 }
             }
         }
@@ -674,7 +894,11 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
             closed_form_ignores_arg(&pw.zero_branch, idx_in_zero)
                 && closed_form_ignores_arg(&pw.pos_branch, idx)
         }
-        ClosedForm::NegMod(a1, a2, a3) => affine_ignores_arg(a1, idx) && affine_ignores_arg(a2, idx) && affine_ignores_arg(a3, idx),
+        ClosedForm::NegMod(a1, a2, a3) => {
+            affine_ignores_arg(a1, idx)
+                && affine_ignores_arg(a2, idx)
+                && affine_ignores_arg(a3, idx)
+        }
     }
 }
 
@@ -756,7 +980,9 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
 
             // Case 1: inners[bi] is identically 0 → always fire zero_branch on rest.
             if is_always_zero(g_branch) {
-                let rest: Vec<ClosedForm> = inners.iter().enumerate()
+                let rest: Vec<ClosedForm> = inners
+                    .iter()
+                    .enumerate()
                     .filter(|(i, _)| *i != bi)
                     .map(|(_, s)| s.clone())
                     .collect();
@@ -783,21 +1009,26 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
             // Correctness: Piecewise inners on a different variable must not depend on xj
             // (their pos_face_at returns them unchanged, only valid when xj-independent).
             // Affine inners are fine: pos_face_at adjusts their constant to compensate.
-            let others_ok = inners.iter().enumerate()
-                .filter(|(i, _)| *i != bi)
-                .all(|(_, inner)| {
-                    if let ClosedForm::Piecewise(pw2) = inner {
-                        pw2.branch_index + 1 == j || closed_form_ignores_arg(inner, j)
-                    } else {
-                        true
-                    }
-                });
+            let others_ok =
+                inners
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != bi)
+                    .all(|(_, inner)| {
+                        if let ClosedForm::Piecewise(pw2) = inner {
+                            pw2.branch_index + 1 == j || closed_form_ignores_arg(inner, j)
+                        } else {
+                            true
+                        }
+                    });
             if !others_ok {
                 return None;
             }
             // Zero branch: compose zero_branch with all inners except inners[bi],
             // each substituted at xj=0.
-            let zero_inners: Vec<ClosedForm> = inners.iter().enumerate()
+            let zero_inners: Vec<ClosedForm> = inners
+                .iter()
+                .enumerate()
                 .filter(|(i, _)| *i != bi)
                 .map(|(_, inner)| zero_face_at(inner, j))
                 .collect();
@@ -820,9 +1051,16 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
             Some(make_piecewise(arity, j - 1, zero_sem, pos_sem))
         }
         ClosedForm::NegMod(a1, a2, a3) => {
-            let inners_af: Option<Vec<AffineFn>> = inners.iter().map(|cf| {
-                if let ClosedForm::Affine(af) = cf { Some(af.clone()) } else { None }
-            }).collect();
+            let inners_af: Option<Vec<AffineFn>> = inners
+                .iter()
+                .map(|cf| {
+                    if let ClosedForm::Affine(af) = cf {
+                        Some(af.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             let inners_af = inners_af?;
             let c1 = compose_affine(a1, &inners_af)?;
             let c2 = compose_affine(a2, &inners_af)?;
@@ -837,20 +1075,29 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
 
 fn zero_face_at_affine(af: &AffineFn, j: usize) -> AffineFn {
     let new_coeffs = drop_index(&af.coeffs, j);
-    AffineFn { arity: af.arity - 1, coeffs: new_coeffs }
+    AffineFn {
+        arity: af.arity - 1,
+        coeffs: new_coeffs,
+    }
 }
 
 fn pos_face_at_affine(af: &AffineFn, j: usize) -> AffineFn {
     let mut new_coeffs = af.coeffs.clone();
     new_coeffs[0] = new_coeffs[0].saturating_add(new_coeffs[j]);
-    AffineFn { arity: af.arity, coeffs: new_coeffs }
+    AffineFn {
+        arity: af.arity,
+        coeffs: new_coeffs,
+    }
 }
 
 fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
     match sem {
         ClosedForm::Affine(af) => {
             let new_coeffs = drop_index(&af.coeffs, j);
-            ClosedForm::Affine(AffineFn { arity: af.arity - 1, coeffs: new_coeffs })
+            ClosedForm::Affine(AffineFn {
+                arity: af.arity - 1,
+                coeffs: new_coeffs,
+            })
         }
         ClosedForm::Piecewise(pw) => {
             let b = pw.branch_index + 1; // 1-based branch variable
@@ -863,16 +1110,19 @@ fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 let j_in_zero = if j < b { j } else { j - 1 };
                 let new_zero = zero_face_at(&pw.zero_branch, j_in_zero);
                 let new_pos = zero_face_at(&pw.pos_branch, j);
-                let new_bi = if j < b { pw.branch_index - 1 } else { pw.branch_index };
-                ClosedForm::Piecewise(PiecewiseFn {
-                    arity: pw.arity - 1,
-                    branch_index: new_bi,
-                    zero_branch: Box::new(new_zero),
-                    pos_branch: Box::new(new_pos),
-                })
+                let new_bi = if j < b {
+                    pw.branch_index - 1
+                } else {
+                    pw.branch_index
+                };
+                make_piecewise(pw.arity - 1, new_bi, new_zero, new_pos)
             }
         }
-        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(zero_face_at_affine(a1, j), zero_face_at_affine(a2, j), zero_face_at_affine(a3, j)),
+        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(
+            zero_face_at_affine(a1, j),
+            zero_face_at_affine(a2, j),
+            zero_face_at_affine(a3, j),
+        ),
     }
 }
 
@@ -890,7 +1140,10 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
         ClosedForm::Affine(af) => {
             let mut new_coeffs = af.coeffs.clone();
             new_coeffs[0] = new_coeffs[0].saturating_add(new_coeffs[j]);
-            ClosedForm::Affine(AffineFn { arity: af.arity, coeffs: new_coeffs })
+            ClosedForm::Affine(AffineFn {
+                arity: af.arity,
+                coeffs: new_coeffs,
+            })
         }
         ClosedForm::Piecewise(pw) => {
             let b = pw.branch_index + 1; // 1-based branch variable
@@ -900,18 +1153,16 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 let j_in_zero = if j < b { j } else { j - 1 };
                 let new_zero = pos_face_at(&pw.zero_branch, j_in_zero);
                 let new_pos = pos_face_at(&pw.pos_branch, j);
-                ClosedForm::Piecewise(PiecewiseFn {
-                    arity: pw.arity,
-                    branch_index: pw.branch_index,
-                    zero_branch: Box::new(new_zero),
-                    pos_branch: Box::new(new_pos),
-                })
+                make_piecewise(pw.arity, pw.branch_index, new_zero, new_pos)
             }
         }
-        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(pos_face_at_affine(a1, j), pos_face_at_affine(a2, j), pos_face_at_affine(a3, j)),
+        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(
+            pos_face_at_affine(a1, j),
+            pos_face_at_affine(a2, j),
+            pos_face_at_affine(a3, j),
+        ),
     }
 }
-
 
 /// If `sem` is a pure projection f(x) = xj (1-based j), return `Some(j)`.
 fn is_proj_of(sem: &ClosedForm) -> Option<usize> {
@@ -938,7 +1189,10 @@ fn is_proj_of(sem: &ClosedForm) -> Option<usize> {
 fn prepend_arg_affine(af: &AffineFn) -> AffineFn {
     let mut new_coeffs = vec![af.coeffs[0], 0];
     new_coeffs.extend_from_slice(&af.coeffs[1..]);
-    AffineFn { arity: af.arity + 1, coeffs: new_coeffs }
+    AffineFn {
+        arity: af.arity + 1,
+        coeffs: new_coeffs,
+    }
 }
 
 fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
@@ -946,7 +1200,10 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
         ClosedForm::Affine(af) => {
             let mut new_coeffs = vec![af.coeffs[0], 0]; // constant, then new ignored arg
             new_coeffs.extend_from_slice(&af.coeffs[1..]);
-            ClosedForm::Affine(AffineFn { arity: af.arity + 1, coeffs: new_coeffs })
+            ClosedForm::Affine(AffineFn {
+                arity: af.arity + 1,
+                coeffs: new_coeffs,
+            })
         }
         ClosedForm::Piecewise(pw) => ClosedForm::Piecewise(PiecewiseFn {
             arity: pw.arity + 1,
@@ -954,7 +1211,11 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
             zero_branch: Box::new(prepend_arg(&pw.zero_branch)),
             pos_branch: Box::new(prepend_arg(&pw.pos_branch)),
         }),
-        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(prepend_arg_affine(a1), prepend_arg_affine(a2), prepend_arg_affine(a3)),
+        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(
+            prepend_arg_affine(a1),
+            prepend_arg_affine(a2),
+            prepend_arg_affine(a3),
+        ),
     }
 }
 
@@ -991,7 +1252,9 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
 fn is_always_pos(sem: &ClosedForm) -> bool {
     match sem {
         ClosedForm::Affine(af) => af.coeffs[0] > 0,
-        ClosedForm::Piecewise(pw) => is_always_pos(&pw.zero_branch) && is_always_pos(&pw.pos_branch),
+        ClosedForm::Piecewise(pw) => {
+            is_always_pos(&pw.zero_branch) && is_always_pos(&pw.pos_branch)
+        }
         ClosedForm::NegMod(_, _, _) => false,
     }
 }
@@ -999,7 +1262,9 @@ fn is_always_pos(sem: &ClosedForm) -> bool {
 fn is_always_zero(sem: &ClosedForm) -> bool {
     match sem {
         ClosedForm::Affine(af) => af.coeffs.iter().all(|&c| c == 0),
-        ClosedForm::Piecewise(pw) => is_always_zero(&pw.zero_branch) && is_always_zero(&pw.pos_branch),
+        ClosedForm::Piecewise(pw) => {
+            is_always_zero(&pw.zero_branch) && is_always_zero(&pw.pos_branch)
+        }
         ClosedForm::NegMod(_, _, _) => false,
     }
 }
@@ -1011,12 +1276,14 @@ fn always_pos_minus_one(sem: &ClosedForm) -> Option<AffineFn> {
         ClosedForm::Affine(af) if af.coeffs[0] >= 1 => {
             let mut new_coeffs = af.coeffs.clone();
             new_coeffs[0] -= 1;
-            Some(AffineFn { arity: af.arity, coeffs: new_coeffs })
+            Some(AffineFn {
+                arity: af.arity,
+                coeffs: new_coeffs,
+            })
         }
         _ => None,
     }
 }
-
 
 /// Remove argument at 1-based position `idx` from `sem`, assuming it is unused.
 ///
@@ -1029,7 +1296,10 @@ fn drop_arg_affine(af: &AffineFn, idx: usize) -> Option<AffineFn> {
         if af.coeffs[idx] != 0 {
             return None;
         }
-        Some(AffineFn { arity: af.arity - 1, coeffs: drop_index(&af.coeffs, idx) })
+        Some(AffineFn {
+            arity: af.arity - 1,
+            coeffs: drop_index(&af.coeffs, idx),
+        })
     } else {
         None
     }
@@ -1043,7 +1313,10 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
                 return None; // arg is used
             }
             let new_coeffs = drop_index(&af.coeffs, idx);
-            Some(ClosedForm::Affine(AffineFn { arity: af.arity - 1, coeffs: new_coeffs }))
+            Some(ClosedForm::Affine(AffineFn {
+                arity: af.arity - 1,
+                coeffs: new_coeffs,
+            }))
         }
         ClosedForm::Piecewise(pw) => {
             let b = pw.branch_index + 1; // 1-based
@@ -1056,7 +1329,11 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
             let new_zero = drop_arg(&pw.zero_branch, idx_in_zero)?;
             let new_pos = drop_arg(&pw.pos_branch, idx)?;
             // If we drop an arg before b, the branch_index shifts down.
-            let new_bi = if idx < b { pw.branch_index - 1 } else { pw.branch_index };
+            let new_bi = if idx < b {
+                pw.branch_index - 1
+            } else {
+                pw.branch_index
+            };
             Some(ClosedForm::Piecewise(PiecewiseFn {
                 arity: pw.arity - 1,
                 branch_index: new_bi,
@@ -1064,7 +1341,11 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
                 pos_branch: Box::new(new_pos),
             }))
         }
-        ClosedForm::NegMod(a1, a2, a3) => Some(ClosedForm::NegMod(drop_arg_affine(a1, idx)?, drop_arg_affine(a2, idx)?, drop_arg_affine(a3, idx)?)),
+        ClosedForm::NegMod(a1, a2, a3) => Some(ClosedForm::NegMod(
+            drop_arg_affine(a1, idx)?,
+            drop_arg_affine(a2, idx)?,
+            drop_arg_affine(a3, idx)?,
+        )),
     }
 }
 
@@ -1088,14 +1369,26 @@ fn make_neg_mod(af1: AffineFn, af2: AffineFn, af3: AffineFn) -> ClosedForm {
         } else {
             let diff = v2 - v1;
             let rem = diff % v3;
-            if rem == 0 { 0 } else { v3 - rem }
+            if rem == 0 {
+                0
+            } else {
+                v3 - rem
+            }
         };
-        return ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![res] });
+        return ClosedForm::Affine(AffineFn {
+            arity: 0,
+            coeffs: vec![res],
+        });
     }
     ClosedForm::NegMod(af1, af2, af3)
 }
 
-fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, pos_branch: ClosedForm) -> ClosedForm {
+fn make_piecewise(
+    arity: usize,
+    branch_index: usize,
+    zero_branch: ClosedForm,
+    pos_branch: ClosedForm,
+) -> ClosedForm {
     if let Some(dropped) = drop_arg(&pos_branch, branch_index + 1) {
         if dropped == zero_branch {
             return pos_branch;
@@ -1103,8 +1396,9 @@ fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, po
     }
     if let (ClosedForm::Affine(z), ClosedForm::Affine(p)) = (&zero_branch, &pos_branch) {
         let bi1 = branch_index + 1; // 1-based index of the branched arg
-        // Adjusted constant: A.c0 = p.c0 - p.coeffs[bi1] (from the pos-branch shift by -1)
-        let c0_ok = p.coeffs[0].checked_sub(p.coeffs[bi1])
+                                    // Adjusted constant: A.c0 = p.c0 - p.coeffs[bi1] (from the pos-branch shift by -1)
+        let c0_ok = p.coeffs[0]
+            .checked_sub(p.coeffs[bi1])
             .map_or(false, |c0| c0 == z.coeffs[0]);
         // Non-branched args must have matching coefficients between p and z
         // (z skips the bi1 slot, so z.coeffs[j] matches p.coeffs[j] for j<bi1,
@@ -1115,7 +1409,10 @@ fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, po
         if coeffs_ok {
             let mut new_coeffs = p.coeffs.clone();
             new_coeffs[0] = z.coeffs[0];
-            return ClosedForm::Affine(AffineFn { arity, coeffs: new_coeffs });
+            return ClosedForm::Affine(AffineFn {
+                arity,
+                coeffs: new_coeffs,
+            });
         }
     }
     // If pos_branch is itself a Piecewise on a different axis bi2, try reordering the two
@@ -1129,7 +1426,11 @@ fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, po
             // bi2 in zero_branch's arg space (bi1 was dropped, so indices after bi1 shift down).
             let bi2_in_zero = if bi2 < branch_index { bi2 } else { bi2 - 1 };
             // bi1 in new_zero's arg space (bi2 was dropped, so indices after bi2 shift down).
-            let bi1_in_new_zero = if bi2 < branch_index { branch_index - 1 } else { branch_index };
+            let bi1_in_new_zero = if bi2 < branch_index {
+                branch_index - 1
+            } else {
+                branch_index
+            };
             let pz: ClosedForm = *pp.zero_branch.clone();
             let pp_pos: ClosedForm = *pp.pos_branch.clone();
             // Slice zero_branch at bi2=0 (substitute & drop) and bi2>0 (shift for decrement).
@@ -1137,7 +1438,8 @@ fn make_piecewise(arity: usize, branch_index: usize, zero_branch: ClosedForm, po
             let z_pos = pos_face_at(&zero_branch, bi2_in_zero + 1);
             let new_zero = make_piecewise(arity - 1, bi1_in_new_zero, z0, pz);
             let new_pos = make_piecewise(arity, branch_index, z_pos, pp_pos);
-            if matches!(new_zero, ClosedForm::Affine(_)) && matches!(new_pos, ClosedForm::Affine(_)) {
+            if matches!(new_zero, ClosedForm::Affine(_)) && matches!(new_pos, ClosedForm::Affine(_))
+            {
                 return make_piecewise(arity, bi2, new_zero, new_pos);
             }
         }
@@ -1173,12 +1475,14 @@ fn compose_affine(outer: &AffineFn, inners: &[AffineFn]) -> Option<AffineFn> {
         }
         new_coeffs[0] = new_coeffs[0].checked_add(c_i.checked_mul(inner.coeffs[0])?)?;
         for j in 1..=inner_arity {
-            new_coeffs[j] =
-                new_coeffs[j].checked_add(c_i.checked_mul(inner.coeffs[j])?)?;
+            new_coeffs[j] = new_coeffs[j].checked_add(c_i.checked_mul(inner.coeffs[j])?)?;
         }
     }
 
-    Some(AffineFn { arity: inner_arity, coeffs: new_coeffs })
+    Some(AffineFn {
+        arity: inner_arity,
+        coeffs: new_coeffs,
+    })
 }
 
 /// Return a copy of `coeffs` with the element at `idx` removed.
@@ -1206,7 +1510,8 @@ mod tests {
     /// Assert closed_form_of matches simulate on a grid of inputs 0..=max_val per dimension.
     fn check_vs_sim(grf_str: &str, max_val: SmallNat) {
         let f = grf(grf_str);
-        let sem = closed_form_of(&f).unwrap_or_else(|| panic!("closed_form_of returned None for {grf_str}"));
+        let sem = closed_form_of(&f)
+            .unwrap_or_else(|| panic!("closed_form_of returned None for {grf_str}"));
         let arity = f.arity();
         if arity == 0 {
             let sim_val = simulate(&f, &[], 0).0.into_value();
@@ -1218,7 +1523,7 @@ mod tests {
         let n = (max_val + 1) as usize;
         let total = n.pow(arity as u32);
         for idx in 0..total {
-            let mut args : Vec<SmallNat> = vec![0; arity];
+            let mut args: Vec<SmallNat> = vec![0; arity];
             let mut rem = idx;
             for a in args.iter_mut().rev() {
                 *a = (rem % n) as SmallNat;
@@ -1238,7 +1543,13 @@ mod tests {
     #[test]
     fn test_zero() {
         let s = closed_form_of(&grf("Z0")).unwrap();
-        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 0, coeffs: vec![0] }));
+        assert_eq!(
+            s,
+            ClosedForm::Affine(AffineFn {
+                arity: 0,
+                coeffs: vec![0]
+            })
+        );
         assert_eq!(s.eval::<SmallNat>(&[]), Some(0));
 
         let s3 = closed_form_of(&grf("Z3")).unwrap();
@@ -1249,7 +1560,13 @@ mod tests {
     #[test]
     fn test_succ() {
         let s = closed_form_of(&grf("S")).unwrap();
-        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] }));
+        assert_eq!(
+            s,
+            ClosedForm::Affine(AffineFn {
+                arity: 1,
+                coeffs: vec![1, 1]
+            })
+        );
         assert_eq!(s.eval(&[0u64]), Some(1));
         assert_eq!(s.eval(&[5u64]), Some(6));
     }
@@ -1307,7 +1624,13 @@ mod tests {
         // R(Z0, C(S, P(2,2))) = identity: f(n) = n
         check_vs_sim("R(Z0, C(S, P(2,2)))", 10);
         let s = closed_form_of(&grf("R(Z0, C(S, P(2,2)))")).unwrap();
-        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] }));
+        assert_eq!(
+            s,
+            ClosedForm::Affine(AffineFn {
+                arity: 1,
+                coeffs: vec![0, 1]
+            })
+        );
     }
 
     #[test]
@@ -1315,7 +1638,13 @@ mod tests {
         // R(P(1,1), C(S, P(3,2))) = addition: f(n, m) = n + m
         check_vs_sim("R(P(1,1), C(S, P(3,2)))", 5);
         let s = closed_form_of(&grf("R(P(1,1), C(S, P(3,2)))")).unwrap();
-        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![0, 1, 1] }));
+        assert_eq!(
+            s,
+            ClosedForm::Affine(AffineFn {
+                arity: 2,
+                coeffs: vec![0, 1, 1]
+            })
+        );
     }
 
     #[test]
@@ -1323,7 +1652,13 @@ mod tests {
         // R(S, C(S, C(S, P(3,2)))) = f(n, x) = 1 + 2n + x
         check_vs_sim("R(S, C(S, C(S, P(3,2))))", 5);
         let s = closed_form_of(&grf("R(S, C(S, C(S, P(3,2))))")).unwrap();
-        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![1, 2, 1] }));
+        assert_eq!(
+            s,
+            ClosedForm::Affine(AffineFn {
+                arity: 2,
+                coeffs: vec![1, 2, 1]
+            })
+        );
     }
 
     // --- Rec Case B: h ignores accumulator ---
@@ -1385,7 +1720,10 @@ mod tests {
         // The inner Rec f(n, x1, x2) = R(S,P(3,3))(x1,x2) = if x1=0 then x2+1 else x2.
         check_vs_sim("R(R(S, P(3,3)), C(R(P(1,1), P(3,3)), P(4,4), P(4,2)))", 5);
         // The reported mismatch: C(f, S, S, P(1,1)) at args=[3] gave cf=2, sim=3.
-        check_vs_sim("C(R(R(S, P(3,3)), C(R(P(1,1), P(3,3)), P(4,4), P(4,2))), S, S, P(1,1))", 8);
+        check_vs_sim(
+            "C(R(R(S, P(3,3)), C(R(P(1,1), P(3,3)), P(4,4), P(4,2))), S, S, P(1,1))",
+            8,
+        );
     }
 
     #[test]
@@ -1403,7 +1741,13 @@ mod tests {
         // R(Z0, C(P(2,1), P(2,2), P(2,1))): f(n) = g() + 0*n = 0 for all n
         check_vs_sim("R(Z0, C(P(2,1), P(2,2), P(2,1)))", 8);
         let s = closed_form_of(&grf("R(Z0, C(P(2,1), P(2,2), P(2,1)))")).unwrap();
-        assert_eq!(s, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 0] }));
+        assert_eq!(
+            s,
+            ClosedForm::Affine(AffineFn {
+                arity: 1,
+                coeffs: vec![0, 0]
+            })
+        );
     }
 
     // --- Case B with Piecewise step ---
@@ -1530,7 +1874,10 @@ mod tests {
         // The outer piecewise (on the outermost counter) has equal branches and should collapse.
         let cf2 = closed_form_of(&grf("R(R(R(S, P(3,2)), P(4,1)), P(5,2))")).unwrap();
         if let ClosedForm::Piecewise(ref pw) = cf2 {
-            assert_ne!(pw.branch_index, 0, "outer Piecewise should not branch on the counter");
+            assert_ne!(
+                pw.branch_index, 0,
+                "outer Piecewise should not branch on the counter"
+            );
         }
         check_vs_sim("R(R(R(S, P(3,2)), P(4,1)), P(5,2))", 4);
     }
@@ -1544,17 +1891,35 @@ mod tests {
         // pos_branch = 1+x1 uses x1; boundary: pos_branch(0)=1 ≠ z.c0=0, yet
         // p.c0 - p.coeffs[1] = 0 = z.c0, so it collapses to Affine x1.
         let cf = closed_form_of(&grf("R(Z0, C(S, P(2,1)))")).unwrap();
-        assert_eq!(cf, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] }));
+        assert_eq!(
+            cf,
+            ClosedForm::Affine(AffineFn {
+                arity: 1,
+                coeffs: vec![0, 1]
+            })
+        );
         check_vs_sim("R(Z0, C(S, P(2,1)))", 8);
 
         // R(C(S, Z0), C(S, C(S, P(2,1)))): f(0)=1, f(n+1)=2+n → f(n)=n+1 (successor).
         let cf2 = closed_form_of(&grf("R(C(S, Z0), C(S, C(S, P(2,1))))")).unwrap();
-        assert_eq!(cf2, ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] }));
+        assert_eq!(
+            cf2,
+            ClosedForm::Affine(AffineFn {
+                arity: 1,
+                coeffs: vec![1, 1]
+            })
+        );
         check_vs_sim("R(C(S, Z0), C(S, C(S, P(2,1))))", 8);
 
         // R(Z1, C(S, P(3,1))): arity 2, f(0,m)=0, f(n+1,m)=1+n → f(n,m)=n (project first arg).
         let cf3 = closed_form_of(&grf("R(Z1, C(S, P(3,1)))")).unwrap();
-        assert_eq!(cf3, ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![0, 1, 0] }));
+        assert_eq!(
+            cf3,
+            ClosedForm::Affine(AffineFn {
+                arity: 2,
+                coeffs: vec![0, 1, 0]
+            })
+        );
         check_vs_sim("R(Z1, C(S, P(3,1)))", 4);
     }
 
@@ -1578,8 +1943,14 @@ mod tests {
             ClosedForm::Piecewise(PiecewiseFn {
                 arity: 2,
                 branch_index: 1,
-                zero_branch: Box::new(ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] })),
-                pos_branch: Box::new(ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![0, 0, 0] })),
+                zero_branch: Box::new(ClosedForm::Affine(AffineFn {
+                    arity: 1,
+                    coeffs: vec![0, 1]
+                })),
+                pos_branch: Box::new(ClosedForm::Affine(AffineFn {
+                    arity: 2,
+                    coeffs: vec![0, 0, 0]
+                })),
             }),
             "expected (x2=0 ? x1 : 0@x2-1), got {cf:?}"
         );
@@ -1591,7 +1962,10 @@ mod tests {
     #[test]
     fn test_affine_overflow() {
         // Coefficient that overflows when multiplied by 3: i64::MAX as u64 * 3 > u64::MAX.
-        let af = AffineFn { arity: 1, coeffs: vec![0u64, i64::MAX as u64] };
+        let af = AffineFn {
+            arity: 1,
+            coeffs: vec![0u64, i64::MAX as u64],
+        };
         assert_eq!(af.eval(&[3u64]), None);
         // i64::MAX * 2 = u64::MAX - 1: valid u64, should return Some.
         assert_eq!(af.eval(&[2u64]), Some(u64::MAX - 1));
@@ -1754,7 +2128,9 @@ impl ClosedForm {
             ClosedForm::Piecewise(pw) => {
                 let bi = pw.branch_index;
                 let x = vars[bi].as_str();
-                let zero_vars: Vec<String> = vars.iter().enumerate()
+                let zero_vars: Vec<String> = vars
+                    .iter()
+                    .enumerate()
                     .filter(|&(j, _)| j != bi)
                     .map(|(_, v)| v.clone())
                     .collect();
@@ -1767,14 +2143,17 @@ impl ClosedForm {
             ClosedForm::NegMod(a1, a2, a3) => {
                 let s1 = a1.format_expr(vars);
                 let s2 = a2.format_expr(vars);
-                
+
                 if a3.coeffs.iter().all(|&c| c == 0) {
                     return format!("({s1} ∸ {s2})");
                 }
 
                 let mut a3_plus = a3.clone();
                 a3_plus.coeffs[0] += 1;
-                let s3 = if a3_plus.coeffs[1..].iter().filter(|&&c| c != 0).count() + (if a3_plus.coeffs[0] != 0 { 1 } else { 0 }) > 1 {
+                let s3 = if a3_plus.coeffs[1..].iter().filter(|&&c| c != 0).count()
+                    + (if a3_plus.coeffs[0] != 0 { 1 } else { 0 })
+                    > 1
+                {
                     format!("({})", a3_plus.format_expr(vars))
                 } else {
                     a3_plus.format_expr(vars)
@@ -1794,51 +2173,93 @@ impl ClosedForm {
     fn emit_rules(&self, fn_name: &str, args: &[String], depths: &[usize]) {
         match self {
             ClosedForm::Affine(af) => {
-                let formula_args: Vec<String> = args.iter().zip(depths.iter())
+                let formula_args: Vec<String> = args
+                    .iter()
+                    .zip(depths.iter())
                     .map(|(name, &d)| decrement_n(name, d))
                     .collect();
-                let lhs: Vec<String> = args.iter().enumerate().map(|(j, name)| {
-                    if closed_form_ignores_arg(self, j + 1) { "_".to_string() } else { name.clone() }
-                }).collect();
-                println!("  {}({}) = {}", fn_name, lhs.join(", "), af.format_expr(&formula_args));
-            }
-            ClosedForm::Piecewise(pw) => {
-                let bi = pw.branch_index;
-                let zero_lhs: Vec<String> = args.iter().enumerate().map(|(j, name)| {
-                    if j == bi {
-                        depths[bi].to_string()
-                    } else {
-                        let j_in_zero = if j < bi { j } else { j - 1 };
-                        if closed_form_ignores_arg(&pw.zero_branch, j_in_zero + 1) {
+                let lhs: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(j, name)| {
+                        if closed_form_ignores_arg(self, j + 1) {
                             "_".to_string()
                         } else {
                             name.clone()
                         }
-                    }
-                }).collect();
-                let zero_vars: Vec<String> = args.iter().enumerate()
+                    })
+                    .collect();
+                println!(
+                    "  {}({}) = {}",
+                    fn_name,
+                    lhs.join(", "),
+                    af.format_expr(&formula_args)
+                );
+            }
+            ClosedForm::Piecewise(pw) => {
+                let bi = pw.branch_index;
+                let zero_lhs: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(j, name)| {
+                        if j == bi {
+                            depths[bi].to_string()
+                        } else {
+                            let j_in_zero = if j < bi { j } else { j - 1 };
+                            if closed_form_ignores_arg(&pw.zero_branch, j_in_zero + 1) {
+                                "_".to_string()
+                            } else {
+                                name.clone()
+                            }
+                        }
+                    })
+                    .collect();
+                let zero_vars: Vec<String> = args
+                    .iter()
+                    .enumerate()
                     .filter(|&(j, _)| j != bi)
                     .map(|(_, name)| name.clone())
                     .collect();
-                println!("  {}({}) = {}", fn_name, zero_lhs.join(", "), pw.zero_branch.format_inline(&zero_vars));
+                println!(
+                    "  {}({}) = {}",
+                    fn_name,
+                    zero_lhs.join(", "),
+                    pw.zero_branch.format_inline(&zero_vars)
+                );
                 let mut new_depths = depths.to_vec();
                 new_depths[bi] += 1;
                 pw.pos_branch.emit_rules(fn_name, args, &new_depths);
             }
             ClosedForm::NegMod(a1, a2, a3) => {
                 if a3.coeffs.iter().all(|&c| c == 0) {
-                    println!("  {}({}) = ({} ∸ {})", fn_name, args.join(", "), a1.format_expr(args), a2.format_expr(args));
+                    println!(
+                        "  {}({}) = ({} ∸ {})",
+                        fn_name,
+                        args.join(", "),
+                        a1.format_expr(args),
+                        a2.format_expr(args)
+                    );
                     return;
                 }
-                
+
                 let mut a3_plus = a3.clone();
                 a3_plus.coeffs[0] += 1;
-                let s3 = if a3_plus.coeffs[1..].iter().filter(|&&c| c != 0).count() + (if a3_plus.coeffs[0] != 0 { 1 } else { 0 }) > 1 {
+                let s3 = if a3_plus.coeffs[1..].iter().filter(|&&c| c != 0).count()
+                    + (if a3_plus.coeffs[0] != 0 { 1 } else { 0 })
+                    > 1
+                {
                     format!("({})", a3_plus.format_expr(args))
                 } else {
                     a3_plus.format_expr(args)
                 };
-                println!("  {}({}) = ({} - {}) %< {}", fn_name, args.join(", "), a1.format_expr(args), a2.format_expr(args), s3);
+                println!(
+                    "  {}({}) = ({} - {}) %< {}",
+                    fn_name,
+                    args.join(", "),
+                    a1.format_expr(args),
+                    a2.format_expr(args),
+                    s3
+                );
             }
         }
     }

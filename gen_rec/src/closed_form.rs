@@ -800,21 +800,18 @@ pub fn closed_form_of_rec_internal(
                             }
                         }
 
-                        if is_always_zero(&cur_f) {
-                            let mut inners = Vec::with_capacity(k_outer);
-                            inners.push(ClosedForm::Affine({
-                                let mut af = AffineFn::zero(k_outer - 1);
-                                af.coeffs[0] = step as u64;
-                                af
-                            }));
-                            for i in 1..k_outer {
-                                inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
-                            }
-                            if let Some(next_f) = compose(h_z, &inners, k_outer - 1) {
-                                cur_f = next_f;
-                            } else {
-                                break;
-                            }
+                        let mut inners = Vec::with_capacity(k_outer + 1);
+                        inners.push(ClosedForm::Affine({
+                            let mut af = AffineFn::zero(k_outer - 1);
+                            af.coeffs[0] = step as u64;
+                            af
+                        }));
+                        inners.push(cur_f.clone());
+                        for i in 1..k_outer {
+                            inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
+                        }
+                        if let Some(next_f) = compose(sem_h, &inners, k_outer - 1) {
+                            cur_f = next_f;
                         } else {
                             break;
                         }
@@ -1116,6 +1113,33 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                 let mut pos_inners: Vec<ClosedForm> = inners.to_vec();
                 pos_inners[bi] = ClosedForm::Affine(g_branch_m1);
                 return compose(&pw.pos_branch, &pos_inners, arity);
+            }
+
+            // Case 4: inners[bi] is a Piecewise branching on xj.
+            // Distribute the outer Piecewise over the inner Piecewise.
+            if let ClosedForm::Piecewise(pw_inner) = g_branch {
+                let j = pw_inner.branch_index + 1; // 1-based variable
+                let others_ok = inners.iter().enumerate().filter(|(i, _)| *i != bi).all(|(_, inner)| {
+                    if let ClosedForm::Piecewise(pw2) = inner {
+                        pw2.branch_index + 1 == j || closed_form_ignores_arg(inner, j)
+                    } else {
+                        true // Affine adjusts constant
+                    }
+                });
+                if others_ok {
+                    let zero_inners: Vec<ClosedForm> = inners.iter().enumerate().map(|(i, inner)| {
+                        if i == bi { *pw_inner.zero_branch.clone() } else { zero_face_at(inner, j) }
+                    }).collect();
+                    let pos_inners: Vec<ClosedForm> = inners.iter().enumerate().map(|(i, inner)| {
+                        if i == bi { *pw_inner.pos_branch.clone() } else { pos_face_at(inner, j) }
+                    }).collect();
+                    if let (Some(z_sem), Some(p_sem)) = (
+                        compose(h, &zero_inners, arity.saturating_sub(1)),
+                        compose(h, &pos_inners, arity)
+                    ) {
+                        return Some(make_piecewise(arity, j - 1, z_sem, p_sem));
+                    }
+                }
             }
 
             // Case 3: inners[bi] is a projection of xj → distribute on xj=0 boundary.
@@ -2700,5 +2724,18 @@ mod tests {
         // This corresponds to testing `closed_form_of_rec_internal` handles periodic dependencies on step counter.
         // It should identify that the recursion forms a cycle.
         let rec_cf = super::closed_form_of_rec_internal(&g_sem, &c_sem, 1, 100);
+    }
+
+    #[test]
+    fn test_case_g_piecewise_trap() {
+        // This GRF contains a sequence that hits Piecewise branches and gets trapped after a pre-period.
+        // It requires Case G to properly distribute Piecewise over Piecewise.
+        let f = grf("M(C(R(P(1,1), C(R(S, P(3,3)), P(3,2), P(3,1))), S, Z1))");
+        let cf = closed_form_of(&f);
+        assert!(cf.is_none()); // M() does not have a closed form, it diverges.
+        // However, we can test that the inner R(...) has a closed form!
+        let inner = grf("R(P(1,1), C(R(S, P(3,3)), P(3,2), P(3,1)))");
+        let inner_cf = closed_form_of(&inner);
+        assert!(inner_cf.is_some(), "Inner GRF should have a closed form");
     }
 }

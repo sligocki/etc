@@ -404,6 +404,30 @@ pub fn simulate_opts<N: SimNat>(
             let n = args[0].clone();
             let rest = &args[1..];
 
+            // If h ignores its accumulator (arg 2), every iteration
+            // h(i, acc, rest) = h(i, _, rest) is independent of acc.  The final
+            // result is therefore h(n-1, 0, rest), computable in O(1).
+            // Skip computing base in this case.
+            // Note: This may lead to switching a Divergent GRF -> halting if base diverges
+            // and it will also undercount base_steps.
+            if opts.rec_fast_forward && !n.is_zero() && !h.used_args().contains(&2) {
+                let n_m1 = n.clone().pred();
+                let mut h_args: Vec<N> = Vec::with_capacity(rest.len() + 2);
+                h_args.push(n_m1.clone());
+                h_args.push(N::zero()); // accumulator: ignored by h, value is arbitrary
+                h_args.extend(rest.iter().cloned());
+                let (result, s) =
+                    simulate_opts(h, &h_args, step_budget.map(|b| b - steps.sim), opts);
+                let sh_base = s.base_approx.to_u64_sat(); // exact: bounded by step budget
+                steps += s;
+                // base_approx += (n - 1) * sh_base
+                let approx = n_m1
+                    .checked_mul_u64(sh_base)
+                    .unwrap_or_else(|| N::from_u64(u64::MAX));
+                steps.base_approx.saturating_add_assign(approx);
+                return (result, steps);
+            }
+
             // Base case
             let (base, s) = simulate_opts(g, rest, step_budget.map(|b| b - steps.sim), opts);
             steps += s;
@@ -412,33 +436,9 @@ pub fn simulate_opts<N: SimNat>(
                 other => return (other, steps),
             };
 
-            // Fast-forward two different (opposite) cases:
-            //   * h ignores accumulator (arg 2)
-            //   * h echos (or adds a constant each iteration to) the accumulator
+            // If h(i, acc, rest) = acc + k for a constant k, then
+            // R(g, h)(n, rest) = g(rest) + n*k — direct multiplication.
             if opts.rec_fast_forward {
-                // If h ignores its accumulator (arg 2), every iteration
-                // h(i, acc, rest) = h(i, _, rest) is independent of acc.  The final
-                // result is therefore h(n-1, 0, rest), computable in O(1).
-                if !n.is_zero() && !h.used_args().contains(&2) {
-                    let n_m1 = n.clone().pred();
-                    let mut h_args: Vec<N> = Vec::with_capacity(rest.len() + 2);
-                    h_args.push(n_m1.clone());
-                    h_args.push(N::zero()); // accumulator: ignored by h, value is arbitrary
-                    h_args.extend(rest.iter().cloned());
-                    let (result, s) =
-                        simulate_opts(h, &h_args, step_budget.map(|b| b - steps.sim), opts);
-                    let sh_base = s.base_approx.to_u64_sat(); // exact: bounded by step budget
-                    steps += s;
-                    // base_approx += (n - 1) * sh_base
-                    let approx = n_m1
-                        .checked_mul_u64(sh_base)
-                        .unwrap_or_else(|| N::from_u64(u64::MAX));
-                    steps.base_approx.saturating_add_assign(approx);
-                    return (result, steps);
-                }
-
-                // If h(i, acc, rest) = acc + k for a constant k, then
-                // R(g, h)(n, rest) = g(rest) + n*k — direct multiplication.
                 if let Some(k) = h.acc_plus_k() {
                     // base_approx += n * (2k + 1)
                     let factor = 2 * k + 1;

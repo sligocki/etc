@@ -2,7 +2,7 @@
 use crate::enumerate::stream_grf;
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
-use crate::simulate::{simulate, SimResult, SmallNat};
+use crate::simulate::{SimResult, SmallNat, simulate};
 use std::collections::HashMap;
 
 /// One entry in a fingerprint: the observed outcome on a single canonical input.

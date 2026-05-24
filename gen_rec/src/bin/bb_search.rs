@@ -2,7 +2,7 @@
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
-use gen_rec::enumerate::{stream_grf, EnumScope};
+use gen_rec::enumerate::{EnumScope, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
@@ -539,16 +539,27 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
     if has_min {
         println!(
             "n={}: best={}, {} holdouts, {} diverged, {} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
-            size, best_str, acc.holdouts, acc.diverged, acc.total,
-            elapsed, sim_secs, enum_secs,
+            size,
+            best_str,
+            acc.holdouts,
+            acc.diverged,
+            acc.total,
+            elapsed,
+            sim_secs,
+            enum_secs,
             fmt_si(acc.total_steps),
             fmt_si_f64(acc.total_steps as f64 / elapsed.max(1e-9)),
         );
     } else {
         println!(
             "n={}: best={}, {} holdouts, {} fns  [{:.2}s sim={:.2}s enum={:.2}s, {} steps, {} steps/s]",
-            size, best_str, acc.holdouts, acc.total,
-            elapsed, sim_secs, enum_secs,
+            size,
+            best_str,
+            acc.holdouts,
+            acc.total,
+            elapsed,
+            sim_secs,
+            enum_secs,
             fmt_si(acc.total_steps),
             fmt_si_f64(acc.total_steps as f64 / elapsed.max(1e-9)),
         );

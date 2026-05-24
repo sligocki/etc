@@ -9,8 +9,8 @@ use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::fingerprint::{canonical_inputs_n, verification_inputs};
 use gen_rec::semantic_search::{
-    bool_spec, exact_spec, exhaustive_probe, probe_spec, search_all_at_min, search_smallest,
-    SearchConfig,
+    SearchConfig, bool_spec, exact_spec, exhaustive_probe, probe_spec, search_all_at_min,
+    search_smallest,
 };
 use gen_rec::simulate::SmallNat;
 use std::cmp::min;

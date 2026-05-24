@@ -3,7 +3,7 @@ use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::enumerate::stream_grf;
 use gen_rec::grf::Grf;
 use gen_rec::pruning::PruningOpts;
-use gen_rec::simulate::{simulate_opts, SimOpts, SimResult};
+use gen_rec::simulate::{SimOpts, SimResult, simulate_opts};
 
 use std::collections::HashSet;
 use std::time::Instant;

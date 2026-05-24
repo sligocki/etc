@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use clap::{Args, Parser, Subcommand};
-use gen_rec::closed_form::{closed_form_of, ClosedForm};
+use gen_rec::closed_form::{ClosedForm, closed_form_of};
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::stream_grf;
 use gen_rec::fingerprint::canonical_inputs;
@@ -18,7 +18,7 @@ use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_grl::parse_grf_entries;
 use gen_rec::pruning::PruningOpts;
 use gen_rec::sim_nat::SmallNat;
-use gen_rec::simulate::{simulate, simulate_opts, SimOpts, SimResult};
+use gen_rec::simulate::{SimOpts, SimResult, simulate, simulate_opts};
 
 // =============================================================================
 // CLI
@@ -1259,7 +1259,7 @@ fn run_diff(args: DiffArgs) {
         println!("CF-dedup breakdown (non-canonical sub → canonical replacement):");
 
         let mut pairs: Vec<_> = dedup_pairs.iter().collect();
-        pairs.sort_by(|a, b| b.1 .0.cmp(&a.1 .0).then(b.1 .1.cmp(&a.1 .1)));
+        pairs.sort_by(|a, b| b.1.0.cmp(&a.1.0).then(b.1.1.cmp(&a.1.1)));
 
         let grf_w = pairs
             .iter()
@@ -1321,7 +1321,9 @@ fn print_diff_entry(grf: &Grf, score: SmallNat, d: &Diagnosis) {
             );
         }
         Diagnosis::AllCanonical => {
-            println!("         all sub-expressions canonical; absent from file2 (top-K or pre-found at smaller size)");
+            println!(
+                "         all sub-expressions canonical; absent from file2 (top-K or pre-found at smaller size)"
+            );
         }
         Diagnosis::Unexpected => {
             println!("         WARNING: could not find a CF-dedup reason; check manually");

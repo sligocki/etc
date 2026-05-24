@@ -34,7 +34,7 @@
 use crate::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use crate::fingerprint::{canonical_inputs, canonical_inputs_n, grid_inputs, verification_inputs};
 use crate::grf::Grf;
-use crate::simulate::{simulate, SimResult, SmallNat};
+use crate::simulate::{SimResult, SmallNat, simulate};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -414,12 +414,12 @@ pub fn probe_spec(
             SimResult::Diverge => {
                 return ProbeResult::Diverged {
                     inputs: inp.clone(),
-                }
+                };
             }
             SimResult::OutOfSteps | SimResult::ValueOverflow => {
                 return ProbeResult::TimedOut {
                     inputs: inp.clone(),
-                }
+                };
             }
             SimResult::ArityMismatch => panic!("arity mismatch in probe_spec"),
             SimResult::Value(v) => {

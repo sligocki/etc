@@ -1,5 +1,5 @@
 use crate::grf::{Grf, GrfKind};
-use crate::optimize::{compute_inline_constraints, InlineConstraints};
+use crate::optimize::{InlineConstraints, compute_inline_constraints};
 use crate::pruning::PruningOpts;
 use std::cell::RefCell;
 use std::collections::HashMap;

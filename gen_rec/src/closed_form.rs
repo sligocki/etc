@@ -1372,7 +1372,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                     .iter()
                     .enumerate()
                     .skip(1)
-                    .filter(|(_, &c)| c != 0)
+                    .filter(|&(_, &c)| c != 0)
                     .collect();
                 if non_zeros.len() == 1 && *non_zeros[0].1 == 1 {
                     let j = non_zeros[0].0;
@@ -1816,11 +1816,7 @@ fn make_neg_mod(af1: AffineFn, af2: AffineFn, af3: AffineFn) -> ClosedForm {
         } else {
             let diff = v2 - v1;
             let rem = diff % v3;
-            if rem == 0 {
-                0
-            } else {
-                v3 - rem
-            }
+            if rem == 0 { 0 } else { v3 - rem }
         };
         return ClosedForm::Affine(AffineFn {
             arity: 0,
@@ -1843,7 +1839,7 @@ fn make_piecewise(
     }
     if let (ClosedForm::Affine(z), ClosedForm::Affine(p)) = (&zero_branch, &pos_branch) {
         let bi1 = branch_index + 1; // 1-based index of the branched arg
-                                    // Adjusted constant: A.c0 = p.c0 - p.coeffs[bi1] (from the pos-branch shift by -1)
+        // Adjusted constant: A.c0 = p.c0 - p.coeffs[bi1] (from the pos-branch shift by -1)
         let c0_ok = p.coeffs[0]
             .checked_sub(p.coeffs[bi1])
             .map_or(false, |c0| c0 == z.coeffs[0]);
@@ -2208,7 +2204,7 @@ mod tests {
     use crate::enumerate::stream_grf;
     use crate::pruning::PruningOpts;
     use crate::sim_nat::SmallNat;
-    use crate::simulate::{simulate, SimResult};
+    use crate::simulate::{SimResult, simulate};
 
     fn grf(s: &str) -> Grf {
         s.parse().unwrap()
@@ -2851,7 +2847,7 @@ mod tests {
         let f = grf("M(C(R(P(1,1), C(R(S, P(3,3)), P(3,2), P(3,1))), S, Z1))");
         let cf = closed_form_of(&f);
         assert!(cf.is_none()); // M() does not have a closed form, it diverges.
-                               // However, we can test that the inner R(...) has a closed form!
+        // However, we can test that the inner R(...) has a closed form!
         let inner = grf("R(P(1,1), C(R(S, P(3,3)), P(3,2), P(3,1)))");
         let inner_cf = closed_form_of(&inner);
         assert!(inner_cf.is_some(), "Inner GRF should have a closed form");

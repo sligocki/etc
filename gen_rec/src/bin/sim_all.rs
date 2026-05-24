@@ -183,8 +183,12 @@ fn main() {
                 "[{}] elapsed: {} | {}/{} ({}%) | halted: {} | holdouts: {} | diverged: {} | max_score: {}",
                 Local::now().format("%H:%M:%S"),
                 fmt_elapsed(elapsed_s),
-                n_total, n_input, pct,
-                n_halted, n_holdouts, n_diverged,
+                n_total,
+                n_input,
+                pct,
+                n_halted,
+                n_holdouts,
+                n_diverged,
                 max_score,
             );
             last_progress = Instant::now();

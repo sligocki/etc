@@ -3,7 +3,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
 use crate::grf::{Grf, GrfKind};
-use crate::mgrf::{lift_grf, parse_mgrf_with_modules, MgrfFile};
+use crate::mgrf::{MgrfFile, lift_grf, parse_mgrf_with_modules};
 
 // Ordered list of embedded mgrf files. Earlier files take precedence for
 // deduplication: a macro name present in both base.mgrf and bool_zero.mgrf
@@ -46,7 +46,7 @@ impl AliasDb {
         let mut seen_macros: HashSet<String> = HashSet::new();
 
         macro_rules! push {
-            ($alias:expr, $grf:expr) => {
+            ($alias:expr_2021, $grf:expr_2021) => {
                 entries.push(Entry {
                     alias: $alias.to_string(),
                     grf: $grf,

@@ -11,7 +11,7 @@
 ///   3. Redundancy by canonical target (what smaller GRF is it equivalent to?)
 use clap::Parser;
 use gen_rec::enumerate::{count_grf, stream_grf};
-use gen_rec::fingerprint::{canonical_inputs, compute_fp, Fingerprint};
+use gen_rec::fingerprint::{Fingerprint, canonical_inputs, compute_fp};
 use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::pruning::PruningOpts;
 use gen_rec::sim_nat::SmallNat;

@@ -98,11 +98,7 @@ impl SimNat for BigNat {
         Some(self + rhs)
     }
     fn checked_sub(self, rhs: Self) -> Option<Self> {
-        if self >= rhs {
-            Some(self - rhs)
-        } else {
-            None
-        }
+        if self >= rhs { Some(self - rhs) } else { None }
     }
     fn checked_mul_u64(self, n: u64) -> Option<Self> {
         Some(self * n)
@@ -124,11 +120,7 @@ impl SimNat for BigNat {
         *self == 0u64
     }
     fn checked_rem(self, rhs: Self) -> Option<Self> {
-        if rhs == 0u64 {
-            None
-        } else {
-            Some(self % rhs)
-        }
+        if rhs == 0u64 { None } else { Some(self % rhs) }
     }
     fn checked_div_ceil_u64(self, rhs: u64) -> Option<Self> {
         if rhs == 0 {

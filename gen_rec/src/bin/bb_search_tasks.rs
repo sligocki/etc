@@ -148,7 +148,7 @@ struct Config {
 /// names → bools, driven by the FLAGS registry.  Missing keys default to false,
 /// so old config files remain readable.
 mod pruning_serde {
-    use gen_rec::pruning::{PruningOpts, FLAGS};
+    use gen_rec::pruning::{FLAGS, PruningOpts};
     use serde::de::Deserializer;
     use serde::ser::Serializer;
     use serde::{Deserialize, Serialize};
@@ -545,11 +545,13 @@ fn cmd_run(args: RunArgs) {
                     let config = config.clone();
                     let dir = args.dir.clone();
                     let batch_size = args.batch_size;
-                    std::thread::spawn(move || loop {
-                        let task = queue.lock().unwrap().pop_front();
-                        match task {
-                            None => break,
-                            Some(t) => run_task(&t, &config, &dir, batch_size),
+                    std::thread::spawn(move || {
+                        loop {
+                            let task = queue.lock().unwrap().pop_front();
+                            match task {
+                                None => break,
+                                Some(t) => run_task(&t, &config, &dir, batch_size),
+                            }
                         }
                     })
                 })

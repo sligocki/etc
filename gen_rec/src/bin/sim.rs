@@ -16,7 +16,7 @@ use gen_rec::grf::GrfKind;
 use gen_rec::io_table::print_sweep_table;
 use gen_rec::sim_nat::SmallNat;
 use gen_rec::simulate::{
-    simulate, simulate_min, simulate_with_fallback, SimOpts, SimResult, SimSteps,
+    SimOpts, SimResult, SimSteps, simulate, simulate_min, simulate_with_fallback,
 };
 
 #[derive(Parser, Debug)]

@@ -11,7 +11,7 @@
 use clap::Parser;
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::{count_grf, stream_grf};
-use gen_rec::pruning::{PruningOpts, FLAGS};
+use gen_rec::pruning::{FLAGS, PruningOpts};
 
 /// Build the cumulative config list from the global FLAGS registry.
 /// Each entry is (label, opts, stream_only).

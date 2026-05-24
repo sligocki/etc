@@ -5,9 +5,9 @@ use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 use std::sync::OnceLock;
 
-use crate::closed_form::{closed_form_of, ClosedForm};
+use crate::closed_form::{ClosedForm, closed_form_of};
 use crate::sim_nat::SmallNat;
-use crate::simulate::{simulate, SimResult};
+use crate::simulate::{SimResult, simulate};
 
 /// Parse a GRF from a format string, panicking on error.
 ///
@@ -256,11 +256,7 @@ impl Grf {
                         return g.min_val() + 1;
                     }
                 }
-                if self.is_never_zero() {
-                    1
-                } else {
-                    0
-                }
+                if self.is_never_zero() { 1 } else { 0 }
             }
             GrfKind::Rec(_, _) => {
                 if self.is_never_zero() {
@@ -741,7 +737,7 @@ fn grf_outer_arg_dfs(g: &Grf, map: &[usize], seen: &mut Vec<bool>, order: &mut V
         }
         GrfKind::Rec(base, step) => {
             let k = base.arity() + 1; // outer arity of this Rec
-                                      // Counter = outer map[0]; always encountered first for Rec.
+            // Counter = outer map[0]; always encountered first for Rec.
             let outer_counter = map[0];
             if outer_counter > 0 && !seen[outer_counter] {
                 seen[outer_counter] = true;
@@ -890,7 +886,7 @@ mod tests {
         assert!(grf!("R(Z0, S)").is_positive_for_pos_arg(1)); // step=S never_zero
         assert!(grf!("R(P(1,1), C(S,P(3,2)))").is_positive_for_pos_arg(1)); // step C(S,...) never_zero
         assert!(!grf!("R(P(1,1), P(3,2))").is_positive_for_pos_arg(1)); // step P(3,2) not never_zero, g not never_zero
-                                                                        // R(S, P(3,2)): is_never_zero (P2 echoes acc which started at S(x)≥1), so positive for any j
+        // R(S, P(3,2)): is_never_zero (P2 echoes acc which started at S(x)≥1), so positive for any j
         assert!(grf!("R(S, P(3,2))").is_positive_for_pos_arg(1));
         // R(S, P(3,3)): step returns outer arg (not acc), so NOT always positive even for n≥1
         assert!(!grf!("R(S, P(3,3))").is_positive_for_pos_arg(1));

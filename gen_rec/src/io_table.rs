@@ -1,5 +1,5 @@
 use crate::grf::Grf;
-use crate::simulate::{simulate_with_fallback, SimResult, SmallNat};
+use crate::simulate::{SimResult, SmallNat, simulate_with_fallback};
 
 const MAX_VAL_W: usize = 8;
 

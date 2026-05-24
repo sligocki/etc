@@ -30,8 +30,8 @@ WG := M(R(S, Next))
 # Fw2(x, y) = WG^x(y+1)
 Fw2 := R(S, C(WG, P2))
 
-# G() = Fw2(2,2) = WG^2(3) > Graham's number
-G := C(C(Fw2, S, S), K[1])
+# Graham() = Fw2(2,2) = WG^2(3) > Graham's number
+Graham := C(C(Fw2, S, S), K[1])
 
 
 # Tests

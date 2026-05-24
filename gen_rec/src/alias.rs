@@ -104,8 +104,7 @@ impl AliasDb {
         }
 
         // TODO: GRF-macro aliases (RepSucc[f], DiagRep[f], DiagS[f]) require structural
-        // sub-expression matching — not yet supported. Concrete instantiations (AckWorm,
-        // Graham, etc.) are already covered by the named defs loaded above.
+        // sub-expression matching — not yet supported.
 
         // ── Lifted versions: FuncName^k for 1–4 extra unused inputs ────────────
         // lift_grf fails for GRFs that cannot be lifted (e.g. S); those are skipped.
@@ -138,7 +137,7 @@ impl AliasDb {
     /// Parse a mgrf expression, resolving alias names and macro families.
     ///
     /// Accepts full mgrf expression syntax: `R(Z, P1)`, `C(Add, S)`, named
-    /// GRFs (`Add`, `AckWorm`), num-macros (`Plus[7]`, `Monus[3]`, `K^2[4]`),
+    /// GRFs (`Add`, `Div2`), num-macros (`Plus[7]`, `Monus[3]`, `K^2[4]`),
     /// and standard raw-GRF atoms (`Z0`, `S`, `P(2,1)`).  Returns `Err` if
     /// the expression cannot be parsed or resolved.
     pub fn resolve(&self, expr: &str) -> Result<Grf, String> {
@@ -245,8 +244,6 @@ mod tests {
         let db = AliasDb::default();
         assert_eq!(db.alias(&pred()), "Pred");
         assert_eq!(db.alias(&add()), "Add");
-        // AckWorm from the mgrf file (Rust's ack_worm() is structurally different).
-        assert_eq!(db.alias(&db.resolve("AckWorm").unwrap()), "AckWorm");
     }
 
     #[test]

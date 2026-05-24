@@ -1,15 +1,6 @@
 /// ClosedForm-based novel-sub-expression enumerator.
 ///
-/// Like `novel_enum::NovelEnumerator` but uses `ClosedForm` structural equality
-/// for deduplication instead of simulation-based fingerprinting.  This avoids
-/// all simulation cost for GRFs that have a closed form (~99.7% of all GRFs)
-/// and also guarantees the GRF are equal (not just similar).
-///
-/// # Soundness note
-///
-/// ClosedForm structural equality is *sound* (same form ⟹ same function) but not
-/// *complete* (same function may have different forms).  ClosedFormOnly mode
-/// therefore retains some redundancy compared to fingerprint-based dedup.
+/// Enumerates GRF, removing duplication for equal ClosedForm results.
 use crate::closed_form::{closed_form_of, ClosedForm};
 use crate::enumerate::{for_each_grf_core, stream_grf};
 use crate::grf::Grf;
@@ -240,11 +231,7 @@ impl ClosedFormEnumerator {
                             .iter()
                             .map(|&i| Grf::proj_atom(target_arity, i))
                             .collect();
-                        cb(&Grf::new(crate::grf::GrfKind::Comp(
-                            Box::new(rnf_grf.clone()),
-                            projs,
-                            target_arity,
-                        )));
+                        cb(&Grf::comp(rnf_grf.clone(), projs));
                     }
                 } else {
                     if let Some(g) = crate::optimize::inline_proj(rnf_grf, target_arity, rewiring) {

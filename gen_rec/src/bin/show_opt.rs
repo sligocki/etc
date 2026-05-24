@@ -11,9 +11,7 @@ use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::fingerprint::FingerprintDb;
 use gen_rec::grf::{Grf, GrfKind};
-use gen_rec::novel_db::{fingerprint_db_from_dir, fingerprint_db_from_file};
 use gen_rec::optimize::{opt_fingerprint, opt_inline_proj};
-use std::path::PathBuf;
 
 const WRAP: usize = 72;
 
@@ -37,27 +35,17 @@ struct Args {
     #[arg(long)]
     no_fingerprint: bool,
 
-    /// Load fingerprint DB from a single novel DB file.
-    /// Mutually exclusive with --db-dir and --db-max-size / --db-max-arity.
-    #[arg(long, value_name = "PATH")]
-    db_path: Option<PathBuf>,
-
-    /// Load fingerprint DB from all .db files in this directory.
-    /// Mutually exclusive with --db-path.
-    #[arg(long, value_name = "DIR")]
-    db_dir: Option<PathBuf>,
-
-    /// Max GRF size included in the fingerprint DB (ignored if --db-path/--db-dir is set).
+    /// Max GRF size for fingerprinting.
     #[arg(long, default_value_t = 8)]
-    db_max_size: usize,
+    fp_max_size: usize,
 
-    /// Max arity included in the fingerprint DB (ignored if --db-path/--db-dir is set).
+    /// Max arity for fingerprinting.
     #[arg(long, default_value_t = 3)]
-    db_max_arity: usize,
+    fp_max_arity: usize,
 
-    /// Include Minimization in the fingerprint DB (ignored if --db-path/--db-dir is set).
+    /// Include Minimization in fingerprinting.
     #[arg(long)]
-    db_allow_min: bool,
+    fp_allow_min: bool,
 
     /// Simulation step budget used when fingerprinting (0 = unlimited).
     #[arg(long, default_value_t = 10_000)]
@@ -189,50 +177,21 @@ fn main() {
 
     // Pass 2: opt_fingerprint
     if !args.no_fingerprint {
-        let db = if let Some(ref path) = args.db_path {
-            eprint!("Loading fingerprint DB from {}... ", path.display());
-            match fingerprint_db_from_file(path, args.max_steps) {
-                Ok(db) => {
-                    eprintln!("done.");
-                    db
-                }
-                Err(e) => {
-                    eprintln!();
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
-            }
-        } else if let Some(ref dir) = args.db_dir {
-            eprint!("Loading fingerprint DB from {}/ ... ", dir.display());
-            match fingerprint_db_from_dir(dir, args.max_steps) {
-                Ok(db) => {
-                    eprintln!("done.");
-                    db
-                }
-                Err(e) => {
-                    eprintln!();
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
-            }
-        } else {
-            eprint!(
-                "Building fingerprint DB (size≤{}, arity≤{})... ",
-                args.db_max_size, args.db_max_arity
-            );
-            let db = FingerprintDb::build(
-                args.db_max_size,
-                args.db_max_arity,
-                args.db_allow_min,
-                args.max_steps,
-            );
-            eprintln!("done.");
-            db
-        };
+        eprint!(
+            "\nBuilding fingerprint DB (size≤{}, arity≤{})... ",
+            args.fp_max_size, args.fp_max_arity
+        );
+        let db = FingerprintDb::build(
+            args.fp_max_size,
+            args.fp_max_arity,
+            args.fp_allow_min,
+            args.max_steps,
+        );
+        eprintln!("done");
 
         let title = format!(
             "opt_fingerprint  DB: size≤{}, arity≤{}",
-            args.db_max_size, args.db_max_arity
+            args.fp_max_size, args.fp_max_arity
         );
         let after = opt_fingerprint(current.clone(), &db);
         print_pass(&title, &current, &after);

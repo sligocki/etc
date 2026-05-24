@@ -129,7 +129,6 @@ pub(crate) fn for_each_grf_core(
                     }
                 }
 
-                let h_box = Box::new(h.clone());
                 let h_is_rec = matches!(&h.kind, GrfKind::Rec(_, _));
                 // Compute constraints once per head; O(h.size()) upfront instead of
                 // O(h.size()) per arg-tuple.
@@ -209,7 +208,7 @@ pub(crate) fn for_each_grf_core(
                                 }
                             }
                         }
-                        callback(&Grf::new(GrfKind::Comp(h_box.clone(), gs.to_vec(), arity)));
+                        callback(&Grf::comp_arity(h.clone(), gs.to_vec(), arity));
                     },
                 );
             });
@@ -527,7 +526,6 @@ fn seek_grfs(
                         if *rem == 0 {
                             return;
                         }
-                        let h_box = Box::new(h.clone());
                         let mut args = Vec::with_capacity(m);
                         seek_args(
                             gs_total,
@@ -540,11 +538,7 @@ fn seek_grfs(
                             rem,
                             &mut args,
                             &mut |gs: &[Grf]| {
-                                callback(&Grf::new(GrfKind::Comp(
-                                    h_box.clone(),
-                                    gs.to_vec(),
-                                    arity,
-                                )));
+                                callback(&Grf::comp_arity(h.clone(), gs.to_vec(), arity));
                             },
                         );
                     },
@@ -571,7 +565,6 @@ fn seek_grfs(
                         if *rem == 0 {
                             return;
                         }
-                        let h_box = Box::new(h.clone());
                         let mut args = Vec::with_capacity(m);
                         seek_args(
                             gs_total,
@@ -584,11 +577,7 @@ fn seek_grfs(
                             rem,
                             &mut args,
                             &mut |gs: &[Grf]| {
-                                callback(&Grf::new(GrfKind::Comp(
-                                    h_box.clone(),
-                                    gs.to_vec(),
-                                    arity,
-                                )));
+                                callback(&Grf::comp_arity(h.clone(), gs.to_vec(), arity));
                             },
                         );
                     },
@@ -622,7 +611,7 @@ fn seek_grfs(
                                 local_skip -= 1;
                                 continue;
                             }
-                            let h_box = Box::new(Grf::min(f.clone()));
+                            let h = Grf::min(f.clone());
                             let mut args = Vec::with_capacity(m);
                             seek_args(
                                 gs_total,
@@ -635,11 +624,7 @@ fn seek_grfs(
                                 rem,
                                 &mut args,
                                 &mut |gs: &[Grf]| {
-                                    callback(&Grf::new(GrfKind::Comp(
-                                        h_box.clone(),
-                                        gs.to_vec(),
-                                        arity,
-                                    )));
+                                    callback(&Grf::comp_arity(h.clone(), gs.to_vec(), arity));
                                 },
                             );
                             local_rem -= 1;
@@ -656,7 +641,7 @@ fn seek_grfs(
                                 if *rem == 0 {
                                     return;
                                 }
-                                let h_box = Box::new(Grf::min(f.clone()));
+                                let h = Grf::min(f.clone());
                                 let mut args = Vec::with_capacity(m);
                                 seek_args(
                                     gs_total,
@@ -669,11 +654,7 @@ fn seek_grfs(
                                     rem,
                                     &mut args,
                                     &mut |gs: &[Grf]| {
-                                        callback(&Grf::new(GrfKind::Comp(
-                                            h_box.clone(),
-                                            gs.to_vec(),
-                                            arity,
-                                        )));
+                                        callback(&Grf::comp_arity(h.clone(), gs.to_vec(), arity));
                                     },
                                 );
                             },
@@ -985,7 +966,6 @@ fn seek_pre_rec_heads(
                     *skip -= per_h2_args;
                     return;
                 }
-                let h2_box = Box::new(h2.clone());
                 let mut args2 = Vec::with_capacity(m2);
                 seek_args(
                     gs2_total,
@@ -998,11 +978,7 @@ fn seek_pre_rec_heads(
                     rem,
                     &mut args2,
                     &mut |gs2: &[Grf]| {
-                        callback(&Grf::new(GrfKind::Comp(
-                            h2_box.clone(),
-                            gs2.to_vec(),
-                            arity,
-                        )));
+                        callback(&Grf::comp_arity(h2.clone(), gs2.to_vec(), arity));
                     },
                 );
             });

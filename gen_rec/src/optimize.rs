@@ -288,7 +288,7 @@ pub fn inline_proj(f: &Grf, new_arity: usize, rewiring: &[usize]) -> Option<Grf>
                 .iter()
                 .map(|g| inline_proj(g, new_arity, rewiring))
                 .collect::<Option<Vec<_>>>()?;
-            Some(Grf::new(GrfKind::Comp(h.clone(), new_gs, new_arity)))
+            Some(Grf::comp_arity(*h.clone(), new_gs, new_arity))
         }
 
         GrfKind::Rec(g, h) => {
@@ -393,9 +393,8 @@ pub fn opt_inline_proj(f: Grf) -> Grf {
             }
 
             // Can't inline at this level — recurse into the head and each arg.
-            let new_h = opt_inline_proj(*h);
             let new_gs = gs.into_iter().map(opt_inline_proj).collect();
-            Grf::new(GrfKind::Comp(Box::new(new_h), new_gs, k))
+            Grf::comp_arity(opt_inline_proj(*h), new_gs, k)
         }
 
         GrfKind::Rec(g, h) => Grf::rec(opt_inline_proj(*g), opt_inline_proj(*h)),
@@ -431,9 +430,8 @@ pub fn opt_fingerprint(f: Grf, db: &FingerprintDb) -> Grf {
 
     match f.kind {
         GrfKind::Comp(h, gs, k) => {
-            let new_h = opt_fingerprint(*h, db);
             let new_gs = gs.into_iter().map(|g| opt_fingerprint(g, db)).collect();
-            Grf::new(GrfKind::Comp(Box::new(new_h), new_gs, k))
+            Grf::comp_arity(opt_fingerprint(*h, db), new_gs, k)
         }
 
         GrfKind::Rec(g, h) => Grf::rec(opt_fingerprint(*g, db), opt_fingerprint(*h, db)),

@@ -111,7 +111,7 @@ impl Hash for Grf {
 }
 
 impl Grf {
-    pub(crate) fn new(kind: GrfKind) -> Self {
+    fn new(kind: GrfKind) -> Self {
         Grf {
             kind,
             cf: OnceLock::new(),
@@ -147,6 +147,10 @@ impl Grf {
         Self::new(GrfKind::Min(Box::new(f)))
     }
 
+    pub fn comp_arity(h: Self, args: Vec<Self>, arity: usize) -> Self {
+        Self::new(GrfKind::Comp(Box::new(h), args, arity))
+    }
+
     /// Convenience constructor for Comp: derives and stores the arity of the args.
     ///
     /// Panics if `args` is empty (use `comp0` for 0-arg Comp).
@@ -156,7 +160,7 @@ impl Grf {
             "Comp requires at least 1 argument function; use comp0 for 0-arg Comp"
         );
         let arity = args[0].arity();
-        Self::new(GrfKind::Comp(Box::new(h), args, arity))
+        Self::comp_arity(h, args, arity)
     }
 
     /// Convenience constructor for 0-arg Comp: `Ck(h)` lifts a 0-arity `h` to

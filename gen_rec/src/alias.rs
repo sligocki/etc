@@ -12,7 +12,6 @@ const MGRF_FILES: &[(&str, &str)] = &[
     ("base", include_str!("../mgrf/base.mgrf")),
     ("bool_zero", include_str!("../mgrf/bool_zero.mgrf")),
     ("func_rep", include_str!("../mgrf/func_rep.mgrf")),
-    ("ack_worm", include_str!("../mgrf/ack_worm.mgrf")),
 ];
 
 struct Entry {

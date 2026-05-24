@@ -10,7 +10,9 @@
 //!   `STEPS  EXPR`   — leading step count (holdout files from bb_search)
 //!   `EXPR`          — plain expression per line
 
+use crate::grf::Grf;
 use crate::sim_nat::SmallNat;
+use crate::simulate::{SimResult, SimSteps};
 use std::fmt;
 use std::io::{self, Write};
 
@@ -55,6 +57,49 @@ pub struct GrfEntry {
     pub base_steps: Option<SmallNat>,
     pub score: Option<SmallNat>,
     pub unknown_reason: Option<String>,
+}
+
+impl GrfEntry {
+    pub fn from_sim_result(grf: &Grf, result: SimResult, steps: SimSteps) -> GrfEntry {
+        let expr = grf.to_string();
+        match result {
+            SimResult::Value(score) => GrfEntry {
+                expr,
+                status: Some(Status::Halt),
+                steps: Some(steps.sim),
+                base_steps: Some(steps.base_approx),
+                score: Some(score),
+                unknown_reason: None,
+            },
+            SimResult::Diverge => GrfEntry {
+                expr,
+                status: Some(Status::Diverge),
+                steps: Some(steps.sim),
+                base_steps: None,
+                score: None,
+                unknown_reason: None,
+            },
+            SimResult::OutOfSteps => GrfEntry {
+                expr,
+                status: Some(Status::Unknown),
+                steps: Some(steps.sim),
+                base_steps: None,
+                score: None,
+                unknown_reason: Some("OutOfSteps".to_string()),
+            },
+            SimResult::ValueOverflow => GrfEntry {
+                expr,
+                status: Some(Status::Unknown),
+                steps: Some(steps.sim),
+                base_steps: None,
+                score: None,
+                unknown_reason: Some("Overflow".to_string()),
+            },
+            SimResult::ArityMismatch => {
+                panic!("arity mismatch");
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

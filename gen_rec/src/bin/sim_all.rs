@@ -2,17 +2,17 @@
 ///
 /// Reads any .grl or legacy holdout file, simulates each 0-arity GRF up to the
 /// given step budget, and writes ALL results (Halt / Diverge / Unknown) to the
-/// output file.  Periodic progress lines and a final stats summary are printed.
+/// output file.
 ///
 /// Usage:
 ///   cargo run --bin sim_all -- input.grl 100000000 output.grl
 ///   cargo run --bin sim_all -- holdout.grl 1000000000 next.grl --progress-interval 10
-use chrono::Local;
 use clap::Parser;
 use gen_rec::grf::Grf;
-use gen_rec::io_grl::{self, GrfEntry, Status};
+use gen_rec::io_grl::{GrfEntry, Status, parse_grf_entries, write_grf_entry, write_grl_header};
 use gen_rec::sim_nat::SmallNat;
 use gen_rec::simulate::simulate;
+use rayon::prelude::*;
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -35,47 +35,108 @@ struct Args {
     progress_interval: u64,
 }
 
-fn fmt_steps(n: SmallNat) -> String {
-    if n < 1_000 {
-        format!("{}", n)
-    } else if n < 1_000_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else if n < 1_000_000_000 {
-        format!("{:.2}M", n as f64 / 1_000_000.0)
-    } else if n < 1_000_000_000_000u64 {
-        format!("{:.2}B", n as f64 / 1_000_000_000.0)
-    } else {
-        format!("{:.2}T", n as f64 / 1_000_000_000_000.0)
-    }
+fn read_grfs(filename: &PathBuf) -> Vec<Grf> {
+    let content = fs::read_to_string(filename).unwrap_or_else(|e| {
+        eprintln!("error reading {}: {}", filename.display(), e);
+        std::process::exit(1);
+    });
+    let entries = parse_grf_entries(&content);
+
+    entries
+        .iter()
+        .filter_map(|entry| entry.expr.parse().ok())
+        .filter(|grf: &Grf| grf.arity() == 0)
+        .collect()
 }
 
-fn fmt_elapsed(secs: u64) -> String {
-    if secs < 60 {
-        format!("{}s", secs)
-    } else if secs < 3600 {
-        format!("{}m{}s", secs / 60, secs % 60)
-    } else {
-        format!("{}h{}m{}s", secs / 3600, (secs % 3600) / 60, secs % 60)
+fn sim_one(grf: &Grf, max_steps: u64) -> GrfEntry {
+    let (result, steps) = simulate(grf, &[], max_steps);
+    GrfEntry::from_sim_result(grf, result, steps)
+}
+
+fn print_summary(results: &Vec<GrfEntry>) {
+    let n_total = results.len();
+    let n_halted = results
+        .iter()
+        .filter(|result| matches!(result.status, Some(Status::Halt)))
+        .count();
+    let n_diverged = results
+        .iter()
+        .filter(|result| matches!(result.status, Some(Status::Diverge)))
+        .count();
+    let n_holdouts = results
+        .iter()
+        .filter(|result| matches!(result.status, Some(Status::Unknown)))
+        .count();
+    let max_score = results
+        .iter()
+        .filter(|result| matches!(result.status, Some(Status::Halt)))
+        .filter_map(|result| result.score)
+        .max();
+    let max_steps = results
+        .iter()
+        .filter(|result| matches!(result.status, Some(Status::Halt)))
+        .filter_map(|result| result.steps)
+        .max();
+    let total_steps: u64 = results.iter().filter_map(|result| result.steps).sum();
+
+    println!("Summary:");
+    println!(
+        "  Halted:   {} / {} ({}%)",
+        n_halted,
+        n_total,
+        n_halted as f32 / n_total as f32
+    );
+    println!(
+        "  Diverged: {} / {} ({}%)",
+        n_diverged,
+        n_total,
+        n_diverged as f32 / n_total as f32
+    );
+    println!(
+        "  Holdouts: {} / {} ({}%)",
+        n_holdouts,
+        n_total,
+        n_holdouts as f32 / n_total as f32
+    );
+    if let Some(n) = max_score {
+        println!("Max Score: {}", n);
     }
+    if let Some(n) = max_steps {
+        println!("Max Steps: {}", n);
+    }
+    println!("Total Sim Steps: {}", total_steps);
 }
 
 fn main() {
     let args = Args::parse();
 
-    let content = fs::read_to_string(&args.input).unwrap_or_else(|e| {
-        eprintln!("error reading {}: {}", args.input.display(), e);
-        std::process::exit(1);
-    });
-
-    let entries = io_grl::parse_grf_entries(&content);
-    let n_input = entries.len();
+    let max_steps = if args.steps == 0 {
+        u64::MAX
+    } else {
+        args.steps
+    };
 
     let out_file = fs::File::create(&args.output).unwrap_or_else(|e| {
         eprintln!("error creating {}: {}", args.output.display(), e);
         std::process::exit(1);
     });
+
+    let grfs = read_grfs(&args.input);
+    println!("Read {} GRFs", grfs.len());
+
+    let start = Instant::now();
+    let results: Vec<GrfEntry> = grfs.par_iter().map(|grf| sim_one(grf, max_steps)).collect();
+    println!(
+        "Simulated {} GRFs for {} steps each in {:?}",
+        grfs.len(),
+        max_steps,
+        start.elapsed()
+    );
+
+    // Write results.
     let mut out = BufWriter::new(out_file);
-    io_grl::write_grl_header(
+    write_grl_header(
         &mut out,
         &format!(
             "sim_all: input={}, budget={}",
@@ -85,135 +146,10 @@ fn main() {
     )
     .unwrap();
 
-    let max_steps = if args.steps == 0 {
-        SmallNat::MAX
-    } else {
-        args.steps
-    };
-
-    let start = Instant::now();
-    let mut last_progress = start;
-    let progress_interval = std::time::Duration::from_secs(args.progress_interval);
-
-    let mut n_total = 0usize;
-    let mut n_halted = 0usize;
-    let mut n_diverged = 0usize;
-    let mut n_holdouts = 0usize;
-    let mut n_skipped = 0usize;
-    let mut max_score: SmallNat = 0;
-    let mut max_halt_steps: SmallNat = 0;
-    let mut total_steps: SmallNat = 0;
-
-    for entry in entries {
-        // Skip entries already known to diverge.
-        if matches!(entry.status, Some(Status::Diverge)) {
-            n_skipped += 1;
-            continue;
-        }
-
-        let grf: Grf = match entry.expr.parse() {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("parse error ({}): {}", e, entry.expr);
-                continue;
-            }
-        };
-
-        if grf.arity() != 0 {
-            eprintln!("skipping non-0-arity GRF: {}", entry.expr);
-            n_skipped += 1;
-            continue;
-        }
-
-        let (result, sim_steps) = simulate(&grf, &[], max_steps);
-        let steps_taken = sim_steps.sim;
-        total_steps += steps_taken;
-        n_total += 1;
-
-        let (out_status, out_score, out_base_steps, out_unknown_reason) = match result {
-            gen_rec::simulate::SimResult::Value(v) => {
-                n_halted += 1;
-                if v > max_score {
-                    max_score = v;
-                }
-                if steps_taken > max_halt_steps {
-                    max_halt_steps = steps_taken;
-                }
-                (Status::Halt, Some(v), Some(sim_steps.base_approx), None)
-            }
-            gen_rec::simulate::SimResult::Diverge => {
-                n_diverged += 1;
-                (Status::Diverge, None, None, None)
-            }
-            gen_rec::simulate::SimResult::OutOfSteps => {
-                n_holdouts += 1;
-                (Status::Unknown, None, None, Some("OutOfSteps"))
-            }
-            gen_rec::simulate::SimResult::ArityMismatch => {
-                panic!("arity mismatch in sim_all");
-            }
-            gen_rec::simulate::SimResult::ValueOverflow => {
-                n_holdouts += 1;
-                (Status::Unknown, None, None, Some("Overflow"))
-            }
-        };
-
-        io_grl::write_grf_entry(
-            &mut out,
-            &GrfEntry {
-                expr: entry.expr,
-                status: Some(out_status),
-                steps: Some(steps_taken),
-                base_steps: out_base_steps,
-                score: out_score,
-                unknown_reason: out_unknown_reason.map(|r| r.to_string()),
-            },
-        )
-        .unwrap();
-
-        // Progress report.
-        if args.progress_interval > 0 && last_progress.elapsed() >= progress_interval {
-            let elapsed_s = start.elapsed().as_secs();
-            let pct = if n_input > 0 {
-                100 * n_total / n_input
-            } else {
-                0
-            };
-            println!(
-                "[{}] elapsed: {} | {}/{} ({}%) | halted: {} | holdouts: {} | diverged: {} | max_score: {}",
-                Local::now().format("%H:%M:%S"),
-                fmt_elapsed(elapsed_s),
-                n_total,
-                n_input,
-                pct,
-                n_halted,
-                n_holdouts,
-                n_diverged,
-                max_score,
-            );
-            last_progress = Instant::now();
-        }
+    for grf_entry in results.iter() {
+        write_grf_entry(&mut out, &grf_entry).unwrap();
     }
-
     out.flush().unwrap();
 
-    let elapsed_s = start.elapsed().as_secs();
-    println!();
-    println!("=== sim_all complete ===");
-    println!("input          : {}", args.input.display());
-    println!("output         : {}", args.output.display());
-    println!("budget         : {}", args.steps);
-    println!("total          : {}", n_total);
-    println!("halted         : {}", n_halted);
-    println!("diverged       : {}", n_diverged);
-    println!("holdouts       : {}", n_holdouts);
-    if n_skipped > 0 {
-        println!("skipped        : {}", n_skipped);
-    }
-    if n_halted > 0 {
-        println!("max score      : {}", max_score);
-        println!("max halt steps : {}", fmt_steps(max_halt_steps));
-    }
-    println!("total steps    : {}", fmt_steps(total_steps));
-    println!("elapsed        : {}", fmt_elapsed(elapsed_s));
+    print_summary(&results);
 }

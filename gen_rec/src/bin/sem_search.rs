@@ -558,11 +558,6 @@ struct Args {
     /// Disable alias resolution for --probe input (accept only raw GRF strings).
     #[arg(long)]
     no_alias: bool,
-
-    /// Cap CF caching to domains where arity+size <= LIMIT; larger domains stream
-    /// without caching.
-    #[arg(long, value_name = "LIMIT")]
-    cf_limit: Option<usize>,
 }
 
 // ── Search runner ─────────────────────────────────────────────────────────────
@@ -596,7 +591,6 @@ fn run_search(info: &SpecDef, args: &Args) {
         confidence_inputs,
         progress: args.progress,
         trace: args.trace,
-        cf_limit: args.cf_limit,
     };
 
     let t0 = Instant::now();

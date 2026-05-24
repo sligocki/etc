@@ -61,9 +61,6 @@ pub struct SearchConfig {
     pub progress: bool,
     /// Print a trace line for every candidate tested. Very verbose.
     pub trace: bool,
-    /// Cap CF caching to domains where arity+size <= LIMIT; larger domains stream
-    /// without caching.
-    pub cf_limit: Option<usize>,
 }
 
 impl Default for SearchConfig {
@@ -76,7 +73,6 @@ impl Default for SearchConfig {
             confidence_inputs: 64,
             progress: false,
             trace: false,
-            cf_limit: None,
         }
     }
 }
@@ -122,11 +118,7 @@ pub fn search_smallest(
     // best partial per size: size → SearchResult with most inputs_tested
     let mut best_partial: BTreeMap<usize, SearchResult> = BTreeMap::new();
 
-    let cf_limit = config
-        .cf_limit
-        .unwrap_or(if config.allow_min { 15 } else { 17 });
-    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min)
-        .with_cf_limit(cf_limit);
+    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min);
 
     for size in 1..=config.max_size {
         let mut guaranteed: Option<SearchResult> = None;
@@ -226,11 +218,7 @@ pub fn search_all_at_min(
     let mut all_guaranteed: Vec<SearchResult> = Vec::new();
     let mut best_at_min: Option<SearchResult> = None;
 
-    let cf_limit = config
-        .cf_limit
-        .unwrap_or(if config.allow_min { 15 } else { 17 });
-    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min)
-        .with_cf_limit(cf_limit);
+    let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min);
     en.prepare(config.arity, min_size);
     en.for_each_raw_candidate(config.arity, min_size, &mut |grf: &Grf| {
         if let Some((converged, timed_out)) = test_candidate(

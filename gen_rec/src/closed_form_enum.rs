@@ -48,13 +48,14 @@ impl ClosedFormEnumerator {
     pub fn new(mode: EnumMode, allow_min: bool, opts: PruningOpts) -> Self {
         // TODO: Not yet supported.
         assert!(mode != EnumMode::ClosedFormChildren);
+        let cf_limit = if allow_min { 15 } else { 17 };
         ClosedFormEnumerator {
             memo: HashMap::new(),
             seen_closed: HashMap::new(),
             mode,
             allow_min,
             opts,
-            cf_limit: usize::MAX,
+            cf_limit,
             dynamic_rnf: false,
         }
     }

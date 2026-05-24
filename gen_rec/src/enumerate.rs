@@ -4,6 +4,44 @@ use crate::pruning::PruningOpts;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+#[derive(
+    clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum EnumScope {
+    #[value(name = "prf")]
+    Prf,
+    #[value(name = "min_prf")]
+    MinPrf,
+    #[value(name = "grf")]
+    Grf,
+}
+
+impl EnumScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Prf => "prf",
+            Self::MinPrf => "min_prf",
+            Self::Grf => "grf",
+        }
+    }
+}
+
+impl EnumScope {
+    pub fn allow_min(&self) -> bool {
+        match self {
+            EnumScope::Grf => true,
+            _ => false,
+        }
+    }
+
+    pub fn min_prf(&self) -> bool {
+        match self {
+            EnumScope::MinPrf => true,
+            _ => false,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GRF streaming enumeration
 // ---------------------------------------------------------------------------

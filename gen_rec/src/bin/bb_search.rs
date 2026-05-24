@@ -2,7 +2,7 @@
 use clap::Parser;
 use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
-use gen_rec::enumerate::stream_grf;
+use gen_rec::enumerate::{stream_grf, EnumScope};
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
@@ -24,6 +24,10 @@ use std::time::{Duration, Instant};
     long_about = None
 )]
 struct Args {
+    /// The search scope: prf, min_prf, or grf.
+    #[arg(value_enum)]
+    enum_scope: EnumScope,
+
     /// Size of GRFs to enumerate.
     size: usize,
 
@@ -31,16 +35,8 @@ struct Args {
     results_dir: Option<PathBuf>,
 
     /// Maximum steps per simulation before giving up (0 = unlimited).
-    #[arg(long, default_value_t = 100_000_000)]
+    #[arg(long, default_value_t = 100_000)]
     max_steps: u64,
-
-    /// Include Minimization combinator (default: PRF only).
-    #[arg(long)]
-    allow_min: bool,
-
-    /// Only search M(f) where f is a PRF (arity-1, no nested Min).
-    #[arg(long, conflicts_with = "allow_min")]
-    min_prf: bool,
 
     /// Batch size for parallel simulation.
     #[arg(long, default_value_t = 2000)]
@@ -68,18 +64,10 @@ struct Args {
     #[arg(long, num_args = 2, value_names = ["START", "COUNT"])]
     seek: Option<Vec<usize>>,
 
-    /// Use ClosedFormEnumerator instead of stream_grf.
-    /// Reduces candidates by deduplicating sub-expressions on ClosedForm structural
-    /// equality, while remaining complete: every semantically distinct GRF is reachable.
+    /// Disable ClosedFormEnumerator (default is enabled).
+    /// If set, streams all GRFs without deduplicating sub-expressions via ClosedForm.
     #[arg(long)]
-    cf: bool,
-
-    /// Cap CF caching to domains where arity+size <= LIMIT; larger domains stream
-    /// without caching. Reduces memory at large sizes at the cost of some dedup
-    /// Optional limit for ClosedForm caching (size + arity <= cf_limit).
-    /// Defaults to `size`, reducing memory significantly for BBµ(n) when n >= 7.
-    #[arg(long)]
-    cf_limit: Option<usize>,
+    no_cf: bool,
 
     /// Enable dynamic RNF regeneration for massively reduced memory usage.
     #[arg(long)]
@@ -313,21 +301,18 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
             std::process::exit(1);
         });
     }
+    let min_prf = args.enum_scope.min_prf();
+    let allow_min = args.enum_scope.allow_min();
+    let cf = !args.no_cf;
     let mode_str = {
-        let base = if args.min_prf {
-            "min_prf"
-        } else if args.allow_min {
-            "grf"
-        } else {
-            "prf"
-        };
-        if args.cf {
+        let base = args.enum_scope.as_str();
+        if cf {
             format!("{base}+cf")
         } else {
             base.to_string()
         }
     };
-    let has_min = args.allow_min || args.min_prf;
+    let has_min = allow_min || min_prf;
     let size = args.size;
 
     // Results directory.
@@ -425,22 +410,15 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
 
     let mut idx = 0usize;
 
-    if args.cf && !(args.min_prf && size < 2) {
-        let cf_arity = if args.min_prf { 1 } else { 0 };
-        let cf_size = if args.min_prf && size >= 2 {
-            size - 1
-        } else {
-            size
-        };
-        let cf_allow_min = !args.min_prf && args.allow_min;
+    if cf && !(min_prf && size < 2) {
+        let cf_arity = if min_prf { 1 } else { 0 };
+        let cf_size = if min_prf && size >= 2 { size - 1 } else { size };
+        let cf_allow_min = !min_prf && allow_min;
         let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, cf_allow_min)
             .with_dynamic_rnf(args.dynamic_rnf);
-        if let Some(limit) = args.cf_limit {
-            en = en.with_cf_limit(limit);
-        }
         en.prepare(cf_arity, cf_size);
         en.for_each_raw_candidate(cf_arity, cf_size, &mut |grf| {
-            if args.min_prf {
+            if min_prf {
                 if opts.min_dom {
                     if !grf.used_args().contains(&1) {
                         return;
@@ -450,7 +428,7 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
                     }
                 }
             }
-            let g = if args.min_prf {
+            let g = if min_prf {
                 Grf::min(grf.clone())
             } else {
                 grf.clone()
@@ -473,7 +451,7 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
                 maybe_progress!();
             }
         });
-    } else if args.min_prf && size >= 2 {
+    } else if min_prf && size >= 2 {
         stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
             if opts.min_dom {
                 if !f.used_args().contains(&1) {
@@ -501,8 +479,8 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
                 maybe_progress!();
             }
         });
-    } else if !args.min_prf {
-        stream_grf(size, 0, args.allow_min, opts, &mut |grf: &Grf| {
+    } else if !min_prf {
+        stream_grf(size, 0, allow_min, opts, &mut |grf: &Grf| {
             let cur = idx;
             idx += 1;
             if cur < seek_start || cur >= seek_start + seek_count {
@@ -636,13 +614,8 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         writeln!(cfg_w, "  \"max_steps\": {},", args.max_steps).unwrap();
         writeln!(cfg_w, "  \"batch_size\": {},", args.batch_size).unwrap();
         writeln!(cfg_w, "  \"top_k\": {},", args.top_k).unwrap();
-        writeln!(cfg_w, "  \"allow_min\": {},", args.allow_min).unwrap();
-        writeln!(cfg_w, "  \"min_prf\": {},", args.min_prf).unwrap();
-        writeln!(cfg_w, "  \"cf\": {},", args.cf).unwrap();
-        match args.cf_limit {
-            Some(limit) => writeln!(cfg_w, "  \"cf_limit\": {},", limit).unwrap(),
-            None => writeln!(cfg_w, "  \"cf_limit\": null,").unwrap(),
-        }
+        writeln!(cfg_w, "  \"enum_scope\": {},", args.enum_scope.as_str()).unwrap();
+        writeln!(cfg_w, "  \"cf\": {},", cf).unwrap();
         writeln!(
             cfg_w,
             "  \"opts\": \"{}\",",

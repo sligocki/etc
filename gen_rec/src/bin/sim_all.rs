@@ -1,12 +1,7 @@
 /// Batch-simulate every GRF in an input file and write results to a .grl output file.
 ///
-/// Reads any .grl or legacy holdout file, simulates each 0-arity GRF up to the
-/// given step budget, and writes ALL results (Halt / Diverge / Unknown) to the
-/// output file.
-///
 /// Usage:
-///   cargo run --bin sim_all -- input.grl 100000000 output.grl
-///   cargo run --bin sim_all -- holdout.grl 1000000000 next.grl --progress-interval 10
+///   cargo run --release --bin sim_all -- input.grl 100000000 output.grl
 use clap::Parser;
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{GrfEntry, Status, parse_grf_entries, write_grf_entry, write_grl_header};

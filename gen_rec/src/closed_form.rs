@@ -1,4 +1,11 @@
 use crate::grf::{Grf, GrfKind};
+use std::sync::atomic::{AtomicUsize, Ordering};
+pub static COMPOSE_CALLS: AtomicUsize = AtomicUsize::new(0);
+pub static COMPOSE_TIME_NS: AtomicUsize = AtomicUsize::new(0);
+pub static REC_INTERNAL_CALLS: AtomicUsize = AtomicUsize::new(0);
+pub static REC_INTERNAL_STEPS: AtomicUsize = AtomicUsize::new(0);
+pub static PERIODIC_PERIOD: AtomicUsize = AtomicUsize::new(0);
+
 use crate::math::lcm;
 use crate::sim_nat::SimNat;
 use crate::simulate::SimResult;
@@ -512,7 +519,7 @@ impl ClosedForm {
                         let mut all_pos = true;
                         let p_len = p.branches.len();
                         for (k, b) in p.branches.iter().enumerate() {
-                            if !is_always_pos_on_branch_k(b, k, p_len) {
+                            if !b.is_always_pos_on_branch_k(k, p_len) {
                                 all_pos = false;
                                 break;
                             }
@@ -575,6 +582,74 @@ impl ClosedForm {
                 p.branch_index,
                 p.branches.iter().map(|b| Box::new(b.lift(arity))).collect(),
             ),
+        }
+    }
+
+    pub fn is_always_pos(&self) -> bool {
+        match self {
+            ClosedForm::Affine(af) => af.coeffs[0] > 0,
+            ClosedForm::Piecewise(pw) => {
+                pw.zero_branch.is_always_pos() && pw.pos_branch.is_always_pos()
+            }
+            ClosedForm::NegMod(_, _, _) => false,
+            ClosedForm::Periodic(p) => p.branches.iter().all(|b| b.is_always_pos()),
+        }
+    }
+
+    fn is_always_pos_on_branch_k(&self, k: usize, p_len: usize) -> bool {
+        match self {
+            ClosedForm::Affine(af) => {
+                if af.coeffs[0] > 0 {
+                    true
+                } else {
+                    if k != 0 {
+                        if af.coeffs.len() > 1
+                            && af.coeffs[1] > 0
+                            && af.coeffs.iter().skip(2).all(|&c| c == 0)
+                        {
+                            return true;
+                        }
+                    }
+                    false
+                }
+            }
+            ClosedForm::Piecewise(pw) => {
+                if pw.branch_index == 0 {
+                    let zero_ok = if k == 0 {
+                        pw.zero_branch.is_always_pos_on_branch_k(0, 1)
+                    } else {
+                        true
+                    };
+                    let pos_ok = pw
+                        .pos_branch
+                        .is_always_pos_on_branch_k((p_len + k - 1) % p_len, p_len);
+                    zero_ok && pos_ok
+                } else {
+                    pw.zero_branch.is_always_pos_on_branch_k(k, p_len)
+                        && pw.pos_branch.is_always_pos_on_branch_k(k, p_len)
+                }
+            }
+            ClosedForm::Periodic(p) => {
+                if p.branch_index == 0 {
+                    p.branches[k % p.branches.len()].is_always_pos_on_branch_k(k, p_len)
+                } else {
+                    p.branches
+                        .iter()
+                        .all(|b| b.is_always_pos_on_branch_k(k, p_len))
+                }
+            }
+            ClosedForm::NegMod(_, _, _) => false,
+        }
+    }
+
+    pub fn is_always_zero(&self) -> bool {
+        match self {
+            ClosedForm::Affine(af) => af.coeffs.iter().all(|&c| c == 0),
+            ClosedForm::Piecewise(pw) => {
+                pw.zero_branch.is_always_zero() && pw.pos_branch.is_always_zero()
+            }
+            ClosedForm::NegMod(_, _, _) => false,
+            ClosedForm::Periodic(p) => p.branches.iter().all(|b| b.is_always_zero()),
         }
     }
 }
@@ -640,6 +715,15 @@ pub fn closed_form_of_rec_internal(
     k_outer: usize,
     split_budget: usize,
 ) -> Option<ClosedForm> {
+    REC_INTERNAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    assert_eq!(
+        sem_h.arity(),
+        k_outer + 1,
+        "ARITY MISMATCH: sem_h.arity() = {}, k_outer = {}, sem_h = {:?}",
+        sem_h.arity(),
+        k_outer,
+        sem_h
+    );
     // Case A: h(n, acc, rest) = j + acc  (j = coeffs[0], acc-coeff=1, rest-coeffs=0)
     if let ClosedForm::Affine(af_h) = sem_h {
         if af_h.coeffs[1] == 0 && af_h.coeffs[2] == 1 && af_h.coeffs[3..].iter().all(|&c| c == 0) {
@@ -664,149 +748,208 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
-    // Case Periodic: h depends on step counter (arg 1) at most periodically -> sequence only depends on acc and rest.
-    // We can simulate the first 50 steps. If we find a cycle, we can represent it with PeriodicFn.
-    if sem_h.arity() == k_outer + 1 {
+    // --- Unified Symbolic Sequence Analyzer ---
+    // Simulates the sequence S_n = h(n-1, S_{n-1}).
+    // Detects:
+    // 1. Affine Growth (handles Case A and Periodic Affine Cycles)
+    // 2. Exact Periodic Cycles (handles Periodic)
+    // 3. Stable Fixed Points (handles Case D, Case G2)
+    // 4. Stable Traps into Pos-Branch (handles Case G)
+    {
         let (p, pre) = period_and_pre_period(sem_h, 1).unwrap_or((0, 0));
-        {
-            let mut seq = Vec::new();
-            seq.push(sem_g.clone());
-            let mut cycle_found = None;
-            let k_rest = k_outer - 1;
-            let max_steps = if p > 0 { 50 } else { 6 };
-            for step in 1..=max_steps {
-                let prev = seq.last().unwrap().clone();
-                let mut inners = Vec::with_capacity(k_outer + 1);
+        let mut seq = Vec::new();
+        seq.push(sem_g.clone());
+        let mut cycle_found = None;
+        let k_rest = k_outer - 1;
+        let max_steps = if p > 0 { 50 } else { 6 };
 
-                // i is the step counter (1-indexed). The step evaluation f(n+1) = h(n, f(n)) uses `n` which is `step - 1`.
-                let mut step_coeffs = vec![0; k_rest + 1];
-                step_coeffs[0] = (step - 1) as u64;
-                inners.push(ClosedForm::Affine(AffineFn {
-                    arity: k_rest,
-                    coeffs: step_coeffs,
-                }));
-                inners.push(prev); // acc
-                for m in 1..=k_rest {
-                    inners.push(ClosedForm::Affine(AffineFn::proj(k_rest, m)));
+        let n_proj = ClosedForm::Affine(AffineFn::proj(k_outer, 1));
+        let mut rest_projs = Vec::with_capacity(k_rest);
+        for i in 1..=k_rest {
+            rest_projs.push(ClosedForm::Affine(AffineFn::proj(k_outer, i + 1)));
+        }
+
+        for step in 1..=max_steps {
+            REC_INTERNAL_STEPS.fetch_add(1, Ordering::Relaxed);
+            let prev = seq.last().unwrap().clone();
+            let mut inners = Vec::with_capacity(k_outer + 1);
+
+            let mut step_coeffs = vec![0; k_rest + 1];
+            step_coeffs[0] = (step - 1) as u64;
+            inners.push(ClosedForm::Affine(AffineFn {
+                arity: k_rest,
+                coeffs: step_coeffs,
+            }));
+            inners.push(prev); // acc
+            for m in 1..=k_rest {
+                inners.push(ClosedForm::Affine(AffineFn::proj(k_rest, m)));
+            }
+
+            if let Some(next_cf) = compose(sem_h, &inners, k_rest) {
+                if next_cf.ast_size() > 100 {
+                    break;
                 }
 
-                if let Some(next_cf) = compose(sem_h, &inners, k_rest) {
-                    if next_cf.ast_size() > 100 {
-                        break;
-                    }
-                    let mut affine_cycle = None;
-                    if let ClosedForm::Affine(a_next) = &next_cf {
-                        if step >= 2 {
-                            if let ClosedForm::Affine(a_prev) = &seq[step - 1] {
-                                if a_next.coeffs.len() == a_prev.coeffs.len() {
-                                    let mut match_coeffs = true;
-                                    for i in 1..a_next.coeffs.len() {
-                                        if a_next.coeffs[i] != a_prev.coeffs[i] {
-                                            match_coeffs = false;
-                                            break;
-                                        }
+                // 1. Detect Affine Growth
+                let mut affine_cycle = None;
+                if let ClosedForm::Affine(a_next) = &next_cf {
+                    if step >= 2 {
+                        if let ClosedForm::Affine(a_prev) = &seq[step - 1] {
+                            if a_next.coeffs.len() == a_prev.coeffs.len() {
+                                let mut match_coeffs = true;
+                                for i in 1..a_next.coeffs.len() {
+                                    if a_next.coeffs[i] != a_prev.coeffs[i] {
+                                        match_coeffs = false;
+                                        break;
                                     }
-                                    if match_coeffs && a_next.coeffs[0] >= a_prev.coeffs[0] {
-                                        let c = a_next.coeffs[0] - a_prev.coeffs[0];
-                                        // Symbolically prove the hypothesized progression:
-                                        // S_m(m) = a_prev + c * m. (where m is the offset from step-1)
-                                        // n = step - 1 + m.
-                                        let mut n_hyp_coeffs = vec![0; k_outer + 1];
-                                        n_hyp_coeffs[0] = (step - 1) as u64;
-                                        n_hyp_coeffs[1] = 1; // multiplier for m
-                                        let n_hyp = ClosedForm::Affine(AffineFn {
+                                }
+                                if match_coeffs && a_next.coeffs[0] >= a_prev.coeffs[0] {
+                                    let c = a_next.coeffs[0] - a_prev.coeffs[0];
+                                    let mut n_hyp_coeffs = vec![0; k_outer + 1];
+                                    n_hyp_coeffs[0] = (step - 1) as u64;
+                                    n_hyp_coeffs[1] = 1;
+                                    let n_hyp = ClosedForm::Affine(AffineFn {
+                                        arity: k_outer,
+                                        coeffs: n_hyp_coeffs,
+                                    });
+
+                                    let mut state_hyp_coeffs = vec![0; k_outer + 1];
+                                    state_hyp_coeffs[0] = a_prev.coeffs[0];
+                                    state_hyp_coeffs[1] = c;
+                                    for i in 1..a_prev.coeffs.len() {
+                                        state_hyp_coeffs[i + 1] = a_prev.coeffs[i];
+                                    }
+                                    let state_hyp = ClosedForm::Affine(AffineFn {
+                                        arity: k_outer,
+                                        coeffs: state_hyp_coeffs.clone(),
+                                    });
+
+                                    let mut expected_coeffs = state_hyp_coeffs.clone();
+                                    expected_coeffs[0] += c;
+                                    let expected = ClosedForm::Affine(AffineFn {
+                                        arity: k_outer,
+                                        coeffs: expected_coeffs,
+                                    });
+
+                                    let mut inners_hyp = vec![n_hyp, state_hyp];
+                                    for m in 1..=k_rest {
+                                        let mut r_coeffs = vec![0; k_outer + 1];
+                                        r_coeffs[m + 1] = 1;
+                                        inners_hyp.push(ClosedForm::Affine(AffineFn {
                                             arity: k_outer,
-                                            coeffs: n_hyp_coeffs,
-                                        });
+                                            coeffs: r_coeffs,
+                                        }));
+                                    }
 
-                                        let mut state_hyp_coeffs = vec![0; k_outer + 1];
-                                        state_hyp_coeffs[0] = a_prev.coeffs[0];
-                                        state_hyp_coeffs[1] = c;
-                                        for i in 1..a_prev.coeffs.len() {
-                                            state_hyp_coeffs[i + 1] = a_prev.coeffs[i];
-                                        }
-                                        let state_hyp = ClosedForm::Affine(AffineFn {
-                                            arity: k_outer,
-                                            coeffs: state_hyp_coeffs.clone(),
-                                        });
-
-                                        let mut expected_coeffs = state_hyp_coeffs.clone();
-                                        expected_coeffs[0] += c;
-                                        let expected = ClosedForm::Affine(AffineFn {
-                                            arity: k_outer,
-                                            coeffs: expected_coeffs,
-                                        });
-
-                                        let mut inners_hyp = vec![n_hyp, state_hyp];
-                                        for m in 1..=k_rest {
-                                            let mut r_coeffs = vec![0; k_outer + 1];
-                                            r_coeffs[m + 1] = 1; // since args are (m, rest...), rest_m is at index m+1 in coeffs
-                                            inners_hyp.push(ClosedForm::Affine(AffineFn {
-                                                arity: k_outer,
-                                                coeffs: r_coeffs,
-                                            }));
-                                        }
-
-                                        if let Some(res) = compose(sem_h, &inners_hyp, k_outer) {
-                                            if res == expected {
-                                                affine_cycle = Some((step - 1, c));
-                                            }
+                                    if let Some(res) = compose(sem_h, &inners_hyp, k_outer) {
+                                        if res == expected {
+                                            affine_cycle = Some((step - 1, c));
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    if let Some((j, c)) = affine_cycle {
-                        let a_j = match &seq[j] {
-                            ClosedForm::Affine(a) => a,
-                            _ => unreachable!(),
-                        };
-                        let mut new_coeffs = Vec::with_capacity(a_j.coeffs.len() + 1);
-                        new_coeffs.push(a_j.coeffs[0]);
-                        new_coeffs.push(c);
-                        new_coeffs.extend_from_slice(&a_j.coeffs[1..]);
-                        let mut res = ClosedForm::Affine(AffineFn {
-                            arity: k_outer,
-                            coeffs: new_coeffs,
-                        });
-                        for m in (0..j).rev() {
-                            res = make_piecewise(k_outer, 0, seq[m].clone(), res);
-                        }
-                        return Some(res);
-                    }
+                }
 
-                    if p > 0 && step >= pre {
-                        // Find a previous state that matches next_cf and is at the same phase modulo p.
-                        let mut found_match = None;
-                        for (j, x) in seq.iter().enumerate() {
-                            if j >= pre && j % p == step % p && x == &next_cf {
-                                found_match = Some(j);
-                                break;
+                if let Some((j, c)) = affine_cycle {
+                    let a_j = match &seq[j] {
+                        ClosedForm::Affine(a) => a,
+                        _ => unreachable!(),
+                    };
+                    let mut new_coeffs = Vec::with_capacity(a_j.coeffs.len() + 1);
+                    new_coeffs.push(a_j.coeffs[0]);
+                    new_coeffs.push(c);
+                    new_coeffs.extend_from_slice(&a_j.coeffs[1..]);
+                    let mut res = ClosedForm::Affine(AffineFn {
+                        arity: k_outer,
+                        coeffs: new_coeffs,
+                    });
+                    for m in (0..j).rev() {
+                        res = make_piecewise(k_outer, 0, seq[m].clone(), res);
+                    }
+                    return Some(res);
+                }
+
+                // 2. Detect Stable Pos-Branch Trap (Case G)
+                if next_cf.is_always_pos() {
+                    if let ClosedForm::Piecewise(pw) = sem_h {
+                        if pw.branch_index == 1 {
+                            if closed_form_ignores_arg(&pw.pos_branch, 2) {
+                                if let Some(h_p_no_acc) = drop_arg(&pw.pos_branch, 2) {
+                                    let shift = step as u64;
+                                    let mut tail_inners = Vec::with_capacity(k_outer);
+                                    tail_inners.push(ClosedForm::Affine({
+                                        let mut af = AffineFn::proj(k_outer, 1);
+                                        af.coeffs[0] = shift;
+                                        af
+                                    }));
+                                    for i in 2..=k_outer {
+                                        tail_inners
+                                            .push(ClosedForm::Affine(AffineFn::proj(k_outer, i)));
+                                    }
+
+                                    if let Some(mut tail) =
+                                        compose(&h_p_no_acc, &tail_inners, k_outer)
+                                    {
+                                        if tail.is_always_pos() {
+                                            for p in seq.iter().rev() {
+                                                tail = make_piecewise(k_outer, 0, p.clone(), tail);
+                                            }
+                                            return Some(tail);
+                                        }
+                                    }
+                                }
                             }
                         }
-                        if let Some(j) = found_match {
-                            cycle_found = Some((j, step));
+                    }
+                }
+
+                // 3. Detect Exact Periodic Cycles and Stable Fixed Points (Case D, G2)
+                let mut found_match = None;
+                if p > 0 && step >= pre {
+                    for (j, x) in seq.iter().enumerate() {
+                        if j >= pre && j % p == step % p && x == &next_cf {
+                            found_match = Some(j);
                             break;
                         }
                     }
-                    seq.push(next_cf);
-                } else {
+                } else if &next_cf == seq.last().unwrap() {
+                    let mut inners_u = vec![n_proj.clone(), prepend_arg(&next_cf)];
+                    inners_u.extend(rest_projs.iter().cloned());
+                    if let Some(u) = compose(sem_h, &inners_u, k_outer) {
+                        if u == prepend_arg(&next_cf) {
+                            found_match = Some(step);
+                        }
+                    }
+                }
+
+                if let Some(j) = found_match {
+                    if j == step {
+                        seq.push(next_cf);
+                        cycle_found = Some((step, step + 1));
+                    } else {
+                        cycle_found = Some((j, step));
+                    }
                     break;
                 }
+
+                seq.push(next_cf);
+            } else {
+                break;
             }
-            if let Some((j, k)) = cycle_found {
-                let mut res = make_periodic(
-                    k_outer,
-                    0,
-                    seq[j..k].iter().map(|b| Box::new(prepend_arg(b))).collect(),
-                );
-                // Wrap in Piecewise for pre-period (in reverse order)
-                for m in (0..j).rev() {
-                    res = make_piecewise(k_outer, 0, seq[m].clone(), res);
-                }
-                return Some(res);
+        }
+
+        if let Some((j, k)) = cycle_found {
+            let mut res = make_periodic(
+                k_outer,
+                0,
+                seq[j..k].iter().map(|b| Box::new(prepend_arg(b))).collect(),
+            );
+            for m in (0..j).rev() {
+                res = make_piecewise(k_outer, 0, seq[m].clone(), res);
             }
+            return Some(res);
         }
     }
 
@@ -835,26 +978,6 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
-    // Case D: h ignores counter (arg 1) and the step has a 1-step fixed point.
-    // h'(acc, rest) = h with counter dropped.  Compute one_step = h'(g(rest), rest).
-    // If h' is stable (each leaf Affine is either pure identity or ignores acc),
-    // then one_step is a fixed point: f(n≥1, rest) = one_step(rest).
-    if closed_form_ignores_arg(sem_h, 1) {
-        if let Some(h_prime) = drop_arg(sem_h, 1) {
-            if h_prime_is_stable(&h_prime) {
-                let k_rest = k_outer - 1;
-                let mut inners: Vec<ClosedForm> = vec![sem_g.clone()];
-                for i in 1..=k_rest {
-                    inners.push(ClosedForm::Affine(AffineFn::proj(k_rest, i)));
-                }
-                if let Some(one_step) = compose(&h_prime, &inners, k_rest) {
-                    let pos_branch = prepend_arg(&one_step);
-                    return Some(make_piecewise(k_outer, 0, sem_g.clone(), pos_branch));
-                }
-            }
-        }
-    }
-
     // Case E: h ignores counter (arg 1) and is Piecewise branching on acc (arg 2 in h, which is arg 1 in h_prime).
     if closed_form_ignores_arg(sem_h, 1) {
         if let Some(h_prime) = drop_arg(sem_h, 1) {
@@ -875,148 +998,6 @@ pub fn closed_form_of_rec_internal(
                             }
                         }
                     }
-                }
-            }
-        }
-    }
-
-    // Case G: h is Piecewise branching on acc (arg 2 in h), and pos_branch ignores acc.
-    if let ClosedForm::Piecewise(pw) = sem_h {
-        if pw.branch_index == 1 {
-            let h_p = &pw.pos_branch;
-            let _h_z = &pw.zero_branch;
-
-            if closed_form_ignores_arg(h_p, 2) {
-                if let Some(h_p_no_acc) = drop_arg(h_p, 2) {
-                    let mut cur_f = sem_g.clone();
-                    let mut prefix = Vec::new();
-                    let mut trapped = false;
-
-                    for step in 0..10 {
-                        prefix.push(cur_f.clone());
-                        if is_always_pos(&cur_f) {
-                            // Verify that h_p_no_acc(step) is strictly positive,
-                            // to ensure it stays trapped forever.
-                            let mut tail_inners = Vec::with_capacity(k_outer);
-                            tail_inners.push(ClosedForm::Affine({
-                                let mut af = AffineFn::zero(k_outer - 1);
-                                af.coeffs[0] = step as u64;
-                                af
-                            }));
-                            for i in 1..k_outer {
-                                tail_inners
-                                    .push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
-                            }
-                            if let Some(tail_at_step) =
-                                compose(&h_p_no_acc, &tail_inners, k_outer - 1)
-                            {
-                                if is_always_pos(&tail_at_step) {
-                                    trapped = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        let mut inners = Vec::with_capacity(k_outer + 1);
-                        inners.push(ClosedForm::Affine({
-                            let mut af = AffineFn::zero(k_outer - 1);
-                            af.coeffs[0] = step as u64;
-                            af
-                        }));
-                        inners.push(cur_f.clone());
-                        for i in 1..k_outer {
-                            inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
-                        }
-                        if let Some(next_f) = compose(sem_h, &inners, k_outer - 1) {
-                            cur_f = next_f;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    if trapped {
-                        let shift = prefix.len() as u64 - 1;
-                        let mut inners = Vec::with_capacity(k_outer);
-                        inners.push(ClosedForm::Affine({
-                            let mut af = AffineFn::proj(k_outer, 1);
-                            af.coeffs[0] = shift;
-                            af
-                        }));
-                        for i in 2..=k_outer {
-                            inners.push(ClosedForm::Affine(AffineFn::proj(k_outer, i)));
-                        }
-
-                        if let Some(mut tail) = compose(&h_p_no_acc, &inners, k_outer) {
-                            for p in prefix.into_iter().rev() {
-                                tail = make_piecewise(k_outer, 0, p, tail);
-                            }
-                            return Some(tail);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Case G2: h is Piecewise branching on acc (arg 2 in h), and pos_branch is EXACTLY acc.
-    if let ClosedForm::Piecewise(pw) = sem_h {
-        if pw.branch_index == 1 {
-            let h_p = &pw.pos_branch;
-            let h_z = &pw.zero_branch;
-
-            let is_acc_identity = if let ClosedForm::Affine(af) = h_p.as_ref() {
-                af.coeffs.len() > 2
-                    && af.coeffs[0] == 1
-                    && af.coeffs[2] == 1
-                    && af
-                        .coeffs
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, &c)| c != 0 && *i != 0 && *i != 2)
-                        .count()
-                        == 0
-            } else {
-                false
-            };
-
-            if is_acc_identity {
-                let mut cur_f = sem_g.clone();
-                let mut prefix = Vec::new();
-                let mut trapped = false;
-
-                for step in 0..10 {
-                    prefix.push(cur_f.clone());
-                    if is_always_pos(&cur_f) {
-                        trapped = true;
-                        break;
-                    }
-
-                    if is_always_zero(&cur_f) {
-                        let mut inners = Vec::with_capacity(k_outer);
-                        inners.push(ClosedForm::Affine({
-                            let mut af = AffineFn::zero(k_outer - 1);
-                            af.coeffs[0] = step as u64;
-                            af
-                        }));
-                        for i in 1..k_outer {
-                            inners.push(ClosedForm::Affine(AffineFn::proj(k_outer - 1, i)));
-                        }
-                        if let Some(next_f) = compose(h_z, &inners, k_outer - 1) {
-                            cur_f = next_f;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-
-                if trapped {
-                    let mut tail = prepend_arg(&cur_f);
-                    for p in prefix.into_iter().rev() {
-                        tail = make_piecewise(k_outer, 0, p, tail);
-                    }
-                    return Some(tail);
                 }
             }
         }
@@ -1090,7 +1071,7 @@ pub fn closed_form_of_rec_internal(
 fn closed_form_of_min(f_grf: &Grf) -> Option<ClosedForm> {
     let cf = closed_form_of(f_grf)?;
     let at_zero = zero_face_at(&cf, 1); // f with search variable (arg 1) set to 0
-    if is_always_zero(&at_zero) {
+    if at_zero.is_always_zero() {
         return Some(ClosedForm::Affine(AffineFn::zero(cf.arity() - 1)));
     }
     None
@@ -1142,7 +1123,9 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
 ///
 /// Recursion terminates because each call either reaches the all-Affine base case
 /// or reduces the maximum Piecewise nesting depth by one.
+
 fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<ClosedForm> {
+    COMPOSE_CALLS.fetch_add(1, Ordering::Relaxed);
     // Base case: 0-arity composition — h is a constant, no inputs consumed.
     if inners.is_empty() {
         return Some(h.lift(arity));
@@ -1201,7 +1184,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
         }
         ClosedForm::Piecewise(pw) => {
             // If h always returns 0, so does the composition.
-            if is_always_zero(h) {
+            if h.is_always_zero() {
                 return Some(ClosedForm::Affine(AffineFn::zero(arity)));
             }
 
@@ -1210,7 +1193,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
             let g_branch = &inners[bi];
 
             // Case 1: inners[bi] is identically 0 → always fire zero_branch on rest.
-            if is_always_zero(g_branch) {
+            if g_branch.is_always_zero() {
                 let rest: Vec<ClosedForm> = inners
                     .iter()
                     .enumerate()
@@ -1328,7 +1311,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                 }
             }
 
-            // Case 3: inners[bi] is a projection of xj → distribute on xj=0 boundary.
+            // Case 5: inners[bi] is a projection of xj → distribute on xj=0 boundary.
             if arity == 0 {
                 return None;
             }
@@ -1629,6 +1612,7 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
 ///   (a) be pure identity on acc: acc-coeff=1 and all rest-coeffs=0, OR
 ///   (b) ignore acc entirely: acc-coeff=0.
 /// Piecewise branching on acc (bi=0) is rejected (too complex).
+#[allow(dead_code)]
 fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
     match h_prime {
         ClosedForm::Affine(af) => {
@@ -1649,74 +1633,6 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
         }
         ClosedForm::NegMod(_, _, _) => false,
         ClosedForm::Periodic(_) => false,
-    }
-}
-
-/// Returns true when `sem` evaluates to 0 for all natural-number inputs.
-pub fn is_always_pos(sem: &ClosedForm) -> bool {
-    match sem {
-        ClosedForm::Affine(af) => af.coeffs[0] > 0,
-        ClosedForm::Piecewise(pw) => {
-            is_always_pos(&pw.zero_branch) && is_always_pos(&pw.pos_branch)
-        }
-        ClosedForm::NegMod(_, _, _) => false,
-        ClosedForm::Periodic(p) => p.branches.iter().all(|b| is_always_pos(b)),
-    }
-}
-
-fn is_always_pos_on_branch_k(sem: &ClosedForm, k: usize, p_len: usize) -> bool {
-    match sem {
-        ClosedForm::Affine(af) => {
-            if af.coeffs[0] > 0 {
-                true
-            } else {
-                if k != 0 {
-                    if af.coeffs.len() > 1
-                        && af.coeffs[1] > 0
-                        && af.coeffs.iter().skip(2).all(|&c| c == 0)
-                    {
-                        return true;
-                    }
-                }
-                false
-            }
-        }
-        ClosedForm::Piecewise(pw) => {
-            if pw.branch_index == 0 {
-                let zero_ok = if k == 0 {
-                    is_always_pos_on_branch_k(&pw.zero_branch, 0, 1)
-                } else {
-                    true
-                };
-                let pos_ok =
-                    is_always_pos_on_branch_k(&pw.pos_branch, (p_len + k - 1) % p_len, p_len);
-                zero_ok && pos_ok
-            } else {
-                is_always_pos_on_branch_k(&pw.zero_branch, k, p_len)
-                    && is_always_pos_on_branch_k(&pw.pos_branch, k, p_len)
-            }
-        }
-        ClosedForm::Periodic(p) => {
-            if p.branch_index == 0 {
-                is_always_pos_on_branch_k(&p.branches[k % p.branches.len()], k, p_len)
-            } else {
-                p.branches
-                    .iter()
-                    .all(|b| is_always_pos_on_branch_k(b, k, p_len))
-            }
-        }
-        ClosedForm::NegMod(_, _, _) => false,
-    }
-}
-
-pub fn is_always_zero(sem: &ClosedForm) -> bool {
-    match sem {
-        ClosedForm::Affine(af) => af.coeffs.iter().all(|&c| c == 0),
-        ClosedForm::Piecewise(pw) => {
-            is_always_zero(&pw.zero_branch) && is_always_zero(&pw.pos_branch)
-        }
-        ClosedForm::NegMod(_, _, _) => false,
-        ClosedForm::Periodic(p) => p.branches.iter().all(|b| is_always_zero(b)),
     }
 }
 
@@ -2559,7 +2475,7 @@ mod tests {
     fn test_min_always_zero() {
         // M(Z1): Z1(i)=0 always, so M=0 (arity 0)
         let s = closed_form_of(&grf("Z1")).unwrap();
-        assert!(is_always_zero(&s));
+        assert!(s.is_always_zero());
         let m = closed_form_of(&grf("M(Z1)")).unwrap();
         assert_eq!(m, ClosedForm::Affine(AffineFn::zero(0)));
         assert_eq!(m.eval::<SmallNat>(&[]), Some(0));
@@ -2717,8 +2633,8 @@ mod tests {
     #[test]
     fn test_rec_mul_none() {
         // Multiplication: h = add(acc, m), not a constant step — None
-        // R(Z0, C(R(P(1,1),C(S,P(3,2))), P(3,2), P(3,3)))
-        assert!(closed_form_of(&grf("R(Z0, C(R(P(1,1),C(S,P(3,2))),P(3,2),P(3,3)))")).is_none());
+        // R(Z1, C(R(P(1,1),C(S,P(3,2))), P(3,2), P(3,3)))
+        assert!(closed_form_of(&grf("R(Z1, C(R(P(1,1),C(S,P(3,2))),P(3,2),P(3,3)))")).is_none());
     }
 
     #[test]
@@ -2885,19 +2801,19 @@ mod tests {
 
         // Test is_always_pos_on_branch_k
         // f1 is 1+x. Always positive on any branch.
-        assert!(is_always_pos_on_branch_k(&f1, 0, 2));
-        assert!(is_always_pos_on_branch_k(&f1, 1, 2));
+        assert!(f1.is_always_pos_on_branch_k(0, 2));
+        assert!(f1.is_always_pos_on_branch_k(1, 2));
 
         // f2 is x. Positive on branch 1 (because i=0 is impossible when i % 2 == 1).
-        assert!(is_always_pos_on_branch_k(&f2, 1, 2));
+        assert!(f2.is_always_pos_on_branch_k(1, 2));
         // Not always positive on branch 0 (because i=0 is possible).
-        assert!(!is_always_pos_on_branch_k(&f2, 0, 2));
+        assert!(!f2.is_always_pos_on_branch_k(0, 2));
 
         // pw is Piecewise(1, x). Positive on branch 0.
         // at i=0, it is 1 > 0.
         // at i>0, it is x-1. But branch is 0. So i % 2 == 0.
         // thus i >= 2. x-1 >= 1 > 0.
-        assert!(is_always_pos_on_branch_k(&pw, 0, 2));
+        assert!(pw.is_always_pos_on_branch_k(0, 2));
 
         // Create a PeriodicFn branching on x (index 0).
         let periodic = ClosedForm::Periodic(PeriodicFn {

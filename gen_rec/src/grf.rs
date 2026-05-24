@@ -224,11 +224,7 @@ impl Grf {
         let cf_self = self.closed_form()?;
         let cf_other = other.closed_form()?;
 
-        if let (
-            crate::closed_form::ClosedForm::Affine(aff_s),
-            crate::closed_form::ClosedForm::Affine(aff_o),
-        ) = (cf_self, cf_other)
-        {
+        if let (ClosedForm::Affine(aff_s), ClosedForm::Affine(aff_o)) = (cf_self, cf_other) {
             // Both are affine. Ensure self's linear coefficients are >= other's linear coefficients.
             if aff_s.coeffs.len() < aff_o.coeffs.len() {
                 // If self has fewer args (impossible if they have the same arity, but just in case)
@@ -300,7 +296,74 @@ impl Grf {
             _ => false,
         }
     }
+
+    fn is_monus_descent_trap(h: &Grf, gs: &[Grf]) -> bool {
+        let (g_h, h_h) = match &h.kind {
+            GrfKind::Rec(g, h2) => (g, h2),
+            _ => return false,
+        };
+        let cf_h = match h_h.closed_form() {
+            Some(cf) => cf,
+            None => return false,
+        };
+        let d_h = match cf_h.min_diff_from_arg(1) {
+            Some(d) => d,
+            None => return false,
+        };
+        if d_h < -1 {
+            return false;
+        }
+        let cf_g = match g_h.closed_form() {
+            Some(cf) => cf,
+            None => return false,
+        };
+
+        for k in 0..gs.len() {
+            let d_g = match cf_g.min_diff_from_arg(k) {
+                Some(d) => d,
+                None => continue,
+            };
+            let gs_k = match gs.get(k + 1) {
+                Some(g) => g,
+                None => continue,
+            };
+            let diff = match gs_k.guaranteed_diff(&gs[0]) {
+                Some(d) => d,
+                None => continue,
+            };
+
+            if diff + d_g >= 1 {
+                return true;
+            }
+            if diff + d_g == 0 || diff + d_g == -1 {
+                if let ClosedForm::Piecewise(pw) = cf_h {
+                    if let ClosedForm::Affine(z_aff) = &*pw.zero_branch {
+                        if z_aff.coeffs[0] >= 1 {
+                            return true;
+                        }
+                        for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
+                            if c > 0 {
+                                if let Some(g_arg) = gs.get(i - 1) {
+                                    if g_arg.min_val() > 0 || g_arg.is_never_zero() {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub fn is_never_zero(&self) -> bool {
+        // Leverage ClosedForm for definitive properties first (only if already cached)
+        if let Some(Some(cf)) = self.cf.get() {
+            if cf.is_always_pos() {
+                return true;
+            }
+        }
         match &self.kind {
             GrfKind::Succ => {
                 return true;
@@ -319,46 +382,8 @@ impl Grf {
                 }
 
                 // Positivity traps for Monus Descent bounds
-                if let GrfKind::Rec(g_h, h_h) = &h.kind {
-                    if let Some(cf_h) = h_h.closed_form() {
-                        if let Some(d_h) = cf_h.min_diff_from_arg(1) {
-                            if d_h >= -1 {
-                                // h_h subtracts at most 1 from the accumulator per step.
-                                if let Some(cf_g) = g_h.closed_form() {
-                                    // Check all arguments to see if g_h projects them >= 0
-                                    for k in 0..gs.len() {
-                                        if let Some(d_g) = cf_g.min_diff_from_arg(k) {
-                                            if let Some(gs_k) = gs.get(k + 1) {
-                                                if let Some(diff) = gs_k.guaranteed_diff(&gs[0]) {
-                                                    if diff + d_g >= 1 {
-                                                        return true;
-                                                    }
-                                                    if diff + d_g == 0 || diff + d_g == -1 {
-                                                        if let crate::closed_form::ClosedForm::Piecewise(pw) = &cf_h {
-                                                                if let crate::closed_form::ClosedForm::Affine(z_aff) = &*pw.zero_branch {
-                                                                    if z_aff.coeffs[0] >= 1 {
-                                                                        return true;
-                                                                    }
-                                                                    for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
-                                                                        if c > 0 {
-                                                                            if let Some(g_arg) = gs.get(i - 1) {
-                                                                                if g_arg.min_val() > 0 || g_arg.is_never_zero() {
-                                                                                    return true;
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if Self::is_monus_descent_trap(h, gs) {
+                    return true;
                 }
 
                 // If any inner argument is strictly positive and the outer function
@@ -388,12 +413,47 @@ impl Grf {
         return false;
     }
 
+    /// Returns true if `self(args...) > 0` for all natural-number inputs.
+    pub fn is_always_pos(&self) -> bool {
+        self.is_never_zero()
+    }
+
+    /// Returns true if `self(args...) == 0` for all natural-number inputs.
+    pub fn is_always_zero(&self) -> bool {
+        if let Some(Some(cf)) = self.cf.get() {
+            if cf.is_always_zero() {
+                return true;
+            }
+        }
+        match &self.kind {
+            GrfKind::Zero(_) => true,
+            GrfKind::Comp(h, _, _) => h.is_always_zero(),
+            GrfKind::Rec(g, h) => g.is_always_zero() && h.is_always_zero(),
+            _ => false,
+        }
+    }
+
     /// Returns true if `f(args…) > 0` whenever arg `j` > 0, regardless of other args.
     ///
     /// Conservative: returns false when unsure. For the Min fast-forward (j=1, the search
     /// counter): if this holds and f(0, args) > 0, then Min diverges since no later i
     /// can produce 0.
     pub fn is_positive_for_pos_arg(&self, j: usize) -> bool {
+        if let Some(Some(cf)) = self.cf.get() {
+            // Check if cf satisfies: forall x, xj > 0 => cf(x) > 0.
+            // A conservative check: if its minimum difference from arg j is > -1,
+            // then cf(x) >= xj + c. If c >= 0, then cf(x) >= xj > 0.
+            // So if c >= 0, it's positive.
+            // Or if it is simply always positive.
+            if cf.is_always_pos() {
+                return true;
+            }
+            if let Some(c) = cf.min_diff_from_arg(j - 1) {
+                if c >= 0 {
+                    return true;
+                }
+            }
+        }
         if self.is_never_zero() {
             return true;
         }
@@ -1085,6 +1145,22 @@ mod tests {
         // This is the final size-12 holdout. It simplifies using the NegMod(A, A+1, A) -> A rule,
         // reducing d(n) to an affine form that is always >= 1.
         let f = grf!("R(C(S, Z0), R(S, R(R(S, P(3,1)), P(4,2))))");
+        f.closed_form();
         assert!(f.is_never_zero());
+    }
+
+    #[test]
+    fn test_is_always_pos_and_zero() {
+        let z = grf!("Z0");
+        assert!(z.is_always_zero());
+        assert!(!z.is_always_pos());
+
+        let s = grf!("S");
+        assert!(!s.is_always_zero());
+        assert!(s.is_always_pos());
+
+        let c = grf!("C(Z0, S)");
+        assert!(c.is_always_zero());
+        assert!(!c.is_always_pos());
     }
 }

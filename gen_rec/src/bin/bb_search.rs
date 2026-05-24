@@ -532,6 +532,24 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
     holdout_writer.flush().unwrap();
 
     let elapsed = start.elapsed().as_secs_f64();
+    eprintln!("=== ClosedForm Debug Diagnostics ===");
+    eprintln!(
+        "COMPOSE_CALLS: {}",
+        gen_rec::closed_form::COMPOSE_CALLS.load(std::sync::atomic::Ordering::Relaxed)
+    );
+    eprintln!(
+        "REC_INTERNAL_CALLS: {}",
+        gen_rec::closed_form::REC_INTERNAL_CALLS.load(std::sync::atomic::Ordering::Relaxed)
+    );
+    eprintln!(
+        "REC_INTERNAL_STEPS: {}",
+        gen_rec::closed_form::REC_INTERNAL_STEPS.load(std::sync::atomic::Ordering::Relaxed)
+    );
+    eprintln!(
+        "PERIODIC_PERIOD: {}",
+        gen_rec::closed_form::PERIODIC_PERIOD.load(std::sync::atomic::Ordering::Relaxed)
+    );
+
     let sim_secs = acc.sim_nanos as f64 / 1e9;
     let enum_secs = elapsed - sim_secs;
 

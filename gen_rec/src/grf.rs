@@ -221,8 +221,8 @@ impl Grf {
 
     /// Returns the minimum mathematically guaranteed value of `self(args) - other(args)`.
     pub fn guaranteed_diff(&self, other: &Grf) -> Option<i64> {
-        let cf_self = crate::closed_form::closed_form_of(self)?;
-        let cf_other = crate::closed_form::closed_form_of(other)?;
+        let cf_self = self.closed_form()?;
+        let cf_other = other.closed_form()?;
 
         if let (
             crate::closed_form::ClosedForm::Affine(aff_s),
@@ -320,11 +320,11 @@ impl Grf {
 
                 // Positivity traps for Monus Descent bounds
                 if let GrfKind::Rec(g_h, h_h) = &h.kind {
-                    if let Some(cf_h) = crate::closed_form::closed_form_of(h_h) {
+                    if let Some(cf_h) = h_h.closed_form() {
                         if let Some(d_h) = cf_h.min_diff_from_arg(1) {
                             if d_h >= -1 {
                                 // h_h subtracts at most 1 from the accumulator per step.
-                                if let Some(cf_g) = crate::closed_form::closed_form_of(g_h) {
+                                if let Some(cf_g) = g_h.closed_form() {
                                     // Check all arguments to see if g_h projects them >= 0
                                     for k in 0..gs.len() {
                                         if let Some(d_g) = cf_g.min_diff_from_arg(k) {
@@ -1076,6 +1076,15 @@ mod tests {
         // diff + d_g = -1.
         // This dips to 0, so the bounce logic extracts cf_h.zero_branch(gs) = gs[0] + 1 >= 1.
         let f = grf!("C(R(P(1,1), C(R(S, P(3,1)), P(3,2), P(3,1))), S, P(1,1))");
+        assert!(f.is_never_zero());
+    }
+
+    #[test]
+    fn test_neg_mod_reduction_size12_holdout() {
+        // M(R(C(S, Z0), R(S, R(R(S, P(3,1)), P(4,2)))))
+        // This is the final size-12 holdout. It simplifies using the NegMod(A, A+1, A) -> A rule,
+        // reducing d(n) to an affine form that is always >= 1.
+        let f = grf!("R(C(S, Z0), R(S, R(R(S, P(3,1)), P(4,2))))");
         assert!(f.is_never_zero());
     }
 }

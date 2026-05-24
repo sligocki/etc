@@ -667,12 +667,14 @@ pub fn closed_form_of_rec_internal(
     // Case Periodic: h depends on step counter (arg 1) at most periodically -> sequence only depends on acc and rest.
     // We can simulate the first 50 steps. If we find a cycle, we can represent it with PeriodicFn.
     if sem_h.arity() == k_outer + 1 {
-        if let Some((p, pre)) = period_and_pre_period(sem_h, 1) {
+        let (p, pre) = period_and_pre_period(sem_h, 1).unwrap_or((0, 0));
+        {
             let mut seq = Vec::new();
             seq.push(sem_g.clone());
             let mut cycle_found = None;
             let k_rest = k_outer - 1;
-            for step in 1..=50 {
+            let max_steps = if p > 0 { 50 } else { 6 };
+            for step in 1..=max_steps {
                 let prev = seq.last().unwrap().clone();
                 let mut inners = Vec::with_capacity(k_outer + 1);
 
@@ -692,7 +694,89 @@ pub fn closed_form_of_rec_internal(
                     if next_cf.ast_size() > 100 {
                         break;
                     }
-                    if step >= pre {
+                    let mut affine_cycle = None;
+                    if let ClosedForm::Affine(a_next) = &next_cf {
+                        if step >= 2 {
+                            if let ClosedForm::Affine(a_prev) = &seq[step - 1] {
+                                if a_next.coeffs.len() == a_prev.coeffs.len() {
+                                    let mut match_coeffs = true;
+                                    for i in 1..a_next.coeffs.len() {
+                                        if a_next.coeffs[i] != a_prev.coeffs[i] {
+                                            match_coeffs = false;
+                                            break;
+                                        }
+                                    }
+                                    if match_coeffs && a_next.coeffs[0] >= a_prev.coeffs[0] {
+                                        let c = a_next.coeffs[0] - a_prev.coeffs[0];
+                                        // Symbolically prove the hypothesized progression:
+                                        // S_m(m) = a_prev + c * m. (where m is the offset from step-1)
+                                        // n = step - 1 + m.
+                                        let mut n_hyp_coeffs = vec![0; k_outer + 1];
+                                        n_hyp_coeffs[0] = (step - 1) as u64;
+                                        n_hyp_coeffs[1] = 1; // multiplier for m
+                                        let n_hyp = ClosedForm::Affine(AffineFn {
+                                            arity: k_outer,
+                                            coeffs: n_hyp_coeffs,
+                                        });
+
+                                        let mut state_hyp_coeffs = vec![0; k_outer + 1];
+                                        state_hyp_coeffs[0] = a_prev.coeffs[0];
+                                        state_hyp_coeffs[1] = c;
+                                        for i in 1..a_prev.coeffs.len() {
+                                            state_hyp_coeffs[i + 1] = a_prev.coeffs[i];
+                                        }
+                                        let state_hyp = ClosedForm::Affine(AffineFn {
+                                            arity: k_outer,
+                                            coeffs: state_hyp_coeffs.clone(),
+                                        });
+
+                                        let mut expected_coeffs = state_hyp_coeffs.clone();
+                                        expected_coeffs[0] += c;
+                                        let expected = ClosedForm::Affine(AffineFn {
+                                            arity: k_outer,
+                                            coeffs: expected_coeffs,
+                                        });
+
+                                        let mut inners_hyp = vec![n_hyp, state_hyp];
+                                        for m in 1..=k_rest {
+                                            let mut r_coeffs = vec![0; k_outer + 1];
+                                            r_coeffs[m + 1] = 1; // since args are (m, rest...), rest_m is at index m+1 in coeffs
+                                            inners_hyp.push(ClosedForm::Affine(AffineFn {
+                                                arity: k_outer,
+                                                coeffs: r_coeffs,
+                                            }));
+                                        }
+
+                                        if let Some(res) = compose(sem_h, &inners_hyp, k_outer) {
+                                            if res == expected {
+                                                affine_cycle = Some((step - 1, c));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some((j, c)) = affine_cycle {
+                        let a_j = match &seq[j] {
+                            ClosedForm::Affine(a) => a,
+                            _ => unreachable!(),
+                        };
+                        let mut new_coeffs = Vec::with_capacity(a_j.coeffs.len() + 1);
+                        new_coeffs.push(a_j.coeffs[0]);
+                        new_coeffs.push(c);
+                        new_coeffs.extend_from_slice(&a_j.coeffs[1..]);
+                        let mut res = ClosedForm::Affine(AffineFn {
+                            arity: k_outer,
+                            coeffs: new_coeffs,
+                        });
+                        for m in (0..j).rev() {
+                            res = make_piecewise(k_outer, 0, seq[m].clone(), res);
+                        }
+                        return Some(res);
+                    }
+
+                    if p > 0 && step >= pre {
                         // Find a previous state that matches next_cf and is at the same phase modulo p.
                         let mut found_match = None;
                         for (j, x) in seq.iter().enumerate() {
@@ -800,7 +884,7 @@ pub fn closed_form_of_rec_internal(
     if let ClosedForm::Piecewise(pw) = sem_h {
         if pw.branch_index == 1 {
             let h_p = &pw.pos_branch;
-            let h_z = &pw.zero_branch;
+            let _h_z = &pw.zero_branch;
 
             if closed_form_ignores_arg(h_p, 2) {
                 if let Some(h_p_no_acc) = drop_arg(h_p, 2) {
@@ -1521,7 +1605,7 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
 }
 
 /// Returns true when `sem` evaluates to 0 for all natural-number inputs.
-fn is_always_pos(sem: &ClosedForm) -> bool {
+pub fn is_always_pos(sem: &ClosedForm) -> bool {
     match sem {
         ClosedForm::Affine(af) => af.coeffs[0] > 0,
         ClosedForm::Piecewise(pw) => {
@@ -1577,7 +1661,7 @@ fn is_always_pos_on_branch_k(sem: &ClosedForm, k: usize, p_len: usize) -> bool {
     }
 }
 
-fn is_always_zero(sem: &ClosedForm) -> bool {
+pub fn is_always_zero(sem: &ClosedForm) -> bool {
     match sem {
         ClosedForm::Affine(af) => af.coeffs.iter().all(|&c| c == 0),
         ClosedForm::Piecewise(pw) => {
@@ -1659,6 +1743,9 @@ fn drop_arg_affine(af: &AffineFn, idx: usize) -> Option<AffineFn> {
 
 fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
     debug_assert!(idx >= 1);
+    if idx > sem.arity() {
+        return None;
+    }
     match sem {
         ClosedForm::Affine(af) => {
             if af.coeffs[idx] != 0 {
@@ -1728,6 +1815,19 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
 /// adjusted to pos_branch.c0 − pos_branch.coeffs[bi+1].
 
 fn make_neg_mod(af1: AffineFn, af2: AffineFn, af3: AffineFn) -> ClosedForm {
+    let mut is_af1_plus_1 = true;
+    if af2.coeffs[0] != af1.coeffs[0] + 1 {
+        is_af1_plus_1 = false;
+    }
+    for i in 1..af1.coeffs.len() {
+        if af2.coeffs[i] != af1.coeffs[i] {
+            is_af1_plus_1 = false;
+            break;
+        }
+    }
+    if is_af1_plus_1 {
+        return ClosedForm::Affine(af3);
+    }
     if af1.coeffs.iter().all(|&c| c == 0) && af3.coeffs.iter().all(|&c| c == 0) {
         return ClosedForm::Affine(AffineFn {
             arity: af1.arity,
@@ -2777,7 +2877,7 @@ mod tests {
 
         // This corresponds to testing `closed_form_of_rec_internal` handles periodic dependencies on step counter.
         // It should identify that the recursion forms a cycle.
-        let rec_cf = super::closed_form_of_rec_internal(&g_sem, &c_sem, 1, 100);
+        let _rec_cf = super::closed_form_of_rec_internal(&g_sem, &c_sem, 1, 100);
     }
 
     #[test]

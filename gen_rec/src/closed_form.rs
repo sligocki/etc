@@ -1232,6 +1232,54 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                 return compose(&pw.pos_branch, &pos_inners, arity);
             }
 
+            // Case 3: inners[bi] is Affine, c0 == 0, depends on exactly one variable j with c > 0.
+            // Then inners[bi] == 0 iff xj == 0. So we can distribute the Piecewise onto xj!
+            if let ClosedForm::Affine(g_af) = g_branch {
+                if g_af.coeffs[0] == 0 {
+                    let mut only_var = None;
+                    let mut ok = true;
+                    for (i, &c) in g_af.coeffs.iter().enumerate().skip(1) {
+                        if c > 0 {
+                            if only_var.is_none() {
+                                only_var = Some(i);
+                            } else {
+                                ok = false;
+                                break;
+                            }
+                        } else if c != 0 {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok {
+                        if let Some(j) = only_var {
+                            let others_ok =
+                                inners.iter().enumerate().filter(|(i, _)| *i != bi).all(
+                                    |(_, inner)| {
+                                        if let ClosedForm::Piecewise(pw2) = inner {
+                                            pw2.branch_index + 1 == j
+                                                || closed_form_ignores_arg(inner, j)
+                                        } else {
+                                            true
+                                        }
+                                    },
+                                );
+                            if others_ok {
+                                let zero_inners: Vec<ClosedForm> =
+                                    inners.iter().map(|inner| zero_face_at(inner, j)).collect();
+                                let new_zero = compose(h, &zero_inners, arity - 1)?;
+
+                                let pos_inners: Vec<ClosedForm> =
+                                    inners.iter().map(|inner| pos_face_at(inner, j)).collect();
+                                let new_pos = compose(h, &pos_inners, arity)?;
+
+                                return Some(make_piecewise(arity, j - 1, new_zero, new_pos));
+                            }
+                        }
+                    }
+                }
+            }
+
             // Case 4: inners[bi] is a Piecewise branching on xj.
             // Distribute the outer Piecewise over the inner Piecewise.
             if let ClosedForm::Piecewise(pw_inner) = g_branch {

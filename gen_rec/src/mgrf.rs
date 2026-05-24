@@ -1177,6 +1177,7 @@ fn resolve(expr: &Expr, target: usize, known: &HashMap<String, Grf>) -> Result<G
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulate::simulate;
 
     fn single(content: &str) -> Grf {
         let defs = parse_mgrf_to_grfs(content).unwrap();
@@ -1369,7 +1370,6 @@ Mult[n] := R(Z, C(Plus[n], P2))
 
     #[test]
     fn test_plus_simulation() {
-        use crate::simulate::simulate;
         let content = format!("{}\nPlus3 := Plus[3]\nPlus5 := Plus[5]", NUM_EXAMPLES);
         let defs = parse_defs(&content);
         let (r, _) = simulate(&defs["Plus3"], &[7], 10_000);
@@ -1380,7 +1380,6 @@ Mult[n] := R(Z, C(Plus[n], P2))
 
     #[test]
     fn test_monus_simulation() {
-        use crate::simulate::simulate;
         let content = format!("{}\nM1 := Monus[1]\nM3 := Monus[3]", NUM_EXAMPLES);
         let defs = parse_defs(&content);
         let (r, _) = simulate(&defs["M1"], &[5], 10_000);
@@ -1395,7 +1394,6 @@ Mult[n] := R(Z, C(Plus[n], P2))
 
     #[test]
     fn test_mult_simulation() {
-        use crate::simulate::simulate;
         let content = format!("{}\nMult3 := Mult[3]\nMult5 := Mult[5]", NUM_EXAMPLES);
         let defs = parse_defs(&content);
         let (r, _) = simulate(&defs["Mult3"], &[4], 100_000);
@@ -1455,7 +1453,6 @@ DiagS[f^2] := C(f, S, S)
 
     #[test]
     fn test_grf_macro_diags_simulation() {
-        use crate::simulate::simulate;
         // DiagS[Add](x) = Add(S(x), S(x)) = (x+1)+(x+1) = 2x+2
         let content = format!("{}\nResult := DiagS[Add]", GRF_EXAMPLES);
         let defs = parse_defs(&content);
@@ -1467,7 +1464,6 @@ DiagS[f^2] := C(f, S, S)
 
     #[test]
     fn test_grf_macro_repsucc_simulation() {
-        use crate::simulate::simulate;
         // RepSucc[S](n, x) = R(S, C(S, P2))(n, x) = x + n + 1
         let content = format!("{}\nResult := RepSucc[S]", GRF_EXAMPLES);
         let defs = parse_defs(&content);
@@ -1479,7 +1475,6 @@ DiagS[f^2] := C(f, S, S)
 
     #[test]
     fn test_grf_macro_diagrep_simulation() {
-        use crate::simulate::simulate;
         // DiagRep[RepSucc[S]](n, x):
         //   = R(S, C(RepSucc[S], P(3,2), P(3,2)))(n, x)
         //   where RepSucc[S](k,y) = y + k + 1
@@ -1511,7 +1506,6 @@ DiagS[f^2] := C(f, S, S)
 
     #[test]
     fn test_grf_macro_with_num_macro_matching_arity() {
-        use crate::simulate::simulate;
         // Mult (arity 2) used with DiagS[f^2]: DiagS[Mult](x) = Mult(x+1, x+1) = (x+1)^2
         let content = format!(
             "{}\nMult := R(Z, R(Add, P2))\nResult := DiagS[Mult]",
@@ -1544,7 +1538,6 @@ DiagS[f^2] := C(f, S, S)
 
     #[test]
     fn test_grf_param_passed_via_caret_syntax() {
-        use crate::simulate::simulate;
         // Twice[f^1] := C(f, f) where f is a GRF-param.
         // Twice[RepSucc[S]^2]: pass RepSucc[S] (arity 2) but declared as f^1 — should error
         //   because Twice expects f^1 but RepSucc[S] has arity 2.
@@ -1575,7 +1568,6 @@ DiagS[f^2] := C(f, S, S)
     }
 
     fn run_mgrf_tests(file: &MgrfFile) {
-        use crate::simulate::simulate;
         const BUDGET: SmallNat = 1_000_000;
         let grf_map: HashMap<&str, &Grf> = file.defs.iter().map(|(n, g)| (n.as_str(), g)).collect();
         for tc in &file.tests {

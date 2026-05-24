@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 use crate::closed_form::{closed_form_of, ClosedForm};
 use crate::sim_nat::SmallNat;
+use crate::simulate::{simulate, SimResult};
 
 /// Parse a GRF from a format string, panicking on error.
 ///
@@ -287,8 +288,8 @@ impl Grf {
             GrfKind::Rec(g, h) => {
                 if j == 1 {
                     if g.arity() == 0 && h.is_positive_for_pos_arg(2) {
-                        let (res, _) = crate::simulate::simulate(self, &[m], 100);
-                        if let crate::simulate::SimResult::Value(v) = res {
+                        let (res, _) = simulate(self, &[m], 100);
+                        if let SimResult::Value(v) = res {
                             if v > 0 {
                                 return true;
                             }
@@ -469,8 +470,8 @@ impl Grf {
                         return true;
                     }
                     if g.arity() == 0 && h.is_positive_for_pos_arg(2) {
-                        let (res, _) = crate::simulate::simulate(self, &[1], 100);
-                        if let crate::simulate::SimResult::Value(v) = res {
+                        let (res, _) = simulate(self, &[1], 100);
+                        if let SimResult::Value(v) = res {
                             if v > 0 {
                                 return true;
                             }

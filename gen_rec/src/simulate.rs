@@ -1085,7 +1085,7 @@ mod tests {
         // M(C(R(P(1,1), P(3,1)), R(Z0, C(S, C(S, P(2,2)))), S))
         // This size-13 holdout reduces via Piecewise evaluation onto the branch variable,
         // because the condition is exactly b(x) = 2x, which equals 0 iff x = 0.
-        let f = crate::grf!("M(C(R(P(1,1), P(3,1)), R(Z0, C(S, C(S, P(2,2)))), S))");
+        let f = grf!("M(C(R(P(1,1), P(3,1)), R(Z0, C(S, C(S, P(2,2)))), S))");
         let res = simulate(&f, &[], 1000);
         assert_eq!(res.0, SimResult::Diverge);
     }

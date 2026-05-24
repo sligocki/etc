@@ -4,6 +4,7 @@
 use crate::closed_form::{closed_form_of, ClosedForm};
 use crate::enumerate::{for_each_grf_core, stream_grf};
 use crate::grf::Grf;
+use crate::optimize::inline_proj;
 use crate::pruning::PruningOpts;
 use std::collections::HashMap;
 
@@ -226,7 +227,7 @@ impl ClosedFormEnumerator {
         ) {
             if idx == rewiring.len() {
                 if wrapped_only {
-                    if crate::optimize::inline_proj(rnf_grf, target_arity, rewiring).is_none() {
+                    if inline_proj(rnf_grf, target_arity, rewiring).is_none() {
                         let projs = rewiring
                             .iter()
                             .map(|&i| Grf::proj_atom(target_arity, i))
@@ -234,7 +235,7 @@ impl ClosedFormEnumerator {
                         cb(&Grf::comp(rnf_grf.clone(), projs));
                     }
                 } else {
-                    if let Some(g) = crate::optimize::inline_proj(rnf_grf, target_arity, rewiring) {
+                    if let Some(g) = inline_proj(rnf_grf, target_arity, rewiring) {
                         cb(&g);
                     }
                 }

@@ -461,6 +461,7 @@ pub fn exhaustive_probe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fingerprint::canonical_inputs_n;
     use crate::grf;
     use crate::simulate::SmallNat;
 
@@ -652,8 +653,8 @@ mod tests {
 
     #[test]
     fn test_probe_spec_detects_false_positive() {
-        let grf: crate::grf::Grf = grf!("P(2,1)");
-        let large_inputs = crate::fingerprint::canonical_inputs_n(2, 64);
+        let grf = grf!("P(2,1)");
+        let large_inputs = canonical_inputs_n(2, 64);
         let result_large = probe_spec(&grf, &mut trailing_bits_spec, &large_inputs, 100_000);
         assert!(
             matches!(result_large, ProbeResult::SpecFailed { .. }),
@@ -678,7 +679,7 @@ mod tests {
         // C(P(2,2),P(2,1),P(2,2)) is the accumulator-echo (semantically Proj(_, 2)),
         // so is_positive_for_pos_arg(2) detects it and is_never_zero fires.
         // M of a never-zero body → Diverged (detected statically, no timeout needed).
-        let grf: crate::grf::Grf = grf!("M(C(R(C(S,Z0),C(P(2,2),P(2,1),P(2,2))),P(1,1)))");
+        let grf = grf!("M(C(R(C(S,Z0),C(P(2,2),P(2,1),P(2,2))),P(1,1)))");
         let inputs = vec![vec![]];
         let result = probe_spec(&grf, &mut |_, _| true, &inputs, 10);
         assert!(

@@ -73,12 +73,7 @@ impl ClosedFormEnumerator {
     }
 
     /// Stream GRFs one at a time via callback
-    pub fn stream_grfs<F: FnMut(&Grf)>(
-        &mut self,
-        arity: usize,
-        size: usize,
-        callback: &mut F,
-    ) {
+    pub fn stream_grfs<F: FnMut(&Grf)>(&mut self, arity: usize, size: usize, callback: &mut F) {
         self.ensure_dependencies(arity, size);
         self.stream_grf_internal(arity, size, callback);
     }
@@ -112,7 +107,7 @@ impl ClosedFormEnumerator {
     /// Populate `memo[(arity, size)]` with novel GRFs, recursing into dependencies.
     /// If `arity + size > cf_limit` this is a no-op: the domain is intentionally
     /// left uncached and will be streamed on demand by `all_grfs`.
-    pub fn compute_size(&mut self, arity: usize, size: usize) {
+    pub fn fill_cache(&mut self, arity: usize, size: usize) {
         if self.memo.contains_key(&(arity, size)) {
             return;
         }
@@ -127,11 +122,11 @@ impl ClosedFormEnumerator {
             if self.dynamic_rnf && !grf.is_rnf() {
                 continue;
             }
-            match (closed_form_of(&grf), self.mode) {
+            match (grf.closed_form(), self.mode) {
                 (Some(cf), _) => {
                     let seen = self.seen_closed.entry(arity).or_default();
                     if !seen.contains_key(&cf) {
-                        seen.insert(cf, grf.clone());
+                        seen.insert(cf.clone(), grf.clone());
                         novel.push(grf);
                     }
                 }
@@ -160,12 +155,7 @@ impl ClosedFormEnumerator {
     ///
     /// Call `prepare(arity, size)` first to ensure in-limit dependency domains are
     /// in the memo.  Above-limit domains are streamed on demand.
-    fn stream_grf_internal<F: FnMut(&Grf)>(
-        &self,
-        arity: usize,
-        size: usize,
-        callback: &mut F,
-    ) {
+    fn stream_grf_internal<F: FnMut(&Grf)>(&self, arity: usize, size: usize, callback: &mut F) {
         let memo = &self.memo;
         let allow_min = self.allow_min;
         let opts = self.opts;
@@ -322,7 +312,7 @@ impl ClosedFormEnumerator {
     fn ensure_up_to(&mut self, arity: usize, size: usize) {
         for s in 1..=size {
             if arity + s <= self.cf_limit && !self.memo.contains_key(&(arity, s)) {
-                self.compute_size(arity, s);
+                self.fill_cache(arity, s);
             }
         }
     }
@@ -341,9 +331,9 @@ mod tests {
         let mut en =
             ClosedFormEnumerator::new(EnumMode::ClosedFormOnly, false, PruningOpts::default());
         for s in 1..=max_size {
-            en.compute_size(0, s);
-            en.compute_size(1, s);
-            en.compute_size(2, s);
+            en.fill_cache(0, s);
+            en.fill_cache(1, s);
+            en.fill_cache(2, s);
         }
         en
     }
@@ -356,7 +346,7 @@ mod tests {
             for size in 1..=8 {
                 for grf in en.candidates(arity, size) {
                     assert!(
-                        closed_form_of(grf).is_some(),
+                        grf.closed_form().is_some(),
                         "Mode A returned non-ClosedForm GRF: {} (arity={}, size={})",
                         grf,
                         arity,
@@ -376,7 +366,7 @@ mod tests {
                 std::collections::HashMap::new();
             for size in 1..=8 {
                 for grf in en.candidates(arity, size) {
-                    let cf = closed_form_of(grf).unwrap();
+                    let cf = grf.closed_form().unwrap();
                     if let Some(prev) = seen.insert(cf.clone(), grf.to_string()) {
                         panic!(
                             "Duplicate ClosedForm at arity={}: {} and {}",
@@ -395,9 +385,9 @@ mod tests {
         for arity in 0..=2 {
             for size in 1..=7 {
                 for grf in en.candidates(arity, size) {
-                    let cf = closed_form_of(grf).unwrap();
+                    let cf = grf.closed_form().unwrap();
                     let canon = en.canonical_grf_for(arity, &cf).unwrap();
-                    let canon_cf = closed_form_of(canon).unwrap();
+                    let canon_cf = canon.closed_form().unwrap();
                     assert_eq!(
                         cf, canon_cf,
                         "canonical_grf_for round-trip failed for {}",
@@ -414,9 +404,9 @@ mod tests {
         let en_a = mode_a(7);
         let mut en_b = ClosedFormEnumerator::new(EnumMode::AllGrf, false, PruningOpts::default());
         for s in 1..=7 {
-            en_b.compute_size(0, s);
-            en_b.compute_size(1, s);
-            en_b.compute_size(2, s);
+            en_b.fill_cache(0, s);
+            en_b.fill_cache(1, s);
+            en_b.fill_cache(2, s);
         }
 
         for arity in 0..=2 {
@@ -449,7 +439,7 @@ mod tests {
 
         let mut en = ClosedFormEnumerator::new(EnumMode::AllGrf, false, PruningOpts::recommended());
         for size in 1..=max_size {
-            en.compute_size(0, size);
+            en.fill_cache(0, size);
         }
 
         for &(size, expected) in known {

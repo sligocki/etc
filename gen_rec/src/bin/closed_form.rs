@@ -392,11 +392,6 @@ fn root_cause(reason: &str) -> &str {
 
 fn run_coverage(args: CoverageArgs) {
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, args.allow_min);
-    for arity in 0..=args.max_arity {
-        for size in 1..=args.max_size {
-            en.compute_size(arity, size);
-        }
-    }
 
     let mut grand_total = 0usize;
     let mut grand_covered = 0usize;
@@ -780,9 +775,6 @@ fn run_test(args: TestArgs) {
 
 fn run_list(args: ListArgs) {
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::ClosedFormOnly, args.allow_min);
-    for size in 1..=args.max_size {
-        en.compute_size(args.arity, size);
-    }
 
     // Count total so we can print it in the header.
     let total: usize = (1..=args.max_size)
@@ -835,9 +827,6 @@ fn run_list(args: ListArgs) {
 
 fn run_dups(args: DupsArgs) {
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::ClosedFormOnly, args.allow_min);
-    for size in 1..=args.max_size {
-        en.compute_size(args.arity, size);
-    }
 
     // Group (size, grf_str, ClosedForm) by semantic fingerprint.
     let mut groups: HashMap<Vec<Option<SmallNat>>, Vec<(usize, String, ClosedForm)>> =
@@ -928,12 +917,6 @@ fn run_count(args: CountArgs) {
 
     let max_arity = args.cf_limit.saturating_sub(1);
     let max_size = args.cf_limit;
-
-    for arity in 0..=max_arity {
-        for size in 1..=args.cf_limit.saturating_sub(arity) {
-            en.compute_size(arity, size);
-        }
-    }
 
     // Collect counts[size-1][arity]
     let counts: Vec<Vec<Option<usize>>> = (1..=max_size)
@@ -1178,12 +1161,9 @@ fn run_diff(args: DiffArgs) {
     // entries for all sub-expression (arity, size) pairs needed for diagnosis.
     println!("Building CF enumerator memo…");
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, false);
+    // Make sure all grf sizes are in cache so is_in_memo() works as expected.
     for (grf, _) in &parsed {
-        en.ensure_dependencies(grf.arity(), grf.size());
-    }
-    // Also compute_size for the root's own (arity, size) so is_in_memo works there too.
-    for (grf, _) in &parsed {
-        en.compute_size(grf.arity(), grf.size());
+        en.fill_cache(grf.arity(), grf.size());
     }
     println!("  done  [{}]\n", elapsed_str(start));
 

@@ -1,7 +1,7 @@
 /// ClosedForm-based novel-sub-expression enumerator.
 ///
 /// Enumerates GRF, removing duplication for equal ClosedForm results.
-use crate::closed_form::{ClosedForm, closed_form_of};
+use crate::closed_form::ClosedForm;
 use crate::enumerate::{for_each_grf_core, stream_grf};
 use crate::grf::Grf;
 use crate::optimize::inline_proj;
@@ -321,7 +321,6 @@ impl ClosedFormEnumerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::closed_form::closed_form_of;
     use crate::pruning::PruningOpts;
     use crate::sim_nat::SmallNat;
     use crate::simulate::simulate;

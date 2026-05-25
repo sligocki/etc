@@ -217,34 +217,59 @@ impl Grf {
     ///
     /// Used by the simulator to detect when a `Rec` step function ignores its
     /// accumulator (arg 2), enabling the fast-forward optimization.
-    /// Returns true if this GRF can provably never return 0.
-    ///
-    /// Conservative: returns false when unsure. Used by the enumerator to
-    /// prune `M(f)` when `f` is always positive (M(f) always diverges).
+    pub fn used_args(&self) -> BTreeSet<usize> {
+        match &self.kind {
+            GrfKind::Zero(_) => BTreeSet::new(),
+            GrfKind::Succ => [1].into_iter().collect(),
+            GrfKind::Proj(_, i) => [*i].into_iter().collect(),
+            GrfKind::Comp(h, gs, _) => {
+                // C(h, g1..gm)(args) = h(g1(args), ..., gm(args)).
+                // Comp reads arg j iff h reads some position i where gi reads arg j.
+                let h_used = h.used_args();
+                let mut result = BTreeSet::new();
+                for (idx, g) in gs.iter().enumerate() {
+                    if h_used.contains(&(idx + 1)) {
+                        result.extend(g.used_args());
+                    }
+                }
+                result
+            }
+            GrfKind::Rec(g, h) => {
+                // R(g,h)(n, r1..r_{k-1}): base g(r1..r_{k-1}), step h(i, acc, r1..r_{k-1}).
+                // g's arg j  →  Rec's arg j+1  (rest starts at position 2 of Rec).
+                // h's arg j (j≥3)  →  Rec's arg j-1  (h's positions 1,2 are i and acc).
+                // Rec always conservatively includes arg 1 (the counter n).
+                let g_used = g.used_args();
+                let h_used = h.used_args();
+                let mut result = BTreeSet::new();
+                result.insert(1);
+                for j in g_used {
+                    result.insert(j + 1);
+                }
+                for j in h_used {
+                    if j >= 3 {
+                        result.insert(j - 1);
+                    }
+                    // j=1 (loop counter i) already covered by arg 1 above.
+                    // j=2 (accumulator) is internal — doesn't add a new Rec input.
+                }
+                result
+            }
+            GrfKind::Min(f) => {
+                // M(f)(r1..r_k): f(i, r1..r_k). f's arg j (j≥2) → Min's arg j-1.
+                let f_used = f.used_args();
+                let mut result = BTreeSet::new();
+                for j in f_used {
+                    if j >= 2 {
+                        result.insert(j - 1);
+                    }
+                }
+                result
+            }
+        }
+    }
 
     /// Returns a static lower bound for this function across all inputs.
-
-    /// Returns the minimum mathematically guaranteed value of `self(args) - other(args)`.
-    pub fn guaranteed_diff(&self, other: &Grf) -> Option<i64> {
-        let cf_self = self.closed_form()?;
-        let cf_other = other.closed_form()?;
-
-        if let (ClosedForm::Affine(aff_s), ClosedForm::Affine(aff_o)) = (cf_self, cf_other) {
-            // Both are affine. Ensure self's linear coefficients are >= other's linear coefficients.
-            if aff_s.coeffs.len() < aff_o.coeffs.len() {
-                // If self has fewer args (impossible if they have the same arity, but just in case)
-                return None;
-            }
-            for i in 1..aff_o.coeffs.len() {
-                if aff_s.coeffs[i] < aff_o.coeffs[i] {
-                    return None;
-                }
-            }
-            // What if self has more coeffs? They are >= 0, so self(args) will just be even larger.
-            return Some((aff_s.coeffs[0] as i64) - (aff_o.coeffs[0] as i64));
-        }
-        None
-    }
     pub fn min_val(&self) -> u64 {
         match &self.kind {
             GrfKind::Zero(_) => 0,
@@ -267,6 +292,28 @@ impl Grf {
             }
             _ => 0,
         }
+    }
+
+    /// Returns the minimum mathematically guaranteed value of `self(args) - other(args)`.
+    pub fn guaranteed_diff(&self, other: &Grf) -> Option<i64> {
+        let cf_self = self.closed_form()?;
+        let cf_other = other.closed_form()?;
+
+        if let (ClosedForm::Affine(aff_s), ClosedForm::Affine(aff_o)) = (cf_self, cf_other) {
+            // Both are affine. Ensure self's linear coefficients are >= other's linear coefficients.
+            if aff_s.coeffs.len() < aff_o.coeffs.len() {
+                // If self has fewer args (impossible if they have the same arity, but just in case)
+                return None;
+            }
+            for i in 1..aff_o.coeffs.len() {
+                if aff_s.coeffs[i] < aff_o.coeffs[i] {
+                    return None;
+                }
+            }
+            // What if self has more coeffs? They are >= 0, so self(args) will just be even larger.
+            return Some((aff_s.coeffs[0] as i64) - (aff_o.coeffs[0] as i64));
+        }
+        None
     }
 
     /// Returns true if `f(args…) > 0` whenever arg `j` >= `m`, regardless of other args.
@@ -358,6 +405,10 @@ impl Grf {
         false
     }
 
+    /// Returns true if this GRF can provably never return 0.
+    ///
+    /// Conservative: returns false when unsure. Used by the enumerator to
+    /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
         // Leverage ClosedForm for definitive properties first (only if already cached)
         if let Some(Some(cf)) = self.cf.get() {
@@ -498,58 +549,6 @@ impl Grf {
                 false
             }
             _ => false,
-        }
-    }
-
-    pub fn used_args(&self) -> BTreeSet<usize> {
-        match &self.kind {
-            GrfKind::Zero(_) => BTreeSet::new(),
-            GrfKind::Succ => [1].into_iter().collect(),
-            GrfKind::Proj(_, i) => [*i].into_iter().collect(),
-            GrfKind::Comp(h, gs, _) => {
-                // C(h, g1..gm)(args) = h(g1(args), ..., gm(args)).
-                // Comp reads arg j iff h reads some position i where gi reads arg j.
-                let h_used = h.used_args();
-                let mut result = BTreeSet::new();
-                for (idx, g) in gs.iter().enumerate() {
-                    if h_used.contains(&(idx + 1)) {
-                        result.extend(g.used_args());
-                    }
-                }
-                result
-            }
-            GrfKind::Rec(g, h) => {
-                // R(g,h)(n, r1..r_{k-1}): base g(r1..r_{k-1}), step h(i, acc, r1..r_{k-1}).
-                // g's arg j  →  Rec's arg j+1  (rest starts at position 2 of Rec).
-                // h's arg j (j≥3)  →  Rec's arg j-1  (h's positions 1,2 are i and acc).
-                // Rec always conservatively includes arg 1 (the counter n).
-                let g_used = g.used_args();
-                let h_used = h.used_args();
-                let mut result = BTreeSet::new();
-                result.insert(1);
-                for j in g_used {
-                    result.insert(j + 1);
-                }
-                for j in h_used {
-                    if j >= 3 {
-                        result.insert(j - 1);
-                    }
-                    // j=1 (loop counter i) already covered by arg 1 above.
-                    // j=2 (accumulator) is internal — doesn't add a new Rec input.
-                }
-                result
-            }
-            GrfKind::Min(f) => {
-                // M(f)(r1..r_k): f(i, r1..r_k). f's arg j (j≥2) → Min's arg j-1.
-                let f_used = f.used_args();
-                let mut result = BTreeSet::new();
-                for j in f_used {
-                    if j >= 2 {
-                        result.insert(j - 1);
-                    }
-                }
-                result
-            }
         }
     }
 

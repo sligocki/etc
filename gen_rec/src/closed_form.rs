@@ -1,14 +1,15 @@
-use crate::grf::{Grf, GrfKind};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crate::grf::{Grf, GrfKind};
+use crate::math::lcm;
+use crate::sim_nat::SimNat;
+use crate::simulate::SimResult;
+
 pub static COMPOSE_CALLS: AtomicUsize = AtomicUsize::new(0);
 pub static COMPOSE_TIME_NS: AtomicUsize = AtomicUsize::new(0);
 pub static REC_INTERNAL_CALLS: AtomicUsize = AtomicUsize::new(0);
 pub static REC_INTERNAL_STEPS: AtomicUsize = AtomicUsize::new(0);
 pub static PERIODIC_PERIOD: AtomicUsize = AtomicUsize::new(0);
-
-use crate::math::lcm;
-use crate::sim_nat::SimNat;
-use crate::simulate::SimResult;
 
 /// Affine function over natural numbers: c0 + c1*x1 + ... + ck*xk.
 ///

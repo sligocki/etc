@@ -56,8 +56,7 @@ impl ClosedFormEnumerator {
     /// including stream-only flags (`comp_rnf`, `inline_proj`, `min_dom`,
     /// `rec_step_p2`).  Use this for BBµ search and algebraic exploration.
     pub fn with_pruning(mode: EnumMode, allow_min: bool) -> Self {
-        let opts =
-            PruningOpts::recommended().with_flags("min_dom,inline_proj,comp_rnf,rec_step_p2");
+        let opts = PruningOpts::recommended();
         Self::new(mode, allow_min, opts)
     }
 
@@ -73,16 +72,46 @@ impl ClosedFormEnumerator {
         self
     }
 
-    /// Pre-fill the memo for all in-limit dependency domains needed to call
-    /// `raw_candidates_at_size(arity, size)`.  Never caches the target domain
-    /// itself, so no above-limit entry is ever written to the memo.
-    pub fn prepare(&mut self, arity: usize, size: usize) {
+    /// Stream GRFs one at a time via callback
+    pub fn stream_grfs<F: FnMut(&Grf)>(
+        &mut self,
+        arity: usize,
+        size: usize,
+        callback: &mut F,
+    ) {
         self.ensure_dependencies(arity, size);
+        self.stream_grf_internal(arity, size, callback);
+    }
+
+    pub fn count_grfs(&mut self, arity: usize, size: usize) -> usize {
+        let mut count = 0usize;
+        self.stream_grfs(arity, size, &mut |_| count += 1);
+        count
+    }
+
+    /// Get full Vec of all GRFs of a domain
+    pub fn all_grfs(&mut self, arity: usize, size: usize) -> Vec<Grf> {
+        let mut out = Vec::new();
+        self.stream_grfs(arity, size, &mut |grf| out.push(grf.clone()));
+        out
+    }
+
+    /// Return the canonical (first-seen, smallest) Grf for a given ClosedForm and arity.
+    pub fn canonical_grf_for(&self, arity: usize, cf: &ClosedForm) -> Option<&Grf> {
+        self.seen_closed.get(&arity)?.get(cf)
+    }
+
+    pub fn is_in_memo(&self, grf: &Grf) -> bool {
+        if let Some(gs) = self.memo.get(&(grf.arity(), grf.size())) {
+            gs.iter().any(|g| g == grf)
+        } else {
+            false
+        }
     }
 
     /// Populate `memo[(arity, size)]` with novel GRFs, recursing into dependencies.
     /// If `arity + size > cf_limit` this is a no-op: the domain is intentionally
-    /// left uncached and will be streamed on demand by `generate_candidates`.
+    /// left uncached and will be streamed on demand by `all_grfs`.
     pub fn compute_size(&mut self, arity: usize, size: usize) {
         if self.memo.contains_key(&(arity, size)) {
             return;
@@ -93,10 +122,8 @@ impl ClosedFormEnumerator {
 
         self.ensure_dependencies(arity, size);
 
-        let candidates = self.generate_candidates(arity, size);
         let mut novel: Vec<Grf> = Vec::new();
-
-        for grf in candidates {
+        for grf in self.all_grfs(arity, size) {
             if self.dynamic_rnf && !grf.is_rnf() {
                 continue;
             }
@@ -119,28 +146,11 @@ impl ClosedFormEnumerator {
     }
 
     /// Return the cached canonical input set for `(arity, size)`, or empty slice.
-    pub fn candidates(&self, arity: usize, size: usize) -> &[Grf] {
+    fn candidates(&self, arity: usize, size: usize) -> &[Grf] {
         self.memo
             .get(&(arity, size))
             .map(|v| v.as_slice())
             .unwrap_or(&[])
-    }
-
-    /// Return the canonical (first-seen, smallest) Grf for a given ClosedForm and arity.
-    pub fn canonical_grf_for(&self, arity: usize, cf: &ClosedForm) -> Option<&Grf> {
-        self.seen_closed.get(&arity)?.get(cf)
-    }
-
-    /// Return `(total_closed_seen, total_raw_included)` across all arities and sizes.
-    pub fn memo_stats(&self) -> (usize, usize) {
-        let closed: usize = self.seen_closed.values().map(|m| m.len()).sum();
-        let raw: usize = self
-            .memo
-            .values()
-            .flat_map(|v| v.iter())
-            .filter(|g| closed_form_of(g).is_none())
-            .count();
-        (closed, raw)
     }
 
     /// Stream all GRFs of exactly (arity, size) using canonical sub-expressions,
@@ -150,7 +160,7 @@ impl ClosedFormEnumerator {
     ///
     /// Call `prepare(arity, size)` first to ensure in-limit dependency domains are
     /// in the memo.  Above-limit domains are streamed on demand.
-    pub fn for_each_raw_candidate<F: FnMut(&Grf)>(
+    fn stream_grf_internal<F: FnMut(&Grf)>(
         &self,
         arity: usize,
         size: usize,
@@ -270,14 +280,7 @@ impl ClosedFormEnumerator {
         );
     }
 
-    /// Convenience wrapper around `for_each_raw_candidate` that collects into a Vec.
-    pub fn raw_candidates_at_size(&self, arity: usize, size: usize) -> Vec<Grf> {
-        let mut out = Vec::new();
-        self.for_each_raw_candidate(arity, size, &mut |grf| out.push(grf.clone()));
-        out
-    }
-
-    fn ensure_dependencies(&mut self, arity: usize, size: usize) {
+    pub fn ensure_dependencies(&mut self, arity: usize, size: usize) {
         if size == 1 {
             return;
         }
@@ -322,10 +325,6 @@ impl ClosedFormEnumerator {
                 self.compute_size(arity, s);
             }
         }
-    }
-
-    fn generate_candidates(&self, arity: usize, size: usize) -> Vec<Grf> {
-        self.raw_candidates_at_size(arity, size)
     }
 }
 
@@ -441,8 +440,7 @@ mod tests {
     }
 
     /// Mode B `raw_candidates_at_size` must find the known BBµ values for arity-0 PRFs.
-    ///
-    /// Known BBµ values: n=1→0, n=3→1, n=5→2, n=7→3, n=8→2, n=9→4.
+    /// BBµ(2k+1) = k (up to 13)
     #[test]
     fn mode_b_bb_correctness_arity0() {
         let known: &[(usize, SmallNat)] = &[(1, 0), (3, 1), (5, 2), (7, 3), (8, 2), (9, 4)];
@@ -455,7 +453,7 @@ mod tests {
         }
 
         for &(size, expected) in known {
-            let raw = en.raw_candidates_at_size(0, size);
+            let raw = en.all_grfs(0, size);
             let best: SmallNat = raw
                 .iter()
                 .filter_map(|grf| {

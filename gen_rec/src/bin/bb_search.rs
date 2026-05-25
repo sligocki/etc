@@ -416,8 +416,7 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
         let cf_allow_min = !min_prf && allow_min;
         let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, cf_allow_min)
             .with_dynamic_rnf(args.dynamic_rnf);
-        en.prepare(cf_arity, cf_size);
-        en.for_each_raw_candidate(cf_arity, cf_size, &mut |grf| {
+        en.stream_grfs(cf_arity, cf_size, &mut |grf| {
             if min_prf {
                 if opts.min_dom {
                     if !grf.used_args().contains(&1) {

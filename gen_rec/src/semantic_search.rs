@@ -125,8 +125,7 @@ pub fn search_smallest(
         let mut candidates_at_size: usize = 0;
         let t_size = Instant::now();
 
-        en.prepare(config.arity, size);
-        en.for_each_raw_candidate(config.arity, size, &mut |grf: &Grf| {
+        en.stream_grfs(config.arity, size, &mut |grf: &Grf| {
             if guaranteed.is_some() {
                 return;
             }
@@ -219,8 +218,7 @@ pub fn search_all_at_min(
     let mut best_at_min: Option<SearchResult> = None;
 
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, config.allow_min);
-    en.prepare(config.arity, min_size);
-    en.for_each_raw_candidate(config.arity, min_size, &mut |grf: &Grf| {
+    en.stream_grfs(config.arity, min_size, &mut |grf: &Grf| {
         if let Some((converged, timed_out)) = test_candidate(
             grf,
             &fast_inputs,

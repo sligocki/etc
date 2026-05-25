@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use clap::{Args, Parser, Subcommand};
-use gen_rec::closed_form::{ClosedForm, closed_form_of};
+use gen_rec::closed_form::ClosedForm;
 use gen_rec::closed_form_enum::{ClosedFormEnumerator, EnumMode};
 use gen_rec::enumerate::stream_grf;
 use gen_rec::fingerprint::canonical_inputs;
@@ -330,9 +330,9 @@ fn holdout_reason(grf: &Grf) -> String {
         GrfKind::Rec(g, h) => {
             let uses_acc = h.used_args().contains(&2);
             let acc_k = h.acc_plus_k().is_some();
-            let sem_h = closed_form_of(h);
+            let sem_h = h.closed_form();
             if acc_k {
-                match closed_form_of(g) {
+                match g.closed_form() {
                     None => "Rec[A]: base not sem".into(),
                     Some(ClosedForm::Piecewise(_)) => "Rec[A]: base is Piecewise".into(),
                     Some(ClosedForm::NegMod(_, _, _)) => "Rec[A]: base is NegMod".into(),
@@ -340,12 +340,12 @@ fn holdout_reason(grf: &Grf) -> String {
                     Some(ClosedForm::Periodic(_)) => "Rec: base is Periodic".into(),
                 }
             } else if !uses_acc {
-                if closed_form_of(g).is_none() {
+                if g.closed_form().is_none() {
                     "Rec[B]: base not sem".into()
                 } else {
                     match sem_h {
                         None => "Rec[B]: step not sem".into(),
-                        Some(ClosedForm::Affine(ref af)) if af.coeffs.get(2) == Some(&0) => {
+                        Some(ClosedForm::Affine(af)) if af.coeffs.get(2) == Some(&0) => {
                             "Rec[B]: step ok (unexpected)".into()
                         }
                         Some(ClosedForm::Affine(_)) => "Rec[B]: step has nonzero acc coeff".into(),
@@ -366,7 +366,7 @@ fn holdout_reason(grf: &Grf) -> String {
         }
         GrfKind::Comp(h, gs, _) => {
             for (i, g) in gs.iter().enumerate() {
-                match closed_form_of(g) {
+                match g.closed_form() {
                     None => return format!("Comp: arg[{}] → {}", i + 1, holdout_reason(g)),
                     Some(ClosedForm::Piecewise(_)) => return "Comp: arg is Piecewise".into(),
                     Some(ClosedForm::NegMod(_, _, _)) => return "Comp: arg is NegMod".into(),
@@ -374,7 +374,7 @@ fn holdout_reason(grf: &Grf) -> String {
                     Some(ClosedForm::Periodic(_)) => return "Comp: arg is Periodic".into(),
                 }
             }
-            match closed_form_of(h) {
+            match h.closed_form() {
                 None => format!("Comp: head → {}", holdout_reason(h)),
                 Some(ClosedForm::Piecewise(_)) => "Comp: head is Piecewise".into(),
                 Some(ClosedForm::NegMod(_, _, _)) => "Comp: head is NegMod".into(),
@@ -422,12 +422,12 @@ fn run_coverage(args: CoverageArgs) {
         for size in 1..=args.max_size {
             let mut size_total = 0usize;
             let mut size_covered = 0usize;
-            for grf in en.candidates(arity, size) {
+            for grf in en.all_grfs(arity, size) {
                 size_total += 1;
-                if closed_form_of(grf).is_some() {
+                if grf.closed_form().is_some() {
                     size_covered += 1;
                 } else {
-                    let reason = holdout_reason(grf);
+                    let reason = holdout_reason(&grf);
                     let root = root_cause(&reason).to_string();
                     *reason_counts.entry(root.clone()).or_insert(0) += 1;
                     *grand_reason_counts.entry(root.clone()).or_insert(0) += 1;
@@ -578,7 +578,7 @@ fn check_size(arity: usize, size: usize, max_steps: u64) -> (usize, usize) {
     let mut grfs_checked = 0usize;
     let mut grfs_bad = 0usize;
     stream_grf(size, arity, false, opts, &mut |grf| {
-        let cf = match closed_form_of(grf) {
+        let cf = match grf.closed_form() {
             Some(cf) => cf,
             None => return,
         };
@@ -627,7 +627,7 @@ fn check_one_grf(grf_str: &str, explicit_args: &[u64], max_steps: u64) {
         }
     };
     let arity = grf.arity();
-    let cf = match closed_form_of(&grf) {
+    let cf = match grf.closed_form() {
         Some(cf) => cf,
         None => {
             println!("{grf_str}: closed_form_of returned None");
@@ -786,7 +786,7 @@ fn run_list(args: ListArgs) {
 
     // Count total so we can print it in the header.
     let total: usize = (1..=args.max_size)
-        .map(|s| en.candidates(args.arity, s).len())
+        .map(|s| en.count_grfs(args.arity, s))
         .sum();
 
     println!(
@@ -803,8 +803,8 @@ fn run_list(args: ListArgs) {
     // Collect all rows first so we can compute column widths.
     let mut rows: Vec<(usize, String, String, String)> = Vec::new();
     'outer: for size in 1..=args.max_size {
-        for grf in en.candidates(args.arity, size) {
-            let cf = match closed_form_of(grf) {
+        for grf in en.all_grfs(args.arity, size) {
+            let cf = match grf.closed_form() {
                 Some(cf) => cf,
                 None => continue,
             };
@@ -843,13 +843,13 @@ fn run_dups(args: DupsArgs) {
     let mut groups: HashMap<Vec<Option<SmallNat>>, Vec<(usize, String, ClosedForm)>> =
         HashMap::new();
     for size in 1..=args.max_size {
-        for grf in en.candidates(args.arity, size) {
-            if let Some(cf) = closed_form_of(grf) {
+        for grf in en.all_grfs(args.arity, size) {
+            if let Some(cf) = grf.closed_form() {
                 let fp = cf_fingerprint(&cf);
                 groups
                     .entry(fp)
                     .or_default()
-                    .push((size, grf.to_string(), cf));
+                    .push((size, grf.to_string(), cf.clone()));
             }
         }
     }
@@ -941,7 +941,7 @@ fn run_count(args: CountArgs) {
             (0..=max_arity)
                 .map(|arity| {
                     if arity + size <= args.cf_limit {
-                        Some(en.candidates(arity, size).len())
+                        Some(en.count_grfs(arity, size))
                     } else {
                         None
                     }
@@ -1050,19 +1050,6 @@ fn normalize_grf(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-/// Return true if `grf` appears in the CF enumerator's memo for (arity, size).
-///
-/// Atoms are always canonical and bypass the memo lookup.
-fn is_in_memo(grf: &Grf, en: &ClosedFormEnumerator) -> bool {
-    match &grf.kind {
-        GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => true,
-        _ => en
-            .candidates(grf.arity(), grf.size())
-            .iter()
-            .any(|g| g == grf),
-    }
-}
-
 /// Walk `grf` depth-first and return the first (deepest) sub-expression that is
 /// not in the CF enum memo, together with its canonical replacement and shared CF.
 ///
@@ -1100,14 +1087,14 @@ fn first_non_canonical(grf: &Grf, en: &ClosedFormEnumerator) -> Option<(Grf, Grf
     }
 
     // All children are canonical.  Check this node itself.
-    if is_in_memo(grf, en) {
+    if en.is_in_memo(grf) {
         return None;
     }
 
     // Not in memo — find the canonical GRF that claimed this ClosedForm.
-    if let Some(cf) = closed_form_of(grf) {
+    if let Some(cf) = grf.closed_form() {
         if let Some(canon) = en.canonical_grf_for(grf.arity(), &cf) {
-            return Some((grf.clone(), canon.clone(), cf));
+            return Some((grf.clone(), canon.clone(), cf.clone()));
         }
     }
 
@@ -1125,7 +1112,7 @@ fn diagnose(grf: &Grf, en: &ClosedFormEnumerator) -> Diagnosis {
         None => {
             // All sub-expressions appear canonical.
             // The GRF would be generated by for_each_raw_candidate but isn't in file2.
-            if is_in_memo(grf, en) {
+            if en.is_in_memo(grf) {
                 // It's actually in the memo — file2 is just top-K filtered.
                 Diagnosis::AllCanonical
             } else {
@@ -1187,12 +1174,12 @@ fn run_diff(args: DiffArgs) {
         })
         .collect();
 
-    // Build the CF enumerator.  prepare(arity, size) transitively computes memo
+    // Build the CF enumerator.  ensure_dependencies(arity, size) transitively computes memo
     // entries for all sub-expression (arity, size) pairs needed for diagnosis.
     println!("Building CF enumerator memo…");
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::AllGrf, false);
     for (grf, _) in &parsed {
-        en.prepare(grf.arity(), grf.size());
+        en.ensure_dependencies(grf.arity(), grf.size());
     }
     // Also compute_size for the root's own (arity, size) so is_in_memo works there too.
     for (grf, _) in &parsed {

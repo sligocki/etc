@@ -161,9 +161,8 @@ fn main() {
             .collect();
 
         // cf+ count.
-        let cf_count: Option<usize> = if cf_enabled && size <= args.cf_max_size {
-            cf_pruned.compute_size(args.arity, size);
-            Some(cf_pruned.raw_candidates_at_size(args.arity, size).len())
+        let cf_count = if cf_enabled && size <= args.cf_max_size {
+            Some(cf_pruned.count_grfs(args.arity, size))
         } else {
             None
         };

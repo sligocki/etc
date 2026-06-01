@@ -92,7 +92,7 @@ fn print_summary(results: &Vec<GrfEntry>) {
         "  Holdouts: {} / {} ({}%)",
         n_holdouts,
         n_total,
-        n_holdouts as f32 / n_total as f32
+        100.0 * n_holdouts as f32 / n_total as f32
     );
     if let Some(n) = max_score {
         println!("Max Score: {}", n);

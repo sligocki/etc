@@ -509,6 +509,8 @@ impl Grf {
                     }
 
                     // Simulate fallback for cases where n=1 is positive and h preserves
+                    // Needed to prove R(Z0, R(S, R(P(2,2), C(S, P(4,2))))) pos
+                    // TODO: But this seems kind of hacky, can we deal with this in a more elegant/general way?
                     if g.arity() == 0 && h_preserves {
                         if self.arity() == 1 {
                             let (res, _) = crate::simulate::simulate(self, &[1], 100);
@@ -1092,7 +1094,6 @@ mod tests {
         assert!(d.is_never_zero());
     }
 
-    // TODO: Support
     #[test]
     fn test_always_pos_rec_eventually() {
         // From min_prf 12 holdout: M(C(R(Z0, R(S, R(P(2,2), C(S, P(4,2))))), S))

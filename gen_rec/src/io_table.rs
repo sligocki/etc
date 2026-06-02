@@ -1,5 +1,5 @@
 use crate::grf::Grf;
-use crate::simulate::{SimResult, SmallNat, simulate_with_fallback};
+use crate::simulate::{SimResult, SmallNat, simulate};
 
 const MAX_VAL_W: usize = 8;
 
@@ -35,7 +35,7 @@ fn eval(
     for &(idx, val) in sweep {
         args[idx] = val;
     }
-    match simulate_with_fallback(grf, &args, max_steps).0 {
+    match simulate(grf, &args, max_steps).0 {
         SimResult::Value(v) => v.to_string(),
         SimResult::Diverge => "∞".to_string(),
         _ => "?".to_string(),

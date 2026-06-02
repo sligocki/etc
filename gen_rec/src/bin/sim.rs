@@ -16,7 +16,7 @@ use gen_rec::grf::GrfKind;
 use gen_rec::io_table::print_sweep_table;
 use gen_rec::sim_nat::SmallNat;
 use gen_rec::simulate::{
-    SimOpts, SimResult, SimSteps, simulate, simulate_min, simulate_with_fallback,
+    SimOpts, SimResult, SimSteps, simulate, simulate_min,
 };
 
 #[derive(Parser, Debug)]
@@ -195,27 +195,7 @@ fn main() {
                 std::process::exit(1);
             }
             SimResult::ValueOverflow => {
-                let (big_result, big_steps) =
-                    simulate_with_fallback(&grf, &concrete, args.max_steps);
-                match big_result {
-                    SimResult::Value(v) => println!(
-                        "result: {}  ({} steps, {} base)",
-                        v, big_steps.sim, big_steps.base_approx
-                    ),
-                    SimResult::Diverge => println!("result: diverges  ({} steps)", big_steps.sim),
-                    SimResult::OutOfSteps => {
-                        let limit = if args.max_steps == 0 {
-                            "unlimited".to_string()
-                        } else {
-                            args.max_steps.to_string()
-                        };
-                        println!(
-                            "result: timed out after {} steps (limit: {})",
-                            big_steps.sim, limit
-                        );
-                    }
-                    SimResult::ArityMismatch | SimResult::ValueOverflow => unreachable!(),
-                }
+                println!("result: overflow  ({} steps, {} base)", steps.sim, steps.base_approx);
             }
         }
         return;

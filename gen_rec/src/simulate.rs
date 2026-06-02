@@ -1,6 +1,6 @@
 use crate::grf::{Grf, GrfKind};
 
-pub use crate::sim_nat::{BigNat, SimNat, SmallNat};
+pub use crate::sim_nat::{SimNat, SmallNat};
 
 /// Result of simulating a GRF.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,7 +14,6 @@ pub enum SimResult<N = SmallNat> {
     /// The function was called with the wrong number of arguments.
     ArityMismatch,
     /// A value computation overflowed the numeric type.
-    /// Only reachable when `N = u64` (bounded); `BigNat` never returns this.
     ValueOverflow,
 }
 
@@ -131,44 +130,6 @@ pub fn simulate(grf: &Grf, args: &[SmallNat], max_steps: SmallNat) -> (SimResult
     simulate_opts(grf, args, step_budget, SimOpts::default())
 }
 
-/// Simulate using arbitrary-precision integers (`BigNat`).
-/// Values never overflow; returns `OutOfSteps` when the step budget is exhausted.
-pub fn simulate_big(
-    grf: &Grf,
-    args: &[BigNat],
-    max_steps: u64,
-) -> (SimResult<BigNat>, SimSteps<BigNat>) {
-    let step_budget = if max_steps == 0 {
-        None
-    } else {
-        Some(max_steps)
-    };
-    simulate_opts(grf, args, step_budget, SimOpts::default())
-}
-
-/// Simulate with native `u64`; on `ValueOverflow` automatically retry with `BigNat`.
-/// Callers that want a single result without managing the two-step retry should use this.
-pub fn simulate_with_fallback(
-    grf: &Grf,
-    args: &[SmallNat],
-    max_steps: SmallNat,
-) -> (SimResult<BigNat>, SimSteps<BigNat>) {
-    let (result, steps) = simulate(grf, args, max_steps);
-    let big_steps = SimSteps {
-        sim: steps.sim,
-        base_approx: BigNat::from(steps.base_approx),
-    };
-    match result {
-        SimResult::ValueOverflow => {
-            let big_args: Vec<BigNat> = args.iter().map(|&n| BigNat::from(n)).collect();
-            simulate_big(grf, &big_args, max_steps)
-        }
-        SimResult::Value(v) => (SimResult::Value(BigNat::from(v)), big_steps),
-        SimResult::OutOfSteps => (SimResult::OutOfSteps, big_steps),
-        SimResult::Diverge => (SimResult::Diverge, big_steps),
-        SimResult::ArityMismatch => (SimResult::ArityMismatch, big_steps),
-    }
-}
 
 /// Simulate `M(f)(args)`, applying all Min optimizations, calling `on_iter`
 /// after each candidate evaluation in the general or fused loop.
@@ -666,14 +627,6 @@ mod tests {
         assert_eq!(result, SimResult::ValueOverflow);
     }
 
-    #[test]
-    fn test_succ_overflow_bignum() {
-        // S(u64::MAX) with bignum should return Value(2^64), not ValueOverflow.
-        let big_max = BigNat::from(u64::MAX);
-        let (result, _) = simulate_big(&Grf::succ_atom(), &[big_max], 100);
-        let expected = BigNat::from(1u64) << 64u32;
-        assert_eq!(result, SimResult::Value(expected));
-    }
 
     // --- rec_fast_forward tests ---
 

@@ -6,7 +6,7 @@ use gen_rec::enumerate::{EnumScope, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
-use gen_rec::sim_nat::{BigNat, SimNat, SmallNat};
+use gen_rec::sim_nat::{SimNat, SmallNat};
 use gen_rec::simulate::{SimResult, SimSteps};
 use rayon::prelude::*;
 use std::fs;
@@ -73,8 +73,6 @@ struct Args {
     #[arg(long)]
     dynamic_rnf: bool,
 
-    #[arg(long)]
-    bignat: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -285,11 +283,7 @@ fn fmt_si_f64(n: f64) -> String {
 
 fn main() {
     let args = Args::parse();
-    if args.bignat {
-        run_search::<BigNat>(&args);
-    } else {
-        run_search::<SmallNat>(&args);
-    }
+    run_search::<SmallNat>(&args);
 }
 
 fn run_search<N: SimNat + Send + Sync>(args: &Args) {

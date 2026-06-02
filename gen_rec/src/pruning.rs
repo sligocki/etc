@@ -192,6 +192,7 @@ define_pruning_flags! {
     { comp_proj,     "comp_proj",     cc=yes, rec=yes, mo=no,  "C(P,…) → one of its args" },
     { comp_zero,     "comp_zero",     cc=yes, rec=yes, mo=no,  "C(Z,…) → Z" },
     { rec_zero_arg,  "rec_zero_arg",  cc=yes, rec=yes, mo=no,  "C(R(g,h),Z,…) → C(g,…)" },
+    { rec_pos_step,  "rec_pos_step",  cc=no,  rec=yes, mo=no,  "C(R(a,b), c, …) → prune if c>0 and b ignores arg2" },
     { rec_proj_base, "rec_proj_base", cc=yes, rec=yes, mo=no,  "R(P_i,P2) / R(P_i,P_{i+2}) → P_{i+1}" },
     { comp_assoc,    "comp_assoc",    cc=yes, rec=yes, mo=no,  "C(C(f,g),h1…) → C(f,C(g,h1…))" },
     { comp_null_null,"comp_null_null",cc=yes, rec=yes, mo=no,  "C0(h) → h" },

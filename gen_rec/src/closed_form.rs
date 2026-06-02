@@ -2155,6 +2155,12 @@ impl ClosedForm {
                 }
             }
             ClosedForm::NegMod(a1, a2, a3) => {
+                let formula_args: Vec<String> = args
+                    .iter()
+                    .zip(depths.iter())
+                    .map(|(name, &d)| decrement_n(name, d))
+                    .collect();
+
                 let lhs: Vec<String> = args
                     .iter()
                     .enumerate()
@@ -2172,8 +2178,8 @@ impl ClosedForm {
                         "  {}({}) = ({} ∸ {})",
                         fn_name,
                         lhs.join(", "),
-                        a1.format_expr(args),
-                        a2.format_expr(args)
+                        a1.format_expr(&formula_args),
+                        a2.format_expr(&formula_args)
                     );
                     return;
                 }
@@ -2184,16 +2190,16 @@ impl ClosedForm {
                     + (if a3_plus.coeffs[0] != 0 { 1 } else { 0 })
                     > 1
                 {
-                    format!("({})", a3_plus.format_expr(args))
+                    format!("({})", a3_plus.format_expr(&formula_args))
                 } else {
-                    a3_plus.format_expr(args)
+                    a3_plus.format_expr(&formula_args)
                 };
                 println!(
                     "  {}({}) = ({} - {}) %< {}",
                     fn_name,
                     lhs.join(", "),
-                    a1.format_expr(args),
-                    a2.format_expr(args),
+                    a1.format_expr(&formula_args),
+                    a2.format_expr(&formula_args),
                     s3
                 );
             }

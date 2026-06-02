@@ -12,7 +12,6 @@ use gen_rec::semantic_search::{
     SearchConfig, bool_spec, exact_spec, exhaustive_probe, probe_spec, search_all_at_min,
     search_smallest,
 };
-use gen_rec::simulate::{SimResult, simulate};
 use std::cmp::min;
 use std::time::Instant;
 

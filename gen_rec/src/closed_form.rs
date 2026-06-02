@@ -52,7 +52,7 @@ impl AffineFn {
     /// Returns `None` on arithmetic overflow of `u64`.
     pub fn eval(&self, args: &[u64]) -> Option<u64> {
         debug_assert_eq!(args.len(), self.arity);
-        let mut acc: u64 = (self.coeffs[0]);
+        let mut acc: u64 = self.coeffs[0];
         for (i, arg) in args.iter().enumerate() {
             let c = self.coeffs[i + 1];
             if c == 0 {
@@ -326,13 +326,13 @@ impl ClosedForm {
                                     };
 
                                     if num_is_pos {
-                                        if let Some(rem) = num_val.clone().checked_rem((den)) {
+                                        if let Some(rem) = num_val.clone().checked_rem(den) {
                                             if rem == 0 {
-                                                if let Some(i) = (if den == 0 {
+                                                if let Some(i) = if den == 0 {
                                                     None
                                                 } else {
                                                     Some(num_val.div_ceil(den))
-                                                }) {
+                                                } {
                                                     update_min(i);
                                                 }
                                             }
@@ -365,13 +365,13 @@ impl ClosedForm {
 
                                     if den_val > 0 {
                                         let num_val = b_val.clone().checked_sub(k_f).unwrap();
-                                        if let Some(rem) = num_val.clone().checked_rem((den_val)) {
+                                        if let Some(rem) = num_val.clone().checked_rem(den_val) {
                                             if rem == 0 {
-                                                if let Some(i) = (if den_val == 0 {
+                                                if let Some(i) = if den_val == 0 {
                                                     None
                                                 } else {
                                                     Some(num_val.div_ceil(den_val))
-                                                }) {
+                                                } {
                                                     update_min(i);
                                                 }
                                             }

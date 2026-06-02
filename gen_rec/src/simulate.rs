@@ -228,7 +228,7 @@ where
 
             loop {
                 let mut h_args: Vec<u64> = Vec::with_capacity(args.len() + 2);
-                h_args.push((k));
+                h_args.push(k);
                 h_args.push(acc.clone());
                 h_args.extend(args.iter().cloned());
 
@@ -242,16 +242,15 @@ where
 
                 match result {
                     SimResult::Value(v) => {
-                        on_iter((k + 1), &SimResult::Value(v.clone()), steps.clone());
+                        on_iter(k + 1, &SimResult::Value(v.clone()), steps.clone());
                         if v == 0 {
                             let n = k + 1;
                             // base_extra = (n+1) + sg*n + delta_h
-                            let n_times_sg =
-                                sg.clone().checked_mul(n).unwrap_or_else(|| (u64::MAX));
+                            let n_times_sg = sg.clone().checked_mul(n).unwrap_or_else(|| u64::MAX);
                             let base_extra =
                                 (n + 1).saturating_add(n_times_sg).saturating_add(delta_h);
                             steps.base_approx = steps.base_approx.saturating_add(base_extra);
-                            return (SimResult::Value((n)), steps);
+                            return (SimResult::Value(n), steps);
                         }
                         acc = v;
                     }
@@ -372,7 +371,7 @@ pub fn simulate_opts(
                 let sh_base = s.base_approx; // exact: bounded by step budget
                 steps += s;
                 // base_approx += (n - 1) * sh_base
-                let approx = n_m1.checked_mul(sh_base).unwrap_or_else(|| (u64::MAX));
+                let approx = n_m1.checked_mul(sh_base).unwrap_or_else(|| u64::MAX);
                 steps.base_approx = steps.base_approx.saturating_add(approx);
                 return (result, steps);
             }
@@ -391,7 +390,7 @@ pub fn simulate_opts(
                 if let Some(k) = h.acc_plus_k() {
                     // base_approx += n * (2k + 1)
                     let factor = 2 * k + 1;
-                    let approx = n.clone().checked_mul(factor).unwrap_or_else(|| (u64::MAX));
+                    let approx = n.clone().checked_mul(factor).unwrap_or_else(|| u64::MAX);
                     steps.base_approx = steps.base_approx.saturating_add(approx);
                     // Value: acc + n * k (checked for overflow)
                     let val = n.checked_mul(k).and_then(|nk| acc.checked_add(nk));

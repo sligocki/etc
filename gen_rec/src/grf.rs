@@ -415,6 +415,12 @@ impl Grf {
                 return true;
             }
         }
+
+        let pos_args = vec![false; self.arity()];
+        if self.is_pos_if_args_pos(&pos_args) {
+            return true;
+        }
+
         match &self.kind {
             GrfKind::Succ => {
                 return true;
@@ -484,6 +490,66 @@ impl Grf {
         }
     }
 
+    /// Recursively checks if `self(args...) > 0` assuming `pos_args[i]` means `args[i] > 0`.
+    pub fn is_pos_if_args_pos(&self, pos_args: &[bool]) -> bool {
+        if let Some(Some(cf)) = self.cf.get() {
+            if cf.is_always_pos() {
+                return true;
+            }
+            for (i, &is_pos) in pos_args.iter().enumerate() {
+                if is_pos {
+                    if let Some(c) = cf.min_diff_from_arg(i) {
+                        if c >= 0 {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        match &self.kind {
+            GrfKind::Zero(_) => false,
+            GrfKind::Succ => true,
+            GrfKind::Proj(_, i) => pos_args[*i - 1],
+            GrfKind::Comp(h, gs, _) => {
+                let inner_pos: Vec<bool> =
+                    gs.iter().map(|g| g.is_pos_if_args_pos(pos_args)).collect();
+                h.is_pos_if_args_pos(&inner_pos)
+            }
+            GrfKind::Rec(g, h) => {
+                assert!(pos_args.len() > 0);
+                let g_args = &pos_args[1..];
+                let g_pos = g.is_pos_if_args_pos(g_args);
+
+                let mut h_pos_args = vec![false; h.arity()];
+                assert!(h_pos_args.len() > 1);
+                // Assume accumulator is positive
+                h_pos_args[1] = true;
+                for i in 2..h.arity() {
+                    if i - 1 < pos_args.len() {
+                        h_pos_args[i] = pos_args[i - 1];
+                    }
+                }
+                // acc_out is positive if acc_in was
+                let h_preserves = h.is_pos_if_args_pos(&h_pos_args);
+                if !pos_args[0] {
+                    // If g -> + and h preserves +, then output is +
+                    g_pos && h_preserves
+                } else {
+                    // If iteration loops is guaranteed positive, then
+                    // we can be even more lenient and reduce the requirement
+                    // that g -> + to that first h -> +.
+                    let mut s1_args = h_pos_args.clone();
+                    if s1_args.len() > 1 {
+                        s1_args[1] = g_pos;
+                    }
+                    let s1_pos = h.is_pos_if_args_pos(&s1_args);
+                    s1_pos && h_preserves
+                }
+            }
+            GrfKind::Min(_) => false,
+        }
+    }
+
     /// Returns true if `f(args…) > 0` whenever arg `j` > 0, regardless of other args.
     ///
     /// Conservative: returns false when unsure. For the Min fast-forward (j=1, the search
@@ -508,6 +574,15 @@ impl Grf {
         if self.is_never_zero() {
             return true;
         }
+
+        let mut pos_args = vec![false; self.arity()];
+        if j > 0 && j <= self.arity() {
+            pos_args[j - 1] = true;
+        }
+        if self.is_pos_if_args_pos(&pos_args) {
+            return true;
+        }
+
         match &self.kind {
             GrfKind::Proj(_, i) => *i == j,
             GrfKind::Rec(g, h) => {
@@ -1068,6 +1143,25 @@ mod tests {
 
         // b preserves positivity for arg 2
         assert!(b.is_positive_for_pos_arg(2));
+    }
+
+    #[test]
+    fn test_is_pos_if_args_pos_multi_arg_trap() {
+        // M(C(R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3))), P(1,1), S))
+        // Here `a = R(P(2,1), P(4,4))` preserves positivity when BOTH arg 1 and arg 3 are positive.
+        // And `b = R(P(1,1), C(a, P(3,2), P(3,1), P(3,3)))` guarantees that both arg1 and arg3 to `a` are positive
+        // (arg 1 is the accumulator, arg 3 is b's second argument).
+        let a = grf!("R(P(2,1), P(4,4))");
+        // a(+, _, +) -> +
+        assert!(a.is_pos_if_args_pos(&[true, false, true]));
+
+        let b = grf!("R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3)))");
+        // b(_, +) -> +
+        assert!(b.is_pos_if_args_pos(&[false, true]));
+
+        let comp = grf!("C(R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3))), P(1,1), S)");
+        // C(b, P, S) -> +
+        assert!(comp.is_never_zero());
     }
 
     #[test]

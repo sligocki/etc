@@ -6,7 +6,6 @@ use std::str::{Chars, FromStr};
 use std::sync::OnceLock;
 
 use crate::closed_form::{ClosedForm, closed_form_of};
-use crate::sim_nat::SmallNat;
 use crate::simulate::{SimResult, simulate};
 
 /// Parse a GRF from a format string, panicking on error.
@@ -602,7 +601,7 @@ impl Grf {
     /// Returns `Some(k)` if this function is structurally equivalent to
     /// `λ(args). args[2] + k`, i.e. a chain of k Succs applied to P2.
     /// Used to accelerate R(g, h) when h is an affine step on the accumulator.
-    pub fn acc_plus_k(&self) -> Option<SmallNat> {
+    pub fn acc_plus_k(&self) -> Option<u64> {
         match &self.kind {
             GrfKind::Proj(_, 2) => Some(0),
             GrfKind::Comp(outer, inners, _) => {

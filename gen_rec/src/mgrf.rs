@@ -4,7 +4,6 @@ use std::path::Path;
 use std::str::Chars;
 
 use crate::grf::{Grf, GrfKind};
-use crate::sim_nat::SmallNat;
 
 /// A single inline spec test from a `.mgrf` file.
 #[derive(Debug, Clone)]
@@ -13,9 +12,9 @@ pub struct TestCase {
     /// Resolved GRF for tests whose name is a macro instantiation (e.g. `Plus[3]`).
     /// `None` means look the GRF up by name at run time.
     pub grf: Option<Grf>,
-    pub args: Vec<SmallNat>,
+    pub args: Vec<u64>,
     /// `Some(v)` = expects value v; `None` = expects divergence (⊥).
-    pub expected: Option<SmallNat>,
+    pub expected: Option<u64>,
 }
 
 /// Parsed `.mgrf` file: resolved GRF definitions plus inline spec tests.
@@ -25,7 +24,7 @@ pub struct MgrfFile {
     /// GRF-parameterized macros: (name, param_arity, body_grf_with_proj_placeholder).
     /// The body GRF is computed by substituting the parameter with P(param_arity, 1).
     pub grf_macro_defs: Vec<(String, usize, Grf)>,
-    /// SmallNat-parameterized macros: (name, num_cases).
+    /// u64-parameterized macros: (name, num_cases).
     pub num_macro_defs: Vec<(String, usize)>,
     // Private context for eval_expr — holds the resolved GRF/arity tables plus macro tables.
     grfs_ctx: HashMap<String, Grf>,
@@ -104,7 +103,7 @@ enum Expr {
     GrfMacroApp(String, Box<Expr>), // Name[GrfExpr]: GRF-parameterized macro application
 }
 
-// ── SmallNat-parameterized macro types ─────────────────────────────────────────────
+// ── u64-parameterized macro types ─────────────────────────────────────────────
 
 // A numeric argument passed to a num-macro application (inside `[...]`).
 #[derive(Debug, Clone)]
@@ -141,8 +140,8 @@ struct GrfMacroDef {
 // LHS bracket pattern: distinguishes num-macro cases from GRF-macro defs.
 #[derive(Debug, Clone)]
 enum MacroParam {
-    SmallNat(NumPattern), // Name[num_pattern] := ...
-    Grf(String, usize),   // Name[f^k]        := ...
+    Number(NumPattern), // Name[num_pattern] := ...
+    Grf(String, usize), // Name[f^k]        := ...
 }
 
 // A `use module::{Name, ...}` or `use module` import request.
@@ -424,7 +423,7 @@ fn split_macros(
     let mut regular: Vec<(String, Expr)> = Vec::new();
     for (name, param_opt, expr) in items {
         match param_opt {
-            Some(MacroParam::SmallNat(pattern)) => {
+            Some(MacroParam::Number(pattern)) => {
                 num_macros
                     .entry(name)
                     .or_default()
@@ -532,7 +531,7 @@ fn parse_lhs(s: &str) -> Result<(String, Option<MacroParam>), String> {
         // Otherwise parse as a num-macro pattern.
         let pattern =
             parse_num_pattern(inner).map_err(|e| format!("invalid pattern {:?}: {}", inner, e))?;
-        Ok((name, Some(MacroParam::SmallNat(pattern))))
+        Ok((name, Some(MacroParam::Number(pattern))))
     } else {
         Ok((s.to_string(), None))
     }
@@ -608,7 +607,7 @@ fn parse_use_statement(s: &str) -> Option<UseStatement> {
 fn parse_test_line(line: &str) -> Option<TestCase> {
     let (lhs, rhs) = line.split_once("==")?;
     let rhs = rhs.trim();
-    let expected: Option<SmallNat> = if rhs == "⊥" {
+    let expected: Option<u64> = if rhs == "⊥" {
         None
     } else {
         Some(rhs.parse().ok()?)
@@ -621,7 +620,7 @@ fn parse_test_line(line: &str) -> Option<TestCase> {
     }
     let name = lhs[..lparen].trim().to_string();
     let args_str = &lhs[lparen + 1..rparen];
-    let args: Vec<SmallNat> = if args_str.trim().is_empty() {
+    let args: Vec<u64> = if args_str.trim().is_empty() {
         vec![]
     } else {
         args_str
@@ -1568,7 +1567,7 @@ DiagS[f^2] := C(f, S, S)
     }
 
     fn run_mgrf_tests(file: &MgrfFile) {
-        const BUDGET: SmallNat = 1_000_000;
+        const BUDGET: u64 = 1_000_000;
         let grf_map: HashMap<&str, &Grf> = file.defs.iter().map(|(n, g)| (n.as_str(), g)).collect();
         for tc in &file.tests {
             let grf = tc

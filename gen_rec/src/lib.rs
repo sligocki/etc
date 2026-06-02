@@ -11,5 +11,5 @@ pub mod mgrf;
 pub mod optimize;
 pub mod pruning;
 pub mod semantic_search;
-pub mod sim_nat;
+
 pub mod simulate;

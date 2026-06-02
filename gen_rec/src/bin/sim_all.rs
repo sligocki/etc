@@ -5,7 +5,7 @@
 use clap::Parser;
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{GrfEntry, Status, parse_grf_entries, write_grf_entry, write_grl_header};
-use gen_rec::sim_nat::SmallNat;
+
 use gen_rec::simulate::simulate;
 use rayon::prelude::*;
 use std::fs;
@@ -20,7 +20,7 @@ struct Args {
     input: PathBuf,
 
     /// Step budget per simulation (0 = unlimited).
-    steps: SmallNat,
+    steps: u64,
 
     /// Output file (.grl); receives all GRFs with their simulation results.
     output: PathBuf,

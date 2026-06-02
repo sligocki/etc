@@ -12,7 +12,7 @@ use gen_rec::semantic_search::{
     SearchConfig, bool_spec, exact_spec, exhaustive_probe, probe_spec, search_all_at_min,
     search_smallest,
 };
-use gen_rec::simulate::SmallNat;
+use gen_rec::simulate::{SimResult, simulate};
 use std::cmp::min;
 use std::time::Instant;
 
@@ -24,14 +24,14 @@ struct SpecDef {
     name: &'static str,
     default_arity: usize,
     description: &'static str,
-    build: fn() -> Box<dyn FnMut(&[SmallNat], SmallNat) -> bool>,
+    build: fn() -> Box<dyn FnMut(&[u64], u64) -> bool>,
 }
 
-fn plus_8p(inputs: &[SmallNat], output: SmallNat) -> bool {
+fn plus_8p(inputs: &[u64], output: u64) -> bool {
     output >= inputs[0] + 8
 }
 
-fn trailing_bits(inputs: &[SmallNat], output: SmallNat) -> bool {
+fn trailing_bits(inputs: &[u64], output: u64) -> bool {
     let n = inputs[0];
     if n >= 64 {
         return true;

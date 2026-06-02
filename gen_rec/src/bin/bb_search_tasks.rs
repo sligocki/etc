@@ -9,7 +9,6 @@ use gen_rec::alias::alias_db_for_stdout;
 use gen_rec::enumerate::{count_grf, seek_stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::pruning::PruningOpts;
-use gen_rec::sim_nat::SmallNat;
 use gen_rec::simulate::simulate;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -60,16 +59,16 @@ struct GenArgs {
 
     /// Maximum simulation steps before giving up on a GRF.
     #[arg(long, default_value_t = 1_000_000)]
-    max_steps: SmallNat,
+    max_steps: u64,
 
     /// Include GRFs with score >= this in the notable list.
     #[arg(long, default_value_t = 10)]
-    save_min_score: SmallNat,
+    save_min_score: u64,
 
     /// Include GRFs with steps >= this in the notable list
     /// (captures long-running GRFs even if their score is low).
     #[arg(long, default_value_t = 100)]
-    save_min_steps: SmallNat,
+    save_min_steps: u64,
 }
 
 #[derive(Args, Debug)]
@@ -114,7 +113,7 @@ struct SimArgs {
 
     /// Override max_steps from config.
     #[arg(long)]
-    max_steps: Option<SmallNat>,
+    max_steps: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -139,9 +138,9 @@ struct Config {
     allow_min: bool,
     #[serde(with = "pruning_serde")]
     opts: PruningOpts,
-    max_steps: SmallNat,
-    save_min_score: SmallNat,
-    save_min_steps: SmallNat,
+    max_steps: u64,
+    save_min_score: u64,
+    save_min_steps: u64,
 }
 
 /// Serialize/deserialize PruningOpts as a JSON object of count-compatible flag
@@ -200,9 +199,9 @@ struct NotableEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     unknown_reason: Option<String>,
     /// Output value when status == "halted"; null otherwise.
-    score: Option<SmallNat>,
+    score: Option<u64>,
     /// Actual steps taken (halted) or max_steps (over_steps).
-    steps: SmallNat,
+    steps: u64,
 }
 
 /// Written as task_{id:06}.json after a task completes.
@@ -216,22 +215,22 @@ struct TaskResult {
     allow_min: bool,
     #[serde(with = "pruning_serde")]
     opts: PruningOpts,
-    max_steps: SmallNat,
-    save_min_score: SmallNat,
-    save_min_steps: SmallNat,
+    max_steps: u64,
+    save_min_score: u64,
+    save_min_steps: u64,
     // Aggregate stats.
     total_grfs: usize,
     over_steps_count: usize,
-    best_score: Option<SmallNat>,
+    best_score: Option<u64>,
     /// All ranks tied for best_score within this task.
     best_ranks: Vec<usize>,
     elapsed_secs: f64,
     /// score → count of halted GRFs with that score.
     #[serde(default)]
-    score_hist: HashMap<SmallNat, SmallNat>,
+    score_hist: HashMap<u64, u64>,
     /// steps → count of all GRFs that took that many steps.
     #[serde(default)]
-    steps_hist: HashMap<SmallNat, SmallNat>,
+    steps_hist: HashMap<u64, u64>,
     // Per-GRF records for notable entries.
     notable: Vec<NotableEntry>,
 }
@@ -331,12 +330,12 @@ fn cmd_gen(args: GenArgs) {
 struct Acc {
     total_grfs: usize,
     over_steps_count: usize,
-    best_score: Option<SmallNat>,
+    best_score: Option<u64>,
     best_ranks: Vec<usize>,
     /// score → count, for halted GRFs only.
-    score_hist: HashMap<SmallNat, SmallNat>,
+    score_hist: HashMap<u64, u64>,
     /// steps → count, for all GRFs.
-    steps_hist: HashMap<SmallNat, SmallNat>,
+    steps_hist: HashMap<u64, u64>,
     notable: Vec<NotableEntry>,
 }
 
@@ -567,7 +566,7 @@ fn cmd_run(args: RunArgs) {
             );
         }
         _ => {
-            eprintln!("Specify one of --task-id N, --task-range START END, or --all");
+            eprintln!("Specify one of --task-id u64, --task-range START END, or --all");
             std::process::exit(1);
         }
     }
@@ -615,10 +614,7 @@ fn cmd_sim(args: SimArgs) {
 
 // ── merge ─────────────────────────────────────────────────────────────────────
 
-fn merge_hist(
-    mut combined: HashMap<SmallNat, SmallNat>,
-    other: &HashMap<SmallNat, SmallNat>,
-) -> HashMap<SmallNat, SmallNat> {
+fn merge_hist(mut combined: HashMap<u64, u64>, other: &HashMap<u64, u64>) -> HashMap<u64, u64> {
     for (key, value) in other {
         combined
             .entry(*key)
@@ -630,7 +626,7 @@ fn merge_hist(
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-fn fmt_count(n: SmallNat) -> String {
+fn fmt_count(n: u64) -> String {
     if n < 1_000 {
         return n.to_string();
     }
@@ -644,7 +640,7 @@ fn fmt_count(n: SmallNat) -> String {
 }
 
 /// Print a bar chart.  Bar length uses log₁₀(count+1) so rare entries stay visible.
-fn print_bar_chart_log(rows: &[(&str, SmallNat)], total: SmallNat) {
+fn print_bar_chart_log(rows: &[(&str, u64)], total: u64) {
     const BAR_WIDTH: usize = 40;
     let max_log = rows
         .iter()
@@ -675,16 +671,16 @@ fn print_bar_chart_log(rows: &[(&str, SmallNat)], total: SmallNat) {
 
 /// Print a power-of-2 bucketed histogram with log-scale bars.
 /// If the data contains any 0 values, they get their own "=0" row before the ≤1 bucket.
-fn print_pow2_hist(title: &str, hist: HashMap<SmallNat, SmallNat>) {
-    let total: SmallNat = hist.values().sum();
+fn print_pow2_hist(title: &str, hist: HashMap<u64, u64>) {
+    let total: u64 = hist.values().sum();
     let zero_count = hist.get(&0).copied().unwrap_or(0);
     let separate_zero = zero_count > 0;
     let max_val = hist.keys().copied().max().unwrap_or(0);
     let max_k = (0u32..=63).find(|&k| (1u64 << k) >= max_val).unwrap_or(63);
-    let breakpoints: Vec<(SmallNat, String)> = (0u32..=max_k)
+    let breakpoints: Vec<(u64, String)> = (0u32..=max_k)
         .map(|k| (1u64 << k, format!("≤{}", fmt_count(1u64 << k))))
         .collect();
-    let mut buckets: Vec<SmallNat> = vec![0; breakpoints.len() + 1];
+    let mut buckets: Vec<u64> = vec![0; breakpoints.len() + 1];
     for (&val, &count) in &hist {
         if separate_zero && val == 0 {
             continue;
@@ -696,7 +692,7 @@ fn print_pow2_hist(title: &str, hist: HashMap<SmallNat, SmallNat>) {
         buckets[idx] += count;
     }
     let last_label = format!(">{}", fmt_count(1u64 << max_k));
-    let mut rows: Vec<(String, SmallNat)> = Vec::new();
+    let mut rows: Vec<(String, u64)> = Vec::new();
     if separate_zero {
         rows.push(("=0".to_string(), zero_count));
     }
@@ -708,7 +704,7 @@ fn print_pow2_hist(title: &str, hist: HashMap<SmallNat, SmallNat>) {
     if *buckets.last().unwrap() > 0 {
         rows.push((last_label, *buckets.last().unwrap()));
     }
-    let display: Vec<(&str, SmallNat)> = rows.iter().map(|(l, c)| (l.as_str(), *c)).collect();
+    let display: Vec<(&str, u64)> = rows.iter().map(|(l, c)| (l.as_str(), *c)).collect();
     println!("{}  (log scale, total: {})", title, fmt_count(total));
     print_bar_chart_log(&display, total);
 }
@@ -719,7 +715,7 @@ struct SizeSummary {
     total_grfs: usize,
     over_steps_count: usize,
     runtime_sec: f64,
-    best_score: Option<SmallNat>,
+    best_score: Option<u64>,
     notable: Vec<NotableEntry>,
 }
 
@@ -765,8 +761,8 @@ fn cmd_summarize(args: SummarizeArgs) {
         best_score: None,
         notable: Vec::new(),
     };
-    let mut score_hist: HashMap<SmallNat, SmallNat> = HashMap::new();
-    let mut steps_hist: HashMap<SmallNat, SmallNat> = HashMap::new();
+    let mut score_hist: HashMap<u64, u64> = HashMap::new();
+    let mut steps_hist: HashMap<u64, u64> = HashMap::new();
     for r in &results {
         assert_eq!(r.size, size);
         s.tasks_done += 1;
@@ -784,9 +780,9 @@ fn cmd_summarize(args: SummarizeArgs) {
         steps_hist = merge_hist(steps_hist, &r.steps_hist);
     }
 
-    // Build top-N list: deduplicate by expr, sort by score desc.
+    // Build top-u64 list: deduplicate by expr, sort by score desc.
     let mut seen_exprs = std::collections::HashSet::new();
-    let mut top_entries: Vec<(SmallNat, String)> = s
+    let mut top_entries: Vec<(u64, String)> = s
         .notable
         .iter()
         .filter_map(|n| n.score.map(|sc| (sc, n.expr.clone())))

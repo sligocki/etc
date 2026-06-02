@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::grf::{Grf, GrfKind};
 use crate::math::lcm;
-use crate::sim_nat::SimNat;
+
 use crate::simulate::SimResult;
 
 pub static COMPOSE_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -14,7 +14,7 @@ pub static PERIODIC_PERIOD: AtomicUsize = AtomicUsize::new(0);
 /// Affine function over natural numbers: c0 + c1*x1 + ... + ck*xk.
 ///
 /// All coefficients are non-negative (this is an invariant maintained by `closed_form_of`).
-/// `eval` returns `None` on arithmetic overflow of `N`.
+/// `eval` returns `None` on arithmetic overflow of `u64`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AffineFn {
     pub arity: usize,
@@ -49,16 +49,16 @@ impl AffineFn {
 
     /// Evaluate the affine function on concrete arguments.
     ///
-    /// Returns `None` on arithmetic overflow of `N`.
-    pub fn eval<N: SimNat>(&self, args: &[N]) -> Option<N> {
+    /// Returns `None` on arithmetic overflow of `u64`.
+    pub fn eval(&self, args: &[u64]) -> Option<u64> {
         debug_assert_eq!(args.len(), self.arity);
-        let mut acc: N = N::from_u64(self.coeffs[0]);
+        let mut acc: u64 = (self.coeffs[0]);
         for (i, arg) in args.iter().enumerate() {
             let c = self.coeffs[i + 1];
             if c == 0 {
                 continue;
             }
-            acc = acc.checked_add(arg.clone().checked_mul_u64(c)?)?;
+            acc = acc.checked_add(arg.clone().checked_mul(c)?)?;
         }
         Some(acc)
     }
@@ -91,15 +91,15 @@ pub struct PeriodicFn {
 }
 
 impl PiecewiseFn {
-    pub fn eval<N: SimNat>(&self, args: &[N]) -> Option<N> {
+    pub fn eval(&self, args: &[u64]) -> Option<u64> {
         assert_eq!(args.len(), self.arity);
         let bi = self.branch_index;
-        if args[bi].is_zero() {
-            let zero_args: Vec<N> = args[..bi].iter().chain(&args[bi + 1..]).cloned().collect();
+        if args[bi] == 0 {
+            let zero_args: Vec<u64> = args[..bi].iter().chain(&args[bi + 1..]).cloned().collect();
             self.zero_branch.eval(&zero_args)
         } else {
             let mut new_args = args.to_vec();
-            new_args[bi] = new_args[bi].clone().pred();
+            new_args[bi] = new_args[bi].clone().saturating_sub(1);
             self.pos_branch.eval(&new_args)
         }
     }
@@ -182,43 +182,43 @@ impl ClosedForm {
     /// Evaluate the semantic function on concrete arguments.
     ///
     /// Returns `None` if the result would be negative (e.g. affine with negative sum),
-    /// or on arithmetic overflow of `N`.
+    /// or on arithmetic overflow of `u64`.
     ///
     /// Iterative: follows the Piecewise tree with in-place mutations on a single
     /// owned buffer, avoiding per-level Vec allocations and deep recursion.
-    pub fn eval<N: SimNat>(&self, args: &[N]) -> Option<N> {
+    pub fn eval(&self, args: &[u64]) -> Option<u64> {
         let mut current: &ClosedForm = self;
-        let mut buf: Vec<N> = args.to_vec();
+        let mut buf: Vec<u64> = args.to_vec();
         loop {
             match current {
                 ClosedForm::Affine(af) => return af.eval(&buf),
                 ClosedForm::NegMod(a1, a2, a3) => {
                     let v1 = a1.eval(&buf)?;
                     let v2 = a2.eval(&buf)?;
-                    let v3 = a3.eval(&buf)?.checked_add(N::one())?;
+                    let v3 = a3.eval(&buf)?.checked_add(1)?;
                     if v1 >= v2 {
                         return Some(v1.checked_sub(v2).unwrap());
                     } else {
                         let diff = v2.checked_sub(v1).unwrap();
                         let rem = diff.checked_rem(v3.clone())?;
-                        return if rem.is_zero() {
-                            Some(N::zero())
+                        return if rem == 0 {
+                            Some(0)
                         } else {
                             Some(v3.checked_sub(rem)?)
                         };
                     }
                 }
                 ClosedForm::Periodic(p) => {
-                    let val = buf[p.branch_index].to_u64_sat() as usize;
+                    let val = buf[p.branch_index] as usize;
                     current = &p.branches[val % p.branches.len()];
                 }
                 ClosedForm::Piecewise(pw) => {
                     let bi = pw.branch_index;
-                    if buf[bi].is_zero() {
+                    if buf[bi] == 0 {
                         buf.remove(bi);
                         current = &pw.zero_branch;
                     } else {
-                        buf[bi] = buf[bi].clone().pred();
+                        buf[bi] = buf[bi].clone().saturating_sub(1);
                         current = &pw.pos_branch;
                     }
                 }
@@ -234,19 +234,19 @@ impl ClosedForm {
     ///   all i, so we just pick it. Handled iteratively to avoid O(n) stack depth.
     /// - Piecewise on search var (bi = 0): check i=0 via zero_branch; if nonzero,
     ///   M = 1 + M(pos_branch) for the i>0 case.
-    pub fn compute_min<N: SimNat>(&self, outer_args: &[N]) -> SimResult<N> {
+    pub fn compute_min(&self, outer_args: &[u64]) -> SimResult {
         let mut cf: &ClosedForm = self;
-        let mut outer: Vec<N> = outer_args.to_vec();
+        let mut outer: Vec<u64> = outer_args.to_vec();
         loop {
             match cf {
                 ClosedForm::Affine(af) => {
                     // Evaluate at i=0. Non-negative coefficients mean f is non-decreasing
                     // in i, so f(0, outer) > 0 implies f(i, outer) > 0 for all i.
                     let mut full = Vec::with_capacity(outer.len() + 1);
-                    full.push(N::zero());
+                    full.push(0);
                     full.extend(outer.iter().cloned());
                     return match af.eval(&full) {
-                        Some(v) if v.is_zero() => SimResult::Value(N::zero()),
+                        Some(v) if v == 0 => SimResult::Value(0),
                         _ => SimResult::Diverge,
                     };
                 }
@@ -256,7 +256,7 @@ impl ClosedForm {
                     let e = af3.coeffs[1];
 
                     let mut full = Vec::with_capacity(outer.len() + 1);
-                    full.push(N::zero());
+                    full.push(0);
                     full.extend(outer.iter().cloned());
 
                     let b = match af1.eval(&full) {
@@ -271,14 +271,14 @@ impl ClosedForm {
                         Some(v) => v,
                         None => return SimResult::ValueOverflow,
                     };
-                    let f = match f_raw.clone().checked_add(N::one()) {
+                    let f = match f_raw.clone().checked_add(1) {
                         Some(v) => v,
                         None => return SimResult::ValueOverflow,
                     };
 
-                    let mut min_i: Option<N> = None;
+                    let mut min_i: Option<u64> = None;
 
-                    let mut update_min = |candidate: N| match &min_i {
+                    let mut update_min = |candidate: u64| match &min_i {
                         Some(min) => {
                             if candidate < *min {
                                 min_i = Some(candidate);
@@ -305,7 +305,7 @@ impl ClosedForm {
                             for k in 0..=max_k {
                                 let den = a_val - k * e;
                                 if den > 0 {
-                                    let k_f = match f.clone().checked_mul_u64(k) {
+                                    let k_f = match f.clone().checked_mul(k) {
                                         Some(v) => v,
                                         None => return SimResult::ValueOverflow,
                                     };
@@ -326,11 +326,13 @@ impl ClosedForm {
                                     };
 
                                     if num_is_pos {
-                                        if let Some(rem) =
-                                            num_val.clone().checked_rem(N::from_u64(den))
-                                        {
-                                            if rem.is_zero() {
-                                                if let Some(i) = num_val.checked_div_ceil_u64(den) {
+                                        if let Some(rem) = num_val.clone().checked_rem((den)) {
+                                            if rem == 0 {
+                                                if let Some(i) = (if den == 0 {
+                                                    None
+                                                } else {
+                                                    Some(num_val.div_ceil(den))
+                                                }) {
                                                     update_min(i);
                                                 }
                                             }
@@ -341,10 +343,10 @@ impl ClosedForm {
                         }
 
                         // Subcase 2: A - k*e < 0
-                        if !b_is_pos || b_val.is_zero() {
+                        if !b_is_pos || b_val == 0 {
                             let mut k = 0;
                             loop {
-                                let k_f = match f.clone().checked_mul_u64(k) {
+                                let k_f = match f.clone().checked_mul(k) {
                                     Some(v) => v,
                                     None => return SimResult::ValueOverflow,
                                 };
@@ -363,13 +365,13 @@ impl ClosedForm {
 
                                     if den_val > 0 {
                                         let num_val = b_val.clone().checked_sub(k_f).unwrap();
-                                        if let Some(rem) =
-                                            num_val.clone().checked_rem(N::from_u64(den_val))
-                                        {
-                                            if rem.is_zero() {
-                                                if let Some(i) =
-                                                    num_val.checked_div_ceil_u64(den_val)
-                                                {
+                                        if let Some(rem) = num_val.clone().checked_rem((den_val)) {
+                                            if rem == 0 {
+                                                if let Some(i) = (if den_val == 0 {
+                                                    None
+                                                } else {
+                                                    Some(num_val.div_ceil(den_val))
+                                                }) {
                                                     update_min(i);
                                                 }
                                             }
@@ -383,27 +385,27 @@ impl ClosedForm {
                         // Subcase 3: A - k*e == 0
                         if a_is_pos && a_val % e == 0 {
                             let k = a_val / e;
-                            let k_f = match f.clone().checked_mul_u64(k) {
+                            let k_f = match f.clone().checked_mul(k) {
                                 Some(v) => v,
                                 None => return SimResult::ValueOverflow,
                             };
                             let num_is_zero = if b_is_pos {
-                                b_val.is_zero() && k_f.is_zero()
+                                b_val == 0 && k_f == 0
                             } else {
                                 b_val == k_f
                             };
 
                             if num_is_zero {
-                                update_min(N::zero());
+                                update_min(0);
                             }
                         }
                     } else {
                         // e == 0
                         if a_is_pos && a_val == 0 {
-                            if !b_is_pos || b_val.is_zero() {
+                            if !b_is_pos || b_val == 0 {
                                 if let Some(rem) = b_val.clone().checked_rem(f.clone()) {
-                                    if rem.is_zero() {
-                                        update_min(N::zero());
+                                    if rem == 0 {
+                                        update_min(0);
                                     }
                                 }
                             }
@@ -413,19 +415,19 @@ impl ClosedForm {
                                     update_min(b_val);
                                 } else {
                                     let rem = b_val.clone().checked_rem(f.clone()).unwrap();
-                                    if rem.is_zero() {
-                                        update_min(N::zero());
+                                    if rem == 0 {
+                                        update_min(0);
                                     } else {
                                         update_min(f.clone().checked_sub(rem).unwrap());
                                     }
                                 }
                             } else {
-                                let mut i = N::zero();
+                                let mut i: u64 = 0;
                                 let mut steps = 0;
                                 while steps < 10_000 {
                                     let v1 = match i
                                         .clone()
-                                        .checked_mul_u64(a)
+                                        .checked_mul(a)
                                         .and_then(|m| m.checked_add(b.clone()))
                                     {
                                         Some(v) => v,
@@ -433,7 +435,7 @@ impl ClosedForm {
                                     };
                                     let v2 = match i
                                         .clone()
-                                        .checked_mul_u64(c)
+                                        .checked_mul(c)
                                         .and_then(|m| m.checked_add(d.clone()))
                                     {
                                         Some(v) => v,
@@ -446,12 +448,12 @@ impl ClosedForm {
                                         }
                                     } else {
                                         let diff = v2.checked_sub(v1).unwrap();
-                                        if diff.checked_rem(f.clone()).unwrap().is_zero() {
+                                        if diff.checked_rem(f.clone()).unwrap() == 0 {
                                             update_min(i.clone());
                                             break;
                                         }
                                     }
-                                    i = match i.checked_add(N::one()) {
+                                    i = match i.checked_add(1) {
                                         Some(v) => v,
                                         None => return SimResult::ValueOverflow,
                                     };
@@ -460,17 +462,17 @@ impl ClosedForm {
                             }
                         } else {
                             if a_val == 1 {
-                                if !b_is_pos || b_val.is_zero() {
+                                if !b_is_pos || b_val == 0 {
                                     let rem = b_val.clone().checked_rem(f.clone()).unwrap();
                                     update_min(rem);
                                 }
                             } else {
-                                let mut i = N::zero();
+                                let mut i: u64 = 0;
                                 let mut steps = 0;
                                 while steps < 10_000 {
                                     let v1 = match i
                                         .clone()
-                                        .checked_mul_u64(a)
+                                        .checked_mul(a)
                                         .and_then(|m| m.checked_add(b.clone()))
                                     {
                                         Some(v) => v,
@@ -478,7 +480,7 @@ impl ClosedForm {
                                     };
                                     let v2 = match i
                                         .clone()
-                                        .checked_mul_u64(c)
+                                        .checked_mul(c)
                                         .and_then(|m| m.checked_add(d.clone()))
                                     {
                                         Some(v) => v,
@@ -491,12 +493,12 @@ impl ClosedForm {
                                         }
                                     } else {
                                         let diff = v2.checked_sub(v1).unwrap();
-                                        if diff.checked_rem(f.clone()).unwrap().is_zero() {
+                                        if diff.checked_rem(f.clone()).unwrap() == 0 {
                                             update_min(i.clone());
                                             break;
                                         }
                                     }
-                                    i = match i.checked_add(N::one()) {
+                                    i = match i.checked_add(1) {
                                         Some(v) => v,
                                         None => return SimResult::ValueOverflow,
                                     };
@@ -531,7 +533,7 @@ impl ClosedForm {
                         return SimResult::OutOfSteps;
                     } else {
                         let oi = bi - 1;
-                        let val = outer[oi].to_u64_sat() as usize;
+                        let val = outer[oi] as usize;
                         cf = &p.branches[val % p.branches.len()];
                     }
                 }
@@ -541,13 +543,13 @@ impl ClosedForm {
                         // Branch on the search variable i.
                         // i=0: check if zero_branch(outer) = 0.
                         if let Some(v) = pw.zero_branch.eval(&outer) {
-                            if v.is_zero() {
-                                return SimResult::Value(N::zero());
+                            if v == 0 {
+                                return SimResult::Value(0);
                             }
                         }
                         // i>0: cf(i, outer) = pos_branch(i-1, outer), so M(cf) = 1 + M(pos_branch).
                         return match pw.pos_branch.compute_min(&outer) {
-                            SimResult::Value(j) => match j.succ() {
+                            SimResult::Value(j) => match j.checked_add(1) {
                                 Some(succ) => SimResult::Value(succ),
                                 None => SimResult::ValueOverflow,
                             },
@@ -557,11 +559,11 @@ impl ClosedForm {
                         // Branch on outer_args[bi-1] (0-based in outer). This outer arg
                         // is the same for all i, so we can choose the branch unconditionally.
                         let oi = bi - 1;
-                        if outer[oi].is_zero() {
+                        if outer[oi] == 0 {
                             outer.remove(oi);
                             cf = &pw.zero_branch;
                         } else {
-                            outer[oi] = outer[oi].clone().pred();
+                            outer[oi] = outer[oi].clone().saturating_sub(1);
                             cf = &pw.pos_branch;
                         }
                         // Continue loop with updated cf and outer.
@@ -2204,7 +2206,6 @@ mod tests {
     use super::*;
     use crate::enumerate::stream_grf;
     use crate::pruning::PruningOpts;
-    use crate::sim_nat::SmallNat;
     use crate::simulate::{SimResult, simulate};
 
     fn grf(s: &str) -> Grf {
@@ -2212,7 +2213,7 @@ mod tests {
     }
 
     /// Assert closed_form_of matches simulate on a grid of inputs 0..=max_val per dimension.
-    fn check_vs_sim(grf_str: &str, max_val: SmallNat) {
+    fn check_vs_sim(grf_str: &str, max_val: u64) {
         let f = grf(grf_str);
         let sem = closed_form_of(&f)
             .unwrap_or_else(|| panic!("closed_form_of returned None for {grf_str}"));
@@ -2227,10 +2228,10 @@ mod tests {
         let n = (max_val + 1) as usize;
         let total = n.pow(arity as u32);
         for idx in 0..total {
-            let mut args: Vec<SmallNat> = vec![0; arity];
+            let mut args: Vec<u64> = vec![0; arity];
             let mut rem = idx;
             for a in args.iter_mut().rev() {
-                *a = (rem % n) as SmallNat;
+                *a = (rem % n) as u64;
                 rem /= n;
             }
             let sim_val = simulate(&f, &args, 0).0.into_value();
@@ -2254,7 +2255,7 @@ mod tests {
                 coeffs: vec![0]
             })
         );
-        assert_eq!(s.eval::<SmallNat>(&[]), Some(0));
+        assert_eq!(s.eval(&[]), Some(0));
 
         let s3 = closed_form_of(&grf("Z3")).unwrap();
         assert_eq!(s3.arity(), 3);
@@ -2294,7 +2295,7 @@ mod tests {
         // C(S, Z0) = constant 1, arity 0
         let s = closed_form_of(&grf("C(S, Z0)")).unwrap();
         assert_eq!(s.arity(), 0);
-        assert_eq!(s.eval::<SmallNat>(&[]), Some(1));
+        assert_eq!(s.eval(&[]), Some(1));
     }
 
     #[test]
@@ -2310,7 +2311,7 @@ mod tests {
         // C(S, C(S, Z0)) = constant 2
         let s = closed_form_of(&grf("C(S, C(S, Z0))")).unwrap();
         assert_eq!(s.arity(), 0);
-        assert_eq!(s.eval::<SmallNat>(&[]), Some(2));
+        assert_eq!(s.eval(&[]), Some(2));
     }
 
     #[test]
@@ -2475,7 +2476,7 @@ mod tests {
         assert!(s.is_always_zero());
         let m = closed_form_of(&grf("M(Z1)")).unwrap();
         assert_eq!(m, ClosedForm::Affine(AffineFn::zero(0)));
-        assert_eq!(m.eval::<SmallNat>(&[]), Some(0));
+        assert_eq!(m.eval(&[]), Some(0));
 
         // M(P(2,1)): f(i,x)=i, so f(0,x)=0 for all x → M=0 (arity 1)
         let m = closed_form_of(&grf("M(P(2,1))")).unwrap();
@@ -2501,12 +2502,12 @@ mod tests {
         // AffineFn: f(i, x) = x. At i=0: f=x. If x=0 → min=0; else diverge.
         let cf = closed_form_of(&grf("P(2,2)")).unwrap(); // P(2,2)(i,x) = x
         assert!(matches!(cf, ClosedForm::Affine(_)));
-        assert_eq!(cf.compute_min::<u64>(&[0]), SimResult::Value(0));
-        assert_eq!(cf.compute_min::<u64>(&[3]), SimResult::Diverge);
+        assert_eq!(cf.compute_min(&[0]), SimResult::Value(0));
+        assert_eq!(cf.compute_min(&[3]), SimResult::Diverge);
 
         // f(i, x) = i + 1 (Succ of search var). f(0,...) = 1 always → diverge.
         let cf2 = closed_form_of(&grf("S")).unwrap(); // S(i) = i+1
-        assert_eq!(cf2.compute_min::<u64>(&[]), SimResult::Diverge);
+        assert_eq!(cf2.compute_min(&[]), SimResult::Diverge);
     }
 
     #[test]
@@ -2514,12 +2515,12 @@ mod tests {
         // Predecessor R(Z0, P(2,1)) has arity 1: f(i)=pred(i). pred(0)=0 → M()=0.
         let cf = closed_form_of(&grf("R(Z0, P(2,1))")).unwrap();
         assert!(matches!(cf, ClosedForm::Piecewise(ref pw) if pw.branch_index == 0));
-        assert_eq!(cf.compute_min::<u64>(&[]), SimResult::Value(0));
+        assert_eq!(cf.compute_min(&[]), SimResult::Value(0));
 
         // R(C(S,Z0), Z2): arity 1. base=1, step always returns 0 → f(0)=1, f(1)=0 → M()=1.
         let cf2 = closed_form_of(&grf("R(C(S,Z0), Z2)")).unwrap();
         assert!(matches!(cf2, ClosedForm::Piecewise(ref pw) if pw.branch_index == 0));
-        assert_eq!(cf2.compute_min::<u64>(&[]), SimResult::Value(1));
+        assert_eq!(cf2.compute_min(&[]), SimResult::Value(1));
     }
 
     #[test]
@@ -2529,9 +2530,9 @@ mod tests {
         // M(f)(y): pred(0)=0 → Some(0); pred(1)=0 → Some(0); pred(3)=2 → None.
         let cf = closed_form_of(&grf("C(R(Z0,P(2,1)),P(2,2))")).unwrap();
         assert!(matches!(cf, ClosedForm::Piecewise(ref pw) if pw.branch_index == 1));
-        assert_eq!(cf.compute_min::<u64>(&[0]), SimResult::Value(0));
-        assert_eq!(cf.compute_min::<u64>(&[1]), SimResult::Value(0));
-        assert_eq!(cf.compute_min::<u64>(&[3]), SimResult::Diverge);
+        assert_eq!(cf.compute_min(&[0]), SimResult::Value(0));
+        assert_eq!(cf.compute_min(&[1]), SimResult::Value(0));
+        assert_eq!(cf.compute_min(&[3]), SimResult::Diverge);
     }
 
     #[test]
@@ -2540,8 +2541,8 @@ mod tests {
         // cf(1,y) = y
         // cf(_,_) = 0
         let cf = closed_form_of(&grf("R(S, R(P(2,2), Z4))")).unwrap();
-        assert_eq!(cf.compute_min::<u64>(&[0]), SimResult::Value(1));
-        assert_eq!(cf.compute_min::<u64>(&[1]), SimResult::Value(2));
+        assert_eq!(cf.compute_min(&[0]), SimResult::Value(1));
+        assert_eq!(cf.compute_min(&[1]), SimResult::Value(2));
     }
 
     #[test]
@@ -2550,8 +2551,8 @@ mod tests {
         // cf(1,y) = y
         // cf(_,_) = 1
         let cf = closed_form_of(&grf("R(S, R(P(2,2), C(S, Z4)))")).unwrap();
-        assert_eq!(cf.compute_min::<u64>(&[0]), SimResult::Value(1));
-        assert_eq!(cf.compute_min::<u64>(&[1]), SimResult::Diverge);
+        assert_eq!(cf.compute_min(&[0]), SimResult::Value(1));
+        assert_eq!(cf.compute_min(&[1]), SimResult::Diverge);
     }
 
     #[test]
@@ -2678,12 +2679,12 @@ mod tests {
     // ── Exhaustive closed_form_of vs simulate validation ──────────────────────
 
     /// Canonical test inputs for arity k: small exhaustive grid.
-    pub fn test_inputs(arity: usize) -> Vec<Vec<SmallNat>> {
+    pub fn test_inputs(arity: usize) -> Vec<Vec<u64>> {
         if arity == 0 {
             return vec![vec![]];
         }
-        let vals: &[SmallNat] = &[0, 1, 2, 3, 5, 8];
-        let mut result: Vec<Vec<SmallNat>> = vec![vec![]];
+        let vals: &[u64] = &[0, 1, 2, 3, 5, 8];
+        let mut result: Vec<Vec<u64>> = vec![vec![]];
         for _ in 0..arity {
             let mut next = Vec::new();
             for prefix in &result {
@@ -2702,7 +2703,7 @@ mod tests {
         check_all_opts(max_arity, max_size, 1_000_000);
     }
 
-    pub fn check_all_opts(max_arity: usize, max_size: usize, max_steps: SmallNat) {
+    pub fn check_all_opts(max_arity: usize, max_size: usize, max_steps: u64) {
         let opts = PruningOpts::default();
 
         let mut checked = 0usize;
@@ -2821,7 +2822,7 @@ mod tests {
 
         // Since both branches are always positive on their respective indices,
         // compute_min should correctly identify divergence.
-        match periodic.compute_min::<SmallNat>(&[]) {
+        match periodic.compute_min(&[]) {
             SimResult::Diverge => (), // Correct!
             other => panic!("Expected Diverge, got {:?}", other),
         }

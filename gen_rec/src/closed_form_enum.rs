@@ -322,7 +322,6 @@ impl ClosedFormEnumerator {
 mod tests {
     use super::*;
     use crate::pruning::PruningOpts;
-    use crate::sim_nat::SmallNat;
     use crate::simulate::simulate;
 
     // Mode A: ClosedFormOnly
@@ -432,7 +431,7 @@ mod tests {
     /// BBµ(2k+1) = k (up to 13)
     #[test]
     fn mode_b_bb_correctness_arity0() {
-        let known: &[(usize, SmallNat)] = &[(1, 0), (3, 1), (5, 2), (7, 3), (8, 2), (9, 4)];
+        let known: &[(usize, u64)] = &[(1, 0), (3, 1), (5, 2), (7, 3), (8, 2), (9, 4)];
         let max_size = 9;
         let max_steps = 100_000_000;
 
@@ -443,7 +442,7 @@ mod tests {
 
         for &(size, expected) in known {
             let raw = en.all_grfs(0, size);
-            let best: SmallNat = raw
+            let best: u64 = raw
                 .iter()
                 .filter_map(|grf| {
                     let (result, _) = simulate(grf, &[], max_steps);

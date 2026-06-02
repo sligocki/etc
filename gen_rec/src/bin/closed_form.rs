@@ -17,7 +17,7 @@ use gen_rec::fingerprint::canonical_inputs;
 use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::io_grl::parse_grf_entries;
 use gen_rec::pruning::PruningOpts;
-use gen_rec::sim_nat::SmallNat;
+
 use gen_rec::simulate::{SimOpts, SimResult, simulate, simulate_opts};
 
 // =============================================================================
@@ -75,7 +75,7 @@ struct CoverageArgs {
 
     /// Max simulation steps when computing value previews (0 = skip preview).
     #[arg(long, default_value_t = 10_000)]
-    max_steps: SmallNat,
+    max_steps: u64,
 }
 
 // =============================================================================
@@ -167,7 +167,7 @@ struct DiffArgs {
 
     /// Only diagnose GRFs whose score meets this minimum (default: all).
     #[arg(long, default_value_t = 0)]
-    min_score: SmallNat,
+    min_score: u64,
 
     /// Print detailed per-GRF output for at most this many entries (0 = summary only).
     #[arg(long, default_value_t = 30)]
@@ -244,7 +244,7 @@ fn format_cf(cf: &ClosedForm) -> String {
 
 /// Sample output values for a ClosedForm: arity 0-2 get compact strings.
 fn cf_preview(cf: &ClosedForm) -> String {
-    let show = |v: Option<SmallNat>| v.map_or("?".to_string(), |n| n.to_string());
+    let show = |v: Option<u64>| v.map_or("?".to_string(), |n| n.to_string());
     match cf.arity() {
         0 => format!("f()={}", show(cf.eval(&[]))),
         1 => (0u64..8)
@@ -275,7 +275,7 @@ fn cf_preview(cf: &ClosedForm) -> String {
 }
 
 /// Fingerprint a ClosedForm by evaluating on canonical inputs.
-fn cf_fingerprint(cf: &ClosedForm) -> Vec<Option<SmallNat>> {
+fn cf_fingerprint(cf: &ClosedForm) -> Vec<Option<u64>> {
     canonical_inputs(cf.arity())
         .iter()
         .map(|args| cf.eval(args))
@@ -286,12 +286,12 @@ fn cf_fingerprint(cf: &ClosedForm) -> Vec<Option<SmallNat>> {
 // coverage helpers (ported from closed_form_coverage.rs)
 // =============================================================================
 
-fn value_preview(f: &Grf, max_steps: SmallNat) -> String {
+fn value_preview(f: &Grf, max_steps: u64) -> String {
     let arity = f.arity();
     if max_steps == 0 || arity > 2 {
         return String::new();
     }
-    let eval = |args: &[SmallNat]| -> String {
+    let eval = |args: &[u64]| -> String {
         let (res, _) = simulate(f, args, max_steps);
         match res {
             SimResult::Value(v) => v.to_string(),
@@ -308,7 +308,7 @@ fn value_preview(f: &Grf, max_steps: SmallNat) -> String {
             format!("f(0..3) = {}", vals.join(" "))
         }
         2 => {
-            let pts: &[(&str, &[SmallNat])] = &[
+            let pts: &[(&str, &[u64])] = &[
                 ("f(0,0)", &[0, 0]),
                 ("f(1,0)", &[1, 0]),
                 ("f(0,1)", &[0, 1]),
@@ -829,8 +829,7 @@ fn run_dups(args: DupsArgs) {
     let mut en = ClosedFormEnumerator::with_pruning(EnumMode::ClosedFormOnly, args.allow_min);
 
     // Group (size, grf_str, ClosedForm) by semantic fingerprint.
-    let mut groups: HashMap<Vec<Option<SmallNat>>, Vec<(usize, String, ClosedForm)>> =
-        HashMap::new();
+    let mut groups: HashMap<Vec<Option<u64>>, Vec<(usize, String, ClosedForm)>> = HashMap::new();
     for size in 1..=args.max_size {
         for grf in en.all_grfs(args.arity, size) {
             if let Some(cf) = grf.closed_form() {
@@ -937,7 +936,7 @@ fn run_count(args: CountArgs) {
         .map(|arity| (1..=max_size).filter_map(|s| counts[s - 1][arity]).sum())
         .collect();
 
-    // Column width: wide enough for the largest number or "arity=N" header.
+    // Column width: wide enough for the largest number or "arity=u64" header.
     let col_w: Vec<usize> = (0..=max_arity)
         .map(|arity| {
             let header_w = format!("arity={}", arity).len();
@@ -1146,7 +1145,7 @@ fn run_diff(args: DiffArgs) {
     }
 
     // Parse the missing GRFs, skipping any that don't parse.
-    let parsed: Vec<(Grf, SmallNat)> = missing
+    let parsed: Vec<(Grf, u64)> = missing
         .iter()
         .filter_map(|e| match e.expr.parse::<Grf>() {
             Ok(g) => Some((g, e.score.unwrap_or(0))),
@@ -1170,7 +1169,7 @@ fn run_diff(args: DiffArgs) {
     // Diagnose each missing GRF and collect summary statistics.
     let mut tag_counts: HashMap<String, usize> = HashMap::new();
     // For CF-dedup: track (non_canon_str → canon_str) frequency.
-    let mut dedup_pairs: HashMap<(String, String), (usize, SmallNat, ClosedForm)> = HashMap::new();
+    let mut dedup_pairs: HashMap<(String, String), (usize, u64, ClosedForm)> = HashMap::new();
 
     let show_limit = if args.limit == 0 { 0 } else { args.limit };
     let mut shown = 0usize;
@@ -1255,7 +1254,7 @@ fn run_diff(args: DiffArgs) {
     println!("\n[{}]", elapsed_str(start));
 }
 
-fn print_diff_entry(grf: &Grf, score: SmallNat, d: &Diagnosis) {
+fn print_diff_entry(grf: &Grf, score: u64, d: &Diagnosis) {
     println!(
         "[{tag}]  score={score:>3}  [{a},{s}]  {grf}",
         tag = d.tag(),

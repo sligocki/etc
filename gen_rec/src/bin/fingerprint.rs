@@ -14,7 +14,7 @@ use gen_rec::enumerate::{count_grf, stream_grf};
 use gen_rec::fingerprint::{Fingerprint, canonical_inputs, compute_fp};
 use gen_rec::grf::{Grf, GrfKind};
 use gen_rec::pruning::PruningOpts;
-use gen_rec::sim_nat::SmallNat;
+
 use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
@@ -34,7 +34,7 @@ struct Args {
 
     /// Max steps per simulation (0 = unlimited; keep small for fast fingerprinting).
     #[arg(long, default_value_t = 10_000)]
-    max_steps: SmallNat,
+    max_steps: u64,
 
     /// Include Minimization combinator.
     #[arg(long)]

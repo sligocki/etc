@@ -14,10 +14,8 @@ use clap::Parser;
 use gen_rec::alias::AliasDb;
 use gen_rec::grf::GrfKind;
 use gen_rec::io_table::print_sweep_table;
-use gen_rec::sim_nat::SmallNat;
-use gen_rec::simulate::{
-    SimOpts, SimResult, SimSteps, simulate, simulate_min,
-};
+
+use gen_rec::simulate::{SimOpts, SimResult, SimSteps, simulate, simulate_min};
 
 #[derive(Parser, Debug)]
 #[command(about = "Simulate a single GRF expression")]
@@ -31,11 +29,11 @@ struct Args {
 
     /// Maximum simulation steps before giving up (0 = unlimited).
     #[arg(long, default_value_t = 100_000_000)]
-    max_steps: SmallNat,
+    max_steps: u64,
 
     /// Upper bound (inclusive) for each argument in sweep mode.
     #[arg(long, default_value_t = 10)]
-    max_val: SmallNat,
+    max_val: u64,
 }
 
 fn main() {
@@ -77,14 +75,14 @@ fn main() {
     let arity = grf.arity();
 
     // Parse inputs: numbers or "_" wildcards.
-    let parsed: Vec<Option<SmallNat>> = args
+    let parsed: Vec<Option<u64>> = args
         .inputs
         .iter()
         .map(|s| {
             if s == "_" {
                 None
             } else {
-                match s.parse::<SmallNat>() {
+                match s.parse::<u64>() {
                     Ok(v) => Some(v),
                     Err(_) => {
                         eprintln!("error: invalid input '{}' (expected a number or '_')", s);
@@ -96,7 +94,7 @@ fn main() {
         .collect();
 
     // No args given with arity > 0 → full sweep.
-    let template: Vec<Option<SmallNat>> = if parsed.is_empty() && arity > 0 {
+    let template: Vec<Option<u64>> = if parsed.is_empty() && arity > 0 {
         vec![None; arity]
     } else {
         parsed
@@ -122,7 +120,7 @@ fn main() {
 
     // Single-run mode: arity 0, or all args concrete.
     if sweep_indices.is_empty() {
-        let concrete: Vec<SmallNat> = template.iter().map(|v| v.unwrap()).collect();
+        let concrete: Vec<u64> = template.iter().map(|v| v.unwrap()).collect();
         println!("expr  : {}", grf);
         println!("arity : {}", arity);
         println!("size  : {}", grf.size());
@@ -195,7 +193,10 @@ fn main() {
                 std::process::exit(1);
             }
             SimResult::ValueOverflow => {
-                println!("result: overflow  ({} steps, {} base)", steps.sim, steps.base_approx);
+                println!(
+                    "result: overflow  ({} steps, {} base)",
+                    steps.sim, steps.base_approx
+                );
             }
         }
         return;

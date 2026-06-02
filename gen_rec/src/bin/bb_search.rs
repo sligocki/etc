@@ -6,7 +6,6 @@ use gen_rec::enumerate::{EnumScope, stream_grf};
 use gen_rec::grf::Grf;
 use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::pruning::PruningOpts;
-use gen_rec::sim_nat::{SimNat, SmallNat};
 use gen_rec::simulate::{SimResult, SimSteps};
 use rayon::prelude::*;
 use std::fs;
@@ -72,7 +71,6 @@ struct Args {
     /// Enable dynamic RNF regeneration for massively reduced memory usage.
     #[arg(long)]
     dynamic_rnf: bool,
-
 }
 
 // ---------------------------------------------------------------------------
@@ -81,12 +79,12 @@ struct Args {
 
 /// Tracks the top-K individual halting GRFs by score.
 /// Entries are (score, steps, base_steps, raw_expr) sorted ascending; best at end.
-struct TopK<N: SimNat> {
+struct TopK {
     k: usize,
-    entries: Vec<(N, u64, N, String)>,
+    entries: Vec<(u64, u64, u64, String)>,
 }
 
-impl<N: SimNat> TopK<N> {
+impl TopK {
     fn new(k: usize) -> Self {
         TopK {
             k,
@@ -94,11 +92,11 @@ impl<N: SimNat> TopK<N> {
         }
     }
 
-    fn best_score(&self) -> Option<N> {
+    fn best_score(&self) -> Option<u64> {
         self.entries.last().map(|(s, _, _, _)| s.clone())
     }
 
-    fn insert(&mut self, score: N, steps: u64, base_steps: N, expr: String) {
+    fn insert(&mut self, score: u64, steps: u64, base_steps: u64, expr: String) {
         if self.entries.len() >= self.k && score < self.entries[0].0 {
             return;
         }
@@ -109,13 +107,13 @@ impl<N: SimNat> TopK<N> {
         }
     }
 
-    fn merge_from(&mut self, other: TopK<N>) {
+    fn merge_from(&mut self, other: TopK) {
         for (score, steps, base_steps, expr) in other.entries {
             self.insert(score, steps, base_steps, expr);
         }
     }
 
-    fn iter_desc(&self) -> impl Iterator<Item = &(N, u64, N, String)> {
+    fn iter_desc(&self) -> impl Iterator<Item = &(u64, u64, u64, String)> {
         self.entries.iter().rev()
     }
 }
@@ -124,20 +122,20 @@ impl<N: SimNat> TopK<N> {
 // Accumulator: mutable run state
 // ---------------------------------------------------------------------------
 
-struct Accumulator<N: SimNat> {
-    top_k: TopK<N>,
+struct Accumulator {
+    top_k: TopK,
     total: usize,
     holdouts: usize,
     diverged: usize,
-    total_steps: SmallNat,
-    max_steps_single: SmallNat,
+    total_steps: u64,
+    max_steps_single: u64,
     sim_nanos: u64,
 }
 
-impl<N: SimNat> Accumulator<N> {
+impl Accumulator {
     fn new(k: usize) -> Self {
         Accumulator {
-            top_k: TopK::<N>::new(k),
+            top_k: TopK::new(k),
             total: 0,
             holdouts: 0,
             diverged: 0,
@@ -152,24 +150,20 @@ impl<N: SimNat> Accumulator<N> {
 // Batch processing
 // ---------------------------------------------------------------------------
 
-struct BatchResult<N: SimNat> {
-    top_k: TopK<N>,
+struct BatchResult {
+    top_k: TopK,
     holdouts: Vec<(u64, String, Option<&'static str>)>,
     diverged: usize,
-    total_steps: SmallNat,
+    total_steps: u64,
 }
 
-fn process_batch<N: SimNat + Send + Sync>(
-    batch: &[Grf],
-    max_steps: u64,
-    k: usize,
-) -> BatchResult<N> {
+fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
     // Strings not allocated in worker threads — avoids macOS nano-zone
     // cross-thread free errors ("pointer being freed was not allocated").
-    let outcomes: Vec<(SimResult<N>, SimSteps<N>)> = batch
+    let outcomes: Vec<(SimResult, SimSteps)> = batch
         .par_iter()
         .map(|grf| {
-            gen_rec::simulate::simulate_opts::<N>(
+            gen_rec::simulate::simulate_opts(
                 grf,
                 &[],
                 if max_steps == 0 {
@@ -185,7 +179,7 @@ fn process_batch<N: SimNat + Send + Sync>(
     let mut top_k = TopK::new(k);
     let mut holdouts = Vec::new();
     let mut diverged = 0usize;
-    let mut total_steps: SmallNat = 0;
+    let mut total_steps: u64 = 0;
 
     for (idx, (result, sim_steps)) in outcomes.into_iter().enumerate() {
         let steps = sim_steps.sim;
@@ -212,9 +206,9 @@ fn process_batch<N: SimNat + Send + Sync>(
     }
 }
 
-fn flush_batch<W: Write, N: SimNat + Send + Sync>(
+fn flush_batch<W: Write>(
     batch: &mut Vec<Grf>,
-    acc: &mut Accumulator<N>,
+    acc: &mut Accumulator,
     holdout_w: &mut W,
     max_steps: u64,
     k: usize,
@@ -283,10 +277,10 @@ fn fmt_si_f64(n: f64) -> String {
 
 fn main() {
     let args = Args::parse();
-    run_search::<SmallNat>(&args);
+    run_search(&args);
 }
 
-fn run_search<N: SimNat + Send + Sync>(args: &Args) {
+fn run_search(args: &Args) {
     let mut opts = PruningOpts::recommended();
     opts.min_dom = true;
     if let Some(ref s) = args.opts {
@@ -371,7 +365,7 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
     let progress_interval = Duration::from_secs(args.progress_secs);
     let mut last_progress = start;
 
-    let mut acc = Accumulator::<N>::new(args.top_k);
+    let mut acc = Accumulator::new(args.top_k);
     let mut batch: Vec<Grf> = Vec::with_capacity(args.batch_size);
 
     // Macro-like helper to flush and maybe print progress.
@@ -595,8 +589,8 @@ fn run_search<N: SimNat + Send + Sync>(args: &Args) {
                     expr: expr.clone(),
                     status: Some(Status::Halt),
                     steps: Some(*steps),
-                    base_steps: Some(base_steps.to_u64_sat()),
-                    score: Some(score.to_u64_sat()),
+                    base_steps: Some(*base_steps),
+                    score: Some(*score),
                     unknown_reason: None,
                 },
             )

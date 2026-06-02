@@ -1,12 +1,10 @@
 use crate::grf::{Grf, GrfKind};
 
-pub use crate::sim_nat::{SimNat, SmallNat};
-
 /// Result of simulating a GRF.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SimResult<N = SmallNat> {
+pub enum SimResult {
     /// The function terminated with this value.
-    Value(N),
+    Value(u64),
     /// The function exceeded the step budget (may or may not terminate with more steps).
     OutOfSteps,
     /// The function will provably never terminate regardless of step budget.
@@ -17,19 +15,19 @@ pub enum SimResult<N = SmallNat> {
     ValueOverflow,
 }
 
-impl<N: SimNat> SimResult<N> {
+impl SimResult {
     pub fn is_value(&self) -> bool {
         matches!(self, SimResult::Value(_))
     }
 
-    pub fn value(&self) -> Option<&N> {
+    pub fn value(&self) -> Option<&u64> {
         match self {
             SimResult::Value(v) => Some(v),
             _ => None,
         }
     }
 
-    pub fn into_value(self) -> Option<N> {
+    pub fn into_value(self) -> Option<u64> {
         match self {
             SimResult::Value(v) => Some(v),
             _ => None,
@@ -46,32 +44,32 @@ impl<N: SimNat> SimResult<N> {
 ///
 /// **Invariant:** for any run with `no_ff()`, `sim == base_approx`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SimSteps<N = SmallNat> {
+pub struct SimSteps {
     pub sim: u64,
-    pub base_approx: N,
+    pub base_approx: u64,
 }
 
-impl<N: SimNat> SimSteps<N> {
+impl SimSteps {
     fn zero() -> Self {
         SimSteps {
             sim: 0,
-            base_approx: N::zero(),
+            base_approx: 0,
         }
     }
     fn one() -> Self {
         SimSteps {
             sim: 1,
-            base_approx: N::one(),
+            base_approx: 1,
         }
     }
 }
 
-impl<N: SimNat> std::ops::AddAssign<SimSteps<N>> for SimSteps<N> {
-    fn add_assign(&mut self, rhs: SimSteps<N>) {
+impl std::ops::AddAssign<SimSteps> for SimSteps {
+    fn add_assign(&mut self, rhs: SimSteps) {
         // We are not afraid of sim step overflowing
         self.sim += rhs.sim;
         // base steps can overflow, saturate instead
-        self.base_approx.saturating_add_assign(rhs.base_approx);
+        self.base_approx = self.base_approx.saturating_add(rhs.base_approx);
     }
 }
 
@@ -121,7 +119,7 @@ impl Default for SimOpts {
 ///
 /// Uses `SimOpts::default()` (rec_fast_forward enabled). Use `simulate_opts` to
 /// disable the optimization, e.g. for benchmarking or step-count tests.
-pub fn simulate(grf: &Grf, args: &[SmallNat], max_steps: SmallNat) -> (SimResult, SimSteps) {
+pub fn simulate(grf: &Grf, args: &[u64], max_steps: u64) -> (SimResult, SimSteps) {
     let step_budget = if max_steps == 0 {
         None
     } else {
@@ -129,7 +127,6 @@ pub fn simulate(grf: &Grf, args: &[SmallNat], max_steps: SmallNat) -> (SimResult
     };
     simulate_opts(grf, args, step_budget, SimOpts::default())
 }
-
 
 /// Simulate `M(f)(args)`, applying all Min optimizations, calling `on_iter`
 /// after each candidate evaluation in the general or fused loop.
@@ -140,15 +137,15 @@ pub fn simulate(grf: &Grf, args: &[SmallNat], max_steps: SmallNat) -> (SimResult
 /// wrappers; pass `&mut |_, _, _| {}` for the no-op case.
 ///
 /// `step_budget` and `opts` follow the same semantics as [`simulate_opts`].
-pub fn simulate_min<N: SimNat, F>(
+pub fn simulate_min<F>(
     f: &Grf,
-    args: &[N],
+    args: &[u64],
     step_budget: Option<u64>,
     opts: SimOpts,
     on_iter: &mut F,
-) -> (SimResult<N>, SimSteps<N>)
+) -> (SimResult, SimSteps)
 where
-    F: FnMut(N, &SimResult<N>, SimSteps<N>),
+    F: FnMut(u64, &SimResult, SimSteps),
 {
     if step_budget == Some(0) {
         return (SimResult::OutOfSteps, SimSteps::zero());
@@ -175,14 +172,14 @@ where
 
     // Fast-forward: f ignores its search variable (1-indexed arg 1).
     if opts.min_fast_forward && !f.used_args().contains(&1) {
-        let mut f_args: Vec<N> = Vec::with_capacity(args.len() + 1);
-        f_args.push(N::zero());
+        let mut f_args: Vec<u64> = Vec::with_capacity(args.len() + 1);
+        f_args.push(0);
         f_args.extend(args.iter().cloned());
         let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps.sim), opts);
         steps += s;
         // base_approx: base loop also evaluates f(0, args) first; no extra steps.
         return match result {
-            SimResult::Value(v) if v.is_zero() => (SimResult::Value(N::zero()), steps),
+            SimResult::Value(v) if v == 0 => (SimResult::Value(0), steps),
             SimResult::Value(_) => (SimResult::Diverge, steps),
             other => (other, steps),
         };
@@ -190,14 +187,14 @@ where
 
     // Fast-forward: f(i, args) > 0 whenever i > 0, so only i=0 is a candidate.
     if opts.min_fast_forward && f.is_positive_for_pos_arg(1) {
-        let mut f_args: Vec<N> = Vec::with_capacity(args.len() + 1);
-        f_args.push(N::zero());
+        let mut f_args: Vec<u64> = Vec::with_capacity(args.len() + 1);
+        f_args.push(0);
         f_args.extend(args.iter().cloned());
         let (result, s) = simulate_opts(f, &f_args, step_budget.map(|b| b - steps.sim), opts);
         steps += s;
         // base_approx: base loop also evaluates f(0, args) first; no extra steps.
         return match result {
-            SimResult::Value(v) if v.is_zero() => (SimResult::Value(N::zero()), steps),
+            SimResult::Value(v) if v == 0 => (SimResult::Value(0), steps),
             SimResult::Value(_) => (SimResult::Diverge, steps),
             other => (other, steps),
         };
@@ -215,23 +212,23 @@ where
                 other => return (other, steps),
             };
 
-            if acc.is_zero() {
+            if acc == 0 {
                 // Unoptimized would evaluate R(g,h)(0,args) = 1(Rec) + g(args).
                 // Fused only evaluated g(args), so base_extra = 1 (skipped Rec node).
-                steps.base_approx.saturating_add_assign(N::one());
-                return (SimResult::Value(N::zero()), steps);
+                steps.base_approx = steps.base_approx.saturating_add(1);
+                return (SimResult::Value(0), steps);
             }
 
             let mut k: u64 = 0;
-            // sum_h:   Σ sh_j.base_approx  (accumulated as N)
+            // sum_h:   Σ sh_j.base_approx  (accumulated as u64)
             // delta_h: Σ (k-j)*sh_j.base_approx, updated each step as delta_h += old sum_h
             // Avoids subtraction: base_extra = (n+1) + sg*n + delta_h
-            let mut sum_h: N = N::zero();
-            let mut delta_h: N = N::zero();
+            let mut sum_h: u64 = 0;
+            let mut delta_h: u64 = 0;
 
             loop {
-                let mut h_args: Vec<N> = Vec::with_capacity(args.len() + 2);
-                h_args.push(N::from_u64(k));
+                let mut h_args: Vec<u64> = Vec::with_capacity(args.len() + 2);
+                h_args.push((k));
                 h_args.push(acc.clone());
                 h_args.extend(args.iter().cloned());
 
@@ -245,23 +242,16 @@ where
 
                 match result {
                     SimResult::Value(v) => {
-                        on_iter(
-                            N::from_u64(k + 1),
-                            &SimResult::Value(v.clone()),
-                            steps.clone(),
-                        );
-                        if v.is_zero() {
+                        on_iter((k + 1), &SimResult::Value(v.clone()), steps.clone());
+                        if v == 0 {
                             let n = k + 1;
                             // base_extra = (n+1) + sg*n + delta_h
-                            let n_times_sg = sg
-                                .clone()
-                                .checked_mul_u64(n)
-                                .unwrap_or_else(|| N::from_u64(u64::MAX));
-                            let base_extra = N::from_u64(n + 1)
-                                .saturating_add(n_times_sg)
-                                .saturating_add(delta_h);
-                            steps.base_approx.saturating_add_assign(base_extra);
-                            return (SimResult::Value(N::from_u64(n)), steps);
+                            let n_times_sg =
+                                sg.clone().checked_mul(n).unwrap_or_else(|| (u64::MAX));
+                            let base_extra =
+                                (n + 1).saturating_add(n_times_sg).saturating_add(delta_h);
+                            steps.base_approx = steps.base_approx.saturating_add(base_extra);
+                            return (SimResult::Value((n)), steps);
                         }
                         acc = v;
                     }
@@ -273,13 +263,13 @@ where
     }
 
     // General loop: M(f)(args) = min{i : f(i, args...) = 0}
-    let mut i: N = N::zero();
+    let mut i: u64 = 0;
     loop {
         let remaining = step_budget.map(|b| b.saturating_sub(steps.sim));
         if remaining == Some(0) {
             return (SimResult::OutOfSteps, steps);
         }
-        let mut f_args: Vec<N> = Vec::with_capacity(args.len() + 1);
+        let mut f_args: Vec<u64> = Vec::with_capacity(args.len() + 1);
         f_args.push(i.clone());
         f_args.extend(args.iter().cloned());
 
@@ -287,9 +277,9 @@ where
         steps += s;
         on_iter(i.clone(), &result, steps.clone());
         match result {
-            SimResult::Value(v) if v.is_zero() => return (SimResult::Value(i), steps),
+            SimResult::Value(v) if v == 0 => return (SimResult::Value(i), steps),
             SimResult::Value(_) => {
-                i = match i.succ() {
+                i = match i.checked_add(1) {
                     Some(v) => v,
                     None => return (SimResult::ValueOverflow, steps),
                 };
@@ -304,12 +294,12 @@ where
 /// `step_budget` is the total number of steps available for this call and all
 /// its sub-calls. `None` means unlimited. The returned step count is how many
 /// steps were consumed.
-pub fn simulate_opts<N: SimNat>(
+pub fn simulate_opts(
     grf: &Grf,
-    args: &[N],
+    args: &[u64],
     step_budget: Option<u64>,
     opts: SimOpts,
-) -> (SimResult<N>, SimSteps<N>) {
+) -> (SimResult, SimSteps) {
     if step_budget == Some(0) {
         return (SimResult::OutOfSteps, SimSteps::zero());
     }
@@ -318,7 +308,7 @@ pub fn simulate_opts<N: SimNat>(
     }
 
     // CF fast-path: evaluate directly via closed form when available.
-    // Works for any N: SimNat — no SmallNat conversion needed.
+    // Works for any u64: SimNat — no u64 conversion needed.
     // TODO: base_approx for CF-evaluated runs
     if opts.use_closed_form {
         if let Some(cf) = grf.closed_form() {
@@ -332,9 +322,9 @@ pub fn simulate_opts<N: SimNat>(
     let mut steps = SimSteps::one(); // cost of this call
 
     let result = match &grf.kind {
-        GrfKind::Zero(_) => SimResult::Value(N::zero()),
+        GrfKind::Zero(_) => SimResult::Value(0),
 
-        GrfKind::Succ => match args[0].clone().succ() {
+        GrfKind::Succ => match args[0].clone().checked_add(1) {
             Some(v) => SimResult::Value(v),
             None => SimResult::ValueOverflow,
         },
@@ -343,7 +333,7 @@ pub fn simulate_opts<N: SimNat>(
 
         GrfKind::Comp(h, gs, _) => {
             // Evaluate each gi(args), collecting results as new arg list for h.
-            let mut h_args: Vec<N> = Vec::with_capacity(gs.len());
+            let mut h_args: Vec<u64> = Vec::with_capacity(gs.len());
             for g in gs.iter() {
                 let (result, s) = simulate_opts(g, args, step_budget.map(|b| b - steps.sim), opts);
                 steps += s;
@@ -371,21 +361,19 @@ pub fn simulate_opts<N: SimNat>(
             // Skip computing base in this case.
             // Note: This may lead to switching a Divergent GRF -> halting if base diverges
             // and it will also undercount base_steps.
-            if opts.rec_fast_forward && !n.is_zero() && !h.used_args().contains(&2) {
-                let n_m1 = n.clone().pred();
-                let mut h_args: Vec<N> = Vec::with_capacity(rest.len() + 2);
+            if opts.rec_fast_forward && !n == 0 && !h.used_args().contains(&2) {
+                let n_m1 = n.clone().saturating_sub(1);
+                let mut h_args: Vec<u64> = Vec::with_capacity(rest.len() + 2);
                 h_args.push(n_m1.clone());
-                h_args.push(N::zero()); // accumulator: ignored by h, value is arbitrary
+                h_args.push(0); // accumulator: ignored by h, value is arbitrary
                 h_args.extend(rest.iter().cloned());
                 let (result, s) =
                     simulate_opts(h, &h_args, step_budget.map(|b| b - steps.sim), opts);
-                let sh_base = s.base_approx.to_u64_sat(); // exact: bounded by step budget
+                let sh_base = s.base_approx; // exact: bounded by step budget
                 steps += s;
                 // base_approx += (n - 1) * sh_base
-                let approx = n_m1
-                    .checked_mul_u64(sh_base)
-                    .unwrap_or_else(|| N::from_u64(u64::MAX));
-                steps.base_approx.saturating_add_assign(approx);
+                let approx = n_m1.checked_mul(sh_base).unwrap_or_else(|| (u64::MAX));
+                steps.base_approx = steps.base_approx.saturating_add(approx);
                 return (result, steps);
             }
 
@@ -403,13 +391,10 @@ pub fn simulate_opts<N: SimNat>(
                 if let Some(k) = h.acc_plus_k() {
                     // base_approx += n * (2k + 1)
                     let factor = 2 * k + 1;
-                    let approx = n
-                        .clone()
-                        .checked_mul_u64(factor)
-                        .unwrap_or_else(|| N::from_u64(u64::MAX));
-                    steps.base_approx.saturating_add_assign(approx);
+                    let approx = n.clone().checked_mul(factor).unwrap_or_else(|| (u64::MAX));
+                    steps.base_approx = steps.base_approx.saturating_add(approx);
                     // Value: acc + n * k (checked for overflow)
-                    let val = n.checked_mul_u64(k).and_then(|nk| acc.checked_add(nk));
+                    let val = n.checked_mul(k).and_then(|nk| acc.checked_add(nk));
                     return match val {
                         Some(v) => (SimResult::Value(v), steps),
                         None => (SimResult::ValueOverflow, steps),
@@ -417,9 +402,9 @@ pub fn simulate_opts<N: SimNat>(
                 }
             }
 
-            let mut i = N::zero();
+            let mut i: u64 = 0;
             while i < n {
-                let mut h_args: Vec<N> = Vec::with_capacity(rest.len() + 2);
+                let mut h_args: Vec<u64> = Vec::with_capacity(rest.len() + 2);
                 h_args.push(i.clone());
                 h_args.push(acc.clone());
                 h_args.extend(rest.iter().cloned());
@@ -431,7 +416,7 @@ pub fn simulate_opts<N: SimNat>(
                     SimResult::Value(v) => v,
                     other => return (other, steps),
                 };
-                i = match i.succ() {
+                i = match i.checked_add(1) {
                     Some(v) => v,
                     None => return (SimResult::ValueOverflow, steps),
                 };
@@ -453,7 +438,7 @@ mod tests {
     use super::*;
     use crate::grf;
 
-    fn eval_helper(grf: &Grf, args: &[SmallNat]) -> Option<SmallNat> {
+    fn eval_helper(grf: &Grf, args: &[u64]) -> Option<u64> {
         let (result, _steps) = simulate(grf, args, 1_000_000);
         result.into_value()
     }
@@ -530,7 +515,7 @@ mod tests {
     fn test_rec_affine_k1() {
         // R(Z0, C(S, P(2,2)))(n) = n  (acc starts at 0, +1 each step)
         let f = grf!("R(Z0, C(S, P(2,2)))");
-        for n in (0 as SmallNat)..=10 {
+        for n in (0 as u64)..=10 {
             assert_eq!(eval_helper(&f, &[n]), Some(n));
         }
     }
@@ -539,8 +524,8 @@ mod tests {
     fn test_rec_affine_k2() {
         // R(S, C(S, C(S, P(3,2))))(n, x) = S(x) + 2*n = x + 2n + 1
         let f = grf!("R(S, C(S, C(S, P(3,2))))");
-        for n in (0 as SmallNat)..=5 {
-            for x in (0 as SmallNat)..=3 {
+        for n in (0 as u64)..=5 {
+            for x in (0 as u64)..=3 {
                 assert_eq!(eval_helper(&f, &[n, x]), Some(2 * n + x + 1));
             }
         }
@@ -583,12 +568,12 @@ mod tests {
         };
 
         // Z0(): 1 step
-        let (_, steps) = simulate_opts::<SmallNat>(&Grf::zero_atom(0), &[], Some(1_000_000), no_cf);
+        let (_, steps) = simulate_opts(&Grf::zero_atom(0), &[], Some(1_000_000), no_cf);
         assert_eq!(steps.sim, 1);
 
         // C(S, Z0)(): simulate_opts(C) = 1, simulate_opts(Z0) = 1, simulate_opts(S) = 1 → 3 steps
         let f = Grf::comp(Grf::succ_atom(), vec![Grf::zero_atom(0)]);
-        let (_, steps) = simulate_opts::<SmallNat>(&f, &[], Some(1_000_000), no_cf);
+        let (_, steps) = simulate_opts(&f, &[], Some(1_000_000), no_cf);
         assert_eq!(steps.sim, 3);
     }
 
@@ -627,7 +612,6 @@ mod tests {
         assert_eq!(result, SimResult::ValueOverflow);
     }
 
-
     // --- rec_fast_forward tests ---
 
     fn no_ff() -> SimOpts {
@@ -651,7 +635,7 @@ mod tests {
         // Pred: R(Z0, P(2,1))
         // Ignores accumulator
         let r = Grf::rec(Grf::zero_atom(0), Grf::proj_atom(2, 1));
-        for n in (0 as SmallNat)..=10 {
+        for n in (0 as u64)..=10 {
             let expected = n.saturating_sub(1);
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
             let (v_no, _) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
@@ -673,7 +657,7 @@ mod tests {
     fn test_rec_ff_nested_correctness() {
         let f = nested_rec();
         // Both with and without fast-forward must give the same answer.
-        for n in (0 as SmallNat)..=20 {
+        for n in (0 as u64)..=20 {
             let (r_ff, _) = simulate(&f, &[n], 1_000_000);
             let (r_no, _) = simulate_opts(&f, &[n], Some(1_000_000), no_ff());
             assert_eq!(r_ff.into_value(), r_no.into_value(), "mismatch at n={n}");
@@ -683,7 +667,7 @@ mod tests {
     #[test]
     fn test_rec_ff_fewer_steps() {
         let f = nested_rec();
-        let n: SmallNat = 1000;
+        let n: u64 = 1000;
         let (_, steps_ff) = simulate(&f, &[n], 0);
         let (_, steps_no) = simulate_opts(&f, &[n], None, no_ff());
         // Without fast-forward: O(n^2). With: O(1). Confirm dramatically fewer steps.
@@ -703,7 +687,7 @@ mod tests {
         // With rec_ff:    steps = 1(Rec) + 1(Z0) = 2.
         // Without any ff: steps = 1(Rec) + 1(Z0) + 3*1(P) = 5.
         let r = Grf::rec(Grf::zero_atom(0), Grf::proj_atom(2, 2));
-        for n in (0 as SmallNat)..=10 {
+        for n in (0 as u64)..=10 {
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
             let (v_no, _) = simulate_opts(&r, &[n], Some(1_000_000), no_ff());
             assert_eq!(v_ff.into_value(), Some(0), "ff wrong at n={n}");
@@ -724,8 +708,8 @@ mod tests {
     fn test_rec_ff_proj_acc_identity_arity2() {
         // R(P(1,1), P(3,2))(n, m): h = P(3,2) returns acc; result = P(1,1)(m) = m for all n.
         let r = Grf::rec(Grf::proj_atom(1, 1), Grf::proj_atom(3, 2));
-        for n in (0 as SmallNat)..=5 {
-            for m in (0 as SmallNat)..=5 {
+        for n in (0 as u64)..=5 {
+            for m in (0 as u64)..=5 {
                 let (v_ff, _) = simulate(&r, &[n, m], 1_000_000);
                 let (v_no, _) = simulate_opts(&r, &[n, m], Some(1_000_000), no_ff());
                 assert_eq!(v_ff.into_value(), Some(m), "ff wrong at n={n} m={m}");
@@ -740,7 +724,7 @@ mod tests {
         // h = C(Plus, [i, acc]): acc_plus_k returns None, so outer affine ff doesn't fire.
         // (Inner Plus calls may still be accelerated; we verify only correctness here.)
         let r = grf!("R(Z0, C(R(P(1,1), C(S, P(3,2))), P(2,1), P(2,2)))");
-        for n in (0 as SmallNat)..=8 {
+        for n in (0 as u64)..=8 {
             // acc_0 = 0; acc_{i+1} = Plus(i, acc_i). acc_n = sum_{j=0}^{n-1} j = n*(n-1)/2.
             let expected = n * n.saturating_sub(1) / 2;
             let (v_ff, _) = simulate(&r, &[n], 1_000_000);
@@ -794,8 +778,8 @@ mod tests {
         // the search var being ignored) must NOT apply.  However, S.is_never_zero()
         // so the never-zero short-circuit fires first and returns Diverge cheaply.
         let f = Grf::min(Grf::succ_atom());
-        let (r_ff, _) = simulate_opts::<SmallNat>(&f, &[], Some(1000), SimOpts::default());
-        let (r_no, _) = simulate_opts::<SmallNat>(&f, &[], Some(1000), no_min_ff());
+        let (r_ff, _) = simulate_opts(&f, &[], Some(1000), SimOpts::default());
+        let (r_no, _) = simulate_opts(&f, &[], Some(1000), no_min_ff());
         assert_eq!(r_ff, SimResult::Diverge);
         assert_eq!(r_no, SimResult::Diverge);
     }
@@ -869,7 +853,7 @@ mod tests {
         let grf = grf!("M(R(Z0, Z2))");
         assert_eq!(simulate(&grf, &[], 1_000_000).0, SimResult::Value(0));
         assert_eq!(
-            simulate_opts::<SmallNat>(&grf, &[], Some(1_000_000), no_rec_fuse()).0,
+            simulate_opts(&grf, &[], Some(1_000_000), no_rec_fuse()).0,
             SimResult::Value(0)
         );
     }
@@ -881,7 +865,7 @@ mod tests {
         let grf = grf!("M(R(C(S,Z0), Z2))");
         assert_eq!(simulate(&grf, &[], 1_000_000).0, SimResult::Value(1));
         assert_eq!(
-            simulate_opts::<SmallNat>(&grf, &[], Some(1_000_000), no_rec_fuse()).0,
+            simulate_opts(&grf, &[], Some(1_000_000), no_rec_fuse()).0,
             SimResult::Value(1)
         );
     }
@@ -896,7 +880,7 @@ mod tests {
         let mut opts_no = no_rec_fuse();
         opts_no.use_closed_form = false;
 
-        for x in (0 as SmallNat)..=10 {
+        for x in (0 as u64)..=10 {
             let (r_fuse, steps_fuse) =
                 simulate_opts(&grf, &[x], Some(1_000_000), opts_fuse.clone());
             let (r_no, steps_no) = simulate_opts(&grf, &[x], Some(1_000_000), opts_no.clone());
@@ -987,8 +971,8 @@ mod tests {
         // M(R(C(S,Z0), Z2))(): g()=1, h(k,acc)=0 (atom, no inner Rec → base_approx exact).
         // Fused: acc=1, k=0: h returns 0 → result=1. One loop iteration.
         let grf_0 = grf!("M(R(C(S,Z0), Z2))");
-        let (_, s) = simulate_opts::<SmallNat>(&grf_0, &[], None, no_cf);
-        let (_, s_noff) = simulate_opts::<SmallNat>(&grf_0, &[], None, no_ff());
+        let (_, s) = simulate_opts(&grf_0, &[], None, no_cf);
+        let (_, s_noff) = simulate_opts(&grf_0, &[], None, no_ff());
         assert_eq!(
             s.base_approx, s_noff.sim,
             "M(R(C(S,Z0),Z2)): base_approx={} no_ff={}",
@@ -998,8 +982,8 @@ mod tests {
         // M(R(Z0, Z2))(): g()=0 → base case, acc=0 immediately, result=0.
         // base_extra = 1 (skipped Rec node for i=0).
         let grf_base = grf!("M(R(Z0, Z2))");
-        let (_, s2) = simulate_opts::<SmallNat>(&grf_base, &[], None, no_cf);
-        let (_, s2_noff) = simulate_opts::<SmallNat>(&grf_base, &[], None, no_ff());
+        let (_, s2) = simulate_opts(&grf_base, &[], None, no_cf);
+        let (_, s2_noff) = simulate_opts(&grf_base, &[], None, no_ff());
         assert_eq!(
             s2.base_approx, s2_noff.sim,
             "M(R(Z0,Z2)) base case: base_approx={} no_ff={}",
@@ -1010,14 +994,14 @@ mod tests {
         // x=0 is exact (acc=0 base case, inner h never evaluated).
         // x>0 is a lower bound because h contains acc-ignored rec_ff inside R(Z0,P(2,1)).
         let grf_plan = grf!("M(R(P(1,1),C(R(Z0,P(2,1)),P(3,2))))");
-        let (_, s3) = simulate_opts::<SmallNat>(&grf_plan, &[0], None, no_cf);
+        let (_, s3) = simulate_opts(&grf_plan, &[0], None, no_cf);
         let (_, s3_noff) = simulate_opts(&grf_plan, &[0], None, no_ff());
         assert_eq!(
             s3.base_approx, s3_noff.sim,
             "x=0 exact: base_approx={} no_ff={}",
             s3.base_approx, s3_noff.sim
         );
-        for x in (1 as SmallNat)..=10 {
+        for x in (1 as u64)..=10 {
             let (_, sx) = simulate_opts(&grf_plan, &[x], None, no_cf);
             let (_, sx_noff) = simulate_opts(&grf_plan, &[x], None, no_ff());
             assert!(

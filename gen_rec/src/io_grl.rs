@@ -1,7 +1,7 @@
 //! Read and write `.grl` (GRF Results List) files.
 //!
 //! **Line format** (one GRF per line):
-//!   `grf=EXPR [status=Halt|Diverge|Unknown] [steps=N] [score=N]`
+//!   `grf=EXPR [status=Halt|Diverge|Unknown] [steps=u64] [score=u64]`
 //!
 //! Comment/blank lines are skipped.  Unknown keys are ignored, so the format
 //! is forward-compatible with new fields added in the future.
@@ -11,7 +11,6 @@
 //!   `EXPR`          — plain expression per line
 
 use crate::grf::Grf;
-use crate::sim_nat::SmallNat;
 use crate::simulate::{SimResult, SimSteps};
 use std::fmt;
 use std::io::{self, Write};
@@ -53,9 +52,9 @@ impl std::str::FromStr for Status {
 pub struct GrfEntry {
     pub expr: String,
     pub status: Option<Status>,
-    pub steps: Option<SmallNat>,
-    pub base_steps: Option<SmallNat>,
-    pub score: Option<SmallNat>,
+    pub steps: Option<u64>,
+    pub base_steps: Option<u64>,
+    pub score: Option<u64>,
     pub unknown_reason: Option<String>,
 }
 
@@ -131,7 +130,7 @@ fn parse_line(line: &str) -> GrfEntry {
     // Legacy format: "STEPS  EXPR" or plain "EXPR".
     let mut parts = line.splitn(2, |c: char| c.is_whitespace());
     let first = parts.next().unwrap_or("").trim();
-    if let Ok(steps) = first.parse::<SmallNat>() {
+    if let Ok(steps) = first.parse::<u64>() {
         let expr = parts.next().map(str::trim).unwrap_or("").to_string();
         GrfEntry {
             expr,
@@ -167,11 +166,11 @@ fn parse_kv_line(line: &str) -> GrfEntry {
         } else if let Some(v) = token.strip_prefix("status=") {
             status = v.parse::<Status>().ok();
         } else if let Some(v) = token.strip_prefix("steps=") {
-            steps = v.parse::<SmallNat>().ok();
+            steps = v.parse::<u64>().ok();
         } else if let Some(v) = token.strip_prefix("base_steps=") {
-            base_steps = v.parse::<SmallNat>().ok();
+            base_steps = v.parse::<u64>().ok();
         } else if let Some(v) = token.strip_prefix("score=") {
-            score = v.parse::<SmallNat>().ok();
+            score = v.parse::<u64>().ok();
         } else if let Some(v) = token.strip_prefix("unknown_reason=") {
             unknown_reason = Some(v.to_string());
         }

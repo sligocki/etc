@@ -2,14 +2,14 @@
 use crate::enumerate::stream_grf;
 use crate::grf::Grf;
 use crate::pruning::PruningOpts;
-use crate::simulate::{SimResult, SmallNat, simulate};
+use crate::simulate::{SimResult, simulate};
 use std::collections::HashMap;
 
 /// One entry in a fingerprint: the observed outcome on a single canonical input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FpEntry {
     /// The function terminated with this value.
-    Value(SmallNat),
+    Value(u64),
     /// The function provably never terminates on this input (from `SimResult::Diverge`).
     Diverge,
     /// The function exceeded the step budget; termination is unknown.
@@ -66,14 +66,12 @@ impl Lcg {
 
 /// Generate `count` pseudorandom input tuples for a given arity using the given seed.
 /// Skips duplicates — each returned tuple is unique.
-fn sampled_inputs(arity: usize, count: usize, seed: u64) -> Vec<Vec<SmallNat>> {
+fn sampled_inputs(arity: usize, count: usize, seed: u64) -> Vec<Vec<u64>> {
     let mut rng = Lcg::new(seed);
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::with_capacity(count);
     while result.len() < count {
-        let input: Vec<SmallNat> = (0..arity)
-            .map(|_| rng.sample_biased() as SmallNat)
-            .collect();
+        let input: Vec<u64> = (0..arity).map(|_| rng.sample_biased() as u64).collect();
         if seen.insert(input.clone()) {
             result.push(input);
         }
@@ -83,7 +81,7 @@ fn sampled_inputs(arity: usize, count: usize, seed: u64) -> Vec<Vec<SmallNat>> {
 
 /// Build an exhaustive grid of all k-tuples with each component in 0..per_dim,
 /// in lexicographic order.
-pub fn grid_inputs(arity: usize, per_dim: SmallNat) -> Vec<Vec<SmallNat>> {
+pub fn grid_inputs(arity: usize, per_dim: u64) -> Vec<Vec<u64>> {
     let mut result = vec![vec![]];
     for _ in 0..arity {
         let mut next = Vec::new();
@@ -108,9 +106,9 @@ pub fn grid_inputs(arity: usize, per_dim: SmallNat) -> Vec<Vec<SmallNat>> {
 /// covers larger values that the grid misses.
 ///
 /// `per_dim` is chosen as the largest integer where per_dim^arity ≤ count.
-fn grid_then_random(arity: usize, count: usize, seed: u64) -> Vec<Vec<SmallNat>> {
+fn grid_then_random(arity: usize, count: usize, seed: u64) -> Vec<Vec<u64>> {
     // Largest per_dim such that per_dim^arity ≤ count.
-    let per_dim: SmallNat = {
+    let per_dim: u64 = {
         let mut p = 1u64;
         loop {
             let next = p + 1;
@@ -121,18 +119,16 @@ fn grid_then_random(arity: usize, count: usize, seed: u64) -> Vec<Vec<SmallNat>>
                 _ => break,
             }
         }
-        p as SmallNat
+        p as u64
     };
 
     let mut inputs = grid_inputs(arity, per_dim);
     // inputs is already ≤ count in length; fill the rest with unique random samples.
     if inputs.len() < count {
-        let mut seen: std::collections::HashSet<Vec<SmallNat>> = inputs.iter().cloned().collect();
+        let mut seen: std::collections::HashSet<Vec<u64>> = inputs.iter().cloned().collect();
         let mut rng = Lcg::new(seed);
         while inputs.len() < count {
-            let input: Vec<SmallNat> = (0..arity)
-                .map(|_| rng.sample_biased() as SmallNat)
-                .collect();
+            let input: Vec<u64> = (0..arity).map(|_| rng.sample_biased() as u64).collect();
             if seen.insert(input.clone()) {
                 inputs.push(input);
             }
@@ -153,10 +149,10 @@ fn grid_then_random(arity: usize, count: usize, seed: u64) -> Vec<Vec<SmallNat>>
 /// because the grid size (per_dim) depends on n.  Fingerprints computed at
 /// different fp_sizes are therefore not comparable by slicing; each fp_size must
 /// be re-computed independently.
-pub fn canonical_inputs_n(arity: usize, n: usize) -> Vec<Vec<SmallNat>> {
+pub fn canonical_inputs_n(arity: usize, n: usize) -> Vec<Vec<u64>> {
     match arity {
         0 => vec![vec![]],
-        1 => (0..n as SmallNat).map(|v| vec![v]).collect(),
+        1 => (0..n as u64).map(|v| vec![v]).collect(),
         k => grid_then_random(k, n, 0xdeadbeefdeadbeef_u64.wrapping_mul(k as u64)),
     }
 }
@@ -168,16 +164,16 @@ pub fn canonical_inputs_n(arity: usize, n: usize) -> Vec<Vec<SmallNat>> {
 /// Arity ≥ 2: 32 points via `grid_then_random` — an exhaustive grid of small
 ///   values (e.g. all 5×5=25 pairs for arity 2, plus 7 random extras), then
 ///   unique random samples to fill the remainder.
-pub fn canonical_inputs(arity: usize) -> Vec<Vec<SmallNat>> {
+pub fn canonical_inputs(arity: usize) -> Vec<Vec<u64>> {
     match arity {
         0 => vec![vec![]],
-        1 => (0..8 as SmallNat).map(|v| vec![v]).collect(),
+        1 => (0..8 as u64).map(|v| vec![v]).collect(),
         k => grid_then_random(k, 32, 0xdeadbeefdeadbeef_u64.wrapping_mul(k as u64)),
     }
 }
 
 /// Compute the fingerprint of a GRF on the given canonical inputs.
-pub fn compute_fp(grf: &Grf, inputs: &[Vec<SmallNat>], max_steps: SmallNat) -> Fingerprint {
+pub fn compute_fp(grf: &Grf, inputs: &[Vec<u64>], max_steps: u64) -> Fingerprint {
     inputs
         .iter()
         .map(|inp| {
@@ -202,13 +198,13 @@ pub fn compute_fp(grf: &Grf, inputs: &[Vec<SmallNat>], max_steps: SmallNat) -> F
 ///
 /// For arity ≥ 4 the grid would explode, so we fall back to pseudorandom with a
 /// different seed from canonical_inputs.
-pub fn verification_inputs(arity: usize) -> Vec<Vec<SmallNat>> {
+pub fn verification_inputs(arity: usize) -> Vec<Vec<u64>> {
     match arity {
         0 => vec![vec![]],
-        1 => (0..16 as SmallNat).map(|v| vec![v]).collect(),
+        1 => (0..16 as u64).map(|v| vec![v]).collect(),
         k @ 2..=3 => {
-            let per_dim: SmallNat = if k == 2 { 8 } else { 5 };
-            let mut result: Vec<Vec<SmallNat>> = vec![vec![]];
+            let per_dim: u64 = if k == 2 { 8 } else { 5 };
+            let mut result: Vec<Vec<u64>> = vec![vec![]];
             for _ in 0..k {
                 let mut next = Vec::new();
                 for prefix in &result {
@@ -236,8 +232,8 @@ pub struct FingerprintDb {
     /// (arity, fingerprint) → smallest GRF with that fingerprint
     map: HashMap<(usize, Fingerprint), Grf>,
     /// canonical inputs per arity (cached to avoid recomputation)
-    inputs: HashMap<usize, Vec<Vec<SmallNat>>>,
-    max_steps: SmallNat,
+    inputs: HashMap<usize, Vec<Vec<u64>>>,
+    max_steps: u64,
 }
 
 impl FingerprintDb {
@@ -245,7 +241,7 @@ impl FingerprintDb {
     ///
     /// GRFs whose fingerprint contains any `Unknown` entry (step budget exhausted)
     /// are silently skipped — their functional identity is uncertain.
-    pub fn build(max_size: usize, max_arity: usize, allow_min: bool, max_steps: SmallNat) -> Self {
+    pub fn build(max_size: usize, max_arity: usize, allow_min: bool, max_steps: u64) -> Self {
         let opts = PruningOpts::recommended();
         let mut db = FingerprintDb {
             map: HashMap::new(),
@@ -273,7 +269,7 @@ impl FingerprintDb {
 
     /// Create an empty `FingerprintDb` with no entries.
     /// Entries can be added with `add_entry`. Used by `novel_db` when loading from files.
-    pub fn build_empty(max_steps: SmallNat) -> Self {
+    pub fn build_empty(max_steps: u64) -> Self {
         FingerprintDb {
             map: HashMap::new(),
             inputs: HashMap::new(),

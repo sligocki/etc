@@ -190,15 +190,13 @@ pub(crate) fn for_each_grf_core(
                         {
                             return;
                         }
-                        // rec_pos_step: C(R(a,b), c, ...) ≡ C(b, c-1, Z, ...) or C(b, Z, Z, ...)
+                        // rec_pos_step: C(R(a,b), c, ...) ≡ C(b, c-1, Z, ...)
                         if opts.rec_pos_step && h_is_rec {
                             if let GrfKind::Rec(a, b) = &h.kind {
                                 if !b.used_args().contains(&2)
                                     && gs.first().map_or(false, |g| g.is_never_zero())
                                 {
                                     let a_is_zero = matches!(&a.kind, GrfKind::Zero(_));
-                                    let c_is_succ = matches!(&gs[0].kind, GrfKind::Succ)
-                                        || matches!(&gs[0].kind, GrfKind::Comp(head, _, _) if matches!(&head.kind, GrfKind::Succ));
                                     let b_uses_arg1 = b.used_args().contains(&1);
                                     if !b_uses_arg1 || !a_is_zero {
                                         return;

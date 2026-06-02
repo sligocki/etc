@@ -239,10 +239,10 @@ mod tests {
 
     #[test]
     fn parse_kv_all_fields() {
-        let entries = parse_grf_entries("grf=R(Z0,S) status=Halt steps=42 score=7");
+        let entries = parse_grf_entries("grf=R(Z0,C(S,P(2,1))) status=Halt steps=42 score=7");
         assert_eq!(entries.len(), 1);
         let e = &entries[0];
-        assert_eq!(e.expr, "R(Z0,S)");
+        assert_eq!(e.expr, "R(Z0,C(S,P(2,1)))");
         assert_eq!(e.status, Some(Status::Halt));
         assert_eq!(e.steps, Some(42));
         assert_eq!(e.score, Some(7));

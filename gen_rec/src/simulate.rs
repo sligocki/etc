@@ -920,7 +920,7 @@ mod tests {
     #[test]
     fn test_base_approx_no_ff_invariant() {
         // With no_ff(), sim == base_approx for any GRF (no optimizations fire).
-        let (_, s) = simulate_opts(&grf!("R(Z0,C(S,P(3,2)))"), &[5], None, no_ff());
+        let (_, s) = simulate_opts(&grf!("R(Z0,C(S,P(2,2)))"), &[5], None, no_ff());
         assert_eq!(
             s.sim, s.base_approx,
             "R: sim={} base={}",

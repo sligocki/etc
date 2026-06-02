@@ -137,8 +137,15 @@ impl Grf {
 
     // --- Combinator constructors ---
 
-    /// Convenience constructor for Rec: boxes both sub-functions.
+    /// Constructs a primitive recursion: g is the base case, h is the step function.
     pub fn rec(g: Self, h: Self) -> Self {
+        assert_eq!(
+            g.arity() + 2,
+            h.arity(),
+            "Arity mismatch in Rec: g={}, h={}",
+            g.arity(),
+            h.arity()
+        );
         Self::new(GrfKind::Rec(Box::new(g), Box::new(h)))
     }
 
@@ -409,65 +416,7 @@ impl Grf {
     /// Conservative: returns false when unsure. Used by the enumerator to
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
-        // Leverage ClosedForm for definitive properties first (only if already cached)
-        if let Some(Some(cf)) = self.cf.get() {
-            if cf.is_always_pos() {
-                return true;
-            }
-        }
-
-        let pos_args = vec![false; self.arity()];
-        if self.is_pos_if_args_pos(&pos_args) {
-            return true;
-        }
-
-        match &self.kind {
-            GrfKind::Succ => {
-                return true;
-            }
-            GrfKind::Rec(g, h) => {
-                // R(g, h)(n, rest): base g(rest), then h applies n times accumulating.
-                // Positive for all n iff: g never zero AND h positive when accumulator positive.
-                if g.is_never_zero() && h.is_positive_for_pos_arg(2) {
-                    return true;
-                }
-            }
-            GrfKind::Comp(h, gs, _) => {
-                // C(+, ...) -> +
-                if h.is_never_zero() {
-                    return true;
-                }
-
-                // Positivity traps for Monus Descent bounds
-                if Self::is_monus_descent_trap(h, gs) {
-                    return true;
-                }
-
-                // If any inner argument is strictly positive and the outer function
-                // preserves positivity for that argument, the result is strictly positive.
-                for (i, gi) in gs.iter().enumerate() {
-                    let m = gi.min_val();
-                    if m > 0 && h.is_positive_for_arg_ge(i + 1, m) {
-                        return true;
-                    }
-                    if gi.is_never_zero() && h.is_positive_for_pos_arg(i + 1) {
-                        return true;
-                    }
-                }
-
-                // C(R(_, +), +, _, ...) -> +
-                // C(R(_, h_step), gs) -> + when h_step and all gs are always positive:
-                // gs[0] is never zero so the counter n >= 1, meaning R always steps at
-                // least once; since h_step is never zero the result is always positive.
-                if let GrfKind::Rec(_, h_step) = &h.kind {
-                    if h_step.is_never_zero() && gs.first().map_or(false, |g| g.is_never_zero()) {
-                        return true;
-                    }
-                }
-            }
-            _ => {}
-        }
-        return false;
+        self.is_pos_if_args_pos(&vec![false; self.arity()])
     }
 
     /// Returns true if `self(args...) > 0` for all natural-number inputs.
@@ -513,21 +462,35 @@ impl Grf {
             GrfKind::Comp(h, gs, _) => {
                 let inner_pos: Vec<bool> =
                     gs.iter().map(|g| g.is_pos_if_args_pos(pos_args)).collect();
-                h.is_pos_if_args_pos(&inner_pos)
+                if h.is_pos_if_args_pos(&inner_pos) {
+                    return true;
+                }
+
+                // Positivity traps for Monus Descent bounds
+                if Self::is_monus_descent_trap(h, gs) {
+                    return true;
+                }
+
+                // If any inner argument is strictly positive and the outer function
+                // preserves positivity for that argument, the result is strictly positive.
+                for (i, gi) in gs.iter().enumerate() {
+                    let m = gi.min_val();
+                    if m > 0 && h.is_positive_for_arg_ge(i + 1, m) {
+                        return true;
+                    }
+                }
+
+                false
             }
             GrfKind::Rec(g, h) => {
-                assert!(pos_args.len() > 0);
                 let g_args = &pos_args[1..];
                 let g_pos = g.is_pos_if_args_pos(g_args);
 
                 let mut h_pos_args = vec![false; h.arity()];
-                assert!(h_pos_args.len() > 1);
                 // Assume accumulator is positive
                 h_pos_args[1] = true;
                 for i in 2..h.arity() {
-                    if i - 1 < pos_args.len() {
-                        h_pos_args[i] = pos_args[i - 1];
-                    }
+                    h_pos_args[i] = pos_args[i - 1];
                 }
                 // acc_out is positive if acc_in was
                 let h_preserves = h.is_pos_if_args_pos(&h_pos_args);
@@ -539,11 +502,24 @@ impl Grf {
                     // we can be even more lenient and reduce the requirement
                     // that g -> + to that first h -> +.
                     let mut s1_args = h_pos_args.clone();
-                    if s1_args.len() > 1 {
-                        s1_args[1] = g_pos;
-                    }
+                    s1_args[1] = g_pos;
                     let s1_pos = h.is_pos_if_args_pos(&s1_args);
-                    s1_pos && h_preserves
+                    if s1_pos && h_preserves {
+                        return true;
+                    }
+
+                    // Simulate fallback for cases where n=1 is positive and h preserves
+                    if g.arity() == 0 && h_preserves {
+                        if self.arity() == 1 {
+                            let (res, _) = crate::simulate::simulate(self, &[1], 100);
+                            if let crate::simulate::SimResult::Value(v) = res {
+                                if v > 0 {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    false
                 }
             }
             GrfKind::Min(_) => false,
@@ -556,74 +532,11 @@ impl Grf {
     /// counter): if this holds and f(0, args) > 0, then Min diverges since no later i
     /// can produce 0.
     pub fn is_positive_for_pos_arg(&self, j: usize) -> bool {
-        if let Some(Some(cf)) = self.cf.get() {
-            // Check if cf satisfies: forall x, xj > 0 => cf(x) > 0.
-            // A conservative check: if its minimum difference from arg j is > -1,
-            // then cf(x) >= xj + c. If c >= 0, then cf(x) >= xj > 0.
-            // So if c >= 0, it's positive.
-            // Or if it is simply always positive.
-            if cf.is_always_pos() {
-                return true;
-            }
-            if let Some(c) = cf.min_diff_from_arg(j - 1) {
-                if c >= 0 {
-                    return true;
-                }
-            }
-        }
-        if self.is_never_zero() {
-            return true;
-        }
-
         let mut pos_args = vec![false; self.arity()];
         if j > 0 && j <= self.arity() {
             pos_args[j - 1] = true;
         }
-        if self.is_pos_if_args_pos(&pos_args) {
-            return true;
-        }
-
-        match &self.kind {
-            GrfKind::Proj(_, i) => *i == j,
-            GrfKind::Rec(g, h) => {
-                if j == 1 {
-                    if h.is_never_zero() {
-                        return true;
-                    }
-                    if g.arity() == 0 && h.is_positive_for_pos_arg(2) {
-                        let (res, _) = simulate(self, &[1], 100);
-                        if let SimResult::Value(v) = res {
-                            if v > 0 {
-                                return true;
-                            }
-                        }
-                    }
-                    false
-                } else {
-                    // Rec's outer arg j (j ≥ 2) maps to g's arg (j-1).
-                    // Base (n=0): g positive when g's arg (j-1) positive.
-                    // Steps: h positive when accumulator (arg 2) positive (or when j -> j+1 pos)
-                    let h_pos = h.is_positive_for_pos_arg(2) || h.is_positive_for_pos_arg(j + 1);
-                    g.is_positive_for_pos_arg(j - 1) && h_pos
-                }
-            }
-            GrfKind::Comp(h, gs, _) => {
-                // h positive when h's arg 1 positive, gs[0] positive when comp's arg j positive
-                if h.is_positive_for_pos_arg(1)
-                    && gs.first().map_or(false, |g| g.is_positive_for_pos_arg(j))
-                {
-                    return true;
-                }
-                // h = Proj to position p: output = gs[p-1], delegate
-                if let GrfKind::Proj(_, p) = &h.kind {
-                    if let Some(gp) = gs.get(p - 1) {
-                        return gp.is_positive_for_pos_arg(j);
-                    }
-                }
-                false
-            }
-            _ => false,
-        }
+        self.is_pos_if_args_pos(&pos_args)
     }
 
     /// Returns the outer argument indices in DFS first-occurrence order.
@@ -916,7 +829,7 @@ mod tests {
 
     #[test]
     fn test_rec_arity_and_size() {
-        let r = grf!("R(Z0, C(S, P(3,2)))");
+        let r = grf!("R(Z0, C(S, P(2,2)))");
         assert_eq!(r.arity(), 1);
         assert_eq!(r.size(), 5);
     }
@@ -956,7 +869,7 @@ mod tests {
         assert!(!grf!("P(2,2)").is_positive_for_pos_arg(1)); // returns arg2, not arg1
 
         // Rec j=1: true iff step is never_zero (counter > 0 → h fires once)
-        assert!(grf!("R(Z0, S)").is_positive_for_pos_arg(1)); // step=S never_zero
+        assert!(grf!("R(Z0, C(S, P(2,1)))").is_positive_for_pos_arg(1)); // step C(S, P(2,1)) never_zero
         assert!(grf!("R(P(1,1), C(S,P(3,2)))").is_positive_for_pos_arg(1)); // step C(S,...) never_zero
         assert!(!grf!("R(P(1,1), P(3,2))").is_positive_for_pos_arg(1)); // step P(3,2) not never_zero, g not never_zero
         // R(S, P(3,2)): is_never_zero (P2 echoes acc which started at S(x)≥1), so positive for any j
@@ -980,12 +893,12 @@ mod tests {
         assert!(grf!("R(S, R(P(2,1), C(S,P(4,1))))").is_positive_for_pos_arg(1));
 
         // Comp: h positive for arg1, gs[0] positive for arg j
-        assert!(grf!("C(R(Z0,S), P(1,1))").is_positive_for_pos_arg(1));
-        assert!(!grf!("C(R(Z0,S), P(2,2))").is_positive_for_pos_arg(1));
+        assert!(grf!("C(R(Z0,C(S,P(2,1))), P(1,1))").is_positive_for_pos_arg(1));
+        assert!(!grf!("C(R(Z0,C(S,P(2,1))), P(2,2))").is_positive_for_pos_arg(1));
 
         // Comp: h = Proj to position p, delegate to gs[p-1]
-        assert!(grf!("C(P(2,1), R(Z0,S), Z0)").is_positive_for_pos_arg(1));
-        assert!(!grf!("C(P(2,2), R(Z0,S), Z0)").is_positive_for_pos_arg(1));
+        assert!(grf!("C(P(2,1), R(Z0,C(S,P(2,1))), Z0)").is_positive_for_pos_arg(1));
+        assert!(!grf!("C(P(2,2), R(Z0,C(S,P(2,1))), Z0)").is_positive_for_pos_arg(1));
     }
 
     #[test]

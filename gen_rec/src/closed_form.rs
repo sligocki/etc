@@ -751,6 +751,76 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
+    // Case C: h(n, acc, rest) = NegMod(af1, n, acc)
+    // where af1 depends only on rest.
+    // This arises from saturating subtraction (monus).
+    // The recursive step h simulates: S_n = (af1 - n) %< (1 + S_{n-1})
+    if let ClosedForm::NegMod(af1, af2, af3) = sem_h {
+        // Verify af2 represents exactly `n` (the step counter, argument 1)
+        let is_n =
+            af2.coeffs[0] == 0 && af2.coeffs[1] == 1 && af2.coeffs[2..].iter().all(|&c| c == 0);
+        // Verify af3 represents exactly `acc` (the accumulator, argument 2)
+        let is_acc = af3.coeffs[0] == 0
+            && af3.coeffs[1] == 0
+            && af3.coeffs[2] == 1
+            && af3.coeffs[3..].iter().all(|&c| c == 0);
+        // Verify af1 depends ONLY on `rest` parameters (does not use `n` or `acc`)
+        let af1_indep = af1.coeffs[1] == 0 && af1.coeffs[2] == 0;
+
+        if is_n && is_acc && af1_indep {
+            // Re-project af1 into the outer arity (k_outer) by dropping the accumulator argument
+            let mut af1_outer_coeffs = vec![0; k_outer + 1];
+            af1_outer_coeffs[0] = af1.coeffs[0];
+            af1_outer_coeffs[2..].copy_from_slice(&af1.coeffs[3..]);
+            let af1_outer = AffineFn {
+                arity: k_outer,
+                coeffs: af1_outer_coeffs,
+            };
+
+            // Re-project af1 into the base case arity (k_outer - 1) to compare with g
+            let mut af1_rest_coeffs = vec![0; k_outer];
+            af1_rest_coeffs[0] = af1.coeffs[0];
+            af1_rest_coeffs[1..].copy_from_slice(&af1.coeffs[3..]);
+
+            // Check if the base case g is exactly af1 + 1.
+            // If g = af1 + 1, then the whole function collapses gracefully to a single NegMod expression
+            // representing `(af1 + 1) \dotminus n`, which doesn't need piecewise branching.
+            let mut g_is_af1_plus_1 = false;
+            if let ClosedForm::Affine(g_af) = sem_g {
+                if g_af.coeffs[0] == af1_rest_coeffs[0] + 1 {
+                    let mut match_rest = true;
+                    for i in 1..k_outer {
+                        if g_af.coeffs[i] != af1_rest_coeffs[i] {
+                            match_rest = false;
+                            break;
+                        }
+                    }
+                    if match_rest {
+                        g_is_af1_plus_1 = true;
+                    }
+                }
+            }
+
+            let p1_outer = AffineFn::proj(k_outer, 1);
+            let zero_outer = AffineFn::zero(k_outer);
+
+            if g_is_af1_plus_1 {
+                // Return exactly `NegMod(af1 + 1, n, 0)` which is mathematically equivalent to `max(0, af1 + 1 - n)`
+                let mut af1_outer_plus_1 = af1_outer.clone();
+                af1_outer_plus_1.coeffs[0] += 1;
+                return Some(ClosedForm::NegMod(af1_outer_plus_1, p1_outer, zero_outer));
+            } else {
+                // Otherwise, the sequence is `g` at n=0, and `max(0, af1 - (n-1))` for n > 0.
+                return Some(make_piecewise(
+                    k_outer,
+                    0,
+                    sem_g.clone(),
+                    ClosedForm::NegMod(af1_outer, p1_outer, zero_outer),
+                ));
+            }
+        }
+    }
+
     // --- Unified Symbolic Sequence Analyzer ---
     // Simulates the sequence S_n = h(n-1, S_{n-1}).
     // Detects:
@@ -2859,5 +2929,11 @@ mod tests {
         let inner = grf("R(P(1,1), C(R(S, P(3,3)), P(3,2), P(3,1)))");
         let inner_cf = closed_form_of(&inner);
         assert!(inner_cf.is_some(), "Inner GRF should have a closed form");
+    }
+    #[test]
+    fn test_rec_negmod_monus() {
+        // This GRF computes saturating subtraction (monus): d(x, y) = y + 1 ∸ x.
+        // It relies on Case C parsing of recursive steps into NegMod(af1, n, acc).
+        check_vs_sim("R(S, R(P(2,2), R(R(P(2,1), P(4,1)), P(5,2))))", 10);
     }
 }

@@ -322,33 +322,82 @@ impl Grf {
         None
     }
 
-    /// Returns true if `f(args…) > 0` whenever arg `j` >= `m`, regardless of other args.
-    pub fn is_positive_for_arg_ge(&self, j: usize, m: u64) -> bool {
-        if self.is_never_zero() {
-            return true;
-        }
-        if m == 0 {
-            return false;
-        }
-        if m == 1 {
-            return self.is_positive_for_pos_arg(j);
-        }
-        match &self.kind {
-            GrfKind::Rec(g, h) => {
-                if j == 1 {
-                    if g.arity() == 0 && h.is_positive_for_pos_arg(2) {
-                        let (res, _) = simulate(self, &[m], 100);
-                        if let SimResult::Value(v) = res {
-                            if v > 0 {
-                                return true;
-                            }
-                        }
+    /// Returns a safe lower bound for the output of this GRF given lower bounds for its arguments.
+    pub fn lower_bound(&self, args_min: &[usize]) -> usize {
+        let mut bound = 0;
+        if let Some(Some(cf)) = self.cf.get() {
+            if cf.is_always_pos() {
+                bound = 1;
+            }
+            for (i, &min_val) in args_min.iter().enumerate() {
+                if let Some(c) = cf.min_diff_from_arg(i) {
+                    let mut b = min_val as i64 + c;
+                    if b < 0 {
+                        b = 0;
+                    }
+                    if b as usize > bound {
+                        bound = b as usize;
                     }
                 }
-                false
             }
-            _ => false,
         }
+
+        let structural_bound = match &self.kind {
+            GrfKind::Zero(_) => 0,
+            GrfKind::Succ => args_min[0].saturating_add(1),
+            GrfKind::Proj(_, i) => args_min[*i - 1],
+            GrfKind::Comp(h, gs, _) => {
+                let gs_min: Vec<usize> = gs.iter().map(|g| g.lower_bound(args_min)).collect();
+                let mut h_bound = h.lower_bound(&gs_min);
+                if h_bound == 0 && Self::is_monus_descent_trap(h, gs) {
+                    h_bound = 1;
+                }
+                h_bound
+            }
+            GrfKind::Rec(g, h) => {
+                let c_min = args_min[0];
+                let rest_min = &args_min[1..];
+
+                let mut current_min = g.lower_bound(rest_min);
+                let unroll_limit = std::cmp::min(c_min, 3);
+                for c in 0..unroll_limit {
+                    let mut h_args = vec![c];
+                    h_args.push(current_min);
+                    h_args.extend_from_slice(rest_min);
+
+                    let mut use_sim = false;
+                    if rest_min.is_empty() {
+                        let sim_args: Vec<u64> = h_args.iter().map(|&x| x as u64).collect();
+                        if let SimResult::Value(v) = simulate(h, &sim_args, 100).0 {
+                            current_min = v as usize;
+                            use_sim = true;
+                        }
+                    }
+                    if !use_sim {
+                        current_min = h.lower_bound(&h_args);
+                    }
+                }
+
+                let mut global_min = current_min;
+                let mut possible_acc = current_min;
+                loop {
+                    let mut h_args = vec![std::cmp::max(c_min, unroll_limit)];
+                    h_args.push(possible_acc);
+                    h_args.extend_from_slice(rest_min);
+                    let next_acc = h.lower_bound(&h_args);
+
+                    if next_acc >= possible_acc {
+                        break;
+                    }
+                    possible_acc = next_acc;
+                    global_min = std::cmp::min(global_min, possible_acc);
+                }
+                global_min
+            }
+            GrfKind::Min(_) => 0,
+        };
+
+        std::cmp::max(bound, structural_bound)
     }
 
     fn is_monus_descent_trap(h: &Grf, gs: &[Grf]) -> bool {
@@ -398,7 +447,7 @@ impl Grf {
                         for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
                             if c > 0 {
                                 if let Some(g_arg) = gs.get(i - 1) {
-                                    if g_arg.min_val() > 0 || g_arg.is_never_zero() {
+                                    if g_arg.lower_bound(&vec![0; g_arg.arity()]) > 0 {
                                         return true;
                                     }
                                 }
@@ -416,7 +465,7 @@ impl Grf {
     /// Conservative: returns false when unsure. Used by the enumerator to
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
-        self.is_pos_if_args_pos(&vec![false; self.arity()])
+        self.lower_bound(&vec![0; self.arity()]) > 0
     }
 
     /// Returns true if `self(args...) > 0` for all natural-number inputs.
@@ -439,106 +488,17 @@ impl Grf {
         }
     }
 
-    /// Recursively checks if `self(args...) > 0` assuming `pos_args[i]` means `args[i] > 0`.
-    pub fn is_pos_if_args_pos(&self, pos_args: &[bool]) -> bool {
-        if let Some(Some(cf)) = self.cf.get() {
-            if cf.is_always_pos() {
-                return true;
-            }
-            for (i, &is_pos) in pos_args.iter().enumerate() {
-                if is_pos {
-                    if let Some(c) = cf.min_diff_from_arg(i) {
-                        if c >= 0 {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        match &self.kind {
-            GrfKind::Zero(_) => false,
-            GrfKind::Succ => true,
-            GrfKind::Proj(_, i) => pos_args[*i - 1],
-            GrfKind::Comp(h, gs, _) => {
-                let inner_pos: Vec<bool> =
-                    gs.iter().map(|g| g.is_pos_if_args_pos(pos_args)).collect();
-                if h.is_pos_if_args_pos(&inner_pos) {
-                    return true;
-                }
-
-                // Positivity traps for Monus Descent bounds
-                if Self::is_monus_descent_trap(h, gs) {
-                    return true;
-                }
-
-                // If any inner argument is strictly positive and the outer function
-                // preserves positivity for that argument, the result is strictly positive.
-                for (i, gi) in gs.iter().enumerate() {
-                    let m = gi.min_val();
-                    if m > 0 && h.is_positive_for_arg_ge(i + 1, m) {
-                        return true;
-                    }
-                }
-
-                false
-            }
-            GrfKind::Rec(g, h) => {
-                let g_args = &pos_args[1..];
-                let g_pos = g.is_pos_if_args_pos(g_args);
-
-                let mut h_pos_args = vec![false; h.arity()];
-                // Assume accumulator is positive
-                h_pos_args[1] = true;
-                for i in 2..h.arity() {
-                    h_pos_args[i] = pos_args[i - 1];
-                }
-                // acc_out is positive if acc_in was
-                let h_preserves = h.is_pos_if_args_pos(&h_pos_args);
-                if !pos_args[0] {
-                    // If g -> + and h preserves +, then output is +
-                    g_pos && h_preserves
-                } else {
-                    // If iteration loops is guaranteed positive, then
-                    // we can be even more lenient and reduce the requirement
-                    // that g -> + to that first h -> +.
-                    let mut s1_args = h_pos_args.clone();
-                    s1_args[1] = g_pos;
-                    let s1_pos = h.is_pos_if_args_pos(&s1_args);
-                    if s1_pos && h_preserves {
-                        return true;
-                    }
-
-                    // Simulate fallback for cases where n=1 is positive and h preserves
-                    // Needed to prove R(Z0, R(S, R(P(2,2), C(S, P(4,2))))) pos
-                    // TODO: But this seems kind of hacky, can we deal with this in a more elegant/general way?
-                    if g.arity() == 0 && h_preserves {
-                        if self.arity() == 1 {
-                            let (res, _) = crate::simulate::simulate(self, &[1], 100);
-                            if let crate::simulate::SimResult::Value(v) = res {
-                                if v > 0 {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                    false
-                }
-            }
-            GrfKind::Min(_) => false,
-        }
-    }
-
     /// Returns true if `f(args…) > 0` whenever arg `j` > 0, regardless of other args.
     ///
     /// Conservative: returns false when unsure. For the Min fast-forward (j=1, the search
     /// counter): if this holds and f(0, args) > 0, then Min diverges since no later i
     /// can produce 0.
     pub fn is_positive_for_pos_arg(&self, j: usize) -> bool {
-        let mut pos_args = vec![false; self.arity()];
+        let mut args_min = vec![0; self.arity()];
         if j > 0 && j <= self.arity() {
-            pos_args[j - 1] = true;
+            args_min[j - 1] = 1;
         }
-        self.is_pos_if_args_pos(&pos_args)
+        self.lower_bound(&args_min) > 0
     }
 
     /// Returns the outer argument indices in DFS first-occurrence order.
@@ -1061,22 +1021,30 @@ mod tests {
     }
 
     #[test]
-    fn test_is_pos_if_args_pos_multi_arg_trap() {
-        // M(C(R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3))), P(1,1), S))
+    fn test_is_pos_if_args_pos() {
         // Here `a = R(P(2,1), P(4,4))` preserves positivity when BOTH arg 1 and arg 3 are positive.
         // And `b = R(P(1,1), C(a, P(3,2), P(3,1), P(3,3)))` guarantees that both arg1 and arg3 to `a` are positive
         // (arg 1 is the accumulator, arg 3 is b's second argument).
         let a = grf!("R(P(2,1), P(4,4))");
         // a(+, _, +) -> +
-        assert!(a.is_pos_if_args_pos(&[true, false, true]));
+        assert!(a.lower_bound(&[1, 0, 1]) > 0);
 
         let b = grf!("R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3)))");
         // b(_, +) -> +
-        assert!(b.is_pos_if_args_pos(&[false, true]));
+        assert!(b.lower_bound(&[0, 1]) > 0);
 
         let comp = grf!("C(R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3))), P(1,1), S)");
         // C(b, P, S) -> +
         assert!(comp.is_never_zero());
+    }
+
+    #[test]
+    fn test_lower_bound_lower_arg() {
+        // User test case: M(C(b, C(S, S), Z1))
+        // where b := R(P(1,1), a) and a := R(P(2,1), C(S, P(4,2)))
+        // We evaluate C(b, C(S, S), Z1) and prove it's never zero.
+        let f = grf!("C(R(P(1,1), R(P(2,1), C(S, P(4,2)))), C(S, S), Z1)");
+        assert!(f.is_never_zero());
     }
 
     #[test]

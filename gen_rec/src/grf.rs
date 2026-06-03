@@ -6,7 +6,6 @@ use std::str::{Chars, FromStr};
 use std::sync::OnceLock;
 
 use crate::closed_form::{ClosedForm, closed_form_of};
-use crate::simulate::{SimResult, simulate};
 
 /// Parse a GRF from a format string, panicking on error.
 ///
@@ -24,7 +23,31 @@ macro_rules! grf {
     };
 }
 
-/// Flexibility of a GRF when its arguments are rewired.
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Bound {
+    Exact(usize),
+    Min(usize),
+}
+
+impl Bound {
+    pub fn min_value(&self) -> usize {
+        match self {
+            Bound::Exact(v) | Bound::Min(v) => *v,
+        }
+    }
+
+    pub fn is_exact(&self) -> bool {
+        matches!(self, Bound::Exact(_))
+    }
+
+    pub fn map_val<F: FnOnce(usize) -> usize>(self, f: F) -> Bound {
+        match self {
+            Bound::Exact(v) => Bound::Exact(f(v)),
+            Bound::Min(v) => Bound::Min(f(v)),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Rewirability {
     /// Fully flexible. Can map outer arguments to any indices freely.
@@ -323,15 +346,16 @@ impl Grf {
     }
 
     /// Returns a safe lower bound for the output of this GRF given lower bounds for its arguments.
-    pub fn lower_bound(&self, args_min: &[usize]) -> usize {
+    pub fn lower_bound(&self, args_bound: &[Bound]) -> Bound {
         let mut bound = 0;
+
         if let Some(Some(cf)) = self.cf.get() {
             if cf.is_always_pos() {
                 bound = 1;
             }
-            for (i, &min_val) in args_min.iter().enumerate() {
+            for (i, arg) in args_bound.iter().enumerate() {
                 if let Some(c) = cf.min_diff_from_arg(i) {
-                    let mut b = min_val as i64 + c;
+                    let mut b = arg.min_value() as i64 + c;
                     if b < 0 {
                         b = 0;
                     }
@@ -343,61 +367,114 @@ impl Grf {
         }
 
         let structural_bound = match &self.kind {
-            GrfKind::Zero(_) => 0,
-            GrfKind::Succ => args_min[0].saturating_add(1),
-            GrfKind::Proj(_, i) => args_min[*i - 1],
+            GrfKind::Zero(_) => Bound::Exact(0),
+            GrfKind::Succ => args_bound[0].map_val(|v| v + 1),
+            GrfKind::Proj(_, i) => args_bound[*i - 1],
             GrfKind::Comp(h, gs, _) => {
-                let gs_min: Vec<usize> = gs.iter().map(|g| g.lower_bound(args_min)).collect();
-                let mut h_bound = h.lower_bound(&gs_min);
-                if h_bound == 0 && Self::is_monus_descent_trap(h, gs) {
-                    h_bound = 1;
+                let gs_bound: Vec<Bound> = gs.iter().map(|g| g.lower_bound(args_bound)).collect();
+                let mut h_bound = h.lower_bound(&gs_bound);
+                if h_bound.min_value() == 0 && Self::is_monus_descent_trap(h, gs) {
+                    h_bound = Bound::Min(1);
                 }
                 h_bound
             }
             GrfKind::Rec(g, h) => {
-                let c_min = args_min[0];
-                let rest_min = &args_min[1..];
+                let c_bound = args_bound[0];
+                let rest_bound = &args_bound[1..];
 
-                let mut current_min = g.lower_bound(rest_min);
-                let unroll_limit = std::cmp::min(c_min, 3);
-                for c in 0..unroll_limit {
-                    let mut h_args = vec![c];
-                    h_args.push(current_min);
-                    h_args.extend_from_slice(rest_min);
+                let mut current_min = g.lower_bound(rest_bound);
 
-                    let mut use_sim = false;
-                    if rest_min.is_empty() {
-                        let sim_args: Vec<u64> = h_args.iter().map(|&x| x as u64).collect();
-                        if let SimResult::Value(v) = simulate(h, &sim_args, 100).0 {
-                            current_min = v as usize;
-                            use_sim = true;
+                if let Bound::Exact(c) = c_bound {
+                    let unroll_limit = std::cmp::min(c, 3);
+                    for c_val in 0..unroll_limit {
+                        let mut h_args = vec![Bound::Exact(c_val)];
+                        h_args.push(current_min);
+                        h_args.extend_from_slice(rest_bound);
+
+                        let mut use_sim = false;
+                        if rest_bound.is_empty() && current_min.is_exact() {
+                            let sim_args: Vec<u64> =
+                                h_args.iter().map(|x| x.min_value() as u64).collect();
+                            if let crate::simulate::SimResult::Value(v) =
+                                crate::simulate::simulate(h, &sim_args, 100).0
+                            {
+                                current_min = Bound::Exact(v as usize);
+                                use_sim = true;
+                            }
+                        }
+                        if !use_sim {
+                            current_min = h.lower_bound(&h_args);
                         }
                     }
-                    if !use_sim {
-                        current_min = h.lower_bound(&h_args);
-                    }
-                }
 
-                let mut global_min = current_min;
-                let mut possible_acc = current_min;
-                loop {
-                    let mut h_args = vec![std::cmp::max(c_min, unroll_limit)];
-                    h_args.push(possible_acc);
-                    h_args.extend_from_slice(rest_min);
-                    let next_acc = h.lower_bound(&h_args);
+                    if c <= 3 {
+                        current_min
+                    } else {
+                        let mut global_min = current_min.min_value();
+                        let mut possible_acc = current_min.min_value();
+                        loop {
+                            let mut h_args = vec![Bound::Min(unroll_limit)];
+                            h_args.push(Bound::Min(possible_acc));
+                            h_args.extend_from_slice(rest_bound);
+                            let next_acc = h.lower_bound(&h_args).min_value();
 
-                    if next_acc >= possible_acc {
-                        break;
+                            if next_acc >= possible_acc {
+                                break;
+                            }
+                            possible_acc = next_acc;
+                            global_min = std::cmp::min(global_min, possible_acc);
+                        }
+                        Bound::Min(global_min)
                     }
-                    possible_acc = next_acc;
-                    global_min = std::cmp::min(global_min, possible_acc);
+                } else {
+                    let c_min = c_bound.min_value();
+                    let unroll_limit = std::cmp::min(c_min, 3);
+                    for c_val in 0..unroll_limit {
+                        let mut h_args = vec![Bound::Exact(c_val)];
+                        h_args.push(current_min);
+                        h_args.extend_from_slice(rest_bound);
+
+                        let mut use_sim = false;
+                        if rest_bound.is_empty() && current_min.is_exact() {
+                            let sim_args: Vec<u64> =
+                                h_args.iter().map(|x| x.min_value() as u64).collect();
+                            if let crate::simulate::SimResult::Value(v) =
+                                crate::simulate::simulate(h, &sim_args, 100).0
+                            {
+                                current_min = Bound::Exact(v as usize);
+                                use_sim = true;
+                            }
+                        }
+                        if !use_sim {
+                            current_min = h.lower_bound(&h_args);
+                        }
+                    }
+
+                    let mut global_min = current_min.min_value();
+                    let mut possible_acc = current_min.min_value();
+                    loop {
+                        let mut h_args = vec![Bound::Min(std::cmp::max(c_min, unroll_limit))];
+                        h_args.push(Bound::Min(possible_acc));
+                        h_args.extend_from_slice(rest_bound);
+                        let next_acc = h.lower_bound(&h_args).min_value();
+
+                        if next_acc >= possible_acc {
+                            break;
+                        }
+                        possible_acc = next_acc;
+                        global_min = std::cmp::min(global_min, possible_acc);
+                    }
+                    Bound::Min(global_min)
                 }
-                global_min
             }
-            GrfKind::Min(_) => 0,
+            GrfKind::Min(_) => Bound::Exact(0),
         };
 
-        std::cmp::max(bound, structural_bound)
+        if structural_bound.min_value() >= bound {
+            structural_bound
+        } else {
+            Bound::Min(bound)
+        }
     }
 
     fn is_monus_descent_trap(h: &Grf, gs: &[Grf]) -> bool {
@@ -447,7 +524,11 @@ impl Grf {
                         for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
                             if c > 0 {
                                 if let Some(g_arg) = gs.get(i - 1) {
-                                    if g_arg.lower_bound(&vec![0; g_arg.arity()]) > 0 {
+                                    if g_arg
+                                        .lower_bound(&vec![Bound::Min(0); g_arg.arity()])
+                                        .min_value()
+                                        > 0
+                                    {
                                         return true;
                                     }
                                 }
@@ -465,7 +546,7 @@ impl Grf {
     /// Conservative: returns false when unsure. Used by the enumerator to
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
-        self.lower_bound(&vec![0; self.arity()]) > 0
+        self.lower_bound(&vec![Bound::Min(0); self.arity()]).min_value() > 0
     }
 
     /// Returns true if `self(args...) > 0` for all natural-number inputs.
@@ -494,11 +575,11 @@ impl Grf {
     /// counter): if this holds and f(0, args) > 0, then Min diverges since no later i
     /// can produce 0.
     pub fn is_positive_for_pos_arg(&self, j: usize) -> bool {
-        let mut args_min = vec![0; self.arity()];
+        let mut args_min = vec![Bound::Min(0); self.arity()];
         if j > 0 && j <= self.arity() {
-            args_min[j - 1] = 1;
+            args_min[j - 1] = Bound::Min(1);
         }
-        self.lower_bound(&args_min) > 0
+        self.lower_bound(&args_min).min_value() > 0
     }
 
     /// Returns the outer argument indices in DFS first-occurrence order.
@@ -1023,15 +1104,17 @@ mod tests {
     #[test]
     fn test_is_pos_if_args_pos() {
         // Here `a = R(P(2,1), P(4,4))` preserves positivity when BOTH arg 1 and arg 3 are positive.
-        // And `b = R(P(1,1), C(a, P(3,2), P(3,1), P(3,3)))` guarantees that both arg1 and arg3 to `a` are positive
-        // (arg 1 is the accumulator, arg 3 is b's second argument).
         let a = grf!("R(P(2,1), P(4,4))");
         // a(+, _, +) -> +
-        assert!(a.lower_bound(&[1, 0, 1]) > 0);
+        assert!(
+            a.lower_bound(&[Bound::Min(1), Bound::Min(0), Bound::Min(1)])
+                .min_value()
+                > 0
+        );
 
         let b = grf!("R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3)))");
         // b(_, +) -> +
-        assert!(b.lower_bound(&[0, 1]) > 0);
+        assert!(b.lower_bound(&[Bound::Min(0), Bound::Min(1)]).min_value() > 0);
 
         let comp = grf!("C(R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3))), P(1,1), S)");
         // C(b, P, S) -> +
@@ -1073,6 +1156,17 @@ mod tests {
 
         let b = grf!("C(R(Z0, R(S, R(P(2,2), C(S, P(4,2))))), S)");
         assert!(b.is_never_zero());
+    }
+
+    #[test]
+    fn test_lower_bound_exact_loop_counter() {
+        // M(C(R(Z1, R(P(2,2), R(P(3,2), C(S, P(5,2))))), S, S))
+        let f = grf!("C(R(Z1, R(P(2,2), R(P(3,2), C(S, P(5,2))))), S, S)");
+        // Since S.lb([0]) = Min(1), the inputs to R(...) are [Min(1), Min(1)].
+        // c_min = Min(1). Unroll loop executes c=0, passing Exact(0) to the inner function.
+        // b(Exact(0), Min(0), Min(1)) = P(2,2)(Min(0), Min(1)) = Min(1).
+        // Since the lower bound is 1 for c=0, c(Min(1), Min(1)) bounds to Min(1) -> never_zero.
+        assert!(f.is_never_zero());
     }
 
     #[test]

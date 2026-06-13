@@ -134,7 +134,19 @@ fn main() {
                 }
 
                 if num_total % 100_000 == 0 {
-                    println!("Progress: {} TMs evaluated...", num_total);
+                    let pct_halt = if num_total > 0 {
+                        (num_halt as f64 / num_total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    let now = chrono::Local::now().format("%H:%M:%S").to_string();
+                    let step_champ = max_steps_tms.first().map(|s| s.as_str()).unwrap_or("None");
+                    let score_champ = max_score_tms.first().map(|s| s.as_str()).unwrap_or("None");
+                    
+                    println!(
+                        "[{}] Total: {} | Halt: {} ({:.2}%) | Max Steps: {} ({}) | Max Score: {} ({})",
+                        now, num_total, num_halt, pct_halt, max_steps, step_champ, max_score, score_champ
+                    );
                 }
             }
 

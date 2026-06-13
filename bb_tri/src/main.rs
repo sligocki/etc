@@ -82,6 +82,9 @@ fn main() {
                 SimResult::LimitReached => {
                     println!("Unknown");
                 }
+                SimResult::Infinite => {
+                    println!("Infinite (Translated Cycler)");
+                }
                 SimResult::UndefinedTrans => {
                     println!("Hit undefined transition");
                 }
@@ -95,6 +98,7 @@ fn main() {
         } => {
             let mut num_halt = 0;
             let mut num_unknown = 0;
+            let mut num_infinite = 0;
             let mut num_total = 0;
             let mut max_steps = 0;
             let mut max_steps_tms = Vec::new();
@@ -102,13 +106,13 @@ fn main() {
             let mut max_score_tms = Vec::new();
             let mut max_time = std::time::Duration::ZERO;
             
-            let start_time = std::time::Instant::now();
             let mut out_file = output.as_ref().map(|p| std::fs::File::create(p).unwrap());
             
             use std::io::Write;
-
             let (tx, rx) = std::sync::mpsc::channel();
             enumerator::enumerate(*states, *symbols, *steps, tx);
+
+            let start_time = std::time::Instant::now();
 
             for (tm, result, duration) in rx {
                 num_total += 1;
@@ -117,7 +121,8 @@ fn main() {
                 }
 
                 let tm_str = parser::tm_to_string(&tm);
-                let result_str = match result {
+
+                match result {
                     SimResult::Halt(s, score) => {
                         num_halt += 1;
                         if s > max_steps { 
@@ -135,18 +140,18 @@ fn main() {
                         } else if score == max_score {
                             max_score_tms.push(tm_str.clone());
                         }
-                        
-                        format!("Halt {} {}", s, score)
                     }
                     SimResult::LimitReached => {
                         num_unknown += 1;
-                        "Unknown".to_string()
+                    }
+                    SimResult::Infinite => {
+                        num_infinite += 1;
                     }
                     SimResult::UndefinedTrans => unreachable!(),
-                };
+                }
 
                 if let Some(f) = &mut out_file {
-                    writeln!(f, "{} {}", tm_str, result_str).unwrap();
+                    writeln!(f, "{} {:?}", tm_str, result).unwrap();
                 }
 
                 if num_total % 100_000 == 0 {
@@ -155,13 +160,18 @@ fn main() {
                     } else {
                         0.0
                     };
+                    let pct_inf = if num_total > 0 {
+                        (num_infinite as f64 / num_total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
                     let now = chrono::Local::now().format("%H:%M:%S").to_string();
                     let step_champ = max_steps_tms.first().map(|s| s.as_str()).unwrap_or("None");
                     let score_champ = max_score_tms.first().map(|s| s.as_str()).unwrap_or("None");
                     
                     println!(
-                        "[{}] Total: {} | Halt: {} ({:.2}%) | Max Steps: {} ({}) | Max Score: {} ({})",
-                        now, num_total, num_halt, pct_halt, max_steps, step_champ, max_score, score_champ
+                        "[{}] Total: {} | Halt: {} ({:.2}%) | Inf: {} ({:.2}%) | Max Steps: {} ({}) | Max Score: {} ({})",
+                        now, num_total, num_halt, pct_halt, num_infinite, pct_inf, max_steps, step_champ, max_score, score_champ
                     );
                 }
             }
@@ -175,10 +185,12 @@ fn main() {
 
             println!("--- Enumeration Complete ---");
             println!("Total TMs generated : {}", num_total);
-            if num_total > 0 {
-                println!("Halted              : {} ({:.2}%)", num_halt, (num_halt as f64 / num_total as f64) * 100.0);
-                println!("Unknown (Limit)     : {} ({:.2}%)", num_unknown, (num_unknown as f64 / num_total as f64) * 100.0);
-            }
+            let pct_halt_final = (num_halt as f64 / num_total as f64) * 100.0;
+            let pct_inf_final = (num_infinite as f64 / num_total as f64) * 100.0;
+            let pct_unk_final = (num_unknown as f64 / num_total as f64) * 100.0;
+            println!("Halted              : {} ({:.2}%)", num_halt, pct_halt_final);
+            println!("Infinite            : {} ({:.2}%)", num_infinite, pct_inf_final);
+            println!("Unknown (Limit)     : {} ({:.2}%)", num_unknown, pct_unk_final);
             println!("Max Halt Steps      : {}", max_steps);
             if !max_steps_tms.is_empty() {
                 println!("Max Steps TMs       :");

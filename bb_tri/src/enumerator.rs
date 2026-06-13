@@ -39,8 +39,14 @@ fn enum_rec(
     let total_time = accumulated_time + elapsed;
 
     match result {
-        SimResult::Halt(_, _) | SimResult::LimitReached => {
-            let _ = tx.send((tm, result, total_time));
+        SimResult::Halt(_, _) => {
+            tx.send((tm, result, elapsed)).unwrap();
+            return;
+        }
+        SimResult::LimitReached | SimResult::Infinite => {
+            // We just report it back
+            tx.send((tm, result, elapsed)).unwrap();
+            return;
         }
         SimResult::UndefinedTrans => {
             let curr_state = match sim.state {

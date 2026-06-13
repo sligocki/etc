@@ -41,6 +41,7 @@ pub enum SimResult {
     Halt(u64, u32), // steps, score
     LimitReached,
     UndefinedTrans,
+    Infinite,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +50,7 @@ pub struct Simulator {
     pub head: u32,
     pub state: State,
     pub steps: u64,
+    pub blank_entries: Vec<(State, Direction, u32)>,
 }
 
 impl Simulator {
@@ -58,6 +60,7 @@ impl Simulator {
             head: 0,
             state: State::Active(0),
             steps: 0,
+            blank_entries: Vec::new(),
         }
     }
 
@@ -65,6 +68,14 @@ impl Simulator {
         while self.steps < step_limit {
             if self.state == State::Halt {
                 return SimResult::Halt(self.steps, self.tape.score());
+            }
+
+            while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
+                if node_idx > self.head {
+                    self.blank_entries.pop();
+                } else {
+                    break;
+                }
             }
 
             let s = match self.state {
@@ -91,6 +102,12 @@ impl Simulator {
 
             if next_idx == u32::MAX {
                 let new_idx = self.tape.nodes.len() as u32;
+                
+                if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
+                    return SimResult::Infinite;
+                }
+                self.blank_entries.push((trans.next_state, trans.dir, new_idx));
+
                 self.tape.nodes.push(Node::default());
 
                 match trans.dir {
@@ -130,6 +147,14 @@ impl Simulator {
                 return (SimResult::Halt(self.steps, self.tape.score()), transcript);
             }
 
+            while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
+                if node_idx > self.head {
+                    self.blank_entries.pop();
+                } else {
+                    break;
+                }
+            }
+
             let s = match self.state {
                 State::Active(s) => s,
                 State::Halt => unreachable!(),
@@ -156,6 +181,12 @@ impl Simulator {
 
             if next_idx == u32::MAX {
                 let new_idx = self.tape.nodes.len() as u32;
+                
+                if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
+                    return (SimResult::Infinite, transcript);
+                }
+                self.blank_entries.push((trans.next_state, trans.dir, new_idx));
+
                 self.tape.nodes.push(Node::default());
 
                 match trans.dir {

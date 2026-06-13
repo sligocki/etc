@@ -15,10 +15,11 @@ pub fn enumerate(
     let sim = Simulator::new();
     let max_state = 0;
     let dirs_used = 0;
+    let max_sym_written = 0;
 
     // Launch the recursion on the rayon thread pool so main thread can just recv()
     rayon::spawn(move || {
-        enum_rec(tm, sim, step_limit, max_state, dirs_used, Duration::ZERO, tx);
+        enum_rec(tm, sim, step_limit, max_state, dirs_used, max_sym_written, Duration::ZERO, tx);
     });
 }
 
@@ -28,6 +29,7 @@ fn enum_rec(
     step_limit: u64,
     max_state: u8,
     dirs_used: u8,
+    max_sym_written: u8,
     accumulated_time: Duration,
     tx: mpsc::Sender<(TuringMachine, SimResult, Duration)>,
 ) {
@@ -61,9 +63,12 @@ fn enum_rec(
                 },
             );
             let next_dirs_used_halt = std::cmp::max(dirs_used, 1);
-            branches.push((halt_tm, max_state, next_dirs_used_halt, accumulated_time));
+            let next_sym_written_halt = std::cmp::max(max_sym_written, 1);
+            branches.push((halt_tm, max_state, next_dirs_used_halt, next_sym_written_halt, accumulated_time));
 
-            for sym in 0..tm.num_symbols {
+            let max_sym = std::cmp::min(max_sym_written + 1, tm.num_symbols - 1);
+            for sym in 0..=max_sym {
+                let next_sym_written = std::cmp::max(max_sym_written, sym);
                 let max_dir = std::cmp::min(dirs_used, 2);
                 for dir_idx in 0..=max_dir {
                     let dir = match dir_idx {
@@ -89,18 +94,19 @@ fn enum_rec(
                         );
                         let next_max_state = std::cmp::max(max_state, next_state_idx);
                         
-                        branches.push((new_tm, next_max_state, next_dirs_used, total_time));
+                        branches.push((new_tm, next_max_state, next_dirs_used, next_sym_written, total_time));
                     }
                 }
             }
 
-            branches.into_par_iter().for_each_with(tx, |tx_ref, (new_tm, next_max_state, next_dirs_used, time)| {
+            branches.into_par_iter().for_each_with(tx, |tx_ref, (new_tm, next_max_state, next_dirs_used, next_sym_written, time)| {
                 enum_rec(
                     new_tm,
                     sim.clone(),
                     step_limit,
                     next_max_state,
                     next_dirs_used,
+                    next_sym_written,
                     time,
                     tx_ref.clone(),
                 );

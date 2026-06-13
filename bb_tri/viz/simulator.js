@@ -41,7 +41,8 @@ export class Simulator {
         this.tape = {}; // key: path string, val: symbol
         this.head = [];
         this.state = 0;
-        this.steps = 0;
+        this.steps = 0; // synonymous with maxStep
+        this.currentStep = 0;
         
         this.history = [];
         this.saveState();
@@ -53,6 +54,13 @@ export class Simulator {
             head: [...this.head],
             state: this.state
         });
+    }
+
+    restoreState(index) {
+        let s = this.history[index];
+        this.tape = {...s.tape};
+        this.head = [...s.head];
+        this.state = s.state;
     }
     
     read() {
@@ -70,6 +78,12 @@ export class Simulator {
     }
     
     stepForward() {
+        if (this.currentStep < this.steps) {
+            this.currentStep++;
+            this.restoreState(this.currentStep);
+            return true;
+        }
+
         if (this.state === 'Z') return false;
         
         let sym = this.read();
@@ -77,6 +91,8 @@ export class Simulator {
         
         if (!trans) {
             this.state = 'Z';
+            this.steps++;
+            this.currentStep++;
             this.saveState(); // Record that we halted
             return false;
         }
@@ -91,21 +107,43 @@ export class Simulator {
         
         this.state = trans.next;
         this.steps++;
+        this.currentStep++;
         this.saveState();
         return true;
     }
     
     stepBackward() {
-        if (this.steps > 0) {
-            this.steps--;
-            this.history.pop();
-            let last = this.history[this.history.length - 1];
-            this.tape = {...last.tape};
-            this.head = [...last.head];
-            this.state = last.state;
+        if (this.currentStep > 0) {
+            this.currentStep--;
+            this.restoreState(this.currentStep);
             return true;
         }
         return false;
+    }
+
+    jumpToStart() {
+        if (this.currentStep > 0) {
+            this.currentStep = 0;
+            this.restoreState(0);
+            return true;
+        }
+        return false;
+    }
+
+    jumpToEnd() {
+        let limit = 10000; // prevent infinite loops in UI
+        let advanced = false;
+        while (this.state !== 'Z' && this.steps < limit) {
+            if (!this.stepForward()) break;
+            advanced = true;
+        }
+        // If we were just scrubbing back, and we jump to end:
+        if (this.currentStep < this.steps) {
+            this.currentStep = this.steps;
+            this.restoreState(this.currentStep);
+            advanced = true;
+        }
+        return advanced;
     }
 
     getStateChar() {

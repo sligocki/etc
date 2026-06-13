@@ -27,11 +27,18 @@
             <p>Steps: <span id="stat-steps" class="badge">0</span></p>
           </div>
           
-          <div class="controls">
-            <button id="btn-reset">↺ Reset</button>
-            <button id="btn-back">⏮ Step Back</button>
-            <button id="btn-play">▶ Play</button>
-            <button id="btn-forward">⏭ Step Forward</button>
+          <div class="controls-row">
+            <div class="speed-control">
+              <label for="speed-slider">Speed:</label>
+              <input type="range" id="speed-slider" min="10" max="1000" value="200" step="10">
+            </div>
+            <div class="controls">
+              <button id="btn-start">⏮ Start</button>
+              <button id="btn-back">◀ Step Back</button>
+              <button id="btn-play">▶ Play</button>
+              <button id="btn-forward">Step Forward ▶</button>
+              <button id="btn-end">End ⏭</button>
+            </div>
           </div>
         </div>
       </main>

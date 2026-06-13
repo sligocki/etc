@@ -8,27 +8,32 @@ let playInterval = null;
 const input = document.getElementById('tm-input');
 const btnLoad = document.getElementById('btn-load');
 const btnPlay = document.getElementById('btn-play');
-const btnReset = document.getElementById('btn-reset');
+const btnStart = document.getElementById('btn-start');
+const btnEnd = document.getElementById('btn-end');
 const btnBack = document.getElementById('btn-back');
 const btnForward = document.getElementById('btn-forward');
+const speedSlider = document.getElementById('speed-slider');
 
 const statState = document.getElementById('stat-state');
 const statSteps = document.getElementById('stat-steps');
 
 function updateUI() {
     statState.textContent = simulator.getStateChar();
-    statSteps.textContent = simulator.steps;
+    statSteps.textContent = simulator.currentStep;
     
-    if (simulator.state === 'Z') {
+    if (simulator.state === 'Z' && simulator.currentStep === simulator.steps) {
         btnForward.disabled = true;
+        btnEnd.disabled = true;
         stopPlay();
-        statState.style.color = '#ef4444'; // Red for halt
+        statState.style.color = '#ef4444';
     } else {
         btnForward.disabled = false;
+        btnEnd.disabled = false;
         statState.style.color = '#38bdf8';
     }
     
-    btnBack.disabled = simulator.steps === 0;
+    btnBack.disabled = simulator.currentStep === 0;
+    btnStart.disabled = simulator.currentStep === 0;
     
     renderer.update(simulator);
 }
@@ -39,7 +44,6 @@ function loadTM() {
         const tm = new TuringMachine(tmStr);
         simulator = new Simulator(tm);
         
-        // Clear SVG
         document.getElementById('viz-canvas').innerHTML = '';
         renderer = new Renderer('#viz-canvas');
         
@@ -54,13 +58,27 @@ function stepForward() {
     if (simulator.stepForward()) {
         updateUI();
     } else {
-        updateUI(); // To show Halt
+        updateUI();
     }
 }
 
 function stepBackward() {
     if (!simulator) return;
     if (simulator.stepBackward()) {
+        updateUI();
+    }
+}
+
+function jumpToStart() {
+    if (!simulator) return;
+    if (simulator.jumpToStart()) {
+        updateUI();
+    }
+}
+
+function jumpToEnd() {
+    if (!simulator) return;
+    if (simulator.jumpToEnd()) {
         updateUI();
     }
 }
@@ -74,14 +92,16 @@ function togglePlay() {
 }
 
 function startPlay() {
-    if (simulator.state === 'Z') return;
+    if (simulator.state === 'Z' && simulator.currentStep === simulator.steps) return;
     btnPlay.textContent = '⏸ Pause';
+    let delay = parseInt(speedSlider.max) - parseInt(speedSlider.value) + parseInt(speedSlider.min);
+    
     playInterval = setInterval(() => {
         if (!simulator.stepForward()) {
             stopPlay();
         }
         updateUI();
-    }, 200); // 200ms per step
+    }, delay);
 }
 
 function stopPlay() {
@@ -91,6 +111,13 @@ function stopPlay() {
     }
     btnPlay.textContent = '▶ Play';
 }
+
+speedSlider.addEventListener('input', () => {
+    if (playInterval) {
+        stopPlay();
+        startPlay();
+    }
+});
 
 btnLoad.addEventListener('click', () => {
     stopPlay();
@@ -106,11 +133,8 @@ input.addEventListener('keypress', (e) => {
 
 btnForward.addEventListener('click', stepForward);
 btnBack.addEventListener('click', stepBackward);
+btnStart.addEventListener('click', jumpToStart);
+btnEnd.addEventListener('click', jumpToEnd);
 btnPlay.addEventListener('click', togglePlay);
-btnReset.addEventListener('click', () => {
-    stopPlay();
-    loadTM();
-});
 
-// Initial load
 loadTM();

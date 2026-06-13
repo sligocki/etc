@@ -2,30 +2,35 @@ use crate::simulator::{SimResult, Simulator};
 use crate::tm::{Direction, State, Transition, TuringMachine};
 
 use std::time::{Duration, Instant};
+use std::sync::mpsc;
+use rayon::prelude::*;
 
-pub fn enumerate<F>(num_states: u8, num_symbols: u8, step_limit: u64, mut on_tm: F)
-where
-    F: FnMut(&TuringMachine, &SimResult, Duration),
-{
+pub fn enumerate(
+    num_states: u8, 
+    num_symbols: u8, 
+    step_limit: u64, 
+    tx: mpsc::Sender<(TuringMachine, SimResult, Duration)>
+) {
     let tm = TuringMachine::new(num_states, num_symbols);
     let sim = Simulator::new();
     let max_state = 0;
     let dirs_used = 0;
 
-    enum_rec(tm, sim, step_limit, max_state, dirs_used, Duration::ZERO, &mut on_tm);
+    // Launch the recursion on the rayon thread pool so main thread can just recv()
+    rayon::spawn(move || {
+        enum_rec(tm, sim, step_limit, max_state, dirs_used, Duration::ZERO, tx);
+    });
 }
 
-fn enum_rec<F>(
+fn enum_rec(
     tm: TuringMachine,
     mut sim: Simulator,
     step_limit: u64,
     max_state: u8,
     dirs_used: u8,
     accumulated_time: Duration,
-    on_tm: &mut F,
-) where
-    F: FnMut(&TuringMachine, &SimResult, Duration),
-{
+    tx: mpsc::Sender<(TuringMachine, SimResult, Duration)>,
+) {
     let start = Instant::now();
     let result = sim.run(&tm, step_limit);
     let elapsed = start.elapsed();
@@ -33,7 +38,7 @@ fn enum_rec<F>(
 
     match result {
         SimResult::Halt(_, _) | SimResult::LimitReached => {
-            on_tm(&tm, &result, total_time);
+            let _ = tx.send((tm, result, total_time));
         }
         SimResult::UndefinedTrans => {
             let curr_state = match sim.state {
@@ -41,6 +46,8 @@ fn enum_rec<F>(
                 State::Halt => unreachable!(),
             };
             let curr_symbol = sim.tape.read(&sim.head);
+            
+            let mut branches = Vec::new();
 
             // Canonical Halt branch: always 1RZ
             let mut halt_tm = tm.clone();
@@ -54,15 +61,7 @@ fn enum_rec<F>(
                 },
             );
             let next_dirs_used_halt = std::cmp::max(dirs_used, 1);
-            enum_rec(
-                halt_tm,
-                sim.clone(),
-                step_limit,
-                max_state,
-                next_dirs_used_halt,
-                accumulated_time, // pass accumulated_time instead of total_time, because this branch hasn't run yet
-                on_tm,
-            );
+            branches.push((halt_tm, max_state, next_dirs_used_halt, accumulated_time));
 
             for sym in 0..tm.num_symbols {
                 let max_dir = std::cmp::min(dirs_used, 2);
@@ -89,18 +88,23 @@ fn enum_rec<F>(
                             },
                         );
                         let next_max_state = std::cmp::max(max_state, next_state_idx);
-                        enum_rec(
-                            new_tm,
-                            sim.clone(),
-                            step_limit,
-                            next_max_state,
-                            next_dirs_used,
-                            total_time,
-                            on_tm,
-                        );
+                        
+                        branches.push((new_tm, next_max_state, next_dirs_used, total_time));
                     }
                 }
             }
+
+            branches.into_par_iter().for_each_with(tx, |tx_ref, (new_tm, next_max_state, next_dirs_used, time)| {
+                enum_rec(
+                    new_tm,
+                    sim.clone(),
+                    step_limit,
+                    next_max_state,
+                    next_dirs_used,
+                    time,
+                    tx_ref.clone(),
+                );
+            });
         }
     }
 }

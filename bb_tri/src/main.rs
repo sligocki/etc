@@ -91,29 +91,32 @@ fn main() {
             
             use std::io::Write;
 
-            enumerator::enumerate(*states, *symbols, *steps, |tm, result, duration| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            enumerator::enumerate(*states, *symbols, *steps, tx);
+
+            for (tm, result, duration) in rx {
                 num_total += 1;
                 if duration > max_time {
                     max_time = duration;
                 }
 
-                let tm_str = parser::tm_to_string(tm);
+                let tm_str = parser::tm_to_string(&tm);
                 let result_str = match result {
                     SimResult::Halt(s, score) => {
                         num_halt += 1;
-                        if *s > max_steps { 
-                            max_steps = *s; 
+                        if s > max_steps { 
+                            max_steps = s; 
                             max_steps_tms.clear();
                             max_steps_tms.push(tm_str.clone());
-                        } else if *s == max_steps {
+                        } else if s == max_steps {
                             max_steps_tms.push(tm_str.clone());
                         }
 
-                        if *score > max_score { 
-                            max_score = *score; 
+                        if score > max_score { 
+                            max_score = score; 
                             max_score_tms.clear();
                             max_score_tms.push(tm_str.clone());
-                        } else if *score == max_score {
+                        } else if score == max_score {
                             max_score_tms.push(tm_str.clone());
                         }
                         
@@ -133,7 +136,7 @@ fn main() {
                 if num_total % 100_000 == 0 {
                     println!("Progress: {} TMs evaluated...", num_total);
                 }
-            });
+            }
 
             let total_elapsed = start_time.elapsed();
             let avg_time = if num_total > 0 {

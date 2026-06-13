@@ -42,6 +42,28 @@ fn enum_rec<F>(
             };
             let curr_symbol = sim.tape.read(&sim.head);
 
+            // Canonical Halt branch: always 1RZ
+            let mut halt_tm = tm.clone();
+            halt_tm.set_transition(
+                curr_state,
+                curr_symbol,
+                Transition {
+                    symbol: 1,
+                    dir: Direction::R,
+                    next_state: State::Halt,
+                },
+            );
+            let next_dirs_used_halt = std::cmp::max(dirs_used, 1);
+            enum_rec(
+                halt_tm,
+                sim.clone(),
+                step_limit,
+                max_state,
+                next_dirs_used_halt,
+                accumulated_time, // pass accumulated_time instead of total_time, because this branch hasn't run yet
+                on_tm,
+            );
+
             for sym in 0..tm.num_symbols {
                 let max_dir = std::cmp::min(dirs_used, 2);
                 for dir_idx in 0..=max_dir {
@@ -77,27 +99,6 @@ fn enum_rec<F>(
                             on_tm,
                         );
                     }
-
-                    // Halt state
-                    let mut new_tm = tm.clone();
-                    new_tm.set_transition(
-                        curr_state,
-                        curr_symbol,
-                        Transition {
-                            symbol: sym,
-                            dir,
-                            next_state: State::Halt,
-                        },
-                    );
-                    enum_rec(
-                        new_tm,
-                        sim.clone(),
-                        step_limit,
-                        max_state,
-                        next_dirs_used,
-                        total_time,
-                        on_tm,
-                    );
                 }
             }
         }

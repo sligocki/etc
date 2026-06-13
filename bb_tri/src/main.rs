@@ -22,7 +22,7 @@ enum Commands {
 
         /// The step limit
         #[arg(short, long)]
-        steps: u64,
+        steps: Option<u64>,
     },
     /// Enumerate all TMs with a given number of states and symbols
     Enumerate {
@@ -57,7 +57,23 @@ fn main() {
             };
 
             let mut sim = simulator::Simulator::new();
-            let result = sim.run(&turing_machine, *steps);
+            let step_limit = steps.unwrap_or(u64::MAX);
+            let (result, transcript) = sim.run_with_transcript(&turing_machine, step_limit);
+
+            let mut trans_str = String::new();
+            if turing_machine.num_symbols == 2 {
+                for (state, sym) in transcript {
+                    let char_base = if sym == 0 { b'a' } else { b'A' };
+                    trans_str.push((char_base + state) as char);
+                }
+            } else {
+                for (state, sym) in transcript {
+                    trans_str.push_str(&format!("{}{}", (b'A' + state) as char, sym));
+                    trans_str.push(' ');
+                }
+            }
+
+            println!("Transcript:\n{}", trans_str.trim_end());
 
             match result {
                 SimResult::Halt(s, score) => {

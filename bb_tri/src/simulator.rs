@@ -117,4 +117,69 @@ impl Simulator {
 
         SimResult::LimitReached
     }
+
+    pub fn run_with_transcript(
+        &mut self,
+        tm: &TuringMachine,
+        step_limit: u64,
+    ) -> (SimResult, Vec<(u8, u8)>) {
+        let mut transcript = Vec::new();
+
+        while self.steps < step_limit {
+            if self.state == State::Halt {
+                return (SimResult::Halt(self.steps, self.tape.score()), transcript);
+            }
+
+            let s = match self.state {
+                State::Active(s) => s,
+                State::Halt => unreachable!(),
+            };
+
+            let curr = self.head as usize;
+            let sym = self.tape.nodes[curr].symbol;
+
+            transcript.push((s, sym));
+
+            let trans = match tm.get_transition(s, sym) {
+                Some(t) => t,
+                None => return (SimResult::UndefinedTrans, transcript),
+            };
+
+            self.tape.nodes[curr].symbol = trans.symbol;
+            self.state = trans.next_state;
+
+            let next_idx = match trans.dir {
+                Direction::R => self.tape.nodes[curr].r,
+                Direction::G => self.tape.nodes[curr].g,
+                Direction::B => self.tape.nodes[curr].b,
+            };
+
+            if next_idx == u32::MAX {
+                let new_idx = self.tape.nodes.len() as u32;
+                self.tape.nodes.push(Node::default());
+
+                match trans.dir {
+                    Direction::R => {
+                        self.tape.nodes[curr].r = new_idx;
+                        self.tape.nodes[new_idx as usize].r = curr as u32;
+                    }
+                    Direction::G => {
+                        self.tape.nodes[curr].g = new_idx;
+                        self.tape.nodes[new_idx as usize].g = curr as u32;
+                    }
+                    Direction::B => {
+                        self.tape.nodes[curr].b = new_idx;
+                        self.tape.nodes[new_idx as usize].b = curr as u32;
+                    }
+                }
+                self.head = new_idx;
+            } else {
+                self.head = next_idx;
+            }
+
+            self.steps += 1;
+        }
+
+        (SimResult::LimitReached, transcript)
+    }
 }

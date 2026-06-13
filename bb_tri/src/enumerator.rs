@@ -45,7 +45,7 @@ fn enum_rec(
                 State::Active(s) => s,
                 State::Halt => unreachable!(),
             };
-            let curr_symbol = sim.tape.read(&sim.head);
+            let curr_symbol = sim.tape.nodes[sim.head as usize].symbol;
             
             let mut branches = Vec::new();
 

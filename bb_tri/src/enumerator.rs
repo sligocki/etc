@@ -74,8 +74,24 @@ fn enum_rec(
             let next_sym_written_halt = std::cmp::max(max_sym_written, 1);
             branches.push((halt_tm, max_state, next_dirs_used_halt, next_sym_written_halt, accumulated_time));
 
-            let max_sym = std::cmp::min(max_sym_written + 1, tm.num_symbols - 1);
-            for sym in 0..=max_sym {
+            let mut num_defined = 0;
+            let mut has_halt = false;
+            for row in &tm.transitions {
+                for t_opt in row {
+                    if let Some(t) = t_opt {
+                        num_defined += 1;
+                        if matches!(t.next_state, State::Halt) {
+                            has_halt = true;
+                        }
+                    }
+                }
+            }
+
+            let total_transitions = (tm.num_states as usize) * (tm.num_symbols as usize);
+
+            if num_defined < total_transitions - 1 || has_halt {
+                let max_sym = std::cmp::min(max_sym_written + 1, tm.num_symbols - 1);
+                for sym in 0..=max_sym {
                 let next_sym_written = std::cmp::max(max_sym_written, sym);
                 let max_dir = std::cmp::min(dirs_used, 2);
                 for dir_idx in 0..=max_dir {
@@ -105,6 +121,7 @@ fn enum_rec(
                         branches.push((new_tm, next_max_state, next_dirs_used, next_sym_written, total_time));
                     }
                 }
+            }
             }
 
             branches.into_par_iter().for_each_with(tx, |tx_ref, (new_tm, next_max_state, next_dirs_used, next_sym_written, time)| {

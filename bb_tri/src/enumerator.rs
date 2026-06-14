@@ -43,7 +43,7 @@ fn enum_rec(
             tx.send((tm, result, elapsed)).unwrap();
             return;
         }
-        SimResult::LimitReached | SimResult::Infinite => {
+        SimResult::LimitReached | SimResult::InfiniteStationary | SimResult::InfiniteTranslated => {
             // We just report it back
             tx.send((tm, result, elapsed)).unwrap();
             return;

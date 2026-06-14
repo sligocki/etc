@@ -41,7 +41,8 @@ pub enum SimResult {
     Halt(u64, u32), // steps, score
     LimitReached,
     UndefinedTrans,
-    Infinite,
+    InfiniteStationary,
+    InfiniteTranslated,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +52,13 @@ pub struct Simulator {
     pub state: State,
     pub steps: u64,
     pub blank_entries: Vec<(State, Direction, u32)>,
+    
+    // Brent's cycle detection variables
+    pub brent_power: u64,
+    pub brent_lam: u64,
+    pub saved_head: u32,
+    pub saved_state: State,
+    pub saved_symbols: Vec<u8>,
 }
 
 impl Simulator {
@@ -61,26 +69,19 @@ impl Simulator {
             state: State::Active(0),
             steps: 0,
             blank_entries: Vec::new(),
+            brent_power: 1,
+            brent_lam: 1,
+            saved_head: 0,
+            saved_state: State::Active(0),
+            saved_symbols: vec![0],
         }
     }
 
     pub fn run(&mut self, tm: &TuringMachine, step_limit: u64) -> SimResult {
         while self.steps < step_limit {
-            if self.state == State::Halt {
-                return SimResult::Halt(self.steps, self.tape.score());
-            }
-
-            while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
-                if node_idx > self.head {
-                    self.blank_entries.pop();
-                } else {
-                    break;
-                }
-            }
-
             let s = match self.state {
                 State::Active(s) => s,
-                State::Halt => unreachable!(),
+                State::Halt => return SimResult::Halt(self.steps, self.tape.score()),
             };
 
             let curr = self.head as usize;
@@ -90,6 +91,30 @@ impl Simulator {
                 Some(t) => t,
                 None => return SimResult::UndefinedTrans,
             };
+
+            if self.steps > 0 && self.head == self.saved_head && self.state == self.saved_state && self.tape.nodes.len() == self.saved_symbols.len() {
+                if self.tape.nodes.iter().zip(self.saved_symbols.iter()).all(|(n, &s)| n.symbol == s) {
+                    return SimResult::InfiniteStationary;
+                }
+            }
+
+            if self.brent_lam == self.brent_power {
+                self.saved_head = self.head;
+                self.saved_state = self.state;
+                self.saved_symbols.clear();
+                self.saved_symbols.extend(self.tape.nodes.iter().map(|n| n.symbol));
+                self.brent_power *= 2;
+                self.brent_lam = 0;
+            }
+            self.brent_lam += 1;
+
+            while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
+                if node_idx > self.head {
+                    self.blank_entries.pop();
+                } else {
+                    break;
+                }
+            }
 
             self.tape.nodes[curr].symbol = trans.symbol;
             self.state = trans.next_state;
@@ -104,7 +129,7 @@ impl Simulator {
                 let new_idx = self.tape.nodes.len() as u32;
                 
                 if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
-                    return SimResult::Infinite;
+                    return SimResult::InfiniteTranslated;
                 }
                 self.blank_entries.push((trans.next_state, trans.dir, new_idx));
 
@@ -143,9 +168,34 @@ impl Simulator {
         let mut transcript = Vec::new();
 
         while self.steps < step_limit {
-            if self.state == State::Halt {
-                return (SimResult::Halt(self.steps, self.tape.score()), transcript);
+            let s = match self.state {
+                State::Active(s) => s,
+                State::Halt => return (SimResult::Halt(self.steps, self.tape.score()), transcript),
+            };
+
+            let curr = self.head as usize;
+            let sym = self.tape.nodes[curr].symbol;
+
+            let trans = match tm.get_transition(s, sym) {
+                Some(t) => t,
+                None => return (SimResult::UndefinedTrans, transcript),
+            };
+
+            if self.steps > 0 && self.head == self.saved_head && self.state == self.saved_state && self.tape.nodes.len() == self.saved_symbols.len() {
+                if self.tape.nodes.iter().zip(self.saved_symbols.iter()).all(|(n, &s)| n.symbol == s) {
+                    return (SimResult::InfiniteStationary, transcript);
+                }
             }
+
+            if self.brent_lam == self.brent_power {
+                self.saved_head = self.head;
+                self.saved_state = self.state;
+                self.saved_symbols.clear();
+                self.saved_symbols.extend(self.tape.nodes.iter().map(|n| n.symbol));
+                self.brent_power *= 2;
+                self.brent_lam = 0;
+            }
+            self.brent_lam += 1;
 
             while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
                 if node_idx > self.head {
@@ -155,20 +205,7 @@ impl Simulator {
                 }
             }
 
-            let s = match self.state {
-                State::Active(s) => s,
-                State::Halt => unreachable!(),
-            };
-
-            let curr = self.head as usize;
-            let sym = self.tape.nodes[curr].symbol;
-
             transcript.push((s, sym));
-
-            let trans = match tm.get_transition(s, sym) {
-                Some(t) => t,
-                None => return (SimResult::UndefinedTrans, transcript),
-            };
 
             self.tape.nodes[curr].symbol = trans.symbol;
             self.state = trans.next_state;
@@ -183,7 +220,7 @@ impl Simulator {
                 let new_idx = self.tape.nodes.len() as u32;
                 
                 if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
-                    return (SimResult::Infinite, transcript);
+                    return (SimResult::InfiniteTranslated, transcript);
                 }
                 self.blank_entries.push((trans.next_state, trans.dir, new_idx));
 

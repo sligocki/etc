@@ -59,10 +59,12 @@ pub struct Simulator {
     pub saved_head: u32,
     pub saved_state: State,
     pub saved_symbols: Vec<u8>,
+    pub enable_stationary: bool,
+    pub enable_translated: bool,
 }
 
 impl Simulator {
-    pub fn new() -> Self {
+    pub fn new(enable_stationary: bool, enable_translated: bool) -> Self {
         Self {
             tape: Tape::new(),
             head: 0,
@@ -74,6 +76,8 @@ impl Simulator {
             saved_head: 0,
             saved_state: State::Active(0),
             saved_symbols: vec![0],
+            enable_stationary,
+            enable_translated,
         }
     }
 
@@ -92,27 +96,31 @@ impl Simulator {
                 None => return SimResult::UndefinedTrans,
             };
 
-            if self.steps > 0 && self.head == self.saved_head && self.state == self.saved_state && self.tape.nodes.len() == self.saved_symbols.len() {
-                if self.tape.nodes.iter().zip(self.saved_symbols.iter()).all(|(n, &s)| n.symbol == s) {
-                    return SimResult::InfiniteStationary;
+            if self.enable_stationary {
+                if self.steps > 0 && self.head == self.saved_head && self.state == self.saved_state && self.tape.nodes.len() == self.saved_symbols.len() {
+                    if self.tape.nodes.iter().zip(self.saved_symbols.iter()).all(|(n, &s)| n.symbol == s) {
+                        return SimResult::InfiniteStationary;
+                    }
                 }
+
+                if self.brent_lam == self.brent_power {
+                    self.saved_head = self.head;
+                    self.saved_state = self.state;
+                    self.saved_symbols.clear();
+                    self.saved_symbols.extend(self.tape.nodes.iter().map(|n| n.symbol));
+                    self.brent_power *= 2;
+                    self.brent_lam = 0;
+                }
+                self.brent_lam += 1;
             }
 
-            if self.brent_lam == self.brent_power {
-                self.saved_head = self.head;
-                self.saved_state = self.state;
-                self.saved_symbols.clear();
-                self.saved_symbols.extend(self.tape.nodes.iter().map(|n| n.symbol));
-                self.brent_power *= 2;
-                self.brent_lam = 0;
-            }
-            self.brent_lam += 1;
-
-            while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
-                if node_idx > self.head {
-                    self.blank_entries.pop();
-                } else {
-                    break;
+            if self.enable_translated {
+                while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
+                    if node_idx > self.head {
+                        self.blank_entries.pop();
+                    } else {
+                        break;
+                    }
                 }
             }
 
@@ -128,10 +136,12 @@ impl Simulator {
             if next_idx == u32::MAX {
                 let new_idx = self.tape.nodes.len() as u32;
                 
-                if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
-                    return SimResult::InfiniteTranslated;
+                if self.enable_translated {
+                    if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
+                        return SimResult::InfiniteTranslated;
+                    }
+                    self.blank_entries.push((trans.next_state, trans.dir, new_idx));
                 }
-                self.blank_entries.push((trans.next_state, trans.dir, new_idx));
 
                 self.tape.nodes.push(Node::default());
 
@@ -181,27 +191,31 @@ impl Simulator {
                 None => return (SimResult::UndefinedTrans, transcript),
             };
 
-            if self.steps > 0 && self.head == self.saved_head && self.state == self.saved_state && self.tape.nodes.len() == self.saved_symbols.len() {
-                if self.tape.nodes.iter().zip(self.saved_symbols.iter()).all(|(n, &s)| n.symbol == s) {
-                    return (SimResult::InfiniteStationary, transcript);
+            if self.enable_stationary {
+                if self.steps > 0 && self.head == self.saved_head && self.state == self.saved_state && self.tape.nodes.len() == self.saved_symbols.len() {
+                    if self.tape.nodes.iter().zip(self.saved_symbols.iter()).all(|(n, &s)| n.symbol == s) {
+                        return (SimResult::InfiniteStationary, transcript);
+                    }
                 }
+
+                if self.brent_lam == self.brent_power {
+                    self.saved_head = self.head;
+                    self.saved_state = self.state;
+                    self.saved_symbols.clear();
+                    self.saved_symbols.extend(self.tape.nodes.iter().map(|n| n.symbol));
+                    self.brent_power *= 2;
+                    self.brent_lam = 0;
+                }
+                self.brent_lam += 1;
             }
 
-            if self.brent_lam == self.brent_power {
-                self.saved_head = self.head;
-                self.saved_state = self.state;
-                self.saved_symbols.clear();
-                self.saved_symbols.extend(self.tape.nodes.iter().map(|n| n.symbol));
-                self.brent_power *= 2;
-                self.brent_lam = 0;
-            }
-            self.brent_lam += 1;
-
-            while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
-                if node_idx > self.head {
-                    self.blank_entries.pop();
-                } else {
-                    break;
+            if self.enable_translated {
+                while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
+                    if node_idx > self.head {
+                        self.blank_entries.pop();
+                    } else {
+                        break;
+                    }
                 }
             }
 
@@ -219,10 +233,12 @@ impl Simulator {
             if next_idx == u32::MAX {
                 let new_idx = self.tape.nodes.len() as u32;
                 
-                if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
-                    return (SimResult::InfiniteTranslated, transcript);
+                if self.enable_translated {
+                    if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
+                        return (SimResult::InfiniteTranslated, transcript);
+                    }
+                    self.blank_entries.push((trans.next_state, trans.dir, new_idx));
                 }
-                self.blank_entries.push((trans.next_state, trans.dir, new_idx));
 
                 self.tape.nodes.push(Node::default());
 

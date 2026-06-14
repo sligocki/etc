@@ -8,11 +8,13 @@ use rayon::prelude::*;
 pub fn enumerate(
     num_states: u8, 
     num_symbols: u8, 
-    step_limit: u64, 
+    step_limit: u64,
+    enable_stationary: bool,
+    enable_translated: bool,
     tx: mpsc::Sender<(TuringMachine, SimResult, Duration)>
 ) {
     let tm = TuringMachine::new(num_states, num_symbols);
-    let sim = Simulator::new();
+    let sim = Simulator::new(enable_stationary, enable_translated);
     let max_state = 0;
     let dirs_used = 0;
     let max_sym_written = 0;

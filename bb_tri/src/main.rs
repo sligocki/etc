@@ -23,6 +23,14 @@ enum Commands {
         /// The step limit
         #[arg(short, long)]
         steps: Option<u64>,
+
+        /// Disable the stationary cycler decider (Brent's Algorithm)
+        #[arg(long)]
+        no_stationary: bool,
+
+        /// Disable the translated cycler decider (Blank Subtree)
+        #[arg(long)]
+        no_translated: bool,
     },
     /// Enumerate all TMs with a given number of states and symbols
     Enumerate {
@@ -40,6 +48,14 @@ enum Commands {
         /// Optional file to output all generated TMs to
         #[arg(short, long)]
         output: Option<String>,
+
+        /// Disable the stationary cycler decider (Brent's Algorithm)
+        #[arg(long)]
+        no_stationary: bool,
+
+        /// Disable the translated cycler decider (Blank Subtree)
+        #[arg(long)]
+        no_translated: bool,
     },
 }
 
@@ -47,7 +63,7 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Simulate { tm, steps } => {
+        Commands::Simulate { tm, steps, no_stationary, no_translated } => {
             let turing_machine = match parser::parse_tm(tm) {
                 Ok(tm) => tm,
                 Err(e) => {
@@ -56,7 +72,7 @@ fn main() {
                 }
             };
 
-            let mut sim = simulator::Simulator::new();
+            let mut sim = simulator::Simulator::new(!no_stationary, !no_translated);
             let step_limit = steps.unwrap_or(u64::MAX);
             let (result, transcript) = sim.run_with_transcript(&turing_machine, step_limit);
 
@@ -98,6 +114,8 @@ fn main() {
             symbols,
             steps,
             output,
+            no_stationary,
+            no_translated,
         } => {
             let mut num_halt = 0;
             let mut num_unknown = 0;
@@ -114,7 +132,7 @@ fn main() {
             
             use std::io::Write;
             let (tx, rx) = std::sync::mpsc::channel();
-            enumerator::enumerate(*states, *symbols, *steps, tx);
+            enumerator::enumerate(*states, *symbols, *steps, !no_stationary, !no_translated, tx);
 
             let start_time = std::time::Instant::now();
 
@@ -198,12 +216,15 @@ fn main() {
             println!("--- Enumeration Complete ---");
             println!("Total TMs generated : {}", num_total);
             let pct_halt_final = (num_halt as f64 / num_total as f64) * 100.0;
+            let num_infinite = num_inf_stationary + num_inf_translated;
+            let pct_inf_final = (num_infinite as f64 / num_total as f64) * 100.0;
             let pct_inf_stat_final = (num_inf_stationary as f64 / num_total as f64) * 100.0;
             let pct_inf_trans_final = (num_inf_translated as f64 / num_total as f64) * 100.0;
             let pct_unk_final = (num_unknown as f64 / num_total as f64) * 100.0;
             println!("Halted              : {} ({:.2}%)", num_halt, pct_halt_final);
-            println!("Infinite Stationary : {} ({:.2}%)", num_inf_stationary, pct_inf_stat_final);
-            println!("Infinite Translated : {} ({:.2}%)", num_inf_translated, pct_inf_trans_final);
+            println!("Infinite            : {} ({:.2}%)", num_infinite, pct_inf_final);
+            println!("  Stationary        : {} ({:.2}%)", num_inf_stationary, pct_inf_stat_final);
+            println!("  Translated        : {} ({:.2}%)", num_inf_translated, pct_inf_trans_final);
             println!("Unknown (Limit)     : {} ({:.2}%)", num_unknown, pct_unk_final);
             println!("Max Halt Steps      : {}", max_steps);
             if !max_steps_tms.is_empty() {

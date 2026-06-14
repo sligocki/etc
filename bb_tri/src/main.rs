@@ -226,28 +226,21 @@ fn main() {
                     } else {
                         0.0
                     };
-                    let pct_inf_stat = if num_total > 0 {
-                        (num_inf_stationary as f64 / num_total as f64) * 100.0
+                    
+                    let num_infinite = num_inf_stationary + num_inf_translated + num_inf_nopath;
+                    let pct_inf = if num_total > 0 {
+                        (num_infinite as f64 / num_total as f64) * 100.0
                     } else {
                         0.0
                     };
-                    let pct_inf_trans = if num_total > 0 {
-                        (num_inf_translated as f64 / num_total as f64) * 100.0
-                    } else {
-                        0.0
-                    };
-                    let pct_inf_nopath = if num_total > 0 {
-                        (num_inf_nopath as f64 / num_total as f64) * 100.0
-                    } else {
-                        0.0
-                    };
+
                     let now = chrono::Local::now().format("%H:%M:%S").to_string();
                     let step_champ = max_steps_tms.first().map(|s| s.as_str()).unwrap_or("None");
                     let score_champ = max_score_tms.first().map(|s| s.as_str()).unwrap_or("None");
                     
                     println!(
-                        "[{}] Total: {} | Halt: {} ({:.2}%) | InfStat: {} ({:.2}%) | InfTrans: {} ({:.2}%) | InfNoPath: {} ({:.2}%) | Max Steps: {} ({}) | Max Score: {} ({})",
-                        now, num_total, num_halt, pct_halt, num_inf_stationary, pct_inf_stat, num_inf_translated, pct_inf_trans, num_inf_nopath, pct_inf_nopath, max_steps, step_champ, max_score, score_champ
+                        "[{}] Total: {} | Halt: {} ({:.2}%) | Inf: {} ({:.2}%) | Max Steps: {} ({}) | Max Score: {} ({})",
+                        now, num_total, num_halt, pct_halt, num_infinite, pct_inf, max_steps, step_champ, max_score, score_champ
                     );
                 }
             }

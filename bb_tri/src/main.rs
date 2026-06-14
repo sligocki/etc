@@ -176,7 +176,14 @@ fn main() {
                 }
 
                 if let Some(f) = &mut out_file {
-                    writeln!(f, "{} {:?}", tm_str, result).unwrap();
+                    let out_str = match result {
+                        SimResult::Halt(steps, score) => format!("Halt {} {}", steps, score),
+                        SimResult::LimitReached => "Unknown Limit".to_string(),
+                        SimResult::InfiniteStationary => "Infinite Stationary".to_string(),
+                        SimResult::InfiniteTranslated => "Infinite Translated".to_string(),
+                        SimResult::UndefinedTrans => unreachable!(),
+                    };
+                    writeln!(f, "{} {}", tm_str, out_str).unwrap();
                 }
 
                 if num_total % 100_000 == 0 {

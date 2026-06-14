@@ -56,6 +56,10 @@ enum Commands {
         /// Disable the translated cycler decider (Blank Subtree)
         #[arg(long)]
         no_translated: bool,
+
+        /// Time interval in seconds between progress updates
+        #[arg(long, default_value_t = 10)]
+        progress_interval: u64,
     },
 }
 
@@ -116,6 +120,7 @@ fn main() {
             output,
             no_stationary,
             no_translated,
+            progress_interval,
         } => {
             let mut num_halt = 0;
             let mut num_unknown = 0;
@@ -135,6 +140,7 @@ fn main() {
             enumerator::enumerate(*states, *symbols, *steps, !no_stationary, !no_translated, tx);
 
             let start_time = std::time::Instant::now();
+            let mut last_print_time = start_time;
 
             for (tm, result, duration) in rx {
                 num_total += 1;
@@ -186,7 +192,8 @@ fn main() {
                     writeln!(f, "{} {}", tm_str, out_str).unwrap();
                 }
 
-                if num_total % 100_000 == 0 {
+                if last_print_time.elapsed().as_secs() >= *progress_interval {
+                    last_print_time = std::time::Instant::now();
                     let pct_halt = if num_total > 0 {
                         (num_halt as f64 / num_total as f64) * 100.0
                     } else {

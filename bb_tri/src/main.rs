@@ -31,6 +31,10 @@ enum Commands {
         /// Disable the translated cycler decider (Blank Subtree)
         #[arg(long)]
         no_translated: bool,
+
+        /// Disable the no-path-to-halt decider
+        #[arg(long)]
+        no_nopath: bool,
     },
     /// Enumerate all TMs with a given number of states and symbols
     Enumerate {
@@ -57,6 +61,10 @@ enum Commands {
         #[arg(long)]
         no_translated: bool,
 
+        /// Disable the no-path-to-halt decider
+        #[arg(long)]
+        no_nopath: bool,
+
         /// Time interval in seconds between progress updates
         #[arg(long, default_value_t = 10)]
         progress_interval: u64,
@@ -67,7 +75,7 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Simulate { tm, steps, no_stationary, no_translated } => {
+        Commands::Simulate { tm, steps, no_stationary, no_translated, no_nopath } => {
             let turing_machine = match parser::parse_tm(tm) {
                 Ok(tm) => tm,
                 Err(e) => {
@@ -76,7 +84,12 @@ fn main() {
                 }
             };
 
-            let mut sim = simulator::Simulator::new(!no_stationary, !no_translated);
+            let options = simulator::DeciderOptions {
+                stationary: !no_stationary,
+                translated: !no_translated,
+                nopath: !no_nopath,
+            };
+            let mut sim = simulator::Simulator::new(options);
             let step_limit = steps.unwrap_or(u64::MAX);
             let (result, transcript) = sim.run_with_transcript(&turing_machine, step_limit);
 
@@ -102,11 +115,14 @@ fn main() {
                 SimResult::LimitReached => {
                     println!("Unknown");
                 }
-                SimResult::InfiniteStationary => {
+                SimResult::Infinite(simulator::InfReason::Stationary) => {
                     println!("Infinite (Stationary Cycler)");
                 }
-                SimResult::InfiniteTranslated => {
+                SimResult::Infinite(simulator::InfReason::Translated) => {
                     println!("Infinite (Translated Cycler)");
+                }
+                SimResult::Infinite(simulator::InfReason::NoPath) => {
+                    println!("Infinite (No Path)");
                 }
                 SimResult::UndefinedTrans => {
                     println!("Hit undefined transition");
@@ -120,12 +136,14 @@ fn main() {
             output,
             no_stationary,
             no_translated,
+            no_nopath,
             progress_interval,
         } => {
             let mut num_halt = 0;
             let mut num_unknown = 0;
             let mut num_inf_stationary = 0;
             let mut num_inf_translated = 0;
+            let mut num_inf_nopath = 0;
             let mut num_total = 0;
             let mut max_steps = 0;
             let mut max_steps_tms = Vec::new();
@@ -137,7 +155,12 @@ fn main() {
             
             use std::io::Write;
             let (tx, rx) = std::sync::mpsc::channel();
-            enumerator::enumerate(*states, *symbols, *steps, !no_stationary, !no_translated, tx);
+            let options = simulator::DeciderOptions {
+                stationary: !no_stationary,
+                translated: !no_translated,
+                nopath: !no_nopath,
+            };
+            enumerator::enumerate(*states, *symbols, *steps, options, tx);
 
             let start_time = std::time::Instant::now();
             let mut last_print_time = start_time;
@@ -172,11 +195,14 @@ fn main() {
                     SimResult::LimitReached => {
                         num_unknown += 1;
                     }
-                    SimResult::InfiniteStationary => {
+                    SimResult::Infinite(simulator::InfReason::Stationary) => {
                         num_inf_stationary += 1;
                     }
-                    SimResult::InfiniteTranslated => {
+                    SimResult::Infinite(simulator::InfReason::Translated) => {
                         num_inf_translated += 1;
+                    }
+                    SimResult::Infinite(simulator::InfReason::NoPath) => {
+                        num_inf_nopath += 1;
                     }
                     SimResult::UndefinedTrans => unreachable!(),
                 }
@@ -185,8 +211,9 @@ fn main() {
                     let out_str = match result {
                         SimResult::Halt(steps, score) => format!("Halt {} {}", steps, score),
                         SimResult::LimitReached => "Unknown Limit".to_string(),
-                        SimResult::InfiniteStationary => "Infinite Stationary".to_string(),
-                        SimResult::InfiniteTranslated => "Infinite Translated".to_string(),
+                        SimResult::Infinite(simulator::InfReason::Stationary) => "Infinite Stationary".to_string(),
+                        SimResult::Infinite(simulator::InfReason::Translated) => "Infinite Translated".to_string(),
+                        SimResult::Infinite(simulator::InfReason::NoPath) => "Infinite NoPath".to_string(),
                         SimResult::UndefinedTrans => unreachable!(),
                     };
                     writeln!(f, "{} {}", tm_str, out_str).unwrap();
@@ -209,13 +236,18 @@ fn main() {
                     } else {
                         0.0
                     };
+                    let pct_inf_nopath = if num_total > 0 {
+                        (num_inf_nopath as f64 / num_total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
                     let now = chrono::Local::now().format("%H:%M:%S").to_string();
                     let step_champ = max_steps_tms.first().map(|s| s.as_str()).unwrap_or("None");
                     let score_champ = max_score_tms.first().map(|s| s.as_str()).unwrap_or("None");
                     
                     println!(
-                        "[{}] Total: {} | Halt: {} ({:.2}%) | InfStat: {} ({:.2}%) | InfTrans: {} ({:.2}%) | Max Steps: {} ({}) | Max Score: {} ({})",
-                        now, num_total, num_halt, pct_halt, num_inf_stationary, pct_inf_stat, num_inf_translated, pct_inf_trans, max_steps, step_champ, max_score, score_champ
+                        "[{}] Total: {} | Halt: {} ({:.2}%) | InfStat: {} ({:.2}%) | InfTrans: {} ({:.2}%) | InfNoPath: {} ({:.2}%) | Max Steps: {} ({}) | Max Score: {} ({})",
+                        now, num_total, num_halt, pct_halt, num_inf_stationary, pct_inf_stat, num_inf_translated, pct_inf_trans, num_inf_nopath, pct_inf_nopath, max_steps, step_champ, max_score, score_champ
                     );
                 }
             }
@@ -230,16 +262,18 @@ fn main() {
             println!("--- Enumeration Complete ---");
             println!("Total TMs generated : {}", num_total);
             let pct_halt_final = (num_halt as f64 / num_total as f64) * 100.0;
-            let num_infinite = num_inf_stationary + num_inf_translated;
+            let num_infinite = num_inf_stationary + num_inf_translated + num_inf_nopath;
             let pct_inf_final = (num_infinite as f64 / num_total as f64) * 100.0;
             let pct_inf_stat_final = (num_inf_stationary as f64 / num_total as f64) * 100.0;
             let pct_inf_trans_final = (num_inf_translated as f64 / num_total as f64) * 100.0;
-            let pct_unk_final = (num_unknown as f64 / num_total as f64) * 100.0;
+            let pct_inf_nopath_final = (num_inf_nopath as f64 / num_total as f64) * 100.0;
+            let pct_unknown_final = (num_unknown as f64 / num_total as f64) * 100.0;
             println!("Halted              : {} ({:.2}%)", num_halt, pct_halt_final);
             println!("Infinite            : {} ({:.2}%)", num_infinite, pct_inf_final);
             println!("  Stationary        : {} ({:.2}%)", num_inf_stationary, pct_inf_stat_final);
             println!("  Translated        : {} ({:.2}%)", num_inf_translated, pct_inf_trans_final);
-            println!("Unknown (Limit)     : {} ({:.2}%)", num_unknown, pct_unk_final);
+            println!("  No Path           : {} ({:.2}%)", num_inf_nopath, pct_inf_nopath_final);
+            println!("Unknown (Limit)     : {} ({:.2}%)", num_unknown, pct_unknown_final);
             println!("Max Halt Steps      : {}", max_steps);
             if !max_steps_tms.is_empty() {
                 println!("Max Steps TMs       :");

@@ -9,12 +9,11 @@ pub fn enumerate(
     num_states: u8, 
     num_symbols: u8, 
     step_limit: u64,
-    enable_stationary: bool,
-    enable_translated: bool,
+    deciders: crate::simulator::DeciderOptions,
     tx: mpsc::Sender<(TuringMachine, SimResult, Duration)>
 ) {
     let tm = TuringMachine::new(num_states, num_symbols);
-    let sim = Simulator::new(enable_stationary, enable_translated);
+    let sim = Simulator::new(deciders);
     let max_state = 0;
     let dirs_used = 0;
     let max_sym_written = 0;
@@ -36,6 +35,7 @@ fn enum_rec(
     tx: mpsc::Sender<(TuringMachine, SimResult, Duration)>,
 ) {
     let start = Instant::now();
+    sim.can_reach_halt = None;
     let result = sim.run(&tm, step_limit);
     let elapsed = start.elapsed();
     let total_time = accumulated_time + elapsed;
@@ -45,7 +45,7 @@ fn enum_rec(
             tx.send((tm, result, elapsed)).unwrap();
             return;
         }
-        SimResult::LimitReached | SimResult::InfiniteStationary | SimResult::InfiniteTranslated => {
+        SimResult::LimitReached | SimResult::Infinite(_) => {
             // We just report it back
             tx.send((tm, result, elapsed)).unwrap();
             return;

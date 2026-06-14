@@ -37,12 +37,25 @@ impl Tape {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InfReason {
+    Stationary,
+    Translated,
+    NoPath,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimResult {
     Halt(u64, u32), // steps, score
     LimitReached,
     UndefinedTrans,
-    InfiniteStationary,
-    InfiniteTranslated,
+    Infinite(InfReason),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct DeciderOptions {
+    pub stationary: bool,
+    pub translated: bool,
+    pub nopath: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,12 +72,12 @@ pub struct Simulator {
     pub saved_head: u32,
     pub saved_state: State,
     pub saved_symbols: Vec<u8>,
-    pub enable_stationary: bool,
-    pub enable_translated: bool,
+    pub deciders: DeciderOptions,
+    pub can_reach_halt: Option<Vec<bool>>,
 }
 
 impl Simulator {
-    pub fn new(enable_stationary: bool, enable_translated: bool) -> Self {
+    pub fn new(deciders: DeciderOptions) -> Self {
         Self {
             tape: Tape::new(),
             head: 0,
@@ -76,15 +89,28 @@ impl Simulator {
             saved_head: 0,
             saved_state: State::Active(0),
             saved_symbols: vec![0],
-            enable_stationary,
-            enable_translated,
+            deciders,
+            can_reach_halt: None,
         }
     }
 
     pub fn run(&mut self, tm: &TuringMachine, step_limit: u64) -> SimResult {
+        if self.deciders.nopath && self.can_reach_halt.is_none() {
+            self.can_reach_halt = Some(compute_halt_reachable(tm));
+        }
+
         while self.steps < step_limit {
             let s = match self.state {
-                State::Active(s) => s,
+                State::Active(s) => {
+                    if self.deciders.nopath {
+                        if let Some(reach) = &self.can_reach_halt {
+                            if !reach[s as usize] {
+                                return SimResult::Infinite(InfReason::NoPath);
+                            }
+                        }
+                    }
+                    s
+                },
                 State::Halt => return SimResult::Halt(self.steps, self.tape.score()),
             };
 
@@ -96,10 +122,10 @@ impl Simulator {
                 None => return SimResult::UndefinedTrans,
             };
 
-            if self.enable_stationary {
+            if self.deciders.stationary {
                 if self.steps > 0 && self.head == self.saved_head && self.state == self.saved_state && self.tape.nodes.len() == self.saved_symbols.len() {
                     if self.tape.nodes.iter().zip(self.saved_symbols.iter()).all(|(n, &s)| n.symbol == s) {
-                        return SimResult::InfiniteStationary;
+                        return SimResult::Infinite(InfReason::Stationary);
                     }
                 }
 
@@ -114,7 +140,7 @@ impl Simulator {
                 self.brent_lam += 1;
             }
 
-            if self.enable_translated {
+            if self.deciders.translated {
                 while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
                     if node_idx > self.head {
                         self.blank_entries.pop();
@@ -136,9 +162,9 @@ impl Simulator {
             if next_idx == u32::MAX {
                 let new_idx = self.tape.nodes.len() as u32;
                 
-                if self.enable_translated {
+                if self.deciders.translated {
                     if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
-                        return SimResult::InfiniteTranslated;
+                        return SimResult::Infinite(InfReason::Translated);
                     }
                     self.blank_entries.push((trans.next_state, trans.dir, new_idx));
                 }
@@ -175,11 +201,24 @@ impl Simulator {
         tm: &TuringMachine,
         step_limit: u64,
     ) -> (SimResult, Vec<(u8, u8)>) {
+        if self.deciders.nopath && self.can_reach_halt.is_none() {
+            self.can_reach_halt = Some(compute_halt_reachable(tm));
+        }
+
         let mut transcript = Vec::new();
 
         while self.steps < step_limit {
             let s = match self.state {
-                State::Active(s) => s,
+                State::Active(s) => {
+                    if self.deciders.nopath {
+                        if let Some(reach) = &self.can_reach_halt {
+                            if !reach[s as usize] {
+                                return (SimResult::Infinite(InfReason::NoPath), transcript);
+                            }
+                        }
+                    }
+                    s
+                },
                 State::Halt => return (SimResult::Halt(self.steps, self.tape.score()), transcript),
             };
 
@@ -191,10 +230,10 @@ impl Simulator {
                 None => return (SimResult::UndefinedTrans, transcript),
             };
 
-            if self.enable_stationary {
+            if self.deciders.stationary {
                 if self.steps > 0 && self.head == self.saved_head && self.state == self.saved_state && self.tape.nodes.len() == self.saved_symbols.len() {
                     if self.tape.nodes.iter().zip(self.saved_symbols.iter()).all(|(n, &s)| n.symbol == s) {
-                        return (SimResult::InfiniteStationary, transcript);
+                        return (SimResult::Infinite(InfReason::Stationary), transcript);
                     }
                 }
 
@@ -209,7 +248,7 @@ impl Simulator {
                 self.brent_lam += 1;
             }
 
-            if self.enable_translated {
+            if self.deciders.translated {
                 while let Some(&(_, _, node_idx)) = self.blank_entries.last() {
                     if node_idx > self.head {
                         self.blank_entries.pop();
@@ -233,9 +272,9 @@ impl Simulator {
             if next_idx == u32::MAX {
                 let new_idx = self.tape.nodes.len() as u32;
                 
-                if self.enable_translated {
+                if self.deciders.translated {
                     if self.blank_entries.iter().any(|(st, dir, _)| *st == trans.next_state && *dir == trans.dir) {
-                        return (SimResult::InfiniteTranslated, transcript);
+                        return (SimResult::Infinite(InfReason::Translated), transcript);
                     }
                     self.blank_entries.push((trans.next_state, trans.dir, new_idx));
                 }
@@ -266,4 +305,47 @@ impl Simulator {
 
         (SimResult::LimitReached, transcript)
     }
+}
+
+pub fn compute_halt_reachable(tm: &TuringMachine) -> Vec<bool> {
+    let mut reachable = vec![false; tm.num_states as usize];
+    let mut changed = true;
+
+    while changed {
+        changed = false;
+        for s in 0..tm.num_states {
+            if reachable[s as usize] {
+                continue;
+            }
+            
+            for sym in 0..tm.num_symbols {
+                match tm.get_transition(s, sym) {
+                    Some(t) => {
+                        match t.next_state {
+                            State::Halt => {
+                                reachable[s as usize] = true;
+                                changed = true;
+                                break;
+                            }
+                            State::Active(next_s) => {
+                                if reachable[next_s as usize] {
+                                    reachable[s as usize] = true;
+                                    changed = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        // Undefined transitions can be filled with a Halt transition
+                        reachable[s as usize] = true;
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    reachable
 }

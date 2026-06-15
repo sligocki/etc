@@ -2,7 +2,7 @@ use crate::ast::Instr;
 use crate::simulator::{Simulator, RunResult};
 use rayon::prelude::*;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum FlatInstr {
     Inc(usize),
     Dec(usize),
@@ -44,15 +44,22 @@ impl SearchResult {
 }
 
 pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
+    if length == 0 {
+        return SearchResult::new();
+    }
+
     let prefix_len = std::cmp::min(length, 4); 
     
     let mut prefixes = Vec::new();
     let mut initial_flat = Vec::new();
+    
+    // Rule 1: First instruction must be Inc(0)
+    initial_flat.push(FlatInstr::Inc(0));
     generate_prefixes(
-        length,
-        None,
+        length - 1,
+        Some(0),
         0,
-        prefix_len,
+        prefix_len - 1,
         &mut initial_flat,
         &mut prefixes,
     );
@@ -75,6 +82,21 @@ pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
     }).reduce(|| SearchResult::new(), |a, b| a.merge(b))
 }
 
+fn is_valid_primitive(last_instr: Option<&FlatInstr>, current_var: usize, is_inc: bool) -> bool {
+    match last_instr {
+        Some(FlatInstr::Inc(p)) => {
+            if current_var < *p { return false; }
+            if current_var == *p && !is_inc { return false; } // Ban Inc(p); Dec(p)
+            true
+        }
+        Some(FlatInstr::Dec(p)) => {
+            if current_var < *p { return false; }
+            true
+        }
+        _ => true
+    }
+}
+
 fn generate_prefixes(
     remaining_length: usize,
     max_var: Option<usize>,
@@ -94,9 +116,12 @@ fn generate_prefixes(
     }
 
     if open_loops > 0 {
-        current_flat.push(FlatInstr::WhileEnd);
-        generate_prefixes(remaining_length, max_var, open_loops - 1, steps_left, current_flat, prefixes);
-        current_flat.pop();
+        let is_empty_loop = matches!(current_flat.last(), Some(FlatInstr::WhileStart(_)));
+        if !is_empty_loop {
+            current_flat.push(FlatInstr::WhileEnd);
+            generate_prefixes(remaining_length, max_var, open_loops - 1, steps_left, current_flat, prefixes);
+            current_flat.pop();
+        }
     }
 
     let next_allowed = match max_var {
@@ -104,16 +129,22 @@ fn generate_prefixes(
         None => 0,
     };
 
+    let last_instr = current_flat.last().cloned();
+
     for v in 0..=next_allowed {
         let next_max_var = Some(max_var.unwrap_or(0).max(v));
 
-        current_flat.push(FlatInstr::Inc(v));
-        generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes);
-        current_flat.pop();
+        if is_valid_primitive(last_instr.as_ref(), v, true) {
+            current_flat.push(FlatInstr::Inc(v));
+            generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes);
+            current_flat.pop();
+        }
 
-        current_flat.push(FlatInstr::Dec(v));
-        generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes);
-        current_flat.pop();
+        if is_valid_primitive(last_instr.as_ref(), v, false) {
+            current_flat.push(FlatInstr::Dec(v));
+            generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes);
+            current_flat.pop();
+        }
 
         current_flat.push(FlatInstr::WhileStart(v));
         generate_prefixes(remaining_length - 1, next_max_var, open_loops + 1, steps_left - 1, current_flat, prefixes);
@@ -158,9 +189,12 @@ fn generate_and_sim(
     }
 
     if open_loops > 0 {
-        current_flat.push(FlatInstr::WhileEnd);
-        generate_and_sim(remaining_length, max_var, open_loops - 1, current_flat, local_res, sim, max_steps);
-        current_flat.pop();
+        let is_empty_loop = matches!(current_flat.last(), Some(FlatInstr::WhileStart(_)));
+        if !is_empty_loop {
+            current_flat.push(FlatInstr::WhileEnd);
+            generate_and_sim(remaining_length, max_var, open_loops - 1, current_flat, local_res, sim, max_steps);
+            current_flat.pop();
+        }
     }
 
     let next_allowed = match max_var {
@@ -168,16 +202,22 @@ fn generate_and_sim(
         None => 0,
     };
 
+    let last_instr = current_flat.last().cloned();
+
     for v in 0..=next_allowed {
         let next_max_var = Some(max_var.unwrap_or(0).max(v));
 
-        current_flat.push(FlatInstr::Inc(v));
-        generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps);
-        current_flat.pop();
+        if is_valid_primitive(last_instr.as_ref(), v, true) {
+            current_flat.push(FlatInstr::Inc(v));
+            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps);
+            current_flat.pop();
+        }
 
-        current_flat.push(FlatInstr::Dec(v));
-        generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps);
-        current_flat.pop();
+        if is_valid_primitive(last_instr.as_ref(), v, false) {
+            current_flat.push(FlatInstr::Dec(v));
+            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps);
+            current_flat.pop();
+        }
 
         current_flat.push(FlatInstr::WhileStart(v));
         generate_and_sim(remaining_length - 1, next_max_var, open_loops + 1, current_flat, local_res, sim, max_steps);

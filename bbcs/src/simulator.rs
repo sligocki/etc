@@ -10,7 +10,7 @@ pub enum InfiniteReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunResult {
-    Halted { score: usize },
+    Halted { score: usize, steps: usize },
     Infinite(InfiniteReason),
     Unknown,
 }
@@ -223,7 +223,7 @@ impl Simulator {
         match self.run_block(program, &mut steps, max_steps) {
             Ok(_) => {
                 let score = self.counters.iter().copied().max().unwrap_or(0);
-                RunResult::Halted { score }
+                RunResult::Halted { score, steps }
             }
             Err(Some(reason)) => RunResult::Infinite(reason),
             Err(None) => RunResult::Unknown,

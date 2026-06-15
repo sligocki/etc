@@ -35,6 +35,7 @@ pub struct SearchResult {
     pub infinites_symbolic: usize,
     pub infinites_sum: usize,
     pub max_score: usize,
+    pub max_halting_steps: usize,
     pub champion_code: String,
 }
 
@@ -49,6 +50,7 @@ impl SearchResult {
             infinites_symbolic: 0,
             infinites_sum: 0,
             max_score: 0,
+            max_halting_steps: 0,
             champion_code: String::new(),
         }
     }
@@ -64,6 +66,9 @@ impl SearchResult {
         if other.max_score > self.max_score {
             self.max_score = other.max_score;
             self.champion_code = other.champion_code.clone();
+        }
+        if other.max_halting_steps > self.max_halting_steps {
+            self.max_halting_steps = other.max_halting_steps;
         }
     }
 }
@@ -469,11 +474,14 @@ fn generate_and_sim(
         let ast = parse_flat(current_flat);
         local_res.total += 1;
         match sim.run(&ast, max_steps) {
-            RunResult::Halted { score } => {
+            RunResult::Halted { score, steps } => {
                 local_res.halted += 1;
                 if score > local_res.max_score {
                     local_res.max_score = score;
                     local_res.champion_code = format_program(&ast);
+                }
+                if steps > local_res.max_halting_steps {
+                    local_res.max_halting_steps = steps;
                 }
                 if tx.is_some() {
                     local_buffer.push(format!("{} Halt {}", format_program(&ast), score));

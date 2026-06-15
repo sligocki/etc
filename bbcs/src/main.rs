@@ -39,6 +39,7 @@ fn main() {
     println!("Inf (Symbolic): {}", results.infinites_symbolic);
     println!("Inf (Sum):      {}", results.infinites_sum);
     println!("Max Score:      {}", results.max_score);
+    println!("Max Steps:      {}", results.max_halting_steps);
     if !results.champion_code.is_empty() {
         println!("Champion Code:  {}", results.champion_code);
     }

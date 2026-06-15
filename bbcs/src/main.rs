@@ -3,9 +3,7 @@ pub mod simulator;
 pub mod enumerator;
 
 use clap::Parser;
-use rayon::prelude::*;
-use crate::simulator::{Simulator, RunResult};
-use crate::enumerator::enumerate_programs;
+use crate::enumerator::search_programs;
 use crate::ast::Instr;
 use std::time::Instant;
 
@@ -45,48 +43,18 @@ fn format_program(program: &[Instr]) -> String {
 
 fn main() {
     let args = Args::parse();
-    println!("Enumerating all canonical programs of length {}...", args.length);
-    let start_enum = Instant::now();
-    let programs = enumerate_programs(args.length);
-    println!("Found {} valid canonical programs. Enumeration took {:?}", programs.len(), start_enum.elapsed());
+    println!("Streaming and simulating all canonical programs of length {} with max steps {}...", args.length, args.max_steps);
+    let start_time = Instant::now();
 
-    println!("Simulating with max steps {}...", args.max_steps);
-    let start_sim = Instant::now();
+    let results = search_programs(args.length, args.max_steps);
 
-    // Use par_iter for parallel execution
-    let results: Vec<(RunResult, &Vec<Instr>)> = programs.par_iter().map(|prog| {
-        let mut sim = Simulator::new();
-        let res = sim.run(prog, args.max_steps);
-        (res, prog)
-    }).collect();
-
-    let mut halted = 0;
-    let mut timeouts = 0;
-    let mut max_score = 0;
-    let mut champion: Option<&Vec<Instr>> = None;
-
-    for (res, prog) in results {
-        match res {
-            RunResult::Halted { score } => {
-                halted += 1;
-                if score > max_score || champion.is_none() {
-                    max_score = score;
-                    champion = Some(prog);
-                }
-            }
-            RunResult::Timeout => {
-                timeouts += 1;
-            }
-        }
-    }
-
-    println!("Simulation took {:?}", start_sim.elapsed());
+    println!("Completed in {:?}", start_time.elapsed());
     println!("--- Results ---");
-    println!("Total Programs: {}", programs.len());
-    println!("Halted:         {}", halted);
-    println!("Timeouts:       {}", timeouts);
-    println!("Max Score:      {}", max_score);
-    if let Some(champ) = champion {
-        println!("Champion Code:  {}", format_program(champ));
+    println!("Total Programs: {}", results.total);
+    println!("Halted:         {}", results.halted);
+    println!("Timeouts:       {}", results.timeouts);
+    println!("Max Score:      {}", results.max_score);
+    if let Some(champ) = results.champion {
+        println!("Champion Code:  {}", format_program(&champ));
     }
 }

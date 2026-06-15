@@ -30,24 +30,32 @@ pub struct SearchResult {
     pub total: usize,
     pub halted: usize,
     pub timeouts: usize,
+    pub infinites: usize,
     pub max_score: usize,
-    pub champion: Option<Vec<Instr>>,
+    pub champion_code: String,
 }
 
 impl SearchResult {
     fn new() -> Self {
-        Self { total: 0, halted: 0, timeouts: 0, max_score: 0, champion: None }
+        Self {
+            total: 0,
+            halted: 0,
+            timeouts: 0,
+            infinites: 0,
+            max_score: 0,
+            champion_code: String::new(),
+        }
     }
-    
-    fn merge(mut self, other: Self) -> Self {
+
+    fn merge(&mut self, other: &Self) {
         self.total += other.total;
         self.halted += other.halted;
         self.timeouts += other.timeouts;
-        if other.max_score > self.max_score || self.champion.is_none() {
+        self.infinites += other.infinites;
+        if other.max_score > self.max_score {
             self.max_score = other.max_score;
-            self.champion = other.champion;
+            self.champion_code = other.champion_code.clone();
         }
-        self
     }
 }
 
@@ -55,8 +63,9 @@ pub struct SharedProgress {
     pub total: AtomicUsize,
     pub halted: AtomicUsize,
     pub timeouts: AtomicUsize,
+    pub infinites: AtomicUsize,
     pub max_score: Mutex<usize>,
-    pub champion: Mutex<Option<Vec<Instr>>>,
+    pub champion_code: Mutex<String>,
     pub done_mutex: Mutex<bool>,
     pub done_cvar: Condvar,
 }
@@ -67,8 +76,9 @@ impl SharedProgress {
             total: AtomicUsize::new(0),
             halted: AtomicUsize::new(0),
             timeouts: AtomicUsize::new(0),
+            infinites: AtomicUsize::new(0),
             max_score: Mutex::new(0),
-            champion: Mutex::new(None),
+            champion_code: Mutex::new(String::new()),
             done_mutex: Mutex::new(false),
             done_cvar: Condvar::new(),
         })
@@ -114,15 +124,15 @@ pub fn search_programs(length: usize, max_steps: usize, output_file: Option<Stri
                 let total = prog_clone.total.load(Ordering::Relaxed);
                 let halted = prog_clone.halted.load(Ordering::Relaxed);
                 let score = *prog_clone.max_score.lock().unwrap();
-                let champ = prog_clone.champion.lock().unwrap().clone();
+                let champ = prog_clone.champion_code.lock().unwrap().clone();
                 
                 let pct = if total > 0 { (halted as f64 / total as f64) * 100.0 } else { 0.0 };
                 let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
                 
                 println!("[{}] Progress: {} total, {} halted ({:.2}%), max score: {}", 
                          timestamp, total, halted, pct, score);
-                if let Some(c) = champ {
-                    println!("  Champion: {}", format_program(&c));
+                if !champ.is_empty() {
+                    println!("  Champion: {}", champ);
                 }
             }
         }
@@ -174,18 +184,19 @@ pub fn search_programs(length: usize, max_steps: usize, output_file: Option<Stri
         progress.total.fetch_add(local_res.total, Ordering::Relaxed);
         progress.halted.fetch_add(local_res.halted, Ordering::Relaxed);
         progress.timeouts.fetch_add(local_res.timeouts, Ordering::Relaxed);
+        progress.infinites.fetch_add(local_res.infinites, Ordering::Relaxed);
         
         let mut score_lock = progress.max_score.lock().unwrap();
-        let mut champ_lock = progress.champion.lock().unwrap();
-        if local_res.max_score > *score_lock || champ_lock.is_none() {
+        let mut champ_lock = progress.champion_code.lock().unwrap();
+        if local_res.max_score > *score_lock {
             *score_lock = local_res.max_score;
-            *champ_lock = local_res.champion.clone();
+            *champ_lock = local_res.champion_code.clone();
         }
         drop(score_lock);
         drop(champ_lock);
 
         local_res
-    }).reduce(|| SearchResult::new(), |a, b| a.merge(b));
+    }).reduce(|| SearchResult::new(), |mut a, b| { a.merge(&b); a });
 
     *progress.done_mutex.lock().unwrap() = true;
     progress.done_cvar.notify_all();
@@ -351,23 +362,29 @@ fn generate_and_sim(
         local_res.total += 1;
         match sim.run(&ast, max_steps) {
             RunResult::Halted { score } => {
+                local_res.halted += 1;
+                if score > local_res.max_score {
+                    local_res.max_score = score;
+                    local_res.champion_code = format_program(&ast);
+                }
                 if tx.is_some() {
                     local_buffer.push(format!("{} Halt {}", format_program(&ast), score));
                 }
-                local_res.halted += 1;
-                if score > local_res.max_score || local_res.champion.is_none() {
-                    local_res.max_score = score;
-                    local_res.champion = Some(ast);
+            }
+            RunResult::Infinite => {
+                local_res.infinites += 1;
+                if tx.is_some() {
+                    local_buffer.push(format!("{} Infinite", format_program(&ast)));
                 }
             }
-            RunResult::Timeout => {
+            RunResult::Unknown => {
+                local_res.timeouts += 1;
                 if tx.is_some() {
                     local_buffer.push(format!("{} Unknown >{}", format_program(&ast), max_steps));
                 }
-                local_res.timeouts += 1;
             }
         }
-        
+
         if local_buffer.len() >= 10_000 {
             if let Some(tx_sender) = tx {
                 let chunk = std::mem::replace(local_buffer, Vec::with_capacity(10_000));

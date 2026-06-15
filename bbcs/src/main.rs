@@ -32,11 +32,12 @@ fn main() {
 
     println!("Completed in {:?}", start_time.elapsed());
     println!("--- Results ---");
-    println!("Total Programs: {}", results.total);
-    println!("Halted:         {}", results.halted);
-    println!("Timeouts:       {}", results.timeouts);
-    println!("Max Score:      {}", results.max_score);
-    if let Some(champ) = results.champion {
-        println!("Champion Code:  {}", format_program(&champ));
+    println!("Total:     {}", results.total);
+    println!("Halted:    {}", results.halted);
+    println!("Infinite:  {}", results.infinites);
+    println!("Unknown:   {}", results.timeouts);
+    println!("Max Score: {}", results.max_score);
+    if !results.champion_code.is_empty() {
+        println!("Champion Code:  {}", results.champion_code);
     }
 }

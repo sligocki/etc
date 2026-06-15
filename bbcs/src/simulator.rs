@@ -3,16 +3,18 @@ use crate::ast::Instr;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunResult {
     Halted { score: usize },
-    Timeout,
+    Infinite,
+    Unknown,
 }
 
 pub struct Simulator {
     pub counters: Vec<usize>,
+    pub history: Vec<(usize, Vec<usize>)>,
 }
 
 impl Simulator {
     pub fn new() -> Self {
-        Self { counters: Vec::new() }
+        Self { counters: Vec::new(), history: Vec::new() }
     }
 
     fn ensure_counter(&mut self, var: usize) {
@@ -24,21 +26,23 @@ impl Simulator {
     pub fn run(&mut self, program: &[Instr], max_steps: usize) -> RunResult {
         let mut steps = 0;
         self.counters.clear();
+        self.history.clear();
 
         match self.run_block(program, &mut steps, max_steps) {
             Ok(_) => {
                 let score = self.counters.iter().copied().max().unwrap_or(0);
                 RunResult::Halted { score }
             }
-            Err(_) => RunResult::Timeout,
+            Err(true) => RunResult::Infinite,
+            Err(false) => RunResult::Unknown,
         }
     }
 
-    fn run_block(&mut self, program: &[Instr], steps: &mut usize, max_steps: usize) -> Result<(), ()> {
+    fn run_block(&mut self, program: &[Instr], steps: &mut usize, max_steps: usize) -> Result<(), bool> {
         for instr in program {
             *steps += 1;
             if *steps > max_steps {
-                return Err(());
+                return Err(false);
             }
 
             match instr {
@@ -54,12 +58,19 @@ impl Simulator {
                 }
                 Instr::While(v, body) => {
                     self.ensure_counter(*v);
+                    let ip = instr as *const Instr as usize;
                     while self.counters[*v] > 0 {
+                        let state = (ip, self.counters.clone());
+                        if self.history.contains(&state) {
+                            return Err(true);
+                        }
+                        self.history.push(state);
+
                         self.run_block(body, steps, max_steps)?;
                         
                         *steps += 1;
                         if *steps > max_steps {
-                            return Err(());
+                            return Err(false);
                         }
                     }
                 }

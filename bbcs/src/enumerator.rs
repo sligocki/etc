@@ -540,7 +540,7 @@ fn generate_prefixes(
                     old_dec = last_loop.1;
                     old_inc = last_loop.2;
                     last_loop.1 &= !(1 << v);
-                    last_loop.2 |= (1 << v);
+                    last_loop.2 |= 1 << v ;
                 }
                 generate_prefixes(
                     remaining_length - 1,
@@ -581,7 +581,7 @@ fn generate_prefixes(
                     if let Some(last_loop) = open_loops.last_mut() {
                         old_dec = last_loop.1;
                         old_inc = last_loop.2;
-                        last_loop.1 |= (1 << v);
+                        last_loop.1 |= 1 << v ;
                         last_loop.2 &= !(1 << v);
                     }
                     generate_prefixes(
@@ -831,7 +831,7 @@ fn generate_and_sim(
                     old_dec = last_loop.1;
                     old_inc = last_loop.2;
                     last_loop.1 &= !(1 << v);
-                    last_loop.2 |= (1 << v);
+                    last_loop.2 |= 1 << v ;
                 }
                 generate_and_sim(
                     remaining_length - 1,
@@ -876,7 +876,7 @@ fn generate_and_sim(
                     if let Some(last_loop) = open_loops.last_mut() {
                         old_dec = last_loop.1;
                         old_inc = last_loop.2;
-                        last_loop.1 |= (1 << v);
+                        last_loop.1 |= 1 << v ;
                         last_loop.2 &= !(1 << v);
                     }
                     generate_and_sim(

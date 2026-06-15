@@ -18,13 +18,13 @@ pub enum RunResult {
 // A guaranteed lower bound linear combination: C_0*A + C_1*B + C_2*C + C_3*D + C_4*E + K
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LowerBoundExpr {
-    coeffs: [usize; 10],
+    coeffs: Vec<usize>,
     k: usize,
 }
 
 impl LowerBoundExpr {
-    fn new_identity(v: usize) -> Self {
-        let mut coeffs = [0; 10];
+    fn new_identity(v: usize, num_vars: usize) -> Self {
+        let mut coeffs = vec![0; num_vars];
         coeffs[v] = 1;
         Self { coeffs, k: 0 }
     }
@@ -36,7 +36,7 @@ impl LowerBoundExpr {
     // Checks if the expression is exactly V_y + c * V_x
     fn is_transfer_pattern(&self, x: usize, y: usize) -> Option<usize> {
         if self.k != 0 { return None; }
-        for i in 0..10 {
+        for i in 0..self.coeffs.len() {
             if i == y {
                 if self.coeffs[i] != 1 { return None; }
             } else if i == x {
@@ -50,32 +50,28 @@ impl LowerBoundExpr {
     
     fn add_scaled(&mut self, other: &LowerBoundExpr, scale: usize) {
         if scale == 0 { return; }
-        for i in 0..10 {
+        for i in 0..self.coeffs.len() {
             self.coeffs[i] += other.coeffs[i] * scale;
         }
         self.k += other.k * scale;
     }
 }
 
-type LowerBoundState = [LowerBoundExpr; 10];
+type LowerBoundState = Vec<LowerBoundExpr>;
 
-fn new_identity_state() -> LowerBoundState {
-    [
-        LowerBoundExpr::new_identity(0),
-        LowerBoundExpr::new_identity(1),
-        LowerBoundExpr::new_identity(2),
-        LowerBoundExpr::new_identity(3),
-        LowerBoundExpr::new_identity(4),
-        LowerBoundExpr::new_identity(5),
-        LowerBoundExpr::new_identity(6),
-        LowerBoundExpr::new_identity(7),
-        LowerBoundExpr::new_identity(8),
-        LowerBoundExpr::new_identity(9),
-    ]
+fn new_identity_state(num_vars: usize) -> LowerBoundState {
+    (0..num_vars).map(|i| LowerBoundExpr::new_identity(i, num_vars)).collect()
 }
 
-fn evaluate_symbolic(body: &[Instr]) -> Option<Box<LowerBoundState>> {
-    let mut state = Box::new(new_identity_state());
+fn max_var(body: &[Instr]) -> usize {
+    body.iter().map(|instr| match instr {
+        Instr::Inc(v) | Instr::Dec(v) => *v,
+        Instr::While(v, inner) => (*v).max(max_var(inner)),
+    }).max().unwrap_or(0)
+}
+
+fn evaluate_symbolic(body: &[Instr], num_vars: usize) -> Option<LowerBoundState> {
+    let mut state = new_identity_state(num_vars);
     
     for instr in body {
         match instr {
@@ -89,8 +85,8 @@ fn evaluate_symbolic(body: &[Instr]) -> Option<Box<LowerBoundState>> {
                 let x = *v;
                 
                 let mut has_nested = false;
-                let mut decs = [0; 10];
-                let mut incs = [0; 10];
+                let mut decs = vec![0; num_vars];
+                let mut incs = vec![0; num_vars];
                 
                 for inner_instr in inner_body.iter() {
                     match inner_instr {
@@ -102,7 +98,7 @@ fn evaluate_symbolic(body: &[Instr]) -> Option<Box<LowerBoundState>> {
                 
                 if !has_nested && decs[x] == 1 {
                     let mut valid_transfer = true;
-                    for i in 0..10 {
+                    for i in 0..num_vars {
                         if i != x && incs[i] < decs[i] {
                             valid_transfer = false;
                             break;
@@ -110,7 +106,7 @@ fn evaluate_symbolic(body: &[Instr]) -> Option<Box<LowerBoundState>> {
                     }
                     if valid_transfer {
                         let state_x = state[x].clone();
-                        for i in 0..10 {
+                        for i in 0..num_vars {
                             if i != x {
                                 let net = incs[i] - decs[i];
                                 if net > 0 {
@@ -119,16 +115,16 @@ fn evaluate_symbolic(body: &[Instr]) -> Option<Box<LowerBoundState>> {
                                 }
                             }
                         }
-                        state[x] = LowerBoundExpr { coeffs: [0; 10], k: 0 };
+                        state[x] = LowerBoundExpr { coeffs: vec![0; num_vars], k: 0 };
                         continue;
                     }
                 }
                 
-                if let Some(inner_state) = evaluate_symbolic(inner_body) {
+                if let Some(inner_state) = evaluate_symbolic(inner_body, num_vars) {
                     if inner_state[x].is_zero() {
                         let mut valid_complex = true;
-                        let mut scales = [0; 10];
-                        for i in 0..10 {
+                        let mut scales = vec![0; num_vars];
+                        for i in 0..num_vars {
                             if i != x {
                                 if let Some(c) = inner_state[i].is_transfer_pattern(x, i) {
                                     scales[i] = c;
@@ -140,13 +136,13 @@ fn evaluate_symbolic(body: &[Instr]) -> Option<Box<LowerBoundState>> {
                         }
                         if valid_complex {
                             let state_x = state[x].clone();
-                            for i in 0..10 {
+                            for i in 0..num_vars {
                                 if i != x && scales[i] > 0 {
                                     let to_add = state_x.clone();
                                     state[i].add_scaled(&to_add, scales[i]);
                                 }
                             }
-                            state[x] = LowerBoundExpr { coeffs: [0; 10], k: 0 };
+                            state[x] = LowerBoundExpr { coeffs: vec![0; num_vars], k: 0 };
                             continue;
                         }
                     }
@@ -179,7 +175,8 @@ impl Simulator {
 
     fn is_safe_monotonic_body(body: &[Instr], active_loops: &mut Vec<usize>) -> Option<InfiniteReason> {
         if active_loops.is_empty() {
-            if let Some(_) = evaluate_symbolic(body) {
+            let num_vars = max_var(body) + 1;
+            if let Some(_) = evaluate_symbolic(body, num_vars) {
                 return Some(InfiniteReason::SymbolicMonotonic);
             }
         }

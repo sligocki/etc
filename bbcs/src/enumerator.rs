@@ -1,6 +1,9 @@
-use crate::ast::Instr;
+use crate::ast::{Instr, format_program};
 use crate::simulator::{Simulator, RunResult};
 use rayon::prelude::*;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use std::time::Duration;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum FlatInstr {
@@ -43,18 +46,39 @@ impl SearchResult {
     }
 }
 
+pub struct SharedProgress {
+    pub total: AtomicUsize,
+    pub halted: AtomicUsize,
+    pub timeouts: AtomicUsize,
+    pub max_score: Mutex<usize>,
+    pub champion: Mutex<Option<Vec<Instr>>>,
+    pub done: AtomicBool,
+}
+
+impl SharedProgress {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            total: AtomicUsize::new(0),
+            halted: AtomicUsize::new(0),
+            timeouts: AtomicUsize::new(0),
+            max_score: Mutex::new(0),
+            champion: Mutex::new(None),
+            done: AtomicBool::new(false),
+        })
+    }
+}
+
 pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
     if length == 0 {
         return SearchResult::new();
     }
 
-    let prefix_len = std::cmp::min(length, 4); 
+    let prefix_len = std::cmp::min(length, 6); 
     
     let mut prefixes = Vec::new();
     let mut initial_flat = Vec::new();
     let mut initial_open_loops = Vec::new();
     
-    // Rule 1: First instruction must be Inc(0)
     initial_flat.push(FlatInstr::Inc(0));
     generate_prefixes(
         length - 1,
@@ -65,7 +89,33 @@ pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
         &mut prefixes,
     );
 
-    prefixes.into_par_iter().map(|prefix| {
+    let progress = SharedProgress::new();
+    let prog_clone = progress.clone();
+
+    let progress_thread = std::thread::spawn(move || {
+        while !prog_clone.done.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_secs(10));
+            if prog_clone.done.load(Ordering::Relaxed) {
+                break;
+            }
+            
+            let total = prog_clone.total.load(Ordering::Relaxed);
+            let halted = prog_clone.halted.load(Ordering::Relaxed);
+            let score = *prog_clone.max_score.lock().unwrap();
+            let champ = prog_clone.champion.lock().unwrap().clone();
+            
+            let pct = if total > 0 { (halted as f64 / total as f64) * 100.0 } else { 0.0 };
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            
+            println!("[{}] Progress: {} total, {} halted ({:.2}%), max score: {}", 
+                     timestamp, total, halted, pct, score);
+            if let Some(c) = champ {
+                println!("  Champion: {}", format_program(&c));
+            }
+        }
+    });
+
+    let result = prefixes.into_par_iter().map(|prefix| {
         let mut local_res = SearchResult::new();
         let mut sim = Simulator::new();
         let mut current_flat = prefix.flat.clone();
@@ -80,15 +130,34 @@ pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
             &mut sim,
             max_steps,
         );
+        
+        progress.total.fetch_add(local_res.total, Ordering::Relaxed);
+        progress.halted.fetch_add(local_res.halted, Ordering::Relaxed);
+        progress.timeouts.fetch_add(local_res.timeouts, Ordering::Relaxed);
+        
+        let mut score_lock = progress.max_score.lock().unwrap();
+        let mut champ_lock = progress.champion.lock().unwrap();
+        if local_res.max_score > *score_lock || champ_lock.is_none() {
+            *score_lock = local_res.max_score;
+            *champ_lock = local_res.champion.clone();
+        }
+        drop(score_lock);
+        drop(champ_lock);
+
         local_res
-    }).reduce(|| SearchResult::new(), |a, b| a.merge(b))
+    }).reduce(|| SearchResult::new(), |a, b| a.merge(b));
+
+    progress.done.store(true, Ordering::Relaxed);
+    let _ = progress_thread.join();
+
+    result
 }
 
 fn is_valid_primitive(last_instr: Option<&FlatInstr>, current_var: usize, is_inc: bool) -> bool {
     match last_instr {
         Some(FlatInstr::Inc(p)) => {
             if current_var < *p { return false; }
-            if current_var == *p && !is_inc { return false; } // Ban Inc(p); Dec(p)
+            if current_var == *p && !is_inc { return false; } 
             true
         }
         Some(FlatInstr::Dec(p)) => {
@@ -110,9 +179,7 @@ fn generate_prefixes(
     if steps_left == 0 || remaining_length == 0 {
         if remaining_length == 0 {
             for &(_, has_dec) in open_loops.iter() {
-                if !has_dec {
-                    return; // Reject invalid unclosed loops
-                }
+                if !has_dec { return; }
             }
         }
         prefixes.push(PrefixState {
@@ -126,7 +193,7 @@ fn generate_prefixes(
 
     if !open_loops.is_empty() {
         let last_loop = open_loops.last().unwrap();
-        if last_loop.1 { // Only close if it has decremented its loop variable
+        if last_loop.1 {
             current_flat.push(FlatInstr::WhileEnd);
             let popped = open_loops.pop().unwrap();
             generate_prefixes(remaining_length, max_var, open_loops, steps_left, current_flat, prefixes);
@@ -153,7 +220,6 @@ fn generate_prefixes(
 
         if is_valid_primitive(last_instr.as_ref(), v, false) {
             current_flat.push(FlatInstr::Dec(v));
-            
             let mut changed_indices = Vec::new();
             for (i, loop_state) in open_loops.iter_mut().enumerate() {
                 if loop_state.0 == v && !loop_state.1 {
@@ -161,9 +227,7 @@ fn generate_prefixes(
                     changed_indices.push(i);
                 }
             }
-            
             generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes);
-            
             for i in changed_indices {
                 open_loops[i].1 = false;
             }
@@ -189,9 +253,7 @@ fn generate_and_sim(
 ) {
     if remaining_length == 0 {
         for &(_, has_dec) in open_loops.iter() {
-            if !has_dec {
-                return; // Reject invalid unclosed loops
-            }
+            if !has_dec { return; }
         }
 
         for _ in 0..open_loops.len() {
@@ -221,7 +283,7 @@ fn generate_and_sim(
 
     if !open_loops.is_empty() {
         let last_loop = open_loops.last().unwrap();
-        if last_loop.1 { // Only close if it has decremented its loop variable
+        if last_loop.1 {
             current_flat.push(FlatInstr::WhileEnd);
             let popped = open_loops.pop().unwrap();
             generate_and_sim(remaining_length, max_var, open_loops, current_flat, local_res, sim, max_steps);
@@ -248,7 +310,6 @@ fn generate_and_sim(
 
         if is_valid_primitive(last_instr.as_ref(), v, false) {
             current_flat.push(FlatInstr::Dec(v));
-            
             let mut changed_indices = Vec::new();
             for (i, loop_state) in open_loops.iter_mut().enumerate() {
                 if loop_state.0 == v && !loop_state.1 {
@@ -256,9 +317,7 @@ fn generate_and_sim(
                     changed_indices.push(i);
                 }
             }
-            
             generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps);
-            
             for i in changed_indices {
                 open_loops[i].1 = false;
             }

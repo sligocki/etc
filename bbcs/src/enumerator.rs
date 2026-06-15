@@ -33,6 +33,7 @@ pub struct SearchResult {
     pub infinites_stationary: usize,
     pub infinites_translated: usize,
     pub infinites_symbolic: usize,
+    pub infinites_sum: usize,
     pub max_score: usize,
     pub champion_code: String,
 }
@@ -46,6 +47,7 @@ impl SearchResult {
             infinites_stationary: 0,
             infinites_translated: 0,
             infinites_symbolic: 0,
+            infinites_sum: 0,
             max_score: 0,
             champion_code: String::new(),
         }
@@ -58,6 +60,7 @@ impl SearchResult {
         self.infinites_stationary += other.infinites_stationary;
         self.infinites_translated += other.infinites_translated;
         self.infinites_symbolic += other.infinites_symbolic;
+        self.infinites_sum += other.infinites_sum;
         if other.max_score > self.max_score {
             self.max_score = other.max_score;
             self.champion_code = other.champion_code.clone();
@@ -479,12 +482,9 @@ fn generate_and_sim(
             RunResult::Infinite(reason) => {
                 match reason {
                     InfiniteReason::StationaryCycle => local_res.infinites_stationary += 1,
-                    InfiniteReason::TranslatedCycle => {
-                        local_res.infinites_translated += 1;
-                    }
-                    InfiniteReason::SymbolicMonotonic => {
-                        local_res.infinites_symbolic += 1;
-                    }
+                    InfiniteReason::TranslatedCycle => local_res.infinites_translated += 1,
+                    InfiniteReason::SymbolicMonotonic => local_res.infinites_symbolic += 1,
+                    InfiniteReason::SumMonotonic => local_res.infinites_sum += 1,
                 }
                 if tx.is_some() {
                     local_buffer.push(format!("{} Infinite({:?})", format_program(&ast), reason));
@@ -493,7 +493,7 @@ fn generate_and_sim(
             RunResult::Unknown => {
                 local_res.timeouts += 1;
                 if tx.is_some() {
-                    local_buffer.push(format!("{} Unknown >{}", format_program(&ast), max_steps));
+                    local_buffer.push(format!("{} Timeout", format_program(&ast)));
                 }
             }
         }

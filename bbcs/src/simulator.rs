@@ -5,6 +5,7 @@ pub enum InfiniteReason {
     StationaryCycle,
     TranslatedCycle,
     SymbolicMonotonic,
+    SumMonotonic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +156,7 @@ fn evaluate_symbolic(body: &[Instr]) -> Option<LowerBoundState> {
             }
         }
     }
-    
+    //println!("Evaluated body to: {:?}", state);
     Some(state)
 }
 
@@ -176,22 +177,19 @@ impl Simulator {
         }
     }
 
-    fn is_safe_monotonic_body(body: &[Instr], active_loops: &mut Vec<usize>) -> bool {
-        // Try rigorous symbolic evaluator first
+    fn is_safe_monotonic_body(body: &[Instr], active_loops: &mut Vec<usize>) -> Option<InfiniteReason> {
         if active_loops.is_empty() {
             if let Some(_) = evaluate_symbolic(body) {
-                return true;
+                return Some(InfiniteReason::SymbolicMonotonic);
             }
         }
-        
-        // Fallback to strict structural heuristic
         for instr in body {
             match instr {
                 Instr::Inc(_) => {}
                 Instr::Dec(z) => {
                     for &l in active_loops.iter() {
                         if l != *z {
-                            return false;
+                            return None;
                         }
                     }
                 }
@@ -199,13 +197,13 @@ impl Simulator {
                     active_loops.push(*y);
                     let safe = Self::is_safe_monotonic_body(inner_body, active_loops);
                     active_loops.pop();
-                    if !safe {
-                        return false;
+                    if safe.is_none() {
+                        return None;
                     }
                 }
             }
         }
-        true
+        Some(InfiniteReason::SumMonotonic)
     }
 
     fn ensure_counter(&mut self, var: usize) {
@@ -278,7 +276,7 @@ impl Simulator {
                                     }
                                     if m2 > m1 {
                                         is_translated = true;
-                                        if !is_safe || !same_exec {
+                                        if is_safe.is_none() || !same_exec {
                                             if m1 == 0 {
                                                 is_inf = false;
                                                 break;
@@ -292,12 +290,16 @@ impl Simulator {
                                 }
                                 if is_inf {
                                     if is_translated {
-                                        if is_safe && same_exec {
-                                            return Err(Some(InfiniteReason::SymbolicMonotonic));
+                                        if let Some(reason) = is_safe {
+                                            if same_exec {
+                                                return Err(Some(reason));
+                                            } else {
+                                                return Err(Some(InfiniteReason::TranslatedCycle));
+                                            }
                                         } else {
                                             return Err(Some(InfiniteReason::TranslatedCycle));
                                         }
-                                    } else {
+                                    } else if hist_step > self.last_zero_step[*v] {
                                         return Err(Some(InfiniteReason::StationaryCycle));
                                     }
                                 }

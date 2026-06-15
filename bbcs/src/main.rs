@@ -36,7 +36,8 @@ fn main() {
     println!("Timeouts:       {}", results.timeouts);
     println!("Inf (Stat):     {}", results.infinites_stationary);
     println!("Inf (Trans):    {}", results.infinites_translated);
-    println!("Inf (Symbolic):   {}", results.infinites_symbolic);
+    println!("Inf (Symbolic): {}", results.infinites_symbolic);
+    println!("Inf (Sum):      {}", results.infinites_sum);
     println!("Max Score:      {}", results.max_score);
     if !results.champion_code.is_empty() {
         println!("Champion Code:  {}", results.champion_code);

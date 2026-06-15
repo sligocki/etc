@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use std::sync::{Arc, Mutex, Condvar};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::mpsc::SyncSender;
 use std::io::{Write, BufWriter};
 use std::fs::File;
 
@@ -104,6 +104,7 @@ impl SharedProgress {
 }
 
 pub fn search_programs(length: usize, max_steps: usize, output_file: Option<String>) -> SearchResult {
+    rayon::ThreadPoolBuilder::new().stack_size(8 * 1024 * 1024).build_global().unwrap_or(());
     if length == 0 {
         return SearchResult::new();
     }
@@ -159,7 +160,7 @@ pub fn search_programs(length: usize, max_steps: usize, output_file: Option<Stri
     let mut tx_opt = None;
     let mut writer_thread = None;
     if let Some(file_path) = output_file {
-        let (tx, rx) = sync_channel::<Vec<String>>(1024);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(1000);
         tx_opt = Some(tx);
         writer_thread = Some(std::thread::spawn(move || {
             let file = File::create(file_path).expect("Failed to create output file");

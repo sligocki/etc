@@ -1,6 +1,6 @@
 use crate::ast::Instr;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InfiniteReason {
     StationaryCycle,
     TranslatedCycle,
@@ -74,8 +74,8 @@ fn new_identity_state() -> LowerBoundState {
     ]
 }
 
-fn evaluate_symbolic(body: &[Instr]) -> Option<LowerBoundState> {
-    let mut state = new_identity_state();
+fn evaluate_symbolic(body: &[Instr]) -> Option<Box<LowerBoundState>> {
+    let mut state = Box::new(new_identity_state());
     
     for instr in body {
         match instr {
@@ -289,18 +289,18 @@ impl Simulator {
                                     }
                                 }
                                 if is_inf {
-                                    if is_translated {
+                                    if !is_translated {
+                                        //println!("Stationary cycle detected! IP: {}, counters: {:?}", ip, current_state);
+                                        return Err(Some(InfiniteReason::StationaryCycle));
+                                    } else {
                                         if let Some(reason) = is_safe {
                                             if same_exec {
                                                 return Err(Some(reason));
-                                            } else {
-                                                return Err(Some(InfiniteReason::TranslatedCycle));
                                             }
-                                        } else {
+                                        }
+                                        if hist_step > self.last_zero_step[*v] {
                                             return Err(Some(InfiniteReason::TranslatedCycle));
                                         }
-                                    } else if hist_step > self.last_zero_step[*v] {
-                                        return Err(Some(InfiniteReason::StationaryCycle));
                                     }
                                 }
                             }

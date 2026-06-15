@@ -31,8 +31,8 @@ impl Tape {
         }
     }
 
-    pub fn score(&self) -> u32 {
-        self.nodes.iter().filter(|n| n.symbol != 0).count() as u32
+    pub fn space(&self) -> u32 {
+        self.nodes.len() as u32
     }
 }
 
@@ -45,7 +45,7 @@ pub enum InfReason {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimResult {
-    Halt(u64, u32), // steps, score
+    Halt(u64, u32), // steps, space
     LimitReached,
     UndefinedTrans,
     Infinite(InfReason),
@@ -111,7 +111,7 @@ impl Simulator {
                     }
                     s
                 },
-                State::Halt => return SimResult::Halt(self.steps, self.tape.score()),
+                State::Halt => return SimResult::Halt(self.steps, self.tape.space()),
             };
 
             let curr = self.head as usize;
@@ -152,6 +152,11 @@ impl Simulator {
 
             self.tape.nodes[curr].symbol = trans.symbol;
             self.state = trans.next_state;
+
+            if self.state == State::Halt {
+                self.steps += 1;
+                return SimResult::Halt(self.steps, self.tape.space());
+            }
 
             let next_idx = match trans.dir {
                 Direction::R => self.tape.nodes[curr].r,
@@ -219,7 +224,7 @@ impl Simulator {
                     }
                     s
                 },
-                State::Halt => return (SimResult::Halt(self.steps, self.tape.score()), transcript),
+                State::Halt => return (SimResult::Halt(self.steps, self.tape.space()), transcript),
             };
 
             let curr = self.head as usize;
@@ -262,6 +267,11 @@ impl Simulator {
 
             self.tape.nodes[curr].symbol = trans.symbol;
             self.state = trans.next_state;
+
+            if self.state == State::Halt {
+                self.steps += 1;
+                return (SimResult::Halt(self.steps, self.tape.space()), transcript);
+            }
 
             let next_idx = match trans.dir {
                 Direction::R => self.tape.nodes[curr].r,

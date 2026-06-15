@@ -109,8 +109,8 @@ fn main() {
             println!("Transcript:\n{}", trans_str.trim_end());
 
             match result {
-                SimResult::Halt(s, score) => {
-                    println!("Halt {} {}", s, score);
+                SimResult::Halt(s, space) => {
+                    println!("Halt {} {}", s, space);
                 }
                 SimResult::LimitReached => {
                     println!("Unknown");
@@ -147,8 +147,8 @@ fn main() {
             let mut num_total = 0;
             let mut max_steps = 0;
             let mut max_steps_tms = Vec::new();
-            let mut max_score = 0;
-            let mut max_score_tms = Vec::new();
+            let mut max_space = 0;
+            let mut max_space_tms = Vec::new();
             let mut max_time = std::time::Duration::ZERO;
             
             let mut out_file = output.as_ref().map(|p| std::fs::File::create(p).unwrap());
@@ -174,7 +174,7 @@ fn main() {
                 let tm_str = parser::tm_to_string(&tm);
 
                 match result {
-                    SimResult::Halt(s, score) => {
+                    SimResult::Halt(s, space) => {
                         num_halt += 1;
                         if s > max_steps { 
                             max_steps = s; 
@@ -184,12 +184,12 @@ fn main() {
                             max_steps_tms.push(tm_str.clone());
                         }
 
-                        if score > max_score { 
-                            max_score = score; 
-                            max_score_tms.clear();
-                            max_score_tms.push(tm_str.clone());
-                        } else if score == max_score {
-                            max_score_tms.push(tm_str.clone());
+                        if space > max_space { 
+                            max_space = space; 
+                            max_space_tms.clear();
+                            max_space_tms.push(tm_str.clone());
+                        } else if space == max_space {
+                            max_space_tms.push(tm_str.clone());
                         }
                     }
                     SimResult::LimitReached => {
@@ -209,7 +209,7 @@ fn main() {
 
                 if let Some(f) = &mut out_file {
                     let out_str = match result {
-                        SimResult::Halt(steps, score) => format!("Halt {} {}", steps, score),
+                        SimResult::Halt(steps, space) => format!("Halt {} {}", steps, space),
                         SimResult::LimitReached => "Unknown Limit".to_string(),
                         SimResult::Infinite(simulator::InfReason::Stationary) => "Infinite Stationary".to_string(),
                         SimResult::Infinite(simulator::InfReason::Translated) => "Infinite Translated".to_string(),
@@ -236,11 +236,11 @@ fn main() {
 
                     let now = chrono::Local::now().format("%H:%M:%S").to_string();
                     let step_champ = max_steps_tms.first().map(|s| s.as_str()).unwrap_or("None");
-                    let score_champ = max_score_tms.first().map(|s| s.as_str()).unwrap_or("None");
+                    let space_champ = max_space_tms.first().map(|s| s.as_str()).unwrap_or("None");
                     
                     println!(
-                        "[{}] Total: {} | Halt: {} ({:.2}%) | Inf: {} ({:.2}%) | Max Steps: {} ({}) | Max Score: {} ({})",
-                        now, num_total, num_halt, pct_halt, num_infinite, pct_inf, max_steps, step_champ, max_score, score_champ
+                        "[{}] Total: {} | Halt: {} ({:.2}%) | Inf: {} ({:.2}%) | Max Steps: {} ({}) | Max Space: {} ({})",
+                        now, num_total, num_halt, pct_halt, num_infinite, pct_inf, max_steps, step_champ, max_space, space_champ
                     );
                 }
             }
@@ -278,14 +278,14 @@ fn main() {
                 }
             }
 
-            println!("Max Halt Score      : {}", max_score);
-            if !max_score_tms.is_empty() {
-                println!("Max Score TMs       :");
-                for (i, t) in max_score_tms.iter().take(5).enumerate() {
+            println!("Max Halt Space      : {}", max_space);
+            if !max_space_tms.is_empty() {
+                println!("Max Space TMs       :");
+                for (i, t) in max_space_tms.iter().take(5).enumerate() {
                     println!("  {}", t);
                 }
-                if max_score_tms.len() > 5 {
-                    println!("  ... and {} more", max_score_tms.len() - 5);
+                if max_space_tms.len() > 5 {
+                    println!("  ... and {} more", max_space_tms.len() - 5);
                 }
             }
 

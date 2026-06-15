@@ -20,7 +20,7 @@ pub enum FlatInstr {
 struct PrefixState {
     remaining_length: usize,
     max_var: Option<usize>,
-    open_loops: Vec<(usize, bool, bool)>, // (var, has_dec, has_top_level_inc_at_end)
+    open_loops: Vec<(usize, usize, bool)>, // (var, effective_decs, has_top_level_inc_at_end)
     flat: Vec<FlatInstr>,
     inc_mask: u32,
     unresolved_mask: u32,
@@ -333,7 +333,7 @@ fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
 fn generate_prefixes(
     remaining_length: usize,
     max_var: Option<usize>,
-    open_loops: &mut Vec<(usize, bool, bool)>,
+    open_loops: &mut Vec<(usize, usize, bool)>,
     steps_left: usize,
     current_flat: &mut Vec<FlatInstr>,
     prefixes: &mut Vec<PrefixState>,
@@ -354,7 +354,7 @@ fn generate_prefixes(
                 }
             }
             for loop_state in open_loops.iter() {
-                if !loop_state.1 || loop_state.2 { return; }
+                if loop_state.1 == 0 || loop_state.2 { return; }
             }
             if !is_canonical(current_flat, max_var.unwrap_or(0)) {
                 return;
@@ -373,7 +373,7 @@ fn generate_prefixes(
 
     if !open_loops.is_empty() {
         let last_loop = open_loops.last().unwrap();
-        if last_loop.1 && !last_loop.2 {
+        if last_loop.1 > 0 && !last_loop.2 {
             if open_loops.len() == 1 && unresolved_mask != 0 {
                 // Reject: outer loop closes before inner variables are resolved with an increment
             } else {
@@ -401,6 +401,17 @@ fn generate_prefixes(
         if is_valid_primitive(last_instr.as_ref(), v, true) {
             current_flat.push(FlatInstr::Inc(v));
             let mut changed_inc = false;
+            let mut cancelled_decs = Vec::new();
+            if let Some(FlatInstr::Dec(prev_v)) = last_instr {
+                if prev_v == v {
+                    for (i, loop_state) in open_loops.iter_mut().enumerate() {
+                        if loop_state.0 == v {
+                            loop_state.1 -= 1;
+                            cancelled_decs.push(i);
+                        }
+                    }
+                }
+            }
             if let Some(last_loop) = open_loops.last_mut() {
                 if last_loop.0 == v && !last_loop.2 {
                     last_loop.2 = true;
@@ -410,6 +421,9 @@ fn generate_prefixes(
             generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask | (1 << v), unresolved_mask & !(1 << v));
             if changed_inc {
                 open_loops.last_mut().unwrap().2 = false;
+            }
+            for i in cancelled_decs {
+                open_loops[i].1 += 1;
             }
             current_flat.pop();
         }
@@ -425,7 +439,7 @@ fn generate_prefixes(
                     for (i, loop_state) in open_loops.iter_mut().enumerate() {
                         if loop_state.0 == v {
                             changed_state.push((i, loop_state.1, loop_state.2));
-                            loop_state.1 = true;
+                            loop_state.1 += 1;
                             loop_state.2 = false;
                         }
                     }
@@ -439,7 +453,7 @@ fn generate_prefixes(
             }
 
             current_flat.push(FlatInstr::WhileStart(v));
-            open_loops.push((v, false, false));
+            open_loops.push((v, 0, false));
             generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, next_unresolved);
             open_loops.pop();
             current_flat.pop();
@@ -450,7 +464,7 @@ fn generate_prefixes(
 fn generate_and_sim(
     remaining_length: usize,
     max_var: Option<usize>,
-    open_loops: &mut Vec<(usize, bool, bool)>,
+    open_loops: &mut Vec<(usize, usize, bool)>,
     current_flat: &mut Vec<FlatInstr>,
     local_res: &mut SearchResult,
     sim: &mut Simulator,
@@ -475,7 +489,7 @@ fn generate_and_sim(
         }
 
         for loop_state in open_loops.iter() {
-            if !loop_state.1 || loop_state.2 { return; }
+            if loop_state.1 == 0 || loop_state.2 { return; }
         }
 
         if !is_canonical(current_flat, max_var.unwrap_or(0)) {
@@ -536,7 +550,7 @@ fn generate_and_sim(
 
     if !open_loops.is_empty() {
         let last_loop = open_loops.last().unwrap();
-        if last_loop.1 && !last_loop.2 {
+        if last_loop.1 > 0 && !last_loop.2 {
             if open_loops.len() == 1 && unresolved_mask != 0 {
                 // Reject
             } else {
@@ -564,6 +578,17 @@ fn generate_and_sim(
         if is_valid_primitive(last_instr.as_ref(), v, true) {
             current_flat.push(FlatInstr::Inc(v));
             let mut changed_inc = false;
+            let mut cancelled_decs = Vec::new();
+            if let Some(FlatInstr::Dec(prev_v)) = last_instr {
+                if prev_v == v {
+                    for (i, loop_state) in open_loops.iter_mut().enumerate() {
+                        if loop_state.0 == v {
+                            loop_state.1 -= 1;
+                            cancelled_decs.push(i);
+                        }
+                    }
+                }
+            }
             if let Some(last_loop) = open_loops.last_mut() {
                 if last_loop.0 == v && !last_loop.2 {
                     last_loop.2 = true;
@@ -573,6 +598,9 @@ fn generate_and_sim(
             generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask | (1 << v), unresolved_mask & !(1 << v), progress);
             if changed_inc {
                 open_loops.last_mut().unwrap().2 = false;
+            }
+            for i in cancelled_decs {
+                open_loops[i].1 += 1;
             }
             current_flat.pop();
         }
@@ -588,7 +616,7 @@ fn generate_and_sim(
                     for (i, loop_state) in open_loops.iter_mut().enumerate() {
                         if loop_state.0 == v {
                             changed_state.push((i, loop_state.1, loop_state.2));
-                            loop_state.1 = true;
+                            loop_state.1 += 1;
                             loop_state.2 = false;
                         }
                     }
@@ -602,7 +630,7 @@ fn generate_and_sim(
             }
 
             current_flat.push(FlatInstr::WhileStart(v));
-            open_loops.push((v, false, false));
+            open_loops.push((v, 0, false));
             generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, next_unresolved, progress);
             open_loops.pop();
             current_flat.pop();

@@ -17,6 +17,10 @@ struct Args {
     /// Maximum steps for the simulator before timing out
     #[arg(short, long)]
     max_steps: usize,
+
+    /// Output file to save simulation results
+    #[arg(short, long)]
+    output: Option<String>,
 }
 
 fn main() {
@@ -24,7 +28,7 @@ fn main() {
     println!("Streaming and simulating all canonical programs of length {} with max steps {}...", args.length, args.max_steps);
     let start_time = Instant::now();
 
-    let results = search_programs(args.length, args.max_steps);
+    let results = search_programs(args.length, args.max_steps, args.output);
 
     println!("Completed in {:?}", start_time.elapsed());
     println!("--- Results ---");

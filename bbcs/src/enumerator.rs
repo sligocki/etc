@@ -4,6 +4,9 @@ use rayon::prelude::*;
 use std::sync::{Arc, Mutex, Condvar};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use std::sync::mpsc::{sync_channel, SyncSender};
+use std::io::{Write, BufWriter};
+use std::fs::File;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum FlatInstr {
@@ -70,7 +73,7 @@ impl SharedProgress {
     }
 }
 
-pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
+pub fn search_programs(length: usize, max_steps: usize, output_file: Option<String>) -> SearchResult {
     if length == 0 {
         return SearchResult::new();
     }
@@ -121,11 +124,28 @@ pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
         }
     });
 
-    let result = prefixes.into_par_iter().map(|prefix| {
+    let mut tx_opt = None;
+    let mut writer_thread = None;
+    if let Some(file_path) = output_file {
+        let (tx, rx) = sync_channel::<Vec<String>>(1024);
+        tx_opt = Some(tx);
+        writer_thread = Some(std::thread::spawn(move || {
+            let file = File::create(file_path).expect("Failed to create output file");
+            let mut writer = BufWriter::new(file);
+            while let Ok(batch) = rx.recv() {
+                for line in batch {
+                    writeln!(writer, "{}", line).unwrap();
+                }
+            }
+        }));
+    }
+
+    let result = prefixes.into_par_iter().map_with(tx_opt, |tx, prefix| {
         let mut local_res = SearchResult::new();
         let mut sim = Simulator::new();
         let mut current_flat = prefix.flat.clone();
         let mut open_loops = prefix.open_loops.clone();
+        let mut local_buffer = Vec::with_capacity(10_000);
         
         generate_and_sim(
             prefix.remaining_length,
@@ -135,7 +155,15 @@ pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
             &mut local_res,
             &mut sim,
             max_steps,
+            tx,
+            &mut local_buffer,
         );
+        
+        if let Some(tx_sender) = tx {
+            if !local_buffer.is_empty() {
+                let _ = tx_sender.send(local_buffer);
+            }
+        }
         
         progress.total.fetch_add(local_res.total, Ordering::Relaxed);
         progress.halted.fetch_add(local_res.halted, Ordering::Relaxed);
@@ -156,6 +184,10 @@ pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
     *progress.done_mutex.lock().unwrap() = true;
     progress.done_cvar.notify_all();
     let _ = progress_thread.join();
+    
+    if let Some(wt) = writer_thread {
+        let _ = wt.join();
+    }
 
     result
 }
@@ -257,6 +289,8 @@ fn generate_and_sim(
     local_res: &mut SearchResult,
     sim: &mut Simulator,
     max_steps: usize,
+    tx: &mut Option<SyncSender<Vec<String>>>,
+    local_buffer: &mut Vec<String>,
 ) {
     if remaining_length == 0 {
         for &(_, has_dec) in open_loops.iter() {
@@ -271,6 +305,9 @@ fn generate_and_sim(
         local_res.total += 1;
         match sim.run(&ast, max_steps) {
             RunResult::Halted { score } => {
+                if tx.is_some() {
+                    local_buffer.push(format!("{} Halt {}", format_program(&ast), score));
+                }
                 local_res.halted += 1;
                 if score > local_res.max_score || local_res.champion.is_none() {
                     local_res.max_score = score;
@@ -278,7 +315,17 @@ fn generate_and_sim(
                 }
             }
             RunResult::Timeout => {
+                if tx.is_some() {
+                    local_buffer.push(format!("{} Unknown >{}", format_program(&ast), max_steps));
+                }
                 local_res.timeouts += 1;
+            }
+        }
+        
+        if local_buffer.len() >= 10_000 {
+            if let Some(tx_sender) = tx {
+                let chunk = std::mem::replace(local_buffer, Vec::with_capacity(10_000));
+                let _ = tx_sender.send(chunk);
             }
         }
 
@@ -293,7 +340,7 @@ fn generate_and_sim(
         if last_loop.1 {
             current_flat.push(FlatInstr::WhileEnd);
             let popped = open_loops.pop().unwrap();
-            generate_and_sim(remaining_length, max_var, open_loops, current_flat, local_res, sim, max_steps);
+            generate_and_sim(remaining_length, max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer);
             open_loops.push(popped);
             current_flat.pop();
         }
@@ -311,7 +358,7 @@ fn generate_and_sim(
 
         if is_valid_primitive(last_instr.as_ref(), v, true) {
             current_flat.push(FlatInstr::Inc(v));
-            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps);
+            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer);
             current_flat.pop();
         }
 
@@ -324,7 +371,7 @@ fn generate_and_sim(
                     changed_indices.push(i);
                 }
             }
-            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps);
+            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer);
             for i in changed_indices {
                 open_loops[i].1 = false;
             }
@@ -333,7 +380,7 @@ fn generate_and_sim(
 
         current_flat.push(FlatInstr::WhileStart(v));
         open_loops.push((v, false));
-        generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps);
+        generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer);
         open_loops.pop();
         current_flat.pop();
     }

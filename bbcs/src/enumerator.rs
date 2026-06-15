@@ -1,5 +1,5 @@
 use crate::ast::{Instr, format_program};
-use crate::simulator::{Simulator, RunResult};
+use crate::simulator::{Simulator, RunResult, InfiniteReason};
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex, Condvar};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,7 +30,8 @@ pub struct SearchResult {
     pub total: usize,
     pub halted: usize,
     pub timeouts: usize,
-    pub infinites: usize,
+    pub infinites_stationary: usize,
+    pub infinites_translated: usize,
     pub max_score: usize,
     pub champion_code: String,
 }
@@ -41,7 +42,8 @@ impl SearchResult {
             total: 0,
             halted: 0,
             timeouts: 0,
-            infinites: 0,
+            infinites_stationary: 0,
+            infinites_translated: 0,
             max_score: 0,
             champion_code: String::new(),
         }
@@ -51,7 +53,8 @@ impl SearchResult {
         self.total += other.total;
         self.halted += other.halted;
         self.timeouts += other.timeouts;
-        self.infinites += other.infinites;
+        self.infinites_stationary += other.infinites_stationary;
+        self.infinites_translated += other.infinites_translated;
         if other.max_score > self.max_score {
             self.max_score = other.max_score;
             self.champion_code = other.champion_code.clone();
@@ -63,7 +66,8 @@ pub struct SharedProgress {
     pub total: AtomicUsize,
     pub halted: AtomicUsize,
     pub timeouts: AtomicUsize,
-    pub infinites: AtomicUsize,
+    pub infinites_stationary: AtomicUsize,
+    pub infinites_translated: AtomicUsize,
     pub max_score: Mutex<usize>,
     pub champion_code: Mutex<String>,
     pub done_mutex: Mutex<bool>,
@@ -76,7 +80,8 @@ impl SharedProgress {
             total: AtomicUsize::new(0),
             halted: AtomicUsize::new(0),
             timeouts: AtomicUsize::new(0),
-            infinites: AtomicUsize::new(0),
+            infinites_stationary: AtomicUsize::new(0),
+            infinites_translated: AtomicUsize::new(0),
             max_score: Mutex::new(0),
             champion_code: Mutex::new(String::new()),
             done_mutex: Mutex::new(false),
@@ -184,7 +189,8 @@ pub fn search_programs(length: usize, max_steps: usize, output_file: Option<Stri
         progress.total.fetch_add(local_res.total, Ordering::Relaxed);
         progress.halted.fetch_add(local_res.halted, Ordering::Relaxed);
         progress.timeouts.fetch_add(local_res.timeouts, Ordering::Relaxed);
-        progress.infinites.fetch_add(local_res.infinites, Ordering::Relaxed);
+        progress.infinites_stationary.fetch_add(local_res.infinites_stationary, Ordering::Relaxed);
+        progress.infinites_translated.fetch_add(local_res.infinites_translated, Ordering::Relaxed);
         
         let mut score_lock = progress.max_score.lock().unwrap();
         let mut champ_lock = progress.champion_code.lock().unwrap();
@@ -462,10 +468,13 @@ fn generate_and_sim(
                     local_buffer.push(format!("{} Halt {}", format_program(&ast), score));
                 }
             }
-            RunResult::Infinite => {
-                local_res.infinites += 1;
+            RunResult::Infinite(reason) => {
+                match reason {
+                    InfiniteReason::StationaryCycle => local_res.infinites_stationary += 1,
+                    InfiniteReason::TranslatedCycle => local_res.infinites_translated += 1,
+                }
                 if tx.is_some() {
-                    local_buffer.push(format!("{} Infinite", format_program(&ast)));
+                    local_buffer.push(format!("{} Infinite({:?})", format_program(&ast), reason));
                 }
             }
             RunResult::Unknown => {

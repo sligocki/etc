@@ -1,9 +1,15 @@
 use crate::ast::Instr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InfiniteReason {
+    StationaryCycle,
+    TranslatedCycle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunResult {
     Halted { score: usize },
-    Infinite,
+    Infinite(InfiniteReason),
     Unknown,
 }
 
@@ -40,16 +46,16 @@ impl Simulator {
                 let score = self.counters.iter().copied().max().unwrap_or(0);
                 RunResult::Halted { score }
             }
-            Err(true) => RunResult::Infinite,
-            Err(false) => RunResult::Unknown,
+            Err(Some(reason)) => RunResult::Infinite(reason),
+            Err(None) => RunResult::Unknown,
         }
     }
 
-    fn run_block(&mut self, program: &[Instr], steps: &mut usize, max_steps: usize) -> Result<(), bool> {
+    fn run_block(&mut self, program: &[Instr], steps: &mut usize, max_steps: usize) -> Result<(), Option<InfiniteReason>> {
         for instr in program {
             *steps += 1;
             if *steps > max_steps {
-                return Err(false);
+                return Err(None);
             }
 
             match instr {
@@ -75,6 +81,7 @@ impl Simulator {
                         for &(hist_ip, hist_step, ref hist_counters) in self.history.iter().rev() {
                             if hist_ip == ip {
                                 let mut is_inf = true;
+                                let mut is_translated = false;
                                 for i in 0..current_state.len() {
                                     let m1 = hist_counters.get(i).copied().unwrap_or(0);
                                     let m2 = current_state[i];
@@ -84,6 +91,7 @@ impl Simulator {
                                         break;
                                     }
                                     if m2 > m1 {
+                                        is_translated = true;
                                         if m1 == 0 {
                                             is_inf = false;
                                             break;
@@ -95,7 +103,11 @@ impl Simulator {
                                     }
                                 }
                                 if is_inf {
-                                    return Err(true);
+                                    if is_translated {
+                                        return Err(Some(InfiniteReason::TranslatedCycle));
+                                    } else {
+                                        return Err(Some(InfiniteReason::StationaryCycle));
+                                    }
                                 }
                             }
                         }
@@ -106,7 +118,7 @@ impl Simulator {
                         
                         *steps += 1;
                         if *steps > max_steps {
-                            return Err(false);
+                            return Err(None);
                         }
                     }
                 }

@@ -34,8 +34,9 @@ fn main() {
     println!("--- Results ---");
     println!("Total:     {}", results.total);
     println!("Halted:    {}", results.halted);
-    println!("Infinite:  {}", results.infinites);
-    println!("Unknown:   {}", results.timeouts);
+    println!("Infinite (Stat): {}", results.infinites_stationary);
+    println!("Infinite (Tran): {}", results.infinites_translated);
+    println!("Unknown:         {}", results.timeouts);
     println!("Max Score: {}", results.max_score);
     if !results.champion_code.is_empty() {
         println!("Champion Code:  {}", results.champion_code);

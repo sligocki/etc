@@ -17,7 +17,8 @@ pub enum RunResult {
 pub struct Simulator {
     pub counters: Vec<usize>,
     pub last_zero_step: Vec<usize>,
-    pub history: Vec<(usize, usize, Vec<usize>)>, // (IP, step, counters)
+    pub history: Vec<(usize, usize, Vec<usize>, usize)>, // (IP, step, counters, exec_id)
+    pub next_exec_id: usize,
 }
 
 impl Simulator {
@@ -26,6 +27,7 @@ impl Simulator {
             counters: Vec::new(), 
             last_zero_step: Vec::new(),
             history: Vec::new(),
+            next_exec_id: 0,
         }
     }
 
@@ -34,9 +36,6 @@ impl Simulator {
             match instr {
                 Instr::Inc(_) => {}
                 Instr::Dec(z) => {
-                    if active_loops.is_empty() {
-                        return false;
-                    }
                     for &l in active_loops.iter() {
                         if l != *z {
                             return false;
@@ -68,6 +67,7 @@ impl Simulator {
         self.counters.clear();
         self.last_zero_step.clear();
         self.history.clear();
+        self.next_exec_id = 0;
 
         match self.run_block(program, &mut steps, max_steps) {
             Ok(_) => {
@@ -104,11 +104,15 @@ impl Simulator {
                     self.ensure_counter(*v);
                     let ip = instr as *const Instr as usize;
                     let is_safe = Self::is_safe_monotonic_body(body, &mut Vec::new());
+                    self.next_exec_id += 1;
+                    let my_exec_id = self.next_exec_id;
+                    
                     while self.counters[*v] > 0 {
                         let current_state = self.counters.clone();
                         
-                        for &(hist_ip, hist_step, ref hist_counters) in self.history.iter().rev() {
+                        for &(hist_ip, hist_step, ref hist_counters, hist_exec_id) in self.history.iter().rev() {
                             if hist_ip == ip {
+                                let same_exec = hist_exec_id == my_exec_id;
                                 let mut is_inf = true;
                                 let mut is_translated = false;
                                 for i in 0..current_state.len() {
@@ -121,7 +125,7 @@ impl Simulator {
                                     }
                                     if m2 > m1 {
                                         is_translated = true;
-                                        if !is_safe {
+                                        if !is_safe || !same_exec {
                                             if m1 == 0 {
                                                 is_inf = false;
                                                 break;
@@ -135,7 +139,7 @@ impl Simulator {
                                 }
                                 if is_inf {
                                     if is_translated {
-                                        if is_safe {
+                                        if is_safe && same_exec {
                                             return Err(Some(InfiniteReason::SumMonotonic));
                                         } else {
                                             return Err(Some(InfiniteReason::TranslatedCycle));
@@ -147,7 +151,7 @@ impl Simulator {
                             }
                         }
                         
-                        self.history.push((ip, *steps, current_state));
+                        self.history.push((ip, *steps, current_state, my_exec_id));
 
                         self.run_block(body, steps, max_steps)?;
                         

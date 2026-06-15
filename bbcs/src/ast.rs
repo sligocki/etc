@@ -20,7 +20,11 @@ pub fn format_program(program: &[Instr]) -> String {
             Instr::Inc(v) => parts.push(format!("{}++;", var_name(*v))),
             Instr::Dec(v) => parts.push(format!("{}--;", var_name(*v))),
             Instr::While(v, body) => {
-                parts.push(format!("while {} {{ {} }}", var_name(*v), format_program(body)));
+                parts.push(format!(
+                    "while {} {{ {} }}",
+                    var_name(*v),
+                    format_program(body)
+                ));
             }
         }
     }

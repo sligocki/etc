@@ -28,28 +28,36 @@ impl LowerBoundExpr {
         coeffs[v] = 1;
         Self { coeffs, k: 0 }
     }
-    
+
     fn is_zero(&self) -> bool {
         self.k == 0 && self.coeffs.iter().all(|&c| c == 0)
     }
-    
+
     // Checks if the expression is exactly V_y + c * V_x
     fn is_transfer_pattern(&self, x: usize, y: usize) -> Option<usize> {
-        if self.k != 0 { return None; }
+        if self.k != 0 {
+            return None;
+        }
         for i in 0..self.coeffs.len() {
             if i == y {
-                if self.coeffs[i] != 1 { return None; }
+                if self.coeffs[i] != 1 {
+                    return None;
+                }
             } else if i == x {
                 // allow any c >= 0
             } else {
-                if self.coeffs[i] != 0 { return None; }
+                if self.coeffs[i] != 0 {
+                    return None;
+                }
             }
         }
         Some(self.coeffs[x])
     }
-    
+
     fn add_scaled(&mut self, other: &LowerBoundExpr, scale: usize) {
-        if scale == 0 { return; }
+        if scale == 0 {
+            return;
+        }
         for i in 0..self.coeffs.len() {
             self.coeffs[i] += other.coeffs[i] * scale;
         }
@@ -60,42 +68,49 @@ impl LowerBoundExpr {
 type LowerBoundState = Vec<LowerBoundExpr>;
 
 fn new_identity_state(num_vars: usize) -> LowerBoundState {
-    (0..num_vars).map(|i| LowerBoundExpr::new_identity(i, num_vars)).collect()
+    (0..num_vars)
+        .map(|i| LowerBoundExpr::new_identity(i, num_vars))
+        .collect()
 }
 
 fn max_var(body: &[Instr]) -> usize {
-    body.iter().map(|instr| match instr {
-        Instr::Inc(v) | Instr::Dec(v) => *v,
-        Instr::While(v, inner) => (*v).max(max_var(inner)),
-    }).max().unwrap_or(0)
+    body.iter()
+        .map(|instr| match instr {
+            Instr::Inc(v) | Instr::Dec(v) => *v,
+            Instr::While(v, inner) => (*v).max(max_var(inner)),
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn evaluate_symbolic(body: &[Instr], num_vars: usize) -> Option<LowerBoundState> {
     let mut state = new_identity_state(num_vars);
-    
+
     for instr in body {
         match instr {
             Instr::Inc(v) => {
                 state[*v].k += 1;
             }
             Instr::Dec(_) => {
-                return None; 
+                return None;
             }
             Instr::While(v, inner_body) => {
                 let x = *v;
-                
+
                 let mut has_nested = false;
                 let mut decs = vec![0; num_vars];
                 let mut incs = vec![0; num_vars];
-                
+
                 for inner_instr in inner_body.iter() {
                     match inner_instr {
-                        Instr::While(_, _) => { has_nested = true; }
+                        Instr::While(_, _) => {
+                            has_nested = true;
+                        }
                         Instr::Inc(y) => incs[*y] += 1,
                         Instr::Dec(y) => decs[*y] += 1,
                     }
                 }
-                
+
                 if !has_nested && decs[x] == 1 {
                     let mut valid_transfer = true;
                     for i in 0..num_vars {
@@ -115,11 +130,14 @@ fn evaluate_symbolic(body: &[Instr], num_vars: usize) -> Option<LowerBoundState>
                                 }
                             }
                         }
-                        state[x] = LowerBoundExpr { coeffs: vec![0; num_vars], k: 0 };
+                        state[x] = LowerBoundExpr {
+                            coeffs: vec![0; num_vars],
+                            k: 0,
+                        };
                         continue;
                     }
                 }
-                
+
                 if let Some(inner_state) = evaluate_symbolic(inner_body, num_vars) {
                     if inner_state[x].is_zero() {
                         let mut valid_complex = true;
@@ -142,13 +160,16 @@ fn evaluate_symbolic(body: &[Instr], num_vars: usize) -> Option<LowerBoundState>
                                     state[i].add_scaled(&to_add, scales[i]);
                                 }
                             }
-                            state[x] = LowerBoundExpr { coeffs: vec![0; num_vars], k: 0 };
+                            state[x] = LowerBoundExpr {
+                                coeffs: vec![0; num_vars],
+                                k: 0,
+                            };
                             continue;
                         }
                     }
                 }
-                
-                return None; 
+
+                return None;
             }
         }
     }
@@ -165,15 +186,18 @@ pub struct Simulator {
 
 impl Simulator {
     pub fn new() -> Self {
-        Self { 
-            counters: Vec::new(), 
+        Self {
+            counters: Vec::new(),
             last_zero_step: Vec::new(),
             history: Vec::new(),
             next_exec_id: 0,
         }
     }
 
-    fn is_safe_monotonic_body(body: &[Instr], active_loops: &mut Vec<usize>) -> Option<InfiniteReason> {
+    fn is_safe_monotonic_body(
+        body: &[Instr],
+        active_loops: &mut Vec<usize>,
+    ) -> Option<InfiniteReason> {
         if active_loops.is_empty() {
             let num_vars = max_var(body) + 1;
             if let Some(_) = evaluate_symbolic(body, num_vars) {
@@ -227,7 +251,12 @@ impl Simulator {
         }
     }
 
-    fn run_block(&mut self, program: &[Instr], steps: &mut usize, max_steps: usize) -> Result<(), Option<InfiniteReason>> {
+    fn run_block(
+        &mut self,
+        program: &[Instr],
+        steps: &mut usize,
+        max_steps: usize,
+    ) -> Result<(), Option<InfiniteReason>> {
         for instr in program {
             *steps += 1;
             if *steps > max_steps {
@@ -254,11 +283,13 @@ impl Simulator {
                     let is_safe = Self::is_safe_monotonic_body(body, &mut Vec::new());
                     self.next_exec_id += 1;
                     let my_exec_id = self.next_exec_id;
-                    
+
                     while self.counters[*v] > 0 {
                         let current_state = self.counters.clone();
-                        
-                        for &(hist_ip, hist_step, ref hist_counters, hist_exec_id) in self.history.iter().rev() {
+
+                        for &(hist_ip, hist_step, ref hist_counters, hist_exec_id) in
+                            self.history.iter().rev()
+                        {
                             if hist_ip == ip {
                                 let same_exec = hist_exec_id == my_exec_id;
                                 let mut is_inf = true;
@@ -266,7 +297,7 @@ impl Simulator {
                                 for i in 0..current_state.len() {
                                     let m1 = hist_counters.get(i).copied().unwrap_or(0);
                                     let m2 = current_state[i];
-                                    
+
                                     if m2 < m1 {
                                         is_inf = false;
                                         break;
@@ -278,7 +309,9 @@ impl Simulator {
                                                 is_inf = false;
                                                 break;
                                             }
-                                            if self.last_zero_step.get(i).copied().unwrap_or(0) >= hist_step {
+                                            if self.last_zero_step.get(i).copied().unwrap_or(0)
+                                                >= hist_step
+                                            {
                                                 is_inf = false;
                                                 break;
                                             }
@@ -302,11 +335,11 @@ impl Simulator {
                                 }
                             }
                         }
-                        
+
                         self.history.push((ip, *steps, current_state, my_exec_id));
 
                         self.run_block(body, steps, max_steps)?;
-                        
+
                         *steps += 1;
                         if *steps > max_steps {
                             return Err(None);

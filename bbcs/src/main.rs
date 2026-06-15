@@ -1,9 +1,9 @@
 pub mod ast;
-pub mod simulator;
 pub mod enumerator;
+pub mod simulator;
 
-use clap::Parser;
 use crate::enumerator::search_programs;
+use clap::Parser;
 use std::time::Instant;
 
 #[derive(Parser, Debug)]
@@ -24,7 +24,10 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    println!("Streaming and simulating all canonical programs of length {} with max steps {}...", args.length, args.max_steps);
+    println!(
+        "Streaming and simulating all canonical programs of length {} with max steps {}...",
+        args.length, args.max_steps
+    );
     let start_time = Instant::now();
 
     let results = search_programs(args.length, args.max_steps, args.output);

@@ -1,8 +1,8 @@
 use crate::ast::{Instr, format_program};
 use crate::simulator::{Simulator, RunResult};
 use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Condvar};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -52,7 +52,8 @@ pub struct SharedProgress {
     pub timeouts: AtomicUsize,
     pub max_score: Mutex<usize>,
     pub champion: Mutex<Option<Vec<Instr>>>,
-    pub done: AtomicBool,
+    pub done_mutex: Mutex<bool>,
+    pub done_cvar: Condvar,
 }
 
 impl SharedProgress {
@@ -63,7 +64,8 @@ impl SharedProgress {
             timeouts: AtomicUsize::new(0),
             max_score: Mutex::new(0),
             champion: Mutex::new(None),
-            done: AtomicBool::new(false),
+            done_mutex: Mutex::new(false),
+            done_cvar: Condvar::new(),
         })
     }
 }
@@ -93,24 +95,28 @@ pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
     let prog_clone = progress.clone();
 
     let progress_thread = std::thread::spawn(move || {
-        while !prog_clone.done.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_secs(10));
-            if prog_clone.done.load(Ordering::Relaxed) {
+        let mut done = prog_clone.done_mutex.lock().unwrap();
+        while !*done {
+            let (new_done, timeout_res) = prog_clone.done_cvar.wait_timeout(done, Duration::from_secs(10)).unwrap();
+            done = new_done;
+            if *done {
                 break;
             }
             
-            let total = prog_clone.total.load(Ordering::Relaxed);
-            let halted = prog_clone.halted.load(Ordering::Relaxed);
-            let score = *prog_clone.max_score.lock().unwrap();
-            let champ = prog_clone.champion.lock().unwrap().clone();
-            
-            let pct = if total > 0 { (halted as f64 / total as f64) * 100.0 } else { 0.0 };
-            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-            
-            println!("[{}] Progress: {} total, {} halted ({:.2}%), max score: {}", 
-                     timestamp, total, halted, pct, score);
-            if let Some(c) = champ {
-                println!("  Champion: {}", format_program(&c));
+            if timeout_res.timed_out() {
+                let total = prog_clone.total.load(Ordering::Relaxed);
+                let halted = prog_clone.halted.load(Ordering::Relaxed);
+                let score = *prog_clone.max_score.lock().unwrap();
+                let champ = prog_clone.champion.lock().unwrap().clone();
+                
+                let pct = if total > 0 { (halted as f64 / total as f64) * 100.0 } else { 0.0 };
+                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                
+                println!("[{}] Progress: {} total, {} halted ({:.2}%), max score: {}", 
+                         timestamp, total, halted, pct, score);
+                if let Some(c) = champ {
+                    println!("  Champion: {}", format_program(&c));
+                }
             }
         }
     });
@@ -147,7 +153,8 @@ pub fn search_programs(length: usize, max_steps: usize) -> SearchResult {
         local_res
     }).reduce(|| SearchResult::new(), |a, b| a.merge(b));
 
-    progress.done.store(true, Ordering::Relaxed);
+    *progress.done_mutex.lock().unwrap() = true;
+    progress.done_cvar.notify_all();
     let _ = progress_thread.join();
 
     result

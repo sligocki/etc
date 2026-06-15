@@ -224,6 +224,90 @@ fn is_valid_primitive(last_instr: Option<&FlatInstr>, current_var: usize, is_inc
     }
 }
 
+fn instr_rank(instr: &FlatInstr) -> usize {
+    match instr {
+        FlatInstr::WhileEnd => 0,
+        FlatInstr::Inc(v) => 1 + v * 3,
+        FlatInstr::Dec(v) => 1 + v * 3 + 1,
+        FlatInstr::WhileStart(v) => 1 + v * 3 + 2,
+    }
+}
+
+fn check_permutation(prefix: &[FlatInstr], perm: &[usize]) -> bool {
+    let mut mapped = prefix.to_vec();
+    
+    for instr in mapped.iter_mut() {
+        match instr {
+            FlatInstr::Inc(v) => *v = perm[*v],
+            FlatInstr::Dec(v) => *v = perm[*v],
+            FlatInstr::WhileStart(v) => *v = perm[*v],
+            FlatInstr::WhileEnd => {}
+        }
+    }
+    
+    let mut start = 0;
+    while start < mapped.len() {
+        if matches!(mapped[start], FlatInstr::Inc(_) | FlatInstr::Dec(_)) {
+            let mut end = start + 1;
+            while end < mapped.len() && matches!(mapped[end], FlatInstr::Inc(_) | FlatInstr::Dec(_)) {
+                end += 1;
+            }
+            mapped[start..end].sort_by_key(|instr| match instr {
+                FlatInstr::Inc(v) => *v,
+                FlatInstr::Dec(v) => *v,
+                _ => unreachable!(),
+            });
+            start = end;
+        } else {
+            start += 1;
+        }
+    }
+    
+    for (m, p) in mapped.iter().zip(prefix.iter()) {
+        let rank_m = instr_rank(m);
+        let rank_p = instr_rank(p);
+        if rank_m < rank_p {
+            return false;
+        } else if rank_m > rank_p {
+            return true;
+        }
+    }
+    
+    true
+}
+
+fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
+    if max_var == 0 { return true; }
+    
+    let mut perm: Vec<usize> = (0..=max_var).collect();
+    let mut c = vec![0; max_var + 1];
+    let mut i = 1;
+    
+    if !check_permutation(prefix, &perm) { return false; }
+    
+    while i <= max_var {
+        if c[i] < i {
+            if i % 2 == 0 {
+                perm.swap(0, i);
+            } else {
+                perm.swap(c[i], i);
+            }
+            
+            if !check_permutation(prefix, &perm) {
+                return false;
+            }
+            
+            c[i] += 1;
+            i = 1;
+        } else {
+            c[i] = 0;
+            i += 1;
+        }
+    }
+    
+    true
+}
+
 fn generate_prefixes(
     remaining_length: usize,
     max_var: Option<usize>,
@@ -244,6 +328,9 @@ fn generate_prefixes(
         if remaining_length == 0 {
             for loop_state in open_loops.iter() {
                 if !loop_state.1 || loop_state.2 { return; }
+            }
+            if !is_canonical(current_flat, max_var.unwrap_or(0)) {
+                return;
             }
         }
         prefixes.push(PrefixState {
@@ -352,6 +439,10 @@ fn generate_and_sim(
     if remaining_length == 0 {
         for loop_state in open_loops.iter() {
             if !loop_state.1 || loop_state.2 { return; }
+        }
+
+        if !is_canonical(current_flat, max_var.unwrap_or(0)) {
+            return;
         }
 
         for _ in 0..open_loops.len() {

@@ -20,10 +20,11 @@ pub enum FlatInstr {
 struct PrefixState {
     remaining_length: usize,
     max_var: Option<usize>,
-    open_loops: Vec<(usize, u32, bool)>, // (var, mask, has_top_level_inc_at_end)
+    open_loops: Vec<(usize, u32, u32, bool, u32)>, // (var, dec_mask, inc_mask, is_guaranteed, known_gt_0_before)
     flat: Vec<FlatInstr>,
     inc_mask: u32,
     unresolved_mask: u32,
+    pub known_gt_0: u32,
 }
 
 pub struct SearchResult {
@@ -125,6 +126,7 @@ pub fn search_programs(length: usize, max_steps: usize, output_file: Option<Stri
         &mut prefixes,
         1,
         0,
+        1,
     );
 
     let progress = SharedProgress::new();
@@ -192,6 +194,7 @@ pub fn search_programs(length: usize, max_steps: usize, output_file: Option<Stri
             &mut local_buffer,
             prefix.inc_mask,
             prefix.unresolved_mask,
+            prefix.known_gt_0,
             Some(&progress),
         );
         
@@ -333,12 +336,13 @@ fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
 fn generate_prefixes(
     remaining_length: usize,
     max_var: Option<usize>,
-    open_loops: &mut Vec<(usize, u32, bool)>,
+    open_loops: &mut Vec<(usize, u32, u32, bool, u32)>,
     steps_left: usize,
     current_flat: &mut Vec<FlatInstr>,
     prefixes: &mut Vec<PrefixState>,
     inc_mask: u32,
     unresolved_mask: u32,
+    known_gt_0: u32,
 ) {
     let num_vars = max_var.map_or(0, |v| v + 1);
     let missing_incs = num_vars as u32 - inc_mask.count_ones();
@@ -353,8 +357,20 @@ fn generate_prefixes(
                     return;
                 }
             }
-            for loop_state in open_loops.iter() {
-                if loop_state.1 == 0 || loop_state.2 { return; }
+            let mut prop_dec = 0;
+            let mut prop_inc = 0;
+            for loop_state in open_loops.iter().rev() {
+                let mut my_dec = loop_state.1;
+                let mut my_inc = loop_state.2;
+                my_dec |= prop_dec;
+                my_inc &= !prop_dec;
+                if loop_state.3 {
+                    my_inc |= prop_inc;
+                    my_dec &= !prop_inc;
+                }
+                if (my_dec & (1 << loop_state.0)) == 0 { return; }
+                prop_dec = my_dec;
+                prop_inc = my_inc;
             }
             if !is_canonical(current_flat, max_var.unwrap_or(0)) {
                 return;
@@ -367,26 +383,36 @@ fn generate_prefixes(
             flat: current_flat.clone(),
             inc_mask,
             unresolved_mask,
+            known_gt_0,
         });
         return;
     }
 
     if !open_loops.is_empty() {
         let last_loop = open_loops.last().unwrap();
-        if (last_loop.1 & (1 << last_loop.0)) != 0 && !last_loop.2 {
+        if (last_loop.1 & (1 << last_loop.0)) != 0 {
             if open_loops.len() == 1 && unresolved_mask != 0 {
-                // Reject: outer loop closes before inner variables are resolved with an increment
+                // Reject
             } else {
                 current_flat.push(FlatInstr::WhileEnd);
                 let popped = open_loops.pop().unwrap();
-                let mut old_parent_mask = 0;
+                let mut old_parent_dec = 0;
+                let mut old_parent_inc = 0;
                 if let Some(parent) = open_loops.last_mut() {
-                    old_parent_mask = parent.1;
+                    old_parent_dec = parent.1;
+                    old_parent_inc = parent.2;
                     parent.1 |= popped.1;
+                    parent.2 &= !popped.1;
+                    if popped.3 {
+                        parent.2 |= popped.2;
+                        parent.1 &= !popped.2;
+                    }
                 }
-                generate_prefixes(remaining_length, max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, unresolved_mask);
+                let new_known = (popped.4 & !popped.1) & !(1 << popped.0);
+                generate_prefixes(remaining_length, max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, unresolved_mask, new_known);
                 if let Some(parent) = open_loops.last_mut() {
-                    parent.1 = old_parent_mask;
+                    parent.1 = old_parent_dec;
+                    parent.2 = old_parent_inc;
                 }
                 open_loops.push(popped);
                 current_flat.pop();
@@ -398,7 +424,6 @@ fn generate_prefixes(
         Some(v) => v + 1,
         None => 0,
     };
-
     let last_instr = current_flat.last().cloned();
 
     for v in 0..=next_allowed {
@@ -408,22 +433,18 @@ fn generate_prefixes(
 
         if is_valid_primitive(last_instr.as_ref(), v, true) {
             current_flat.push(FlatInstr::Inc(v));
-            let mut changed_inc = false;
-            let mut old_mask = 0;
+            let mut old_dec = 0;
+            let mut old_inc = 0;
             if let Some(last_loop) = open_loops.last_mut() {
-                old_mask = last_loop.1;
+                old_dec = last_loop.1;
+                old_inc = last_loop.2;
                 last_loop.1 &= !(1 << v);
-                if last_loop.0 == v && !last_loop.2 {
-                    last_loop.2 = true;
-                    changed_inc = true;
-                }
+                last_loop.2 |= (1 << v);
             }
-            generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask | (1 << v), unresolved_mask & !(1 << v));
+            generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask | (1 << v), unresolved_mask & !(1 << v), known_gt_0 | (1 << v));
             if let Some(last_loop) = open_loops.last_mut() {
-                last_loop.1 = old_mask;
-                if changed_inc {
-                    last_loop.2 = false;
-                }
+                last_loop.1 = old_dec;
+                last_loop.2 = old_inc;
             }
             current_flat.pop();
         }
@@ -435,22 +456,27 @@ fn generate_prefixes(
                 let ends_program_in_dec = remaining_length == 1 && open_loops.is_empty();
                 if !ends_program_in_dec {
                     current_flat.push(FlatInstr::Dec(v));
-                    let mut old_mask = 0;
+                    let mut old_dec = 0;
+                    let mut old_inc = 0;
                     if let Some(last_loop) = open_loops.last_mut() {
-                        old_mask = last_loop.1;
+                        old_dec = last_loop.1;
+                        old_inc = last_loop.2;
                         last_loop.1 |= (1 << v);
+                        last_loop.2 &= !(1 << v);
                     }
-                    generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, next_unresolved);
+                    generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, next_unresolved, known_gt_0 & !(1 << v));
                     if let Some(last_loop) = open_loops.last_mut() {
-                        last_loop.1 = old_mask;
+                        last_loop.1 = old_dec;
+                        last_loop.2 = old_inc;
                     }
                     current_flat.pop();
                 }
             }
 
             current_flat.push(FlatInstr::WhileStart(v));
-            open_loops.push((v, 0, false));
-            generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, next_unresolved);
+            let is_guar = (known_gt_0 & (1 << v)) != 0;
+            open_loops.push((v, 0, 0, is_guar, known_gt_0));
+            generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, next_unresolved, known_gt_0 | (1 << v));
             open_loops.pop();
             current_flat.pop();
         }
@@ -460,7 +486,7 @@ fn generate_prefixes(
 fn generate_and_sim(
     remaining_length: usize,
     max_var: Option<usize>,
-    open_loops: &mut Vec<(usize, u32, bool)>,
+    open_loops: &mut Vec<(usize, u32, u32, bool, u32)>,
     current_flat: &mut Vec<FlatInstr>,
     local_res: &mut SearchResult,
     sim: &mut Simulator,
@@ -469,6 +495,7 @@ fn generate_and_sim(
     local_buffer: &mut Vec<String>,
     inc_mask: u32,
     unresolved_mask: u32,
+    known_gt_0: u32,
     progress: Option<&SharedProgress>,
 ) {
     let num_vars = max_var.map_or(0, |v| v + 1);
@@ -484,11 +511,20 @@ fn generate_and_sim(
             }
         }
 
-        let mut propagated = 0;
+        let mut prop_dec = 0;
+        let mut prop_inc = 0;
         for loop_state in open_loops.iter().rev() {
-            let combined = loop_state.1 | propagated;
-            if (combined & (1 << loop_state.0)) == 0 || loop_state.2 { return; }
-            propagated = combined;
+            let mut my_dec = loop_state.1;
+            let mut my_inc = loop_state.2;
+            my_dec |= prop_dec;
+            my_inc &= !prop_dec;
+            if loop_state.3 {
+                my_inc |= prop_inc;
+                my_dec &= !prop_inc;
+            }
+            if (my_dec & (1 << loop_state.0)) == 0 { return; }
+            prop_dec = my_dec;
+            prop_inc = my_inc;
         }
 
         if !is_canonical(current_flat, max_var.unwrap_or(0)) {
@@ -549,20 +585,29 @@ fn generate_and_sim(
 
     if !open_loops.is_empty() {
         let last_loop = open_loops.last().unwrap();
-        if (last_loop.1 & (1 << last_loop.0)) != 0 && !last_loop.2 {
+        if (last_loop.1 & (1 << last_loop.0)) != 0 {
             if open_loops.len() == 1 && unresolved_mask != 0 {
                 // Reject
             } else {
                 current_flat.push(FlatInstr::WhileEnd);
                 let popped = open_loops.pop().unwrap();
-                let mut old_parent_mask = 0;
+                let mut old_parent_dec = 0;
+                let mut old_parent_inc = 0;
                 if let Some(parent) = open_loops.last_mut() {
-                    old_parent_mask = parent.1;
+                    old_parent_dec = parent.1;
+                    old_parent_inc = parent.2;
                     parent.1 |= popped.1;
+                    parent.2 &= !popped.1;
+                    if popped.3 {
+                        parent.2 |= popped.2;
+                        parent.1 &= !popped.2;
+                    }
                 }
-                generate_and_sim(remaining_length, max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, unresolved_mask, progress);
+                let new_known = (popped.4 & !popped.1) & !(1 << popped.0);
+                generate_and_sim(remaining_length, max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, unresolved_mask, new_known, progress);
                 if let Some(parent) = open_loops.last_mut() {
-                    parent.1 = old_parent_mask;
+                    parent.1 = old_parent_dec;
+                    parent.2 = old_parent_inc;
                 }
                 open_loops.push(popped);
                 current_flat.pop();
@@ -574,7 +619,6 @@ fn generate_and_sim(
         Some(v) => v + 1,
         None => 0,
     };
-
     let last_instr = current_flat.last().cloned();
 
     for v in 0..=next_allowed {
@@ -584,22 +628,18 @@ fn generate_and_sim(
 
         if is_valid_primitive(last_instr.as_ref(), v, true) {
             current_flat.push(FlatInstr::Inc(v));
-            let mut changed_inc = false;
-            let mut old_mask = 0;
+            let mut old_dec = 0;
+            let mut old_inc = 0;
             if let Some(last_loop) = open_loops.last_mut() {
-                old_mask = last_loop.1;
+                old_dec = last_loop.1;
+                old_inc = last_loop.2;
                 last_loop.1 &= !(1 << v);
-                if last_loop.0 == v && !last_loop.2 {
-                    last_loop.2 = true;
-                    changed_inc = true;
-                }
+                last_loop.2 |= (1 << v);
             }
-            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask | (1 << v), unresolved_mask & !(1 << v), progress);
+            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask | (1 << v), unresolved_mask & !(1 << v), known_gt_0 | (1 << v), progress);
             if let Some(last_loop) = open_loops.last_mut() {
-                last_loop.1 = old_mask;
-                if changed_inc {
-                    last_loop.2 = false;
-                }
+                last_loop.1 = old_dec;
+                last_loop.2 = old_inc;
             }
             current_flat.pop();
         }
@@ -611,22 +651,27 @@ fn generate_and_sim(
                 let ends_program_in_dec = remaining_length == 1 && open_loops.is_empty();
                 if !ends_program_in_dec {
                     current_flat.push(FlatInstr::Dec(v));
-                    let mut old_mask = 0;
+                    let mut old_dec = 0;
+                    let mut old_inc = 0;
                     if let Some(last_loop) = open_loops.last_mut() {
-                        old_mask = last_loop.1;
+                        old_dec = last_loop.1;
+                        old_inc = last_loop.2;
                         last_loop.1 |= (1 << v);
+                        last_loop.2 &= !(1 << v);
                     }
-                    generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, next_unresolved, progress);
+                    generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, next_unresolved, known_gt_0 & !(1 << v), progress);
                     if let Some(last_loop) = open_loops.last_mut() {
-                        last_loop.1 = old_mask;
+                        last_loop.1 = old_dec;
+                        last_loop.2 = old_inc;
                     }
                     current_flat.pop();
                 }
             }
 
             current_flat.push(FlatInstr::WhileStart(v));
-            open_loops.push((v, 0, false));
-            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, next_unresolved, progress);
+            let is_guar = (known_gt_0 & (1 << v)) != 0;
+            open_loops.push((v, 0, 0, is_guar, known_gt_0));
+            generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, next_unresolved, known_gt_0 | (1 << v), progress);
             open_loops.pop();
             current_flat.pop();
         }

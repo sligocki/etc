@@ -9,6 +9,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 #[derive(Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum FlatInstr {
     Inc(usize),
     Dec(usize),
@@ -299,69 +300,35 @@ fn is_valid_primitive(last_instr: Option<&FlatInstr>, current_var: usize, is_inc
     }
 }
 
-fn instr_rank(instr: &FlatInstr) -> usize {
-    match instr {
-        FlatInstr::WhileEnd => 0,
-        FlatInstr::Inc(v) => 1 + v * 3,
-        FlatInstr::Dec(v) => 1 + v * 3 + 1,
-        FlatInstr::WhileStart(v) => 1 + v * 3 + 2,
-    }
-}
-
-fn check_permutation(prefix: &[FlatInstr], perm: &[usize]) -> bool {
-    let mut mapped = prefix.to_vec();
-
-    for instr in mapped.iter_mut() {
-        match instr {
-            FlatInstr::Inc(v) => *v = perm[*v],
-            FlatInstr::Dec(v) => *v = perm[*v],
-            FlatInstr::WhileStart(v) => *v = perm[*v],
-            FlatInstr::WhileEnd => {}
-        }
-    }
-
-    let mut start = 0;
-    while start < mapped.len() {
-        if matches!(mapped[start], FlatInstr::Inc(_) | FlatInstr::Dec(_)) {
-            let mut end = start + 1;
-            while end < mapped.len() && matches!(mapped[end], FlatInstr::Inc(_) | FlatInstr::Dec(_))
-            {
-                end += 1;
-            }
-            mapped[start..end].sort_by_key(|instr| match instr {
-                FlatInstr::Inc(v) => *v,
-                FlatInstr::Dec(v) => *v,
-                _ => unreachable!(),
-            });
-            start = end;
-        } else {
-            start += 1;
-        }
-    }
-
-    for (m, p) in mapped.iter().zip(prefix.iter()) {
-        let rank_m = instr_rank(m);
-        let rank_p = instr_rank(p);
-        if rank_m < rank_p {
-            return false;
-        } else if rank_m > rank_p {
-            return true;
-        }
-    }
-
-    true
-}
 
 fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
     if max_var == 0 {
         return true;
     }
 
+    let mut orig_ast = parse_flat(prefix);
+    crate::ast::canonicalize_block(&mut orig_ast);
+
     let mut perm: Vec<usize> = (0..=max_var).collect();
     let mut c = vec![0; max_var + 1];
     let mut i = 1;
 
-    if !check_permutation(prefix, &perm) {
+    let check_perm = |p: &[usize]| -> bool {
+        let mut mapped = prefix.to_vec();
+        for instr in mapped.iter_mut() {
+            match instr {
+                FlatInstr::Inc(v) => *v = p[*v],
+                FlatInstr::Dec(v) => *v = p[*v],
+                FlatInstr::WhileStart(v) => *v = p[*v],
+                FlatInstr::WhileEnd => {}
+            }
+        }
+        let mut mapped_ast = parse_flat(&mapped);
+        crate::ast::canonicalize_block(&mut mapped_ast);
+        mapped_ast >= orig_ast
+    };
+
+    if !check_perm(&perm) {
         return false;
     }
 
@@ -373,7 +340,7 @@ fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
                 perm.swap(c[i], i);
             }
 
-            if !check_permutation(prefix, &perm) {
+            if !check_perm(&perm) {
                 return false;
             }
 
@@ -694,6 +661,12 @@ fn generate_and_sim(
         }
 
         let ast = parse_flat(current_flat);
+        if crate::ast::prune_infinite_loops(&ast, 0) {
+            for _ in 0..open_loops.len() {
+                current_flat.pop();
+            }
+            return;
+        }
         local_res.total += 1;
         match sim.run(&ast, max_steps) {
             RunResult::Halted { score, steps } => {
@@ -950,10 +923,27 @@ fn parse_flat(flat: &[FlatInstr]) -> Vec<Instr> {
             }
             FlatInstr::WhileEnd => {
                 let body = ast_stack.pop().unwrap();
-                let v = var_stack.pop().unwrap();
+                let v = match var_stack.pop() {
+    Some(val) => val,
+    None => {
+        println!("PANIC! flat={:?}", flat);
+        std::process::exit(1);
+    }
+};
                 ast_stack.last_mut().unwrap().push(Instr::While(v, body));
             }
         }
+    }
+    while ast_stack.len() > 1 {
+        let body = ast_stack.pop().unwrap();
+        let v = match var_stack.pop() {
+    Some(val) => val,
+    None => {
+        println!("PANIC! flat={:?}", flat);
+        std::process::exit(1);
+    }
+};
+        ast_stack.last_mut().unwrap().push(Instr::While(v, body));
     }
     ast_stack.pop().unwrap()
 }

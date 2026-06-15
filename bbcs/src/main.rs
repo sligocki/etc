@@ -47,3 +47,53 @@ fn main() {
         println!("Champion Code:  {}", results.champion_code);
     }
 }
+
+
+#[test]
+fn test_sim_prog1_prog2() {
+    use crate::simulator::*;
+    use crate::ast::*;
+    
+    // Prog 1: A++; A++; while A { A--; while B { A--; A++; B--; } B++; C++; }
+    let prog1 = vec![
+        Instr::Inc(0), Instr::Inc(0),
+        Instr::While(0, vec![
+            Instr::Dec(0),
+            Instr::While(1, vec![
+                Instr::Dec(0), Instr::Inc(0), Instr::Dec(1)
+            ]),
+            Instr::Inc(1),
+            Instr::Inc(2)
+        ])
+    ];
+
+    // Prog 2: A++; A++; while A { A--; B++; while C { A--; A++; C--; } C++; }
+    let prog2 = vec![
+        Instr::Inc(0), Instr::Inc(0),
+        Instr::While(0, vec![
+            Instr::Dec(0),
+            Instr::Inc(1),
+            Instr::While(2, vec![
+                Instr::Dec(0), Instr::Inc(0), Instr::Dec(2)
+            ]),
+            Instr::Inc(2)
+        ])
+    ];
+
+    let mut sim = Simulator::new();
+    println!("Prog 1 result: {:?}", sim.run(&prog1, 1000));
+    println!("Prog 2 result: {:?}", sim.run(&prog2, 1000));
+    
+    // User's program: A++; A++; while A { A--; while B { A--; A++; B--; C++; } B++; }
+    let prog_user = vec![
+        Instr::Inc(0), Instr::Inc(0),
+        Instr::While(0, vec![
+            Instr::Dec(0),
+            Instr::While(1, vec![
+                Instr::Dec(0), Instr::Inc(0), Instr::Dec(1), Instr::Inc(2)
+            ]),
+            Instr::Inc(1),
+        ])
+    ];
+    println!("Prog user result: {:?}", sim.run(&prog_user, 1000));
+}

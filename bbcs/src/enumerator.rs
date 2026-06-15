@@ -32,6 +32,7 @@ pub struct SearchResult {
     pub timeouts: usize,
     pub infinites_stationary: usize,
     pub infinites_translated: usize,
+    pub infinites_summonotonic: usize,
     pub max_score: usize,
     pub champion_code: String,
 }
@@ -44,6 +45,7 @@ impl SearchResult {
             timeouts: 0,
             infinites_stationary: 0,
             infinites_translated: 0,
+            infinites_summonotonic: 0,
             max_score: 0,
             champion_code: String::new(),
         }
@@ -55,6 +57,7 @@ impl SearchResult {
         self.timeouts += other.timeouts;
         self.infinites_stationary += other.infinites_stationary;
         self.infinites_translated += other.infinites_translated;
+        self.infinites_summonotonic += other.infinites_summonotonic;
         if other.max_score > self.max_score {
             self.max_score = other.max_score;
             self.champion_code = other.champion_code.clone();
@@ -68,6 +71,7 @@ pub struct SharedProgress {
     pub timeouts: AtomicUsize,
     pub infinites_stationary: AtomicUsize,
     pub infinites_translated: AtomicUsize,
+    pub infinites_summonotonic: AtomicUsize,
     pub max_score: Mutex<usize>,
     pub champion_code: Mutex<String>,
     pub done_mutex: Mutex<bool>,
@@ -82,6 +86,7 @@ impl SharedProgress {
             timeouts: AtomicUsize::new(0),
             infinites_stationary: AtomicUsize::new(0),
             infinites_translated: AtomicUsize::new(0),
+            infinites_summonotonic: AtomicUsize::new(0),
             max_score: Mutex::new(0),
             champion_code: Mutex::new(String::new()),
             done_mutex: Mutex::new(false),
@@ -191,6 +196,7 @@ pub fn search_programs(length: usize, max_steps: usize, output_file: Option<Stri
         progress.timeouts.fetch_add(local_res.timeouts, Ordering::Relaxed);
         progress.infinites_stationary.fetch_add(local_res.infinites_stationary, Ordering::Relaxed);
         progress.infinites_translated.fetch_add(local_res.infinites_translated, Ordering::Relaxed);
+        progress.infinites_summonotonic.fetch_add(local_res.infinites_summonotonic, Ordering::Relaxed);
         
         let mut score_lock = progress.max_score.lock().unwrap();
         let mut champ_lock = progress.champion_code.lock().unwrap();
@@ -472,6 +478,7 @@ fn generate_and_sim(
                 match reason {
                     InfiniteReason::StationaryCycle => local_res.infinites_stationary += 1,
                     InfiniteReason::TranslatedCycle => local_res.infinites_translated += 1,
+                    InfiniteReason::SumMonotonic => local_res.infinites_summonotonic += 1,
                 }
                 if tx.is_some() {
                     local_buffer.push(format!("{} Infinite({:?})", format_program(&ast), reason));

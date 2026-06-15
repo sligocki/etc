@@ -36,6 +36,7 @@ fn main() {
     println!("Halted:    {}", results.halted);
     println!("Infinite (Stat): {}", results.infinites_stationary);
     println!("Infinite (Tran): {}", results.infinites_translated);
+    println!("Infinite (SumM): {}", results.infinites_summonotonic);
     println!("Unknown:         {}", results.timeouts);
     println!("Max Score: {}", results.max_score);
     if !results.champion_code.is_empty() {

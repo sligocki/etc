@@ -4,6 +4,7 @@ use crate::ast::Instr;
 pub enum InfiniteReason {
     StationaryCycle,
     TranslatedCycle,
+    SumMonotonic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,8 +25,35 @@ impl Simulator {
         Self { 
             counters: Vec::new(), 
             last_zero_step: Vec::new(),
-            history: Vec::new() 
+            history: Vec::new(),
         }
+    }
+
+    fn is_safe_monotonic_body(body: &[Instr], active_loops: &mut Vec<usize>) -> bool {
+        for instr in body {
+            match instr {
+                Instr::Inc(_) => {}
+                Instr::Dec(z) => {
+                    if active_loops.is_empty() {
+                        return false;
+                    }
+                    for &l in active_loops.iter() {
+                        if l != *z {
+                            return false;
+                        }
+                    }
+                }
+                Instr::While(y, inner_body) => {
+                    active_loops.push(*y);
+                    let safe = Self::is_safe_monotonic_body(inner_body, active_loops);
+                    active_loops.pop();
+                    if !safe {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 
     fn ensure_counter(&mut self, var: usize) {
@@ -75,6 +103,7 @@ impl Simulator {
                 Instr::While(v, body) => {
                     self.ensure_counter(*v);
                     let ip = instr as *const Instr as usize;
+                    let is_safe = Self::is_safe_monotonic_body(body, &mut Vec::new());
                     while self.counters[*v] > 0 {
                         let current_state = self.counters.clone();
                         
@@ -92,19 +121,25 @@ impl Simulator {
                                     }
                                     if m2 > m1 {
                                         is_translated = true;
-                                        if m1 == 0 {
-                                            is_inf = false;
-                                            break;
-                                        }
-                                        if self.last_zero_step.get(i).copied().unwrap_or(0) >= hist_step {
-                                            is_inf = false;
-                                            break;
+                                        if !is_safe {
+                                            if m1 == 0 {
+                                                is_inf = false;
+                                                break;
+                                            }
+                                            if self.last_zero_step.get(i).copied().unwrap_or(0) >= hist_step {
+                                                is_inf = false;
+                                                break;
+                                            }
                                         }
                                     }
                                 }
                                 if is_inf {
                                     if is_translated {
-                                        return Err(Some(InfiniteReason::TranslatedCycle));
+                                        if is_safe {
+                                            return Err(Some(InfiniteReason::SumMonotonic));
+                                        } else {
+                                            return Err(Some(InfiniteReason::TranslatedCycle));
+                                        }
                                     } else {
                                         return Err(Some(InfiniteReason::StationaryCycle));
                                     }

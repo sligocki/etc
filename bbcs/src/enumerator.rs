@@ -86,6 +86,7 @@ pub struct SharedProgress {
     pub infinites_translated: AtomicUsize,
     pub infinites_symbolic: AtomicUsize,
     pub max_score: Mutex<usize>,
+    pub max_halting_steps: AtomicUsize,
     pub champion_code: Mutex<String>,
     pub done_mutex: Mutex<bool>,
     pub done_cvar: Condvar,
@@ -101,6 +102,7 @@ impl SharedProgress {
             infinites_translated: AtomicUsize::new(0),
             infinites_symbolic: AtomicUsize::new(0),
             max_score: Mutex::new(0),
+            max_halting_steps: AtomicUsize::new(0),
             champion_code: Mutex::new(String::new()),
             done_mutex: Mutex::new(false),
             done_cvar: Condvar::new(),
@@ -112,6 +114,7 @@ pub fn search_programs(
     length: usize,
     max_steps: usize,
     output_file: Option<String>,
+    progress_secs: u64,
 ) -> SearchResult {
     rayon::ThreadPoolBuilder::new()
         .stack_size(8 * 1024 * 1024)
@@ -151,7 +154,7 @@ pub fn search_programs(
         while !*done {
             let (new_done, timeout_res) = prog_clone
                 .done_cvar
-                .wait_timeout(done, Duration::from_secs(10))
+                .wait_timeout(done, Duration::from_secs(progress_secs))
                 .unwrap();
             done = new_done;
             if *done {
@@ -160,20 +163,21 @@ pub fn search_programs(
 
             if timeout_res.timed_out() {
                 let total = prog_clone.total.load(Ordering::Relaxed);
-                let halted = prog_clone.halted.load(Ordering::Relaxed);
+                let unknown = prog_clone.timeouts.load(Ordering::Relaxed);
                 let score = *prog_clone.max_score.lock().unwrap();
+                let max_steps = prog_clone.max_halting_steps.load(Ordering::Relaxed);
                 let champ = prog_clone.champion_code.lock().unwrap().clone();
 
                 let pct = if total > 0 {
-                    (halted as f64 / total as f64) * 100.0
+                    (unknown as f64 / total as f64) * 100.0
                 } else {
                     0.0
                 };
                 let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
 
                 println!(
-                    "[{}] Progress: {} total, {} halted ({:.2}%), max score: {}",
-                    timestamp, total, halted, pct, score
+                    "[{}] Progress: {} total, {} Unknown ({:.2}%), max score: {}, max steps: {}",
+                    timestamp, total, unknown, pct, score, max_steps
                 );
                 if !champ.is_empty() {
                     println!("  Champion: {}", champ);
@@ -257,6 +261,7 @@ pub fn search_programs(
             }
             drop(score_lock);
             drop(champ_lock);
+            progress.max_halting_steps.fetch_max(local_res.max_halting_steps, Ordering::Relaxed);
 
             local_res
         })

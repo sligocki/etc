@@ -20,6 +20,10 @@ struct Args {
     /// Output file to save simulation results
     #[arg(short, long)]
     output: Option<String>,
+
+    /// How often to print progress in seconds
+    #[arg(short, long, default_value_t = 10)]
+    progress: u64,
 }
 
 fn main() {
@@ -30,7 +34,7 @@ fn main() {
     );
     let start_time = Instant::now();
 
-    let results = search_programs(args.length, args.max_steps, args.output);
+    let results = search_programs(args.length, args.max_steps, args.output, args.progress);
 
     println!("Completed in {:?}", start_time.elapsed());
     println!("--- Results ---");

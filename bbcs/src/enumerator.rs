@@ -348,6 +348,11 @@ fn generate_prefixes(
 
     if steps_left == 0 || remaining_length == 0 {
         if remaining_length == 0 {
+            if open_loops.is_empty() {
+                if let Some(FlatInstr::Dec(_)) = current_flat.last() {
+                    return;
+                }
+            }
             for loop_state in open_loops.iter() {
                 if !loop_state.1 || loop_state.2 { return; }
             }
@@ -413,21 +418,24 @@ fn generate_prefixes(
             let next_unresolved = if is_new_var { unresolved_mask | (1 << v) } else { unresolved_mask };
 
             if is_valid_primitive(last_instr.as_ref(), v, false) {
-                current_flat.push(FlatInstr::Dec(v));
-                let mut changed_state = Vec::new();
-                for (i, loop_state) in open_loops.iter_mut().enumerate() {
-                    if loop_state.0 == v {
-                        changed_state.push((i, loop_state.1, loop_state.2));
-                        loop_state.1 = true;
-                        loop_state.2 = false;
+                let ends_program_in_dec = remaining_length == 1 && open_loops.is_empty();
+                if !ends_program_in_dec {
+                    current_flat.push(FlatInstr::Dec(v));
+                    let mut changed_state = Vec::new();
+                    for (i, loop_state) in open_loops.iter_mut().enumerate() {
+                        if loop_state.0 == v {
+                            changed_state.push((i, loop_state.1, loop_state.2));
+                            loop_state.1 = true;
+                            loop_state.2 = false;
+                        }
                     }
+                    generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, next_unresolved);
+                    for (i, old_dec, old_inc) in changed_state {
+                        open_loops[i].1 = old_dec;
+                        open_loops[i].2 = old_inc;
+                    }
+                    current_flat.pop();
                 }
-                generate_prefixes(remaining_length - 1, next_max_var, open_loops, steps_left - 1, current_flat, prefixes, inc_mask, next_unresolved);
-                for (i, old_dec, old_inc) in changed_state {
-                    open_loops[i].1 = old_dec;
-                    open_loops[i].2 = old_inc;
-                }
-                current_flat.pop();
             }
 
             current_flat.push(FlatInstr::WhileStart(v));
@@ -460,6 +468,12 @@ fn generate_and_sim(
     }
 
     if remaining_length == 0 {
+        if open_loops.is_empty() {
+            if let Some(FlatInstr::Dec(_)) = current_flat.last() {
+                return;
+            }
+        }
+
         for loop_state in open_loops.iter() {
             if !loop_state.1 || loop_state.2 { return; }
         }
@@ -567,21 +581,24 @@ fn generate_and_sim(
             let next_unresolved = if is_new_var { unresolved_mask | (1 << v) } else { unresolved_mask };
 
             if is_valid_primitive(last_instr.as_ref(), v, false) {
-                current_flat.push(FlatInstr::Dec(v));
-                let mut changed_state = Vec::new();
-                for (i, loop_state) in open_loops.iter_mut().enumerate() {
-                    if loop_state.0 == v {
-                        changed_state.push((i, loop_state.1, loop_state.2));
-                        loop_state.1 = true;
-                        loop_state.2 = false;
+                let ends_program_in_dec = remaining_length == 1 && open_loops.is_empty();
+                if !ends_program_in_dec {
+                    current_flat.push(FlatInstr::Dec(v));
+                    let mut changed_state = Vec::new();
+                    for (i, loop_state) in open_loops.iter_mut().enumerate() {
+                        if loop_state.0 == v {
+                            changed_state.push((i, loop_state.1, loop_state.2));
+                            loop_state.1 = true;
+                            loop_state.2 = false;
+                        }
                     }
+                    generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, next_unresolved, progress);
+                    for (i, old_dec, old_inc) in changed_state {
+                        open_loops[i].1 = old_dec;
+                        open_loops[i].2 = old_inc;
+                    }
+                    current_flat.pop();
                 }
-                generate_and_sim(remaining_length - 1, next_max_var, open_loops, current_flat, local_res, sim, max_steps, tx, local_buffer, inc_mask, next_unresolved, progress);
-                for (i, old_dec, old_inc) in changed_state {
-                    open_loops[i].1 = old_dec;
-                    open_loops[i].2 = old_inc;
-                }
-                current_flat.pop();
             }
 
             current_flat.push(FlatInstr::WhileStart(v));

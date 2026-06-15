@@ -4,7 +4,6 @@ pub mod enumerator;
 
 use clap::Parser;
 use crate::enumerator::search_programs;
-use crate::ast::format_program;
 use std::time::Instant;
 
 #[derive(Parser, Debug)]
@@ -32,13 +31,13 @@ fn main() {
 
     println!("Completed in {:?}", start_time.elapsed());
     println!("--- Results ---");
-    println!("Total:     {}", results.total);
-    println!("Halted:    {}", results.halted);
-    println!("Infinite (Stat): {}", results.infinites_stationary);
-    println!("Infinite (Tran): {}", results.infinites_translated);
-    println!("Infinite (SumM): {}", results.infinites_summonotonic);
-    println!("Unknown:         {}", results.timeouts);
-    println!("Max Score: {}", results.max_score);
+    println!("Total Programs: {}", results.total);
+    println!("Halted:         {}", results.halted);
+    println!("Timeouts:       {}", results.timeouts);
+    println!("Inf (Stat):     {}", results.infinites_stationary);
+    println!("Inf (Trans):    {}", results.infinites_translated);
+    println!("Inf (Symbolic):   {}", results.infinites_symbolic);
+    println!("Max Score:      {}", results.max_score);
     if !results.champion_code.is_empty() {
         println!("Champion Code:  {}", results.champion_code);
     }

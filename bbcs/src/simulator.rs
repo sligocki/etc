@@ -4,7 +4,7 @@ use crate::ast::Instr;
 pub enum InfiniteReason {
     StationaryCycle,
     TranslatedCycle,
-    SumMonotonic,
+    SymbolicMonotonic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +12,151 @@ pub enum RunResult {
     Halted { score: usize },
     Infinite(InfiniteReason),
     Unknown,
+}
+
+// A guaranteed lower bound linear combination: C_0*A + C_1*B + C_2*C + C_3*D + C_4*E + K
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LowerBoundExpr {
+    coeffs: [usize; 10],
+    k: usize,
+}
+
+impl LowerBoundExpr {
+    fn new_identity(v: usize) -> Self {
+        let mut coeffs = [0; 10];
+        coeffs[v] = 1;
+        Self { coeffs, k: 0 }
+    }
+    
+    fn is_zero(&self) -> bool {
+        self.k == 0 && self.coeffs.iter().all(|&c| c == 0)
+    }
+    
+    // Checks if the expression is exactly V_y + c * V_x
+    fn is_transfer_pattern(&self, x: usize, y: usize) -> Option<usize> {
+        if self.k != 0 { return None; }
+        for i in 0..10 {
+            if i == y {
+                if self.coeffs[i] != 1 { return None; }
+            } else if i == x {
+                // allow any c >= 0
+            } else {
+                if self.coeffs[i] != 0 { return None; }
+            }
+        }
+        Some(self.coeffs[x])
+    }
+    
+    fn add_scaled(&mut self, other: &LowerBoundExpr, scale: usize) {
+        if scale == 0 { return; }
+        for i in 0..10 {
+            self.coeffs[i] += other.coeffs[i] * scale;
+        }
+        self.k += other.k * scale;
+    }
+}
+
+type LowerBoundState = [LowerBoundExpr; 10];
+
+fn new_identity_state() -> LowerBoundState {
+    [
+        LowerBoundExpr::new_identity(0),
+        LowerBoundExpr::new_identity(1),
+        LowerBoundExpr::new_identity(2),
+        LowerBoundExpr::new_identity(3),
+        LowerBoundExpr::new_identity(4),
+        LowerBoundExpr::new_identity(5),
+        LowerBoundExpr::new_identity(6),
+        LowerBoundExpr::new_identity(7),
+        LowerBoundExpr::new_identity(8),
+        LowerBoundExpr::new_identity(9),
+    ]
+}
+
+fn evaluate_symbolic(body: &[Instr]) -> Option<LowerBoundState> {
+    let mut state = new_identity_state();
+    
+    for instr in body {
+        match instr {
+            Instr::Inc(v) => {
+                state[*v].k += 1;
+            }
+            Instr::Dec(_) => {
+                return None; 
+            }
+            Instr::While(v, inner_body) => {
+                let x = *v;
+                
+                let mut has_nested = false;
+                let mut decs = [0; 10];
+                let mut incs = [0; 10];
+                
+                for inner_instr in inner_body.iter() {
+                    match inner_instr {
+                        Instr::While(_, _) => { has_nested = true; }
+                        Instr::Inc(y) => incs[*y] += 1,
+                        Instr::Dec(y) => decs[*y] += 1,
+                    }
+                }
+                
+                if !has_nested && decs[x] == 1 {
+                    let mut valid_transfer = true;
+                    for i in 0..10 {
+                        if i != x && incs[i] < decs[i] {
+                            valid_transfer = false;
+                            break;
+                        }
+                    }
+                    if valid_transfer {
+                        let state_x = state[x].clone();
+                        for i in 0..10 {
+                            if i != x {
+                                let net = incs[i] - decs[i];
+                                if net > 0 {
+                                    let to_add = state_x.clone();
+                                    state[i].add_scaled(&to_add, net);
+                                }
+                            }
+                        }
+                        state[x] = LowerBoundExpr { coeffs: [0; 10], k: 0 };
+                        continue;
+                    }
+                }
+                
+                if let Some(inner_state) = evaluate_symbolic(inner_body) {
+                    if inner_state[x].is_zero() {
+                        let mut valid_complex = true;
+                        let mut scales = [0; 10];
+                        for i in 0..10 {
+                            if i != x {
+                                if let Some(c) = inner_state[i].is_transfer_pattern(x, i) {
+                                    scales[i] = c;
+                                } else {
+                                    valid_complex = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if valid_complex {
+                            let state_x = state[x].clone();
+                            for i in 0..10 {
+                                if i != x && scales[i] > 0 {
+                                    let to_add = state_x.clone();
+                                    state[i].add_scaled(&to_add, scales[i]);
+                                }
+                            }
+                            state[x] = LowerBoundExpr { coeffs: [0; 10], k: 0 };
+                            continue;
+                        }
+                    }
+                }
+                
+                return None; 
+            }
+        }
+    }
+    
+    Some(state)
 }
 
 pub struct Simulator {
@@ -32,6 +177,14 @@ impl Simulator {
     }
 
     fn is_safe_monotonic_body(body: &[Instr], active_loops: &mut Vec<usize>) -> bool {
+        // Try rigorous symbolic evaluator first
+        if active_loops.is_empty() {
+            if let Some(_) = evaluate_symbolic(body) {
+                return true;
+            }
+        }
+        
+        // Fallback to strict structural heuristic
         for instr in body {
             match instr {
                 Instr::Inc(_) => {}
@@ -140,7 +293,7 @@ impl Simulator {
                                 if is_inf {
                                     if is_translated {
                                         if is_safe && same_exec {
-                                            return Err(Some(InfiniteReason::SumMonotonic));
+                                            return Err(Some(InfiniteReason::SymbolicMonotonic));
                                         } else {
                                             return Err(Some(InfiniteReason::TranslatedCycle));
                                         }

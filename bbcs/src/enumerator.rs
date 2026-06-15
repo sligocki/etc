@@ -117,7 +117,7 @@ pub fn search_programs(
     progress_secs: u64,
 ) -> SearchResult {
     rayon::ThreadPoolBuilder::new()
-        .stack_size(8 * 1024 * 1024)
+        .stack_size(50_000)
         .build_global()
         .unwrap_or(());
     if length == 0 {
@@ -306,6 +306,7 @@ fn is_valid_primitive(last_instr: Option<&FlatInstr>, current_var: usize, is_inc
 }
 
 
+#[inline(never)]
 fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
     if max_var == 0 {
         return true;
@@ -360,6 +361,7 @@ fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
     true
 }
 
+#[inline(never)]
 fn generate_prefixes(
     remaining_length: usize,
     max_var: Option<usize>,
@@ -605,6 +607,7 @@ fn generate_prefixes(
     }
 }
 
+#[inline(never)]
 fn generate_and_sim(
     remaining_length: usize,
     max_var: Option<usize>,
@@ -769,7 +772,7 @@ fn generate_and_sim(
     }
 
     let next_allowed = match max_var {
-        Some(v) => v + 1,
+        Some(v) => std::cmp::min(v + 1, 9),
         None => 0,
     };
     let last_instr = current_flat.last().cloned();
@@ -914,6 +917,7 @@ fn generate_and_sim(
     }
 }
 
+#[inline(never)]
 fn parse_flat(flat: &[FlatInstr]) -> Vec<Instr> {
     let mut ast_stack: Vec<Vec<Instr>> = vec![Vec::new()];
     let mut var_stack: Vec<usize> = Vec::new();

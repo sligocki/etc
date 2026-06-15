@@ -1,8 +1,4 @@
-pub mod ast;
-pub mod enumerator;
-pub mod simulator;
-
-use crate::enumerator::search_programs;
+use bbcs::enumerator::search_programs;
 use clap::Parser;
 use std::time::Instant;
 

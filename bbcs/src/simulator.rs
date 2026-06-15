@@ -83,6 +83,7 @@ fn max_var(body: &[Instr]) -> usize {
         .unwrap_or(0)
 }
 
+#[inline(never)]
 fn evaluate_symbolic(body: &[Instr], num_vars: usize) -> Option<LowerBoundState> {
     let mut state = new_identity_state(num_vars);
 
@@ -194,6 +195,7 @@ impl Simulator {
         }
     }
 
+    #[inline(never)]
     fn is_safe_monotonic_body(
         body: &[Instr],
         active_loops: &mut Vec<usize>,
@@ -251,6 +253,7 @@ impl Simulator {
         }
     }
 
+    #[inline(never)]
     fn run_block(
         &mut self,
         program: &[Instr],

@@ -57,7 +57,10 @@ impl BackwardDecider {
 
     /// Evaluates all input configurations that could lead to the target output.
     pub fn backward_eval(&self, grf: &Grf, target: u64, depth: usize) -> Vec<Region> {
-        if depth > self.max_depth || self.budget.get() == 0 {
+        if depth > self.max_depth {
+            return vec![vec![Constraint::Any; grf.arity()]];
+        }
+        if self.budget.get() == 0 {
             return vec![vec![Constraint::Any; grf.arity()]];
         }
         self.budget.set(self.budget.get() - 1);
@@ -91,6 +94,15 @@ impl BackwardDecider {
                     let mut possible = true;
 
                     for (j, g_target) in h_reg.iter().enumerate() {
+                        if depth >= self.max_depth {
+                            return vec![vec![Constraint::Any; grf.arity()]];
+                        }
+
+                        let current_budget = self.budget.get();
+                        if current_budget == 0 {
+                            println!("Degraded due to budget");
+                            return vec![vec![Constraint::Any; grf.arity()]];
+                        }
                         let g = &gs[j];
                         let g_regions = match g_target {
                             Constraint::Exact(v) => self.backward_eval(g, *v, depth + 1),
@@ -131,9 +143,9 @@ impl BackwardDecider {
 
                 // Base case: n = 0, so g(x) = target
                 let g_regions = self.backward_eval(g, target, depth + 1);
-                for reg in g_regions {
+                for reg in &g_regions {
                     let mut full_reg = vec![Constraint::Exact(0)];
-                    full_reg.extend(reg);
+                    full_reg.extend(reg.clone());
                     result.push(full_reg);
                 }
 
@@ -145,7 +157,24 @@ impl BackwardDecider {
                     let req_x = &h_reg[2..];
 
                     let acc_regions = match req_acc {
-                        Constraint::Exact(v) => self.backward_eval(grf, *v, depth + 1),
+                        Constraint::Exact(v) => {
+                            if *v == target {
+                                // CYCLE DETECTED!
+                                // The step case requires the accumulator to be exactly the target.
+                                // Instead of recursing infinitely (asking "when is G = target" while computing it),
+                                // we mathematically know that any such sequence must ultimately stem from the
+                                // base case of G = target. We substitute the base case constraints (g_regions).
+                                let mut pseudo_g_regs = Vec::with_capacity(g_regions.len());
+                                for base_reg in &g_regions {
+                                    let mut r = vec![Constraint::Any];
+                                    r.extend(base_reg.clone());
+                                    pseudo_g_regs.push(r);
+                                }
+                                pseudo_g_regs
+                            } else {
+                                self.backward_eval(grf, *v, depth + 1)
+                            }
+                        }
                         Constraint::Any => vec![vec![Constraint::Any; k + 1]],
                     };
 

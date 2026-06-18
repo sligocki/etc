@@ -205,3 +205,134 @@ define_pruning_flags! {
     { comp_rnf,      "comp_rnf",      cc=no,  rec=yes, mo=no,  "C(h,…) require h in Rewire Normal Form (all args used, canonical order)" },
     { rec_step_p2,   "rec_step_p2",   cc=no,  rec=yes, mo=no,  "C(R(g,P2),h1,…) → C(g,h2,…)" },
 }
+
+// ---------------------------------------------------------------------------
+// Pruning Rules Engine
+// ---------------------------------------------------------------------------
+
+use crate::grf::{Grf, GrfKind};
+use crate::optimize::InlineConstraints;
+
+pub struct Pruner {
+    pub opts: PruningOpts,
+}
+
+impl Pruner {
+    pub fn new(opts: PruningOpts) -> Self {
+        Self { opts }
+    }
+
+    pub fn should_prune_comp_head(&self, h: &Grf, m: usize) -> bool {
+        if self.opts.comp_zero && matches!(&h.kind, GrfKind::Zero(_)) {
+            return true;
+        }
+        if self.opts.comp_proj && matches!(&h.kind, GrfKind::Proj(_, _)) {
+            return true;
+        }
+        if self.opts.comp_assoc {
+            if let GrfKind::Comp(_, inner_gs, _) = &h.kind {
+                if inner_gs.len() == 1 {
+                    return true;
+                }
+            }
+        }
+        if self.opts.comp_rnf {
+            if h.used_args().len() < m {
+                return true;
+            }
+            let order = h.canonical_arg_order();
+            if order.iter().enumerate().any(|(i, &a)| a != i + 1) {
+                return true;
+            }
+        }
+        if self.opts.rec_step_p2 {
+            if let GrfKind::Rec(_, step) = &h.kind {
+                if matches!(&step.kind, GrfKind::Proj(_, 2)) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn should_prune_comp_args(
+        &self,
+        h: &Grf,
+        gs: &[Grf],
+        arity: usize,
+        inline_c: Option<&InlineConstraints>,
+    ) -> bool {
+        let h_is_rec = matches!(&h.kind, GrfKind::Rec(_, _));
+        if self.opts.rec_zero_arg
+            && h_is_rec
+            && gs.first().map_or(false, |g| matches!(&g.kind, GrfKind::Zero(_)))
+        {
+            return true;
+        }
+        if self.opts.rec_pos_step && h_is_rec {
+            if let GrfKind::Rec(a, b) = &h.kind {
+                if !b.used_args().contains(&2) && gs.first().map_or(false, |g| g.is_never_zero()) {
+                    let a_is_zero = matches!(&a.kind, GrfKind::Zero(_));
+                    let b_uses_arg1 = b.used_args().contains(&1);
+                    if !b_uses_arg1 || !a_is_zero {
+                        return true;
+                    }
+                }
+            }
+        }
+        if let Some(ic) = inline_c {
+            let rewiring: Option<Vec<usize>> = gs
+                .iter()
+                .map(|g| match &g.kind {
+                    GrfKind::Proj(_, i) => Some(*i),
+                    GrfKind::Zero(_) => Some(0),
+                    _ => None,
+                })
+                .collect();
+            if let Some(rw) = rewiring {
+                if ic.allows(&rw, arity) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn should_prune_rec(&self, g: &Grf, h: &Grf) -> bool {
+        let g_is_zero = matches!(&g.kind, GrfKind::Zero(_));
+        if self.opts.rec_zero_base
+            && g_is_zero
+            && matches!(&h.kind, GrfKind::Zero(_) | GrfKind::Proj(_, 2))
+        {
+            return true;
+        }
+        if self.opts.rec_proj_base {
+            if let (GrfKind::Proj(_, i), GrfKind::Proj(_, j)) = (&g.kind, &h.kind) {
+                if *j == 2 || *j == i + 2 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn should_prune_min(&self, f: &Grf) -> bool {
+        if self.opts.min_trivial {
+            if matches!(&f.kind, GrfKind::Zero(_)) {
+                return true;
+            }
+            if matches!(&f.kind, GrfKind::Proj(_, _)) {
+                return true;
+            }
+        }
+        if self.opts.min_dom {
+            if !f.used_args().contains(&1) {
+                return true;
+            }
+            if f.is_never_zero() {
+                return true;
+            }
+        }
+        false
+    }
+}

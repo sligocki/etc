@@ -1,6 +1,6 @@
 use crate::grf::{Grf, GrfKind};
 use crate::optimize::{InlineConstraints, compute_inline_constraints};
-use crate::pruning::PruningOpts;
+use crate::pruning::{Pruner, PruningOpts};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -95,6 +95,7 @@ pub(crate) fn for_each_grf_core(
     let n = size - 1;
 
     // C(h, g1..gm): stream h's; for each h, stream all argument tuples
+    let pruner = Pruner::new(opts);
     for hsize in 1..=n {
         let gs_total = n - hsize;
 
@@ -113,20 +114,8 @@ pub(crate) fn for_each_grf_core(
 
         for m in 1..=gs_total {
             sub(hsize, m, &mut |h: &Grf| {
-                // Prune C(Z,...) and C(P,...)
-                if opts.comp_zero && matches!(&h.kind, GrfKind::Zero(_)) {
+                if pruner.should_prune_comp_head(h, m) {
                     return;
-                }
-                if opts.comp_proj && matches!(&h.kind, GrfKind::Proj(_, _)) {
-                    return;
-                }
-                // Prune C(C(f,g), h1, ...)
-                if opts.comp_assoc {
-                    if let GrfKind::Comp(_, inner_gs, _) = &h.kind {
-                        if inner_gs.len() == 1 {
-                            return;
-                        }
-                    }
                 }
 
                 let h_is_rec = matches!(&h.kind, GrfKind::Rec(_, _));
@@ -137,35 +126,6 @@ pub(crate) fn for_each_grf_core(
                 } else {
                     None
                 };
-
-                // comp_rnf Phase 1: skip h if it has any unused args.
-                // Every such composition is covered by an equivalent lower-arity head.
-                if opts.comp_rnf {
-                    if h.used_args().len() < m {
-                        return;
-                    }
-                }
-
-                // comp_rnf Phase 2: skip h if args appear out of canonical order.
-                // canonical_arg_order returns [1,2,...,m] iff h is in RNF; any other
-                // permutation means a smaller-lex equivalent head exists and is enumerated.
-                if opts.comp_rnf {
-                    let order = h.canonical_arg_order();
-                    if order.iter().enumerate().any(|(i, &a)| a != i + 1) {
-                        return;
-                    }
-                }
-
-                // rec_step_p2: C(R(g, P2), h1, ... hm) → C(g, h2, ... hm)
-                // P2 as step always returns the accumulator unchanged, so R(g,P2)
-                // ignores its first argument entirely.
-                if opts.rec_step_p2 {
-                    if let GrfKind::Rec(_, step) = &h.kind {
-                        if matches!(&step.kind, GrfKind::Proj(_, 2)) {
-                            return;
-                        }
-                    }
-                }
 
                 let forced: Option<&[bool]> = None;
                 let mut args = Vec::with_capacity(m);
@@ -179,48 +139,13 @@ pub(crate) fn for_each_grf_core(
                     forced,
                     &mut args,
                     &mut |gs: &[Grf]| {
-                        // rec_zero_arg: C(R(g,h), Z(p), f2,...) ≡ C(g, f2,...)
-                        // The first arg being Zero forces n=0, so only the base case
-                        // fires. The strictly-smaller C(g, f2,...) is generated separately.
-                        if opts.rec_zero_arg
-                            && h_is_rec
-                            && gs
-                                .first()
-                                .map_or(false, |g| matches!(&g.kind, GrfKind::Zero(_)))
-                        {
+                        if pruner.should_prune_comp_args(
+                            h,
+                            gs,
+                            arity,
+                            inline_c.as_ref(),
+                        ) {
                             return;
-                        }
-                        // rec_pos_step: C(R(a,b), c, ...) ≡ C(b, c-1, Z, ...)
-                        if opts.rec_pos_step && h_is_rec {
-                            if let GrfKind::Rec(a, b) = &h.kind {
-                                if !b.used_args().contains(&2)
-                                    && gs.first().map_or(false, |g| g.is_never_zero())
-                                {
-                                    let a_is_zero = matches!(&a.kind, GrfKind::Zero(_));
-                                    let b_uses_arg1 = b.used_args().contains(&1);
-                                    if !b_uses_arg1 || !a_is_zero {
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                        // inline_proj: C(h, g1..gm) where every gi is Proj or Zero
-                        // is equivalent to inline_proj(h, k, rewiring), which is smaller.
-                        // O(m) check using precomputed constraints.
-                        if let Some(ref ic) = inline_c {
-                            let rewiring: Option<Vec<usize>> = gs
-                                .iter()
-                                .map(|g| match &g.kind {
-                                    GrfKind::Proj(_, i) => Some(*i),
-                                    GrfKind::Zero(_) => Some(0),
-                                    _ => None,
-                                })
-                                .collect();
-                            if let Some(rw) = rewiring {
-                                if ic.allows(&rw, arity) {
-                                    return;
-                                }
-                            }
                         }
                         callback(&Grf::comp_arity(h.clone(), gs.to_vec(), arity));
                     },
@@ -234,24 +159,9 @@ pub(crate) fn for_each_grf_core(
         for gsize in 1..n {
             let hsize = n - gsize;
             sub(gsize, arity - 1, &mut |g: &Grf| {
-                let g_is_zero = matches!(&g.kind, GrfKind::Zero(_));
                 sub(hsize, arity + 1, &mut |h: &Grf| {
-                    // rec_zero_base: R(Z(k), Z(k+2)) ≡ Z(k+1) (step always 0)
-                    //                    R(Z(k), P(k+2,2)) ≡ Z(k+1) (acc starts 0, stays 0)
-                    if opts.rec_zero_base
-                        && g_is_zero
-                        && matches!(&h.kind, GrfKind::Zero(_) | GrfKind::Proj(_, 2))
-                    {
+                    if pruner.should_prune_rec(g, h) {
                         return;
-                    }
-                    // rec_proj_base: R(P(k-1,i), P(k+1,2))   ≡ P(k,i+1)  (h echoes acc, result = base)
-                    //                R(P(k-1,i), P(k+1,i+2)) ≡ P(k,i+1)  (h returns xᵢ = base)
-                    if opts.rec_proj_base {
-                        if let (GrfKind::Proj(_, i), GrfKind::Proj(_, j)) = (&g.kind, &h.kind) {
-                            if *j == 2 || *j == i + 2 {
-                                return;
-                            }
-                        }
                     }
                     callback(&Grf::rec(g.clone(), h.clone()));
                 });
@@ -262,23 +172,8 @@ pub(crate) fn for_each_grf_core(
     // M(f): f ∈ GRF_{arity+1}, |f| = n
     if allow_min {
         sub(n, arity + 1, &mut |f: &Grf| {
-            if opts.min_trivial {
-                if matches!(&f.kind, GrfKind::Zero(_)) {
-                    return;
-                }
-                if matches!(&f.kind, GrfKind::Proj(_, _)) {
-                    return;
-                }
-            }
-            if opts.min_dom {
-                // (a) f ignores the search variable (arg 1 of f): M(f) is a restriction of Z_{arity}.
-                if !f.used_args().contains(&1) {
-                    return;
-                }
-                // (b) f never returns 0: M(f) always diverges, dominated by Z_{arity}.
-                if f.is_never_zero() {
-                    return;
-                }
+            if pruner.should_prune_min(f) {
+                return;
             }
             callback(&Grf::min(f.clone()));
         });
@@ -957,22 +852,13 @@ fn seek_pre_rec_heads(
             // Inside this block: walk inner heads one by one with per-head arg-group skipping.
             // (Inner head counts are bounded by count_as_head(h2size, m2), typically small
             // relative to the outer head counts we optimised above.)
+            let pruner = Pruner::new(opts);
             for_each_grf(h2size, m2, allow_min, opts, &mut |h2: &Grf| {
                 if *rem == 0 {
                     return;
                 }
-                if opts.comp_zero && matches!(&h2.kind, GrfKind::Zero(_)) {
+                if pruner.should_prune_comp_head(h2, m2) {
                     return;
-                }
-                if opts.comp_proj && matches!(&h2.kind, GrfKind::Proj(_, _)) {
-                    return;
-                }
-                if opts.comp_assoc {
-                    if let GrfKind::Comp(_, inner_gs, _) = &h2.kind {
-                        if inner_gs.len() == 1 {
-                            return;
-                        }
-                    }
                 }
                 let h2_is_rec = matches!(&h2.kind, GrfKind::Rec(_, _));
                 let per_h2_args = if h2_is_rec { args2_rec } else { args2_all };

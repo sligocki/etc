@@ -118,7 +118,6 @@ pub(crate) fn for_each_grf_core(
                     return;
                 }
 
-                let h_is_rec = matches!(&h.kind, GrfKind::Rec(_, _));
                 // Compute constraints once per head; O(h.size()) upfront instead of
                 // O(h.size()) per arg-tuple.
                 let inline_c: Option<InlineConstraints> = if opts.inline_proj {

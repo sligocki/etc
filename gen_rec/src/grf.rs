@@ -1,11 +1,11 @@
-use std::collections::BTreeSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::Peekable;
 use std::str::{Chars, FromStr};
-use std::sync::OnceLock;
+use std::sync::Arc;
 
 use crate::closed_form::{ClosedForm, closed_form_of};
+use crate::analysis::GrfAnalysis;
 
 /// Parse a GRF from a format string, panicking on error.
 ///
@@ -93,21 +93,17 @@ pub enum GrfKind {
 ///
 /// `PartialEq`, `Eq`, and `Hash` are based on `kind` only — `cf` is a
 /// transparent cache and does not affect identity.
+// TODO: Consider renaming GrfKind to Grf and removing this wrapper struct later
 pub struct Grf {
     pub kind: GrfKind,
-    /// Lazily computed once; `None` means no closed form exists for this node.
-    pub(crate) cf: OnceLock<Option<ClosedForm>>,
+    pub analysis: Arc<GrfAnalysis>,
 }
 
 impl Clone for Grf {
     fn clone(&self) -> Self {
-        let cf = OnceLock::new();
-        if let Some(v) = self.cf.get() {
-            let _ = cf.set(v.clone());
-        }
         Grf {
             kind: self.kind.clone(),
-            cf,
+            analysis: self.analysis.clone(),
         }
     }
 }
@@ -134,167 +130,58 @@ impl Hash for Grf {
 
 impl Grf {
     fn new(kind: GrfKind) -> Self {
-        Grf {
-            kind,
-            cf: OnceLock::new(),
-        }
+        let analysis = Arc::new(GrfAnalysis::compute(&kind));
+        Grf { kind, analysis }
     }
 
-    // --- Atom constructors ---
-
-    /// Z_k: k-arity constant-zero.
-    pub fn zero_atom(k: usize) -> Self {
-        Self::new(GrfKind::Zero(k))
-    }
-
-    /// S: 1-arity successor.
-    pub fn succ_atom() -> Self {
-        Self::new(GrfKind::Succ)
-    }
-
-    /// P^k_i: k-arity projection (i is 1-based).
-    pub fn proj_atom(k: usize, i: usize) -> Self {
-        Self::new(GrfKind::Proj(k, i))
-    }
-
-    // --- Combinator constructors ---
-
-    /// Constructs a primitive recursion: g is the base case, h is the step function.
-    pub fn rec(g: Self, h: Self) -> Self {
-        assert_eq!(
-            g.arity() + 2,
-            h.arity(),
-            "Arity mismatch in Rec: g={}, h={}",
-            g.arity(),
-            h.arity()
-        );
-        Self::new(GrfKind::Rec(Box::new(g), Box::new(h)))
-    }
-
-    /// Convenience constructor for Min: boxes the inner function.
-    pub fn min(f: Self) -> Self {
-        Self::new(GrfKind::Min(Box::new(f)))
-    }
-
-    pub fn comp_arity(h: Self, args: Vec<Self>, arity: usize) -> Self {
-        Self::new(GrfKind::Comp(Box::new(h), args, arity))
-    }
-
-    /// Convenience constructor for Comp: derives and stores the arity of the args.
-    ///
-    /// Panics if `args` is empty (use `comp0` for 0-arg Comp).
-    pub fn comp(h: Self, args: Vec<Self>) -> Self {
-        assert!(
-            !args.is_empty(),
-            "Comp requires at least 1 argument function; use comp0 for 0-arg Comp"
-        );
-        let arity = args[0].arity();
-        Self::comp_arity(h, args, arity)
-    }
-
-    /// Convenience constructor for 0-arg Comp: `Ck(h)` lifts a 0-arity `h` to
-    /// a constant function of `outer_arity` inputs.
-    pub fn comp0(h: Self, outer_arity: usize) -> Self {
-        Self::new(GrfKind::Comp(Box::new(h), vec![], outer_arity))
-    }
-
-    // --- ClosedForm access ---
-
-    /// Returns the closed-form semantic representation, computing and caching it on
-    /// first call. Returns `None` for `Min`-containing GRFs or unsupported patterns.
     pub fn closed_form(&self) -> Option<&ClosedForm> {
-        self.cf.get_or_init(|| closed_form_of(self)).as_ref()
+        self.analysis.closed_form.get_or_init(|| closed_form_of(self)).as_ref()
     }
 
-    // --- Structural queries ---
-
-    /// Returns the arity (number of inputs) of this function.
-    pub fn arity(&self) -> usize {
-        match &self.kind {
-            GrfKind::Zero(k) => *k,
-            GrfKind::Succ => 1,
-            GrfKind::Proj(k, _) => *k,
-            // Arity is stored directly; O(1) and no panic on empty args.
-            GrfKind::Comp(_, _, k) => *k,
-            // g ∈ GRF_k → R(g,h) ∈ GRF_{k+1}
-            GrfKind::Rec(g, _) => g.arity() + 1,
-            // f ∈ GRF_{k+1} → M(f) ∈ GRF_k
-            GrfKind::Min(f) => {
-                let a = f.arity();
-                debug_assert!(a >= 1, "M(f) requires arity(f) >= 1");
-                a - 1
-            }
-        }
-    }
-
-    /// Returns the structural size of this function.
-    pub fn size(&self) -> usize {
-        match &self.kind {
-            GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => 1,
-            GrfKind::Comp(h, gs, _) => 1 + h.size() + gs.iter().map(Grf::size).sum::<usize>(),
-            GrfKind::Rec(g, h) => 1 + g.size() + h.size(),
-            GrfKind::Min(f) => 1 + f.size(),
-        }
-    }
-
-    /// Returns the set of argument positions (1-indexed) this GRF syntactically reads.
+    /// Returns true if this GRF can provably never return 0.
     ///
-    /// This is a conservative over-approximation: if `j` is absent from the result,
-    /// the GRF provably ignores argument `j`. If `j` is present, it may or may not
-    /// actually depend on it (e.g. `Rec` always conservatively includes arg 1).
-    ///
-    /// Used by the simulator to detect when a `Rec` step function ignores its
-    /// accumulator (arg 2), enabling the fast-forward optimization.
-    pub fn used_args(&self) -> BTreeSet<usize> {
-        match &self.kind {
-            GrfKind::Zero(_) => BTreeSet::new(),
-            GrfKind::Succ => [1].into_iter().collect(),
-            GrfKind::Proj(_, i) => [*i].into_iter().collect(),
-            GrfKind::Comp(h, gs, _) => {
-                // C(h, g1..gm)(args) = h(g1(args), ..., gm(args)).
-                // Comp reads arg j iff h reads some position i where gi reads arg j.
-                let h_used = h.used_args();
-                let mut result = BTreeSet::new();
-                for (idx, g) in gs.iter().enumerate() {
-                    if h_used.contains(&(idx + 1)) {
-                        result.extend(g.used_args());
-                    }
-                }
-                result
-            }
-            GrfKind::Rec(g, h) => {
-                // R(g,h)(n, r1..r_{k-1}): base g(r1..r_{k-1}), step h(i, acc, r1..r_{k-1}).
-                // g's arg j  →  Rec's arg j+1  (rest starts at position 2 of Rec).
-                // h's arg j (j≥3)  →  Rec's arg j-1  (h's positions 1,2 are i and acc).
-                // Rec always conservatively includes arg 1 (the counter n).
-                let g_used = g.used_args();
-                let h_used = h.used_args();
-                let mut result = BTreeSet::new();
-                result.insert(1);
-                for j in g_used {
-                    result.insert(j + 1);
-                }
-                for j in h_used {
-                    if j >= 3 {
-                        result.insert(j - 1);
-                    }
-                    // j=1 (loop counter i) already covered by arg 1 above.
-                    // j=2 (accumulator) is internal — doesn't add a new Rec input.
-                }
-                result
-            }
-            GrfKind::Min(f) => {
-                // M(f)(r1..r_k): f(i, r1..r_k). f's arg j (j≥2) → Min's arg j-1.
-                let f_used = f.used_args();
-                let mut result = BTreeSet::new();
-                for j in f_used {
-                    if j >= 2 {
-                        result.insert(j - 1);
-                    }
-                }
-                result
+    /// Conservative: returns false when unsure. Used by the enumerator to
+    /// prune `M(f)` when `f` is always positive (M(f) always diverges).
+    pub fn is_never_zero(&self) -> bool {
+        self.lower_bound(&vec![Bound::Min(0); self.arity()]).min_value() > 0
+    }
+
+    /// Returns true if `self(args...) > 0` for all natural-number inputs.
+    pub fn is_always_pos(&self) -> bool {
+        self.is_never_zero()
+    }
+
+    /// Returns true if `self(args...) == 0` for all natural-number inputs.
+    pub fn is_always_zero(&self) -> bool {
+        if let Some(Some(cf)) = self.analysis.closed_form.get() {
+            if cf.is_always_zero() {
+                return true;
             }
         }
+        match &self.kind {
+            GrfKind::Zero(_) => true,
+            GrfKind::Comp(h, _, _) => h.is_always_zero(),
+            GrfKind::Rec(g, h) => g.is_always_zero() && h.is_always_zero(),
+            _ => false,
+        }
+    }
+
+    pub fn is_rnf(&self) -> bool {
+        self.analysis.used_args.len() == self.arity()
+            && self.analysis.canonical_arg_order == (1..=self.arity()).collect::<Vec<_>>()
+    }
+
+    /// Returns true if `f(args…) > 0` whenever arg `j` > 0, regardless of other args.
+    ///
+    /// Conservative: returns false when unsure. For the Min fast-forward (j=1, the search
+    /// counter): if this holds and f(0, args) > 0, then Min diverges since no later i
+    /// can produce 0.
+    pub fn is_positive_for_pos_arg(&self, j: usize) -> bool {
+        let mut args_min = vec![Bound::Min(0); self.arity()];
+        if j > 0 && j <= self.arity() {
+            args_min[j - 1] = Bound::Min(1);
+        }
+        self.lower_bound(&args_min).min_value() > 0
     }
 
     /// Returns a static lower bound for this function across all inputs.
@@ -312,11 +199,7 @@ impl Grf {
                 if self.is_never_zero() { 1 } else { 0 }
             }
             GrfKind::Rec(_, _) => {
-                if self.is_never_zero() {
-                    1
-                } else {
-                    0
-                }
+                if self.is_never_zero() { 1 } else { 0 }
             }
             _ => 0,
         }
@@ -328,9 +211,7 @@ impl Grf {
         let cf_other = other.closed_form()?;
 
         if let (ClosedForm::Affine(aff_s), ClosedForm::Affine(aff_o)) = (cf_self, cf_other) {
-            // Both are affine. Ensure self's linear coefficients are >= other's linear coefficients.
             if aff_s.coeffs.len() < aff_o.coeffs.len() {
-                // If self has fewer args (impossible if they have the same arity, but just in case)
                 return None;
             }
             for i in 1..aff_o.coeffs.len() {
@@ -338,7 +219,6 @@ impl Grf {
                     return None;
                 }
             }
-            // What if self has more coeffs? They are >= 0, so self(args) will just be even larger.
             return Some((aff_s.coeffs[0] as i64) - (aff_o.coeffs[0] as i64));
         }
         None
@@ -348,7 +228,7 @@ impl Grf {
     pub fn lower_bound(&self, args_bound: &[Bound]) -> Bound {
         let mut bound = 0;
 
-        if let Some(Some(cf)) = self.cf.get() {
+        if let Some(Some(cf)) = self.analysis.closed_form.get() {
             if cf.is_always_pos() {
                 bound = 1;
             }
@@ -368,7 +248,7 @@ impl Grf {
         let structural_bound = match &self.kind {
             GrfKind::Zero(_) => Bound::Exact(0),
             GrfKind::Succ => args_bound[0].map_val(|v| v + 1),
-            GrfKind::Proj(_, i) => args_bound[*i - 1],
+            GrfKind::Proj(_, i) => args_bound.get(*i - 1).copied().unwrap_or(Bound::Min(0)),
             GrfKind::Comp(h, gs, _) => {
                 let gs_bound: Vec<Bound> = gs.iter().map(|g| g.lower_bound(args_bound)).collect();
                 let mut h_bound = h.lower_bound(&gs_bound);
@@ -523,11 +403,7 @@ impl Grf {
                         for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
                             if c > 0 {
                                 if let Some(g_arg) = gs.get(i - 1) {
-                                    if g_arg
-                                        .lower_bound(&vec![Bound::Min(0); g_arg.arity()])
-                                        .min_value()
-                                        > 0
-                                    {
+                                    if g_arg.lower_bound(&vec![Bound::Min(0); g_arg.arity()]).min_value() > 0 {
                                         return true;
                                     }
                                 }
@@ -540,115 +416,97 @@ impl Grf {
         false
     }
 
-    /// Returns true if this GRF can provably never return 0.
+    // --- Atom constructors ---
+
+    /// Z_k: k-arity constant-zero.
+    pub fn zero_atom(k: usize) -> Self {
+        Self::new(GrfKind::Zero(k))
+    }
+
+    /// S: 1-arity successor.
+    pub fn succ_atom() -> Self {
+        Self::new(GrfKind::Succ)
+    }
+
+    /// P^k_i: k-arity projection (i is 1-based).
+    pub fn proj_atom(k: usize, i: usize) -> Self {
+        Self::new(GrfKind::Proj(k, i))
+    }
+
+    // --- Combinator constructors ---
+
+    /// Constructs a primitive recursion: g is the base case, h is the step function.
+    pub fn rec(g: Self, h: Self) -> Self {
+        assert_eq!(
+            g.arity() + 2,
+            h.arity(),
+            "Arity mismatch in Rec: g={}, h={}",
+            g.arity(),
+            h.arity()
+        );
+        Self::new(GrfKind::Rec(Box::new(g), Box::new(h)))
+    }
+
+    /// Convenience constructor for Min: boxes the inner function.
+    pub fn min(f: Self) -> Self {
+        Self::new(GrfKind::Min(Box::new(f)))
+    }
+
+    pub fn comp_arity(h: Self, args: Vec<Self>, arity: usize) -> Self {
+        Self::new(GrfKind::Comp(Box::new(h), args, arity))
+    }
+
+    /// Convenience constructor for Comp: derives and stores the arity of the args.
     ///
-    /// Conservative: returns false when unsure. Used by the enumerator to
-    /// prune `M(f)` when `f` is always positive (M(f) always diverges).
-    pub fn is_never_zero(&self) -> bool {
-        self.lower_bound(&vec![Bound::Min(0); self.arity()])
-            .min_value()
-            > 0
+    /// Panics if `args` is empty (use `comp0` for 0-arg Comp).
+    pub fn comp(h: Self, args: Vec<Self>) -> Self {
+        assert!(
+            !args.is_empty(),
+            "Comp requires at least 1 argument function; use comp0 for 0-arg Comp"
+        );
+        let arity = args[0].arity();
+        Self::comp_arity(h, args, arity)
     }
 
-    /// Returns true if `self(args...) > 0` for all natural-number inputs.
-    pub fn is_always_pos(&self) -> bool {
-        self.is_never_zero()
+    /// Convenience constructor for 0-arg Comp: `Ck(h)` lifts a 0-arity `h` to
+    /// a constant function of `outer_arity` inputs.
+    pub fn comp0(h: Self, outer_arity: usize) -> Self {
+        Self::new(GrfKind::Comp(Box::new(h), vec![], outer_arity))
     }
 
-    /// Returns true if `self(args...) == 0` for all natural-number inputs.
-    pub fn is_always_zero(&self) -> bool {
-        if let Some(Some(cf)) = self.cf.get() {
-            if cf.is_always_zero() {
-                return true;
+    // --- ClosedForm access ---
+
+    /// Returns the closed-form semantic representation, computing and caching it on
+    /// first call. Returns `None` for `Min`-containing GRFs or unsupported patterns.
+
+    pub fn arity(&self) -> usize {
+        match &self.kind {
+            GrfKind::Zero(k) => *k,
+            GrfKind::Succ => 1,
+            GrfKind::Proj(k, _) => *k,
+            // Arity is stored directly; O(1) and no panic on empty args.
+            GrfKind::Comp(_, _, k) => *k,
+            // g ∈ GRF_k → R(g,h) ∈ GRF_{k+1}
+            GrfKind::Rec(g, _) => g.arity() + 1,
+            // f ∈ GRF_{k+1} → M(f) ∈ GRF_k
+            GrfKind::Min(f) => {
+                let a = f.arity();
+                debug_assert!(a >= 1, "M(f) requires arity(f) >= 1");
+                a - 1
             }
         }
+    }
+
+    /// Returns the structural size of this function.
+    pub fn size(&self) -> usize {
         match &self.kind {
-            GrfKind::Zero(_) => true,
-            GrfKind::Comp(h, _, _) => h.is_always_zero(),
-            GrfKind::Rec(g, h) => g.is_always_zero() && h.is_always_zero(),
-            _ => false,
+            GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => 1,
+            GrfKind::Comp(h, gs, _) => 1 + h.size() + gs.iter().map(Grf::size).sum::<usize>(),
+            GrfKind::Rec(g, h) => 1 + g.size() + h.size(),
+            GrfKind::Min(f) => 1 + f.size(),
         }
     }
 
-    /// Returns true if `f(args…) > 0` whenever arg `j` > 0, regardless of other args.
-    ///
-    /// Conservative: returns false when unsure. For the Min fast-forward (j=1, the search
-    /// counter): if this holds and f(0, args) > 0, then Min diverges since no later i
-    /// can produce 0.
-    pub fn is_positive_for_pos_arg(&self, j: usize) -> bool {
-        let mut args_min = vec![Bound::Min(0); self.arity()];
-        if j > 0 && j <= self.arity() {
-            args_min[j - 1] = Bound::Min(1);
-        }
-        self.lower_bound(&args_min).min_value() > 0
-    }
-
-    /// Returns the outer argument indices in DFS first-occurrence order.
-    ///
-    /// A pre-order walk of the tree records each `Proj` index the first time it
-    /// is encountered, accounting for the argument remappings introduced by
-    /// `Rec` (counter fixed at slot 1, accumulator synthetic) and `Min`
-    /// (search variable synthetic).
-    ///
-    /// `self` is in canonical argument order iff the result equals
-    /// `[1, 2, ..., self.arity()]`.  Combined with the all-args-used check
-    /// (`self.used_args().len() == self.arity()`), this forms the full RNF
-    /// criterion used by the `comp_rnf` pruning flag.
-    pub fn canonical_arg_order(&self) -> Vec<usize> {
-        let identity: Vec<usize> = (1..=self.arity()).collect();
-        let mut seen = vec![false; self.arity() + 1];
-        let mut order = Vec::new();
-        grf_outer_arg_dfs(self, &identity, &mut seen, &mut order);
-        order
-    }
-
-    /// Checks if this GRF is strictly in Rewire Normal Form (RNF).
-    /// That is, it uses all arguments, and their first occurrences appear in canonical order `[1..n]`.
-    pub fn is_rnf(&self) -> bool {
-        self.used_args().len() == self.arity()
-            && self.canonical_arg_order() == (1..=self.arity()).collect::<Vec<_>>()
-    }
-
-    /// Returns the rewiring flexibility of this GRF.
-    pub fn rewirability(&self) -> Rewirability {
-        match &self.kind {
-            GrfKind::Zero(_) | GrfKind::Proj(_, _) | GrfKind::Comp(_, _, _) | GrfKind::Min(_) => {
-                Rewirability::Full
-            }
-            GrfKind::Rec(_, _) => Rewirability::CounterLocked,
-            GrfKind::Succ => Rewirability::SuccLocked,
-        }
-    }
-
-    /// Returns true if this is a Primitive Recursive Function (no Min anywhere).
-    pub fn is_prf(&self) -> bool {
-        match &self.kind {
-            GrfKind::Zero(_) | GrfKind::Succ | GrfKind::Proj(_, _) => true,
-            GrfKind::Comp(h, gs, _) => h.is_prf() && gs.iter().all(Grf::is_prf),
-            GrfKind::Rec(g, h) => g.is_prf() && h.is_prf(),
-            GrfKind::Min(_) => false,
-        }
-    }
-
-    /// Returns `Some(k)` if this function is structurally equivalent to
-    /// `λ(args). args[2] + k`, i.e. a chain of k Succs applied to P2.
-    /// Used to accelerate R(g, h) when h is an affine step on the accumulator.
-    pub fn acc_plus_k(&self) -> Option<u64> {
-        match &self.kind {
-            GrfKind::Proj(_, 2) => Some(0),
-            GrfKind::Comp(outer, inners, _) => {
-                if let GrfKind::Succ = &outer.kind {
-                    if inners.len() == 1 {
-                        return inners[0].acc_plus_k().map(|k| k + 1);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// Recursively parses a single GRF expression from the character stream.
     fn parse_expr(chars: &mut Peekable<Chars>) -> Result<Self, String> {
         let c = chars
             .next()
@@ -740,13 +598,15 @@ impl Grf {
 ///
 /// `map[i-1]` is the outer-arg index for inner arg `i`; 0 means synthetic
 /// (not an outer arg, e.g. Rec's accumulator or Min's search variable).
-fn grf_outer_arg_dfs(g: &Grf, map: &[usize], seen: &mut Vec<bool>, order: &mut Vec<usize>) {
-    match &g.kind {
+pub(crate) fn grf_outer_arg_dfs_kind(kind: &GrfKind, map: &[usize], seen: &mut Vec<bool>, order: &mut Vec<usize>) {
+    match kind {
         GrfKind::Proj(_, i) => {
-            let outer = map[i - 1];
-            if outer > 0 && !seen[outer] {
-                seen[outer] = true;
-                order.push(outer);
+            if *i > 0 && *i <= map.len() {
+                let outer = map[i - 1];
+                if outer > 0 && !seen[outer] {
+                    seen[outer] = true;
+                    order.push(outer);
+                }
             }
         }
         GrfKind::Zero(_) => {}
@@ -762,7 +622,7 @@ fn grf_outer_arg_dfs(g: &Grf, map: &[usize], seen: &mut Vec<bool>, order: &mut V
         GrfKind::Comp(_, gs, _) => {
             // Outer args flow into gs; head h only sees abstract inner positions.
             for gi in gs {
-                grf_outer_arg_dfs(gi, map, seen, order);
+                grf_outer_arg_dfs_kind(&gi.kind, map, seen, order);
             }
         }
         GrfKind::Rec(base, step) => {
@@ -775,22 +635,22 @@ fn grf_outer_arg_dfs(g: &Grf, map: &[usize], seen: &mut Vec<bool>, order: &mut V
             }
             // base's arg j (1-indexed) → outer map[j]  (j = 1..k-1)
             let map_base: Vec<usize> = (1..k).map(|j| map[j]).collect();
-            grf_outer_arg_dfs(base, &map_base, seen, order);
+            grf_outer_arg_dfs_kind(&base.kind, &map_base, seen, order);
             // step: arg 1 → map[0] (counter), arg 2 → 0 (acc), arg j≥3 → map[j-2]
             let mut map_step = vec![map[0], 0usize];
             for j in 3..=(k + 1) {
                 map_step.push(map[j - 2]);
             }
-            grf_outer_arg_dfs(step, &map_step, seen, order);
+            grf_outer_arg_dfs_kind(&step.kind, &map_step, seen, order);
         }
         GrfKind::Min(inner) => {
-            let k = g.arity();
+            let k = inner.arity() - 1;
             // inner: arg 1 → 0 (search var), arg j≥2 → map[j-2]
             let mut map_inner = vec![0usize];
             for i in 0..k {
                 map_inner.push(map[i]);
             }
-            grf_outer_arg_dfs(inner, &map_inner, seen, order);
+            grf_outer_arg_dfs_kind(&inner.kind, &map_inner, seen, order);
         }
     }
 }
@@ -941,22 +801,22 @@ mod tests {
         assert!(!grf!("C(R(Z0,C(S,P(2,1))), P(2,2))").is_positive_for_pos_arg(1));
 
         // Comp: h = Proj to position p, delegate to gs[p-1]
-        assert!(grf!("C(P(2,1), R(Z0,C(S,P(2,1))), Z0)").is_positive_for_pos_arg(1));
-        assert!(!grf!("C(P(2,2), R(Z0,C(S,P(2,1))), Z0)").is_positive_for_pos_arg(1));
+        assert!(grf!("C(P(2,1), R(Z0,C(S,P(2,1))), Z1)").is_positive_for_pos_arg(1));
+        assert!(!grf!("C(P(2,2), R(Z0,C(S,P(2,1))), Z1)").is_positive_for_pos_arg(1));
     }
 
     #[test]
     fn test_is_prf() {
         // PRFs
-        assert!(grf!("S").is_prf());
-        assert!(grf!("C(S, Z0)").is_prf());
+        assert!(grf!("S").analysis.is_prf);
+        assert!(grf!("C(S, Z0)").analysis.is_prf);
         // Not PRFs
-        assert!(!grf!("M(P(1,1))").is_prf());
-        assert!(!grf!("C(S, M(S))").is_prf());
+        assert!(!grf!("M(P(1,1))").analysis.is_prf);
+        assert!(!grf!("C(S, M(S))").analysis.is_prf);
     }
 
     fn ua(s: &str) -> BTreeSet<usize> {
-        s.parse::<Grf>().unwrap().used_args()
+        s.parse::<Grf>().unwrap().analysis.used_args.clone()
     }
 
     fn set(xs: &[usize]) -> BTreeSet<usize> {
@@ -1001,10 +861,10 @@ mod tests {
         // Key invariant for the fast-forward optimisation:
         // R(Z1, P(3,1)) has used_args = {1}, so arg 2 (acc) is absent.
         let inner = grf!("R(Z1,P(3,1))");
-        assert!(!inner.used_args().contains(&2));
+        assert!(!inner.analysis.used_args.contains(&2));
         // Outer R(Z0, inner): inner.used_args = {1}, so inner ignores acc.
         let outer = Grf::rec(Grf::zero_atom(0), inner);
-        assert!(!outer.used_args().contains(&2));
+        assert!(!outer.analysis.used_args.contains(&2));
     }
 
     #[test]
@@ -1016,7 +876,7 @@ mod tests {
     }
 
     fn cao(s: &str) -> Vec<usize> {
-        s.parse::<Grf>().unwrap().canonical_arg_order()
+        s.parse::<Grf>().unwrap().analysis.canonical_arg_order.clone()
     }
 
     #[test]
@@ -1067,19 +927,19 @@ mod tests {
 
     #[test]
     fn test_acc_plus_k() {
-        assert_eq!(Grf::proj_atom(3, 2).acc_plus_k(), Some(0));
-        assert_eq!(Grf::proj_atom(3, 1).acc_plus_k(), None);
-        assert_eq!(Grf::zero_atom(2).acc_plus_k(), None);
+        assert_eq!(Grf::proj_atom(3, 2).analysis.acc_plus_k, Some(0));
+        assert_eq!(Grf::proj_atom(3, 1).analysis.acc_plus_k, None);
+        assert_eq!(Grf::zero_atom(2).analysis.acc_plus_k, None);
         // C(S, P(3,2)) → Some(1)
         let cs_p2 = Grf::comp(Grf::succ_atom(), vec![Grf::proj_atom(3, 2)]);
-        assert_eq!(cs_p2.acc_plus_k(), Some(1));
+        assert_eq!(cs_p2.analysis.acc_plus_k, Some(1));
         // C(S, C(S, P(3,2))) → Some(2)
         let cs_cs_p2 = Grf::comp(Grf::succ_atom(), vec![cs_p2]);
-        assert_eq!(cs_cs_p2.acc_plus_k(), Some(2));
-        assert_eq!(grf!("C(S, C(S, C(S, S)))").acc_plus_k(), None);
-        assert_eq!(grf!("C(S, C(S, C(S, Z0)))").acc_plus_k(), None);
-        assert_eq!(grf!("C(S, C(S, C(S, P(1, 1))))").acc_plus_k(), None);
-        assert_eq!(grf!("C(S, C(S, C(S, P(3, 3))))").acc_plus_k(), None);
+        assert_eq!(cs_cs_p2.analysis.acc_plus_k, Some(2));
+        assert_eq!(grf!("C(S, C(S, C(S, S)))").analysis.acc_plus_k, None);
+        assert_eq!(grf!("C(S, C(S, C(S, Z0)))").analysis.acc_plus_k, None);
+        assert_eq!(grf!("C(S, C(S, C(S, P(1, 1))))").analysis.acc_plus_k, None);
+        assert_eq!(grf!("C(S, C(S, C(S, P(3, 3))))").analysis.acc_plus_k, None);
     }
 
     #[test]
@@ -1108,14 +968,14 @@ mod tests {
         let a = grf!("R(P(2,1), P(4,4))");
         // a(+, _, +) -> +
         assert!(
-            a.lower_bound(&[Bound::Min(1), Bound::Min(0), Bound::Min(1)])
+            lower_bound(&a.kind, &[Bound::Min(1), Bound::Min(0), Bound::Min(1)], a.closed_form())
                 .min_value()
                 > 0
         );
 
         let b = grf!("R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3)))");
         // b(_, +) -> +
-        assert!(b.lower_bound(&[Bound::Min(0), Bound::Min(1)]).min_value() > 0);
+        assert!(lower_bound(&b.kind, &[Bound::Min(0), Bound::Min(1)], b.closed_form()).min_value() > 0);
 
         let comp = grf!("C(R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3))), P(1,1), S)");
         // C(b, P, S) -> +
@@ -1229,7 +1089,7 @@ mod tests {
         assert!(!s.is_always_zero());
         assert!(s.is_always_pos());
 
-        let c = grf!("C(Z0, S)");
+        let c = grf!("C(Z1, S)");
         assert!(c.is_always_zero());
         assert!(!c.is_always_pos());
     }

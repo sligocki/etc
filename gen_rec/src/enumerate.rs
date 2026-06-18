@@ -1479,7 +1479,7 @@ mod tests {
             assert_eq!(grf.size(), size, "size mismatch for {grf}");
             assert_eq!(grf.arity(), arity, "arity mismatch for {grf}");
             if !allow_min {
-                assert!(grf.is_prf(), "non-PRF when allow_min=false: {grf}");
+                assert!(grf.analysis.is_prf, "non-PRF when allow_min=false: {grf}");
             }
         }
 

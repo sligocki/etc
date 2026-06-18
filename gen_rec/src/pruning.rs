@@ -237,10 +237,10 @@ impl Pruner {
             }
         }
         if self.opts.comp_rnf {
-            if h.used_args().len() < m {
+            if h.analysis.used_args.len() < m {
                 return true;
             }
-            let order = h.canonical_arg_order();
+            let order = h.analysis.canonical_arg_order.clone();
             if order.iter().enumerate().any(|(i, &a)| a != i + 1) {
                 return true;
             }
@@ -271,9 +271,9 @@ impl Pruner {
         }
         if self.opts.rec_pos_step && h_is_rec {
             if let GrfKind::Rec(a, b) = &h.kind {
-                if !b.used_args().contains(&2) && gs.first().map_or(false, |g| g.is_never_zero()) {
+                if !b.analysis.used_args.contains(&2) && gs.first().map_or(false, |g| g.is_never_zero()) {
                     let a_is_zero = matches!(&a.kind, GrfKind::Zero(_));
-                    let b_uses_arg1 = b.used_args().contains(&1);
+                    let b_uses_arg1 = b.analysis.used_args.contains(&1);
                     if !b_uses_arg1 || !a_is_zero {
                         return true;
                     }
@@ -326,7 +326,7 @@ impl Pruner {
             }
         }
         if self.opts.min_dom {
-            if !f.used_args().contains(&1) {
+            if !f.analysis.used_args.contains(&1) {
                 return true;
             }
             if f.is_never_zero() {

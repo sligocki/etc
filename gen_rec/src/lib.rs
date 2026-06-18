@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod alias;
 pub mod closed_form;
 pub mod closed_form_enum;

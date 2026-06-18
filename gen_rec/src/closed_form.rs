@@ -667,7 +667,7 @@ impl ClosedForm {
 /// Returns `None` for `Min` or patterns not yet covered.
 pub fn closed_form_of(grf: &Grf) -> Option<ClosedForm> {
     // Short-circuit if already cached (avoids recomputing sub-expressions).
-    if let Some(cached) = grf.cf.get() {
+    if let Some(cached) = grf.analysis.closed_form.get() {
         return cached.clone();
     }
     match &grf.kind {

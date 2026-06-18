@@ -133,7 +133,7 @@ fn main() {
         }
     };
 
-    let prf_tag = if grf.is_prf() { "PRF" } else { "GRF" };
+    let prf_tag = if grf.analysis.is_prf { "PRF" } else { "GRF" };
     println!("Expression: {}", grf);
     println!(
         "Arity: {} | Size: {} | {}",
@@ -178,8 +178,8 @@ fn main() {
                 .map(|(j, k)| (k.clone(), idx_to_name(j)))
                 .collect();
             let subst = fmt_subst(sub, &partial_names);
-            let prf = if sub.is_prf() { ", PRF" } else { "" };
-            let used = sub.used_args();
+            let prf = if sub.analysis.is_prf { ", PRF" } else { "" };
+            let used = sub.analysis.used_args.clone();
             let used_str: String = used
                 .iter()
                 .map(|j| j.to_string())

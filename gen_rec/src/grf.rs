@@ -23,7 +23,6 @@ macro_rules! grf {
     };
 }
 
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Bound {
     Exact(usize),
@@ -546,7 +545,9 @@ impl Grf {
     /// Conservative: returns false when unsure. Used by the enumerator to
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
-        self.lower_bound(&vec![Bound::Min(0); self.arity()]).min_value() > 0
+        self.lower_bound(&vec![Bound::Min(0); self.arity()])
+            .min_value()
+            > 0
     }
 
     /// Returns true if `self(args...) > 0` for all natural-number inputs.

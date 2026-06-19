@@ -208,7 +208,7 @@ impl Program {
                     if let Some(k) = h.analysis.acc_plus_k {
                         return OpCode::RecAccPlusK(Box::new(Self::compile_node(g, opts)), k);
                     }
-                    if !h.analysis.used_args.contains(&2) {
+                    if !h.used_args().contains(&2) {
                         return OpCode::RecFastForward(
                             Box::new(Self::compile_node(g, opts)),
                             Box::new(Self::compile_node(h, opts)),
@@ -226,7 +226,7 @@ impl Program {
                         return OpCode::MinClosedForm(cf.clone(), f.size() as u64, Box::new(Self::compile_node(f, opts)));
                     }
                 }
-                if opts.min_fast_forward && !f.analysis.used_args.contains(&1) {
+                if opts.min_fast_forward && !f.used_args().contains(&1) {
                     return OpCode::MinIgnoreSearchVar(Box::new(Self::compile_node(f, opts)));
                 }
                 if opts.min_fast_forward && f.is_positive_for_pos_arg(1) {

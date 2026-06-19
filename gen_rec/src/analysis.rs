@@ -6,58 +6,54 @@ use crate::grf::{Bound, Grf, GrfKind, Rewirability, grf_outer_arg_dfs_kind};
 
 #[derive(Clone, Debug)]
 pub struct GrfAnalysis {
-    pub used_args: BTreeSet<usize>,
+    pub used_args: OnceLock<BTreeSet<usize>>,
     pub is_never_zero: OnceLock<bool>,
     pub is_always_pos: OnceLock<bool>,
     pub is_always_zero: OnceLock<bool>,
     pub is_prf: bool,
     pub rewirability: Rewirability,
-    pub canonical_arg_order: Vec<usize>,
+    pub canonical_arg_order: OnceLock<Vec<usize>>,
     pub acc_plus_k: Option<u64>,
     pub closed_form: OnceLock<Option<ClosedForm>>,
 }
 
 impl GrfAnalysis {
     pub fn compute(kind: &GrfKind) -> Self {
-        let used_args = Self::compute_used_args(kind);
         let is_prf = Self::compute_is_prf(kind);
         let rewirability = Self::compute_rewirability(kind);
-        let canonical_arg_order = Self::compute_canonical_arg_order(kind);
         let acc_plus_k = Self::compute_acc_plus_k(kind);
 
-
         GrfAnalysis {
-            used_args,
+            used_args: OnceLock::new(),
             is_never_zero: OnceLock::new(),
             is_always_pos: OnceLock::new(),
             is_always_zero: OnceLock::new(),
             is_prf,
-
             rewirability,
-            canonical_arg_order,
+            canonical_arg_order: OnceLock::new(),
             acc_plus_k,
             closed_form: OnceLock::new(),
         }
     }
 
-    fn compute_used_args(kind: &GrfKind) -> BTreeSet<usize> {
+    pub fn compute_used_args(kind: &GrfKind) -> BTreeSet<usize> {
         match kind {
             GrfKind::Zero(_) => BTreeSet::new(),
             GrfKind::Succ => [1].into_iter().collect(),
             GrfKind::Proj(_, i) => [*i].into_iter().collect(),
             GrfKind::Comp(h, gs, _) => {
-                let h_used = &h.analysis.used_args;
+                let h_used = h.used_args();
                 let mut result = BTreeSet::new();
                 for (idx, g) in gs.iter().enumerate() {
                     if h_used.contains(&(idx + 1)) {
-                        result.extend(g.analysis.used_args.iter().copied());
+                        result.extend(g.used_args().iter().copied());
                     }
                 }
                 result
             }
             GrfKind::Rec(g, h) => {
-                let g_used = &g.analysis.used_args;
-                let h_used = &h.analysis.used_args;
+                let g_used = g.used_args();
+                let h_used = h.used_args();
                 let mut result = BTreeSet::new();
                 result.insert(1);
                 for &j in g_used {
@@ -71,7 +67,7 @@ impl GrfAnalysis {
                 result
             }
             GrfKind::Min(f) => {
-                let f_used = &f.analysis.used_args;
+                let f_used = f.used_args();
                 let mut result = BTreeSet::new();
                 for &j in f_used {
                     if j >= 2 {
@@ -117,7 +113,7 @@ impl GrfAnalysis {
         }
     }
 
-    fn compute_canonical_arg_order(kind: &GrfKind) -> Vec<usize> {
+    pub fn compute_canonical_arg_order(kind: &GrfKind) -> Vec<usize> {
         let arity = match kind {
             GrfKind::Zero(k) => *k,
             GrfKind::Succ => 1,

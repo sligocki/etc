@@ -158,9 +158,19 @@ impl Grf {
         *self.analysis.is_always_zero.get_or_init(|| compute_is_always_zero(self))
     }
 
+    pub fn used_args(&self) -> &std::collections::BTreeSet<usize> {
+        self.analysis.used_args.get_or_init(|| crate::analysis::GrfAnalysis::compute_used_args(&self.kind))
+    }
+
+    pub fn canonical_arg_order(&self) -> &Vec<usize> {
+        self.analysis.canonical_arg_order.get_or_init(|| crate::analysis::GrfAnalysis::compute_canonical_arg_order(&self.kind))
+    }
+
+    /// Checks if this GRF is strictly in Rewire Normal Form (RNF).
+    /// That is, it uses all arguments, and their first occurrences appear in canonical order `[1..n]`.
     pub fn is_rnf(&self) -> bool {
-        self.analysis.used_args.len() == self.arity()
-            && self.analysis.canonical_arg_order == (1..=self.arity()).collect::<Vec<_>>()
+        self.used_args().len() == self.arity()
+            && self.canonical_arg_order() == &(1..=self.arity()).collect::<Vec<_>>()
     }
 
     /// Returns true if `f(args…) > 0` whenever arg `j` > 0, regardless of other args.
@@ -593,7 +603,7 @@ mod tests {
     }
 
     fn ua(s: &str) -> BTreeSet<usize> {
-        s.parse::<Grf>().unwrap().analysis.used_args.clone()
+        s.parse::<Grf>().unwrap().used_args().clone()
     }
 
     fn set(xs: &[usize]) -> BTreeSet<usize> {
@@ -638,10 +648,10 @@ mod tests {
         // Key invariant for the fast-forward optimisation:
         // R(Z1, P(3,1)) has used_args = {1}, so arg 2 (acc) is absent.
         let inner = grf!("R(Z1,P(3,1))");
-        assert!(!inner.analysis.used_args.contains(&2));
+        assert!(!inner.used_args().contains(&2));
         // Outer R(Z0, inner): inner.used_args = {1}, so inner ignores acc.
         let outer = Grf::rec(Grf::zero_atom(0), inner);
-        assert!(!outer.analysis.used_args.contains(&2));
+        assert!(!outer.used_args().contains(&2));
     }
 
     #[test]
@@ -653,7 +663,7 @@ mod tests {
     }
 
     fn cao(s: &str) -> Vec<usize> {
-        s.parse::<Grf>().unwrap().analysis.canonical_arg_order.clone()
+        s.parse::<Grf>().unwrap().canonical_arg_order().clone()
     }
 
     #[test]

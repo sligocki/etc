@@ -240,7 +240,7 @@ pub fn print_sweep_table(
 /// Print an I/O table for `grf`, sweeping only the args reported by `used_args()`.
 /// Unused args are held at 0. Arity-0 or all-unused → prints a single value.
 pub fn print_io_table(grf: &Grf, grid: u64, max_steps: u64) {
-    let used: Vec<usize> = grf.analysis.used_args.iter().map(|j| j - 1).collect();
+    let used: Vec<usize> = grf.used_args().iter().map(|j| j - 1).collect();
     let template: Vec<Option<u64>> = (0..grf.arity())
         .map(|i| if used.contains(&i) { None } else { Some(0) })
         .collect();

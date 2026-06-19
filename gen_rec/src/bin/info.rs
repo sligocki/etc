@@ -69,7 +69,7 @@ fn to_latex(grf: &Grf) -> String {
 
 fn print_static_props(grf: &Grf) {
     let arity = grf.arity();
-    let used = grf.analysis.used_args.clone();
+    let used = grf.used_args().clone();
     let used_str: Vec<String> = used.iter().map(|i| i.to_string()).collect();
     println!("  is_never_zero            : {}", grf.is_never_zero());
     for j in 1..=arity.max(1) {
@@ -126,7 +126,7 @@ fn main() {
         // The alternative is a per-flag predicate that mirrors for_each_grf's
         // conditions, but that duplicates logic and needs to be kept in sync.
         println!("pruning (min_dom subset):");
-        let uses_search_var = inner.analysis.used_args.contains(&1);
+        let uses_search_var = inner.used_args().contains(&1);
         let never_zero = inner.is_never_zero();
         println!("  uses search var (arg 1) : {uses_search_var}");
         println!("  is_never_zero           : {never_zero}");

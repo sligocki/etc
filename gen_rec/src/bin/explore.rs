@@ -179,7 +179,7 @@ fn main() {
                 .collect();
             let subst = fmt_subst(sub, &partial_names);
             let prf = if sub.analysis.is_prf { ", PRF" } else { "" };
-            let used = sub.analysis.used_args.clone();
+            let used = sub.used_args().clone();
             let used_str: String = used
                 .iter()
                 .map(|j| j.to_string())

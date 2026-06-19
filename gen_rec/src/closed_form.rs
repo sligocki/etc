@@ -1198,6 +1198,12 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
 /// or reduces the maximum Piecewise nesting depth by one.
 
 fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<ClosedForm> {
+    compose_impl(h, inners, arity, 0)
+}
+
+fn compose_impl(h: &ClosedForm, inners: &[ClosedForm], arity: usize, depth: usize) -> Option<ClosedForm> {
+    if depth > 12 { return None; }
+
     COMPOSE_CALLS.fetch_add(1, Ordering::Relaxed);
     // Base case: 0-arity composition — h is a constant, no inputs consumed.
     if inners.is_empty() {
@@ -1238,8 +1244,8 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
         }
         let zero_inners: Vec<ClosedForm> = inners.iter().map(|s| zero_face_at(s, j)).collect();
         let pos_inners: Vec<ClosedForm> = inners.iter().map(|s| pos_face_at(s, j)).collect();
-        let zero_sem = compose(h, &zero_inners, arity - 1)?;
-        let pos_sem = compose(h, &pos_inners, arity)?;
+        let zero_sem = compose_impl(h, &zero_inners, arity - 1, depth + 1)?;
+        let pos_sem = compose_impl(h, &pos_inners, arity, depth + 1)?;
         return Some(make_piecewise(arity, j - 1, zero_sem, pos_sem));
     }
 
@@ -1276,7 +1282,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                 let raw = if rest.is_empty() {
                     pw.zero_branch.as_ref().clone()
                 } else {
-                    compose(&pw.zero_branch, &rest, arity)?
+                    compose_impl(&pw.zero_branch, &rest, arity, depth + 1)?
                 };
                 return Some(raw.lift(arity));
             }
@@ -1285,7 +1291,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
             if let Some(g_branch_m1) = always_pos_minus_one(g_branch) {
                 let mut pos_inners: Vec<ClosedForm> = inners.to_vec();
                 pos_inners[bi] = ClosedForm::Affine(g_branch_m1);
-                return compose(&pw.pos_branch, &pos_inners, arity);
+                return compose_impl(&pw.pos_branch, &pos_inners, arity, depth + 1);
             }
 
             // Case 3: inners[bi] is Affine, c0 == 0, depends on exactly one variable j with c > 0.
@@ -1323,11 +1329,11 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                             if others_ok {
                                 let zero_inners: Vec<ClosedForm> =
                                     inners.iter().map(|inner| zero_face_at(inner, j)).collect();
-                                let new_zero = compose(h, &zero_inners, arity - 1)?;
+                                let new_zero = compose_impl(h, &zero_inners, arity - 1, depth + 1)?;
 
                                 let pos_inners: Vec<ClosedForm> =
                                     inners.iter().map(|inner| pos_face_at(inner, j)).collect();
-                                let new_pos = compose(h, &pos_inners, arity)?;
+                                let new_pos = compose_impl(h, &pos_inners, arity, depth + 1)?;
 
                                 return Some(make_piecewise(arity, j - 1, new_zero, new_pos));
                             }
@@ -1376,8 +1382,8 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                         })
                         .collect();
                     if let (Some(z_sem), Some(p_sem)) = (
-                        compose(h, &zero_inners, arity.saturating_sub(1)),
-                        compose(h, &pos_inners, arity),
+                        compose_impl(h, &zero_inners, arity.saturating_sub(1), depth + 1),
+                        compose_impl(h, &pos_inners, arity, depth + 1),
                     ) {
                         return Some(make_piecewise(arity, j - 1, z_sem, p_sem));
                     }
@@ -1419,7 +1425,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
             let zero_sem = if zero_inners.is_empty() {
                 pw.zero_branch.as_ref().clone().lift(zero_arity)
             } else {
-                compose(&pw.zero_branch, &zero_inners, zero_arity)?.lift(zero_arity)
+                compose_impl(&pw.zero_branch, &zero_inners, zero_arity, depth + 1)?.lift(zero_arity)
             };
             // Pos branch: inners[bi]=xj delivers xj-1 ✓; apply pos_face_at to all
             // other inners so they evaluate to their caller-context value when xj is
@@ -1430,7 +1436,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                     *inner = pos_face_at(inner, j);
                 }
             }
-            let pos_sem = compose(&pw.pos_branch, &pos_inners, arity)?;
+            let pos_sem = compose_impl(&pw.pos_branch, &pos_inners, arity, depth + 1)?;
             Some(make_piecewise(arity, j - 1, zero_sem, pos_sem))
         }
         ClosedForm::Periodic(p) => {
@@ -1454,7 +1460,7 @@ fn compose(h: &ClosedForm, inners: &[ClosedForm], arity: usize) -> Option<Closed
                     let mut new_branches = Vec::with_capacity(p_len);
                     for i in 0..p_len {
                         let chosen = (i + const_val) % p_len;
-                        new_branches.push(Box::new(compose(&p.branches[chosen], &inners, arity)?));
+                        new_branches.push(Box::new(compose_impl(&p.branches[chosen], &inners, arity, depth + 1)?));
                     }
                     return Some(make_periodic(arity, j - 1, new_branches));
                 }

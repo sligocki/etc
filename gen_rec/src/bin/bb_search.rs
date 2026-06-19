@@ -407,7 +407,7 @@ fn run_search(args: &Args) {
         en.stream_grfs(cf_arity, cf_size, &mut |grf| {
             if min_prf {
                 if opts.min_dom {
-                    if !grf.analysis.used_args.contains(&1) {
+                    if !grf.used_args().contains(&1) {
                         return;
                     }
                     if grf.is_never_zero() {
@@ -441,7 +441,7 @@ fn run_search(args: &Args) {
     } else if min_prf && size >= 2 {
         stream_grf(size - 1, 1, false, opts, &mut |f: &Grf| {
             if opts.min_dom {
-                if !f.analysis.used_args.contains(&1) {
+                if !f.used_args().contains(&1) {
                     return;
                 }
                 if f.is_never_zero() {

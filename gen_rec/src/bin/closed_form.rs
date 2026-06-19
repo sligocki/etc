@@ -328,7 +328,7 @@ fn holdout_reason(grf: &Grf) -> String {
     match &grf.kind {
         GrfKind::Min(_) => "Min".into(),
         GrfKind::Rec(g, h) => {
-            let uses_acc = h.analysis.used_args.contains(&2);
+            let uses_acc = h.used_args().contains(&2);
             let acc_k = h.analysis.acc_plus_k.is_some();
             let sem_h = h.closed_form();
             if acc_k {

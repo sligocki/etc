@@ -5,7 +5,7 @@ use std::str::{Chars, FromStr};
 use std::sync::Arc;
 
 use crate::closed_form::{ClosedForm, closed_form_of};
-use crate::analysis::GrfAnalysis;
+use crate::analysis::{compute_is_always_zero, compute_lower_bound, guaranteed_diff, min_val, GrfAnalysis};
 
 /// Parse a GRF from a format string, panicking on error.
 ///
@@ -143,27 +143,19 @@ impl Grf {
     /// Conservative: returns false when unsure. Used by the enumerator to
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
-        self.lower_bound(&vec![Bound::Min(0); self.arity()]).min_value() > 0
+        *self.analysis.is_never_zero.get_or_init(|| {
+            compute_lower_bound(self, &vec![Bound::Min(0); self.arity()], self.closed_form()).min_value() > 0
+        })
     }
 
     /// Returns true if `self(args...) > 0` for all natural-number inputs.
     pub fn is_always_pos(&self) -> bool {
-        self.is_never_zero()
+        *self.analysis.is_always_pos.get_or_init(|| self.is_never_zero())
     }
 
     /// Returns true if `self(args...) == 0` for all natural-number inputs.
     pub fn is_always_zero(&self) -> bool {
-        if let Some(Some(cf)) = self.analysis.closed_form.get() {
-            if cf.is_always_zero() {
-                return true;
-            }
-        }
-        match &self.kind {
-            GrfKind::Zero(_) => true,
-            GrfKind::Comp(h, _, _) => h.is_always_zero(),
-            GrfKind::Rec(g, h) => g.is_always_zero() && h.is_always_zero(),
-            _ => false,
-        }
+        *self.analysis.is_always_zero.get_or_init(|| compute_is_always_zero(self))
     }
 
     pub fn is_rnf(&self) -> bool {
@@ -181,239 +173,23 @@ impl Grf {
         if j > 0 && j <= self.arity() {
             args_min[j - 1] = Bound::Min(1);
         }
-        self.lower_bound(&args_min).min_value() > 0
+        // Force closed form computation here to ensure eager bound testing during pruning
+        compute_lower_bound(self, &args_min, self.closed_form()).min_value() > 0
     }
 
     /// Returns a static lower bound for this function across all inputs.
     pub fn min_val(&self) -> u64 {
-        match &self.kind {
-            GrfKind::Zero(_) => 0,
-            GrfKind::Succ => 1,
-            GrfKind::Proj(_, _) => 0,
-            GrfKind::Comp(h, gs, _) => {
-                if let GrfKind::Succ = h.kind {
-                    if let Some(g) = gs.first() {
-                        return g.min_val() + 1;
-                    }
-                }
-                if self.is_never_zero() { 1 } else { 0 }
-            }
-            GrfKind::Rec(_, _) => {
-                if self.is_never_zero() { 1 } else { 0 }
-            }
-            _ => 0,
-        }
+        min_val(self)
     }
 
     /// Returns the minimum mathematically guaranteed value of `self(args) - other(args)`.
     pub fn guaranteed_diff(&self, other: &Grf) -> Option<i64> {
-        let cf_self = self.closed_form()?;
-        let cf_other = other.closed_form()?;
-
-        if let (ClosedForm::Affine(aff_s), ClosedForm::Affine(aff_o)) = (cf_self, cf_other) {
-            if aff_s.coeffs.len() < aff_o.coeffs.len() {
-                return None;
-            }
-            for i in 1..aff_o.coeffs.len() {
-                if aff_s.coeffs[i] < aff_o.coeffs[i] {
-                    return None;
-                }
-            }
-            return Some((aff_s.coeffs[0] as i64) - (aff_o.coeffs[0] as i64));
-        }
-        None
+        guaranteed_diff(self, other)
     }
 
     /// Returns a safe lower bound for the output of this GRF given lower bounds for its arguments.
     pub fn lower_bound(&self, args_bound: &[Bound]) -> Bound {
-        let mut bound = 0;
-
-        if let Some(Some(cf)) = self.analysis.closed_form.get() {
-            if cf.is_always_pos() {
-                bound = 1;
-            }
-            for (i, arg) in args_bound.iter().enumerate() {
-                if let Some(c) = cf.min_diff_from_arg(i) {
-                    let mut b = arg.min_value() as i64 + c;
-                    if b < 0 {
-                        b = 0;
-                    }
-                    if b as usize > bound {
-                        bound = b as usize;
-                    }
-                }
-            }
-        }
-
-        let structural_bound = match &self.kind {
-            GrfKind::Zero(_) => Bound::Exact(0),
-            GrfKind::Succ => args_bound[0].map_val(|v| v + 1),
-            GrfKind::Proj(_, i) => args_bound.get(*i - 1).copied().unwrap_or(Bound::Min(0)),
-            GrfKind::Comp(h, gs, _) => {
-                let gs_bound: Vec<Bound> = gs.iter().map(|g| g.lower_bound(args_bound)).collect();
-                let mut h_bound = h.lower_bound(&gs_bound);
-                if h_bound.min_value() == 0 && Self::is_monus_descent_trap(h, gs) {
-                    h_bound = Bound::Min(1);
-                }
-                h_bound
-            }
-            GrfKind::Rec(g, h) => {
-                let c_bound = args_bound[0];
-                let rest_bound = &args_bound[1..];
-
-                let mut current_min = g.lower_bound(rest_bound);
-
-                if let Bound::Exact(c) = c_bound {
-                    let unroll_limit = std::cmp::min(c, 3);
-                    for c_val in 0..unroll_limit {
-                        let mut h_args = vec![Bound::Exact(c_val)];
-                        h_args.push(current_min);
-                        h_args.extend_from_slice(rest_bound);
-
-                        let mut use_sim = false;
-                        if rest_bound.is_empty() && current_min.is_exact() {
-                            let sim_args: Vec<u64> =
-                                h_args.iter().map(|x| x.min_value() as u64).collect();
-                            if let crate::simulate::SimResult::Value(v) =
-                                crate::simulate::simulate(h, &sim_args, 100).0
-                            {
-                                current_min = Bound::Exact(v as usize);
-                                use_sim = true;
-                            }
-                        }
-                        if !use_sim {
-                            current_min = h.lower_bound(&h_args);
-                        }
-                    }
-
-                    if c <= 3 {
-                        current_min
-                    } else {
-                        let mut global_min = current_min.min_value();
-                        let mut possible_acc = current_min.min_value();
-                        loop {
-                            let mut h_args = vec![Bound::Min(unroll_limit)];
-                            h_args.push(Bound::Min(possible_acc));
-                            h_args.extend_from_slice(rest_bound);
-                            let next_acc = h.lower_bound(&h_args).min_value();
-
-                            if next_acc >= possible_acc {
-                                break;
-                            }
-                            possible_acc = next_acc;
-                            global_min = std::cmp::min(global_min, possible_acc);
-                        }
-                        Bound::Min(global_min)
-                    }
-                } else {
-                    let c_min = c_bound.min_value();
-                    let unroll_limit = std::cmp::min(c_min, 3);
-                    for c_val in 0..unroll_limit {
-                        let mut h_args = vec![Bound::Exact(c_val)];
-                        h_args.push(current_min);
-                        h_args.extend_from_slice(rest_bound);
-
-                        let mut use_sim = false;
-                        if rest_bound.is_empty() && current_min.is_exact() {
-                            let sim_args: Vec<u64> =
-                                h_args.iter().map(|x| x.min_value() as u64).collect();
-                            if let crate::simulate::SimResult::Value(v) =
-                                crate::simulate::simulate(h, &sim_args, 100).0
-                            {
-                                current_min = Bound::Exact(v as usize);
-                                use_sim = true;
-                            }
-                        }
-                        if !use_sim {
-                            current_min = h.lower_bound(&h_args);
-                        }
-                    }
-
-                    let mut global_min = current_min.min_value();
-                    let mut possible_acc = current_min.min_value();
-                    loop {
-                        let mut h_args = vec![Bound::Min(std::cmp::max(c_min, unroll_limit))];
-                        h_args.push(Bound::Min(possible_acc));
-                        h_args.extend_from_slice(rest_bound);
-                        let next_acc = h.lower_bound(&h_args).min_value();
-
-                        if next_acc >= possible_acc {
-                            break;
-                        }
-                        possible_acc = next_acc;
-                        global_min = std::cmp::min(global_min, possible_acc);
-                    }
-                    Bound::Min(global_min)
-                }
-            }
-            GrfKind::Min(_) => Bound::Exact(0),
-        };
-
-        if structural_bound.min_value() >= bound {
-            structural_bound
-        } else {
-            Bound::Min(bound)
-        }
-    }
-
-    fn is_monus_descent_trap(h: &Grf, gs: &[Grf]) -> bool {
-        let (g_h, h_h) = match &h.kind {
-            GrfKind::Rec(g, h2) => (g, h2),
-            _ => return false,
-        };
-        let cf_h = match h_h.closed_form() {
-            Some(cf) => cf,
-            None => return false,
-        };
-        let d_h = match cf_h.min_diff_from_arg(1) {
-            Some(d) => d,
-            None => return false,
-        };
-        if d_h < -1 {
-            return false;
-        }
-        let cf_g = match g_h.closed_form() {
-            Some(cf) => cf,
-            None => return false,
-        };
-
-        for k in 0..gs.len() {
-            let d_g = match cf_g.min_diff_from_arg(k) {
-                Some(d) => d,
-                None => continue,
-            };
-            let gs_k = match gs.get(k + 1) {
-                Some(g) => g,
-                None => continue,
-            };
-            let diff = match gs_k.guaranteed_diff(&gs[0]) {
-                Some(d) => d,
-                None => continue,
-            };
-
-            if diff + d_g >= 1 {
-                return true;
-            }
-            if diff + d_g == 0 || diff + d_g == -1 {
-                if let ClosedForm::Piecewise(pw) = cf_h {
-                    if let ClosedForm::Affine(z_aff) = &*pw.zero_branch {
-                        if z_aff.coeffs[0] >= 1 {
-                            return true;
-                        }
-                        for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
-                            if c > 0 {
-                                if let Some(g_arg) = gs.get(i - 1) {
-                                    if g_arg.lower_bound(&vec![Bound::Min(0); g_arg.arity()]).min_value() > 0 {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        false
+        compute_lower_bound(self, args_bound, self.analysis.closed_form.get().unwrap_or(&None).as_ref())
     }
 
     // --- Atom constructors ---
@@ -698,6 +474,7 @@ impl FromStr for Grf {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use super::*;
 
     #[test]
@@ -967,15 +744,17 @@ mod tests {
         // Here `a = R(P(2,1), P(4,4))` preserves positivity when BOTH arg 1 and arg 3 are positive.
         let a = grf!("R(P(2,1), P(4,4))");
         // a(+, _, +) -> +
+        a.closed_form(); // Eagerly compute closed form
         assert!(
-            lower_bound(&a.kind, &[Bound::Min(1), Bound::Min(0), Bound::Min(1)], a.closed_form())
+            a.lower_bound(&[Bound::Min(1), Bound::Min(0), Bound::Min(1)])
                 .min_value()
                 > 0
         );
 
         let b = grf!("R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3)))");
         // b(_, +) -> +
-        assert!(lower_bound(&b.kind, &[Bound::Min(0), Bound::Min(1)], b.closed_form()).min_value() > 0);
+        b.closed_form(); // Eagerly compute closed form
+        assert!(b.lower_bound(&[Bound::Min(0), Bound::Min(1)]).min_value() > 0);
 
         let comp = grf!("C(R(P(1,1), C(R(P(2,1), P(4,4)), P(3,2), P(3,1), P(3,3))), P(1,1), S)");
         // C(b, P, S) -> +

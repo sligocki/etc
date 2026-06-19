@@ -63,9 +63,12 @@ struct Args {
     #[arg(long, num_args = 2, value_names = ["START", "COUNT"])]
     seek: Option<Vec<usize>>,
 
-    /// Disable ClosedFormEnumerator (default is enabled).
-    /// If set, streams all GRFs without deduplicating sub-expressions via ClosedForm.
-    #[arg(long)]
+    /// Enable ClosedFormEnumerator deduplication (default for min_prf/grf).
+    #[arg(long, overrides_with = "no_cf")]
+    cf: bool,
+
+    /// Disable ClosedFormEnumerator deduplication (default for prf).
+    #[arg(long, overrides_with = "cf")]
     no_cf: bool,
 
     /// Enable dynamic RNF regeneration for massively reduced memory usage.
@@ -291,7 +294,19 @@ fn run_search(args: &Args) {
     }
     let min_prf = args.enum_scope.min_prf();
     let allow_min = args.enum_scope.allow_min();
-    let cf = !args.no_cf;
+    
+    // We default `cf` (ClosedForm deduplication) to true for min_prf and grf.
+    // For these modes, simulation steps an input variable (or can diverge), so deduplication
+    // saves immense amounts of time.
+    // For pure `prf`, 0-arity functions are fast and guaranteed to halt, so the heavy
+    // algebraic deduplication overhead of `cf` is not worth it.
+    let cf = if args.cf {
+        true
+    } else if args.no_cf {
+        false
+    } else {
+        !matches!(args.enum_scope, EnumScope::Prf)
+    };
     let mode_str = {
         let base = args.enum_scope.as_str();
         if cf {

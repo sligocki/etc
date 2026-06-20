@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand};
 use gen_rec::enumerate::{stream_grf_visited, EnumScope, EnumVisitor};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use gen_rec::pruning::PruningOpts;
 use gen_rec::search_util::{flush_batch, Accumulator, fmt_si};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fs::{self, File};
@@ -212,8 +214,33 @@ fn main() {
                 }
             };
 
-            for (tid, out_path) in tasks_to_run {
-                println!("Running task {}/{}...", tid, m.prefixes.len());
+            let total_tasks = m.prefixes.len();
+            let mut already_completed = 0;
+            for i in 0..total_tasks {
+                let out_path = results_dir.join(format!("task_{}.json", i));
+                if out_path.exists() {
+                    already_completed += 1;
+                }
+            }
+
+            let completed_tasks = AtomicUsize::new(already_completed);
+
+            if tasks_to_run.is_empty() {
+                println!("All {} tasks are already completed.", total_tasks);
+                return;
+            }
+            
+            if all_tasks {
+                if already_completed > 0 {
+                    println!("Resuming: {} tasks already completed, {} remaining.", already_completed, tasks_to_run.len());
+                } else {
+                    println!("Starting all {} tasks...", total_tasks);
+                }
+            } else {
+                println!("Running single task {}...", tasks_to_run[0].0);
+            }
+
+            tasks_to_run.into_par_iter().for_each(|(tid, out_path)| {
                 let task_start = std::time::Instant::now();
                 let prefix = m.prefixes[tid].clone();
                 let opts = PruningOpts::recommended();
@@ -234,11 +261,11 @@ fn main() {
                     batch.push(grf.clone());
                     acc.total += 1;
                     if batch.len() >= batch_size {
-                        flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k);
+                        flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k, false);
                     }
                 });
                 if !batch.is_empty() {
-                    flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k);
+                    flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k, false);
                 }
 
                 // Parse holdouts back from buffer to struct form
@@ -271,8 +298,12 @@ fn main() {
 
                 let out_file = File::create(&out_path).unwrap();
                 serde_json::to_writer_pretty(out_file, &result).unwrap();
-                println!("Task {} completed. Generated {} GRFs.", tid, acc.total);
-            }
+                
+                let completed = completed_tasks.fetch_add(1, Ordering::SeqCst) + 1;
+                if acc.total > 0 {
+                    println!("Task #{} completed ({}/{}): {} GRFs", tid, completed, total_tasks, acc.total);
+                }
+            });
         }
 
         Commands::Summary {

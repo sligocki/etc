@@ -78,18 +78,21 @@ pub struct BatchResult {
     pub max_steps_single: u64,
 }
 
-pub fn process_batch(batch: &[Grf], max_steps: u64, k: usize) -> BatchResult {
-    let outcomes: Vec<(SimResult, SimSteps)> = batch
-        .par_iter()
-        .map(|grf| {
-            simulate_opts(
-                grf,
-                &[],
-                if max_steps == 0 { None } else { Some(max_steps) },
-                SimOpts::default(),
-            )
-        })
-        .collect();
+pub fn process_batch(batch: &[Grf], max_steps: u64, k: usize, use_parallel_batch: bool) -> BatchResult {
+    let map_fn = |grf| {
+        simulate_opts(
+            grf,
+            &[],
+            if max_steps == 0 { None } else { Some(max_steps) },
+            SimOpts::default(),
+        )
+    };
+
+    let outcomes: Vec<(SimResult, SimSteps)> = if use_parallel_batch {
+        batch.par_iter().map(map_fn).collect()
+    } else {
+        batch.iter().map(map_fn).collect()
+    };
 
     let mut top_k = TopK::new(k);
     let mut holdouts = Vec::new();
@@ -130,12 +133,13 @@ pub fn flush_batch<W: Write>(
     holdout_w: &mut W,
     max_steps: u64,
     k: usize,
+    use_parallel_batch: bool,
 ) {
     if batch.is_empty() {
         return;
     }
     let t0 = Instant::now();
-    let br = process_batch(batch, max_steps, k);
+    let br = process_batch(batch, max_steps, k, use_parallel_batch);
     acc.sim_nanos += t0.elapsed().as_nanos() as u64;
     acc.holdouts += br.holdouts.len();
     acc.diverged += br.diverged;

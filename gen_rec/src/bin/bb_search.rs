@@ -252,6 +252,7 @@ fn run_search(args: &Args) {
                     &mut holdout_writer,
                     args.max_steps,
                     args.top_k,
+                    true,
                 );
                 maybe_progress!();
             }
@@ -280,6 +281,7 @@ fn run_search(args: &Args) {
                     &mut holdout_writer,
                     args.max_steps,
                     args.top_k,
+                    true,
                 );
                 maybe_progress!();
             }
@@ -300,6 +302,7 @@ fn run_search(args: &Args) {
                     &mut holdout_writer,
                     args.max_steps,
                     args.top_k,
+                    true,
                 );
                 maybe_progress!();
             }
@@ -311,6 +314,7 @@ fn run_search(args: &Args) {
         &mut holdout_writer,
         args.max_steps,
         args.top_k,
+        true,
     );
     holdout_writer.flush().unwrap();
 

@@ -52,6 +52,53 @@ impl EnumScope {
 /// - `opts`: structural pruning options (see [`PruningOpts`]).
 ///
 /// No `Vec<Grf>` is ever materialised — memory use is O(size) at any point.
+pub trait EnumVisitor {
+    /// Called when the enumerator enters a branch in the AST generation tree.
+    /// `branch_id` is an index among the siblings of the current choice.
+    /// `remaining_size` is the maximum size budget remaining for this branch.
+    /// Returns true if the branch should be explored, false if it should be pruned.
+    fn enter_branch(&mut self, branch_id: usize, remaining_size: usize) -> bool;
+
+    /// Called when the enumerator exits the branch it entered.
+    fn exit_branch(&mut self);
+}
+
+/// A dummy visitor that explores everything (doesn't prune anything).
+pub struct DummyVisitor;
+
+impl EnumVisitor for DummyVisitor {
+    fn enter_branch(&mut self, _branch_id: usize, _remaining_size: usize) -> bool { true }
+    fn exit_branch(&mut self) {}
+}
+
+pub fn stream_grf_visited<F: FnMut(&Grf)>(
+    size: usize,
+    arity: usize,
+    allow_min: bool,
+    opts: PruningOpts,
+    visitor: &mut dyn EnumVisitor,
+    callback: &mut F,
+) {
+    for_each_grf(size, arity, allow_min, opts, visitor, &mut |_, grf| callback(grf));
+}
+
+pub fn for_each_grf_pub(
+    size: usize,
+    arity: usize,
+    allow_min: bool,
+    opts: PruningOpts,
+    visitor: &mut dyn EnumVisitor,
+    callback: &mut dyn FnMut(&mut dyn EnumVisitor, &Grf),
+) {
+    for_each_grf(size, arity, allow_min, opts, visitor, callback);
+}
+
+/// Call `callback` once for each GRF of exactly `size` with exactly `arity` inputs.
+///
+/// - `allow_min`: include the Minimization combinator (GRF); exclude for PRF-only.
+/// - `opts`: structural pruning options (see [`PruningOpts`]).
+///
+/// No `Vec<Grf>` is ever materialised — memory use is O(size) at any point.
 pub fn stream_grf<F: FnMut(&Grf)>(
     size: usize,
     arity: usize,
@@ -59,7 +106,8 @@ pub fn stream_grf<F: FnMut(&Grf)>(
     opts: PruningOpts,
     callback: &mut F,
 ) {
-    for_each_grf(size, arity, allow_min, opts, callback);
+    let mut visitor = DummyVisitor;
+    stream_grf_visited(size, arity, allow_min, opts, &mut visitor, callback);
 }
 
 /// Core recursive generator parameterised by a sub-expression enumerator.
@@ -76,23 +124,31 @@ pub(crate) fn for_each_grf_core(
     arity: usize,
     allow_min: bool,
     opts: PruningOpts,
-    sub: &dyn Fn(usize, usize, &mut dyn FnMut(&Grf)),
-    callback: &mut dyn FnMut(&Grf),
+    sub: &dyn Fn(usize, usize, &mut dyn EnumVisitor, &mut dyn FnMut(&mut dyn EnumVisitor, &Grf)),
+    visitor: &mut dyn EnumVisitor,
+    callback: &mut dyn FnMut(&mut dyn EnumVisitor, &Grf),
 ) {
     if size == 0 {
         return;
     }
     if size == 1 {
-        callback(&Grf::zero_atom(arity));
+        let mut b = 0;
+        if visitor.enter_branch(b, 1) { callback(visitor, &Grf::zero_atom(arity)); }
+        visitor.exit_branch();
+        b += 1;
         for i in 1..=arity {
-            callback(&Grf::proj_atom(arity, i));
+            if visitor.enter_branch(b, 1) { callback(visitor, &Grf::proj_atom(arity, i)); }
+            visitor.exit_branch();
+            b += 1;
         }
         if arity == 1 {
-            callback(&Grf::succ_atom());
+            if visitor.enter_branch(b, 1) { callback(visitor, &Grf::succ_atom()); }
+            visitor.exit_branch();
         }
         return;
     }
     let n = size - 1;
+    let mut b = 0;
 
     // C(h, g1..gm): stream h's; for each h, stream all argument tuples
     let pruner = Pruner::new(opts);
@@ -103,53 +159,62 @@ pub(crate) fn for_each_grf_core(
         if !opts.comp_null && gs_total == 0 {
             // comp_null_null: prunes C0(h)
             if !(opts.comp_null_null && arity == 0) {
-                sub(hsize, 0, &mut |h: &Grf| {
-                    if opts.comp_zero && matches!(&h.kind, GrfKind::Zero(_)) {
-                        return;
-                    }
-                    callback(&Grf::comp0(h.clone(), arity));
-                });
+                if visitor.enter_branch(b, hsize) {
+                    sub(hsize, 0, visitor, &mut |v, h: &Grf| {
+                        if opts.comp_zero && matches!(&h.kind, GrfKind::Zero(_)) {
+                            return;
+                        }
+                        callback(v, &Grf::comp0(h.clone(), arity));
+                    });
+                }
+                visitor.exit_branch();
+                b += 1;
             }
         }
 
         for m in 1..=gs_total {
-            sub(hsize, m, &mut |h: &Grf| {
-                if pruner.should_prune_comp_head(h, m) {
-                    return;
-                }
+            if visitor.enter_branch(b, std::cmp::max(hsize, gs_total)) {
+                sub(hsize, m, visitor, &mut |v, h: &Grf| {
+                    if pruner.should_prune_comp_head(h, m) {
+                        return;
+                    }
 
-                // Compute constraints once per head; O(h.size()) upfront instead of
-                // O(h.size()) per arg-tuple.
-                let inline_c: Option<InlineConstraints> = if opts.inline_proj {
-                    Some(compute_inline_constraints(h))
-                } else {
-                    None
-                };
+                    // Compute constraints once per head; O(h.size()) upfront instead of
+                    // O(h.size()) per arg-tuple.
+                    let inline_c: Option<InlineConstraints> = if opts.inline_proj {
+                        Some(compute_inline_constraints(h))
+                    } else {
+                        None
+                    };
 
-                let forced: Option<&[bool]> = None;
-                let mut args = Vec::with_capacity(m);
-                for_each_args_core(
-                    gs_total,
-                    m,
-                    arity,
-                    allow_min,
-                    opts,
-                    sub,
-                    forced,
-                    &mut args,
-                    &mut |gs: &[Grf]| {
-                        if pruner.should_prune_comp_args(
-                            h,
-                            gs,
-                            arity,
-                            inline_c.as_ref(),
-                        ) {
-                            return;
-                        }
-                        callback(&Grf::comp_arity(h.clone(), gs.to_vec(), arity));
-                    },
-                );
-            });
+                    let forced: Option<&[bool]> = None;
+                    let mut args = Vec::with_capacity(m);
+                    for_each_args_core(
+                        gs_total,
+                        m,
+                        arity,
+                        allow_min,
+                        opts,
+                        sub,
+                        forced,
+                        &mut args,
+                        v,
+                        &mut |v, gs: &[Grf]| {
+                            if pruner.should_prune_comp_args(
+                                h,
+                                gs,
+                                arity,
+                                inline_c.as_ref(),
+                            ) {
+                                return;
+                            }
+                            callback(v, &Grf::comp_arity(h.clone(), gs.to_vec(), arity));
+                        },
+                    );
+                });
+            }
+            visitor.exit_branch();
+            b += 1;
         }
     }
 
@@ -157,25 +222,32 @@ pub(crate) fn for_each_grf_core(
     if arity >= 1 {
         for gsize in 1..n {
             let hsize = n - gsize;
-            sub(gsize, arity - 1, &mut |g: &Grf| {
-                sub(hsize, arity + 1, &mut |h: &Grf| {
-                    if pruner.should_prune_rec(g, h) {
-                        return;
-                    }
-                    callback(&Grf::rec(g.clone(), h.clone()));
+            if visitor.enter_branch(b, std::cmp::max(gsize, hsize)) {
+                sub(gsize, arity - 1, visitor, &mut |v, g: &Grf| {
+                    sub(hsize, arity + 1, v, &mut |v2, h: &Grf| {
+                        if pruner.should_prune_rec(g, h) {
+                            return;
+                        }
+                        callback(v2, &Grf::rec(g.clone(), h.clone()));
+                    });
                 });
-            });
+            }
+            visitor.exit_branch();
+            b += 1;
         }
     }
 
     // M(f): f ∈ GRF_{arity+1}, |f| = n
     if allow_min {
-        sub(n, arity + 1, &mut |f: &Grf| {
-            if pruner.should_prune_min(f) {
-                return;
-            }
-            callback(&Grf::min(f.clone()));
-        });
+        if visitor.enter_branch(b, n) {
+            sub(n, arity + 1, visitor, &mut |v, f: &Grf| {
+                if pruner.should_prune_min(f) {
+                    return;
+                }
+                callback(v, &Grf::min(f.clone()));
+            });
+        }
+        visitor.exit_branch();
     }
 }
 
@@ -186,14 +258,16 @@ fn for_each_grf(
     arity: usize,
     allow_min: bool,
     opts: PruningOpts,
-    callback: &mut dyn FnMut(&Grf),
+    visitor: &mut dyn EnumVisitor,
+    callback: &mut dyn FnMut(&mut dyn EnumVisitor, &Grf),
 ) {
     for_each_grf_core(
         size,
         arity,
         allow_min,
         opts,
-        &|s, a, cb| for_each_grf(s, a, allow_min, opts, cb),
+        &|s, a, v, cb| for_each_grf(s, a, allow_min, opts, v, cb),
+        visitor,
         callback,
     )
 }
@@ -210,14 +284,15 @@ fn for_each_args_core(
     arity: usize,
     allow_min: bool,
     opts: PruningOpts,
-    sub: &dyn Fn(usize, usize, &mut dyn FnMut(&Grf)),
+    sub: &dyn Fn(usize, usize, &mut dyn EnumVisitor, &mut dyn FnMut(&mut dyn EnumVisitor, &Grf)),
     forced: Option<&[bool]>,
     current: &mut Vec<Grf>,
-    callback: &mut dyn FnMut(&[Grf]),
+    visitor: &mut dyn EnumVisitor,
+    callback: &mut dyn FnMut(&mut dyn EnumVisitor, &[Grf]),
 ) {
     if remaining_count == 0 {
         if remaining_size == 0 {
-            callback(current);
+            callback(visitor, current);
         }
         return;
     }
@@ -235,6 +310,7 @@ fn for_each_args_core(
                 sub,
                 forced,
                 current,
+                visitor,
                 callback,
             );
             current.pop();
@@ -242,21 +318,25 @@ fn for_each_args_core(
     } else {
         let max_first = remaining_size.saturating_sub(remaining_count - 1);
         for x in 1..=max_first {
-            sub(x, arity, &mut |g: &Grf| {
-                current.push(g.clone());
-                for_each_args_core(
-                    remaining_size - x,
-                    remaining_count - 1,
-                    arity,
-                    allow_min,
-                    opts,
-                    sub,
-                    forced,
-                    current,
-                    callback,
-                );
-                current.pop();
-            });
+            if visitor.enter_branch(x, std::cmp::max(x, remaining_size - x)) {
+                sub(x, arity, visitor, &mut |v, g: &Grf| {
+                    current.push(g.clone());
+                    for_each_args_core(
+                        remaining_size - x,
+                        remaining_count - 1,
+                        arity,
+                        allow_min,
+                        opts,
+                        sub,
+                        forced,
+                        current,
+                        v,
+                        callback,
+                    );
+                    current.pop();
+                });
+            }
+            visitor.exit_branch();
         }
     }
 }
@@ -271,7 +351,7 @@ fn for_each_args(
     opts: PruningOpts,
     forced: Option<&[bool]>,
     current: &mut Vec<Grf>,
-    callback: &mut dyn FnMut(&[Grf]),
+    callback: &mut dyn FnMut(&mut dyn EnumVisitor, &[Grf]),
 ) {
     for_each_args_core(
         remaining_size,
@@ -279,23 +359,12 @@ fn for_each_args(
         arity,
         allow_min,
         opts,
-        &|s, a, cb| for_each_grf(s, a, allow_min, opts, cb),
+        &|s, a, v, cb| for_each_grf(s, a, allow_min, opts, v, cb),
         forced,
         current,
+        &mut DummyVisitor,
         callback,
     )
-}
-
-/// Emit or skip a single atom, updating the skip/rem counters.
-fn emit_atom(skip: &mut usize, rem: &mut usize, grf: &Grf, callback: &mut dyn FnMut(&Grf)) {
-    if *skip > 0 {
-        *skip -= 1;
-        return;
-    }
-    if *rem > 0 {
-        callback(grf);
-        *rem -= 1;
-    }
 }
 
 // ---------------------------------------------------------------------------

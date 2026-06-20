@@ -2,7 +2,7 @@
 ///
 /// Enumerates GRF, removing duplication for equal ClosedForm results.
 use crate::closed_form::ClosedForm;
-use crate::enumerate::{for_each_grf_core, stream_grf};
+use crate::enumerate::for_each_grf_core;
 use crate::grf::Grf;
 use crate::optimize::inline_proj;
 use crate::pruning::PruningOpts;
@@ -160,18 +160,19 @@ impl ClosedFormEnumerator {
         let allow_min = self.allow_min;
         let opts = self.opts;
         let dynamic_rnf = self.dynamic_rnf;
+        let mut visitor = crate::enumerate::DummyVisitor;
         for_each_grf_core(
             size,
             arity,
             allow_min,
             opts,
-            &|s, a, cb| {
+            &|s, a, v, cb| {
                 if dynamic_rnf && a + s <= self.cf_limit {
                     // Direct rewirings (s_inner == s)
                     for k in 0..=a {
                         if let Some(grfs) = memo.get(&(k, s)) {
                             for rnf_grf in grfs {
-                                Self::generate_valid_rewirings(rnf_grf, a, false, cb);
+                                Self::generate_valid_rewirings(rnf_grf, a, false, v, cb);
                             }
                         }
                     }
@@ -183,7 +184,7 @@ impl ClosedFormEnumerator {
                             if s_inner + 1 + k == s {
                                 if let Some(grfs) = memo.get(&(k, s_inner)) {
                                     for rnf_grf in grfs {
-                                        Self::generate_valid_rewirings(rnf_grf, a, true, cb);
+                                        Self::generate_valid_rewirings(rnf_grf, a, true, v, cb);
                                     }
                                 }
                             }
@@ -192,21 +193,23 @@ impl ClosedFormEnumerator {
                 } else {
                     if let Some(grfs) = memo.get(&(a, s)) {
                         for grf in grfs {
-                            cb(grf);
+                            cb(v, grf);
                         }
                     } else {
-                        stream_grf(s, a, allow_min, opts, &mut |grf| cb(grf));
+                        crate::enumerate::for_each_grf_pub(s, a, allow_min, opts, v, cb);
                     }
                 }
             },
-            &mut |grf| callback(grf),
+            &mut visitor,
+            &mut |_, grf| callback(grf),
         );
     }
 
-    fn generate_valid_rewirings<F: FnMut(&Grf) + ?Sized>(
+    fn generate_valid_rewirings<F: FnMut(&mut dyn crate::enumerate::EnumVisitor, &Grf) + ?Sized>(
         rnf_grf: &Grf,
         target_arity: usize,
         wrapped_only: bool,
+        v: &mut dyn crate::enumerate::EnumVisitor,
         cb: &mut F,
     ) {
         let k = rnf_grf.arity();
@@ -216,13 +219,14 @@ impl ClosedFormEnumerator {
         let mut rewiring = vec![0; k];
         let mut used = vec![false; target_arity + 1];
 
-        fn backtrack<F: FnMut(&Grf) + ?Sized>(
+        fn backtrack<F: FnMut(&mut dyn crate::enumerate::EnumVisitor, &Grf) + ?Sized>(
             rnf_grf: &Grf,
             target_arity: usize,
             rewiring: &mut [usize],
             used: &mut [bool],
             idx: usize,
             wrapped_only: bool,
+            v: &mut dyn crate::enumerate::EnumVisitor,
             cb: &mut F,
         ) {
             if idx == rewiring.len() {
@@ -232,11 +236,11 @@ impl ClosedFormEnumerator {
                             .iter()
                             .map(|&i| Grf::proj_atom(target_arity, i))
                             .collect();
-                        cb(&Grf::comp(rnf_grf.clone(), projs));
+                        cb(v, &Grf::comp(rnf_grf.clone(), projs));
                     }
                 } else {
                     if let Some(g) = inline_proj(rnf_grf, target_arity, rewiring) {
-                        cb(&g);
+                        cb(v, &g);
                     }
                 }
                 return;
@@ -252,6 +256,7 @@ impl ClosedFormEnumerator {
                         used,
                         idx + 1,
                         wrapped_only,
+                        v,
                         cb,
                     );
                     used[i] = false;
@@ -266,6 +271,7 @@ impl ClosedFormEnumerator {
             &mut used,
             0,
             wrapped_only,
+            v,
             cb,
         );
     }

@@ -48,7 +48,7 @@ enum Commands {
     /// Phase 3: Combine all results
     Summary {
         results_dir: PathBuf,
-        #[arg(long, default_value_t = 100)]
+        #[arg(long, default_value_t = 10)]
         top_k: usize,
     },
 }
@@ -321,12 +321,14 @@ fn main() {
             let mut max_task_grfs = 0;
             let mut max_task_time = 0.0f64;
 
+            let mut completed_tasks = 0;
+
             for i in 0..m.prefixes.len() {
                 let res_path = results_dir.join(format!("task_{}.json", i));
                 if !res_path.exists() {
-                    eprintln!("Missing result for task {} at {:?}", i, res_path);
-                    std::process::exit(1);
+                    continue;
                 }
+                completed_tasks += 1;
                 let res_file = File::open(res_path).unwrap();
                 let res: WorkerResult = serde_json::from_reader(BufReader::new(res_file)).unwrap();
 
@@ -351,15 +353,19 @@ fn main() {
             }
 
             let total_tasks = m.prefixes.len();
-            let pct_empty = if total_tasks > 0 {
-                (empty_tasks as f64 / total_tasks as f64) * 100.0
+            let non_empty_tasks = completed_tasks - empty_tasks;
+            let pct_non_empty = if completed_tasks > 0 {
+                (non_empty_tasks as f64 / completed_tasks as f64) * 100.0
             } else {
                 0.0
             };
 
             println!("Summary for manifest {:?}", manifest_path);
-            println!("Total Tasks: {}", total_tasks);
-            println!("  - Empty Tasks: {} ({:.1}%)", empty_tasks, pct_empty);
+            if completed_tasks < total_tasks {
+                println!("*** WARNING: PARTIAL RESULTS ({} / {} tasks completed) ***", completed_tasks, total_tasks);
+            }
+            println!("Total Tasks: {}", completed_tasks);
+            println!("  - Non-empty tasks: {} ({:.1}%)", non_empty_tasks, pct_non_empty);
             println!("  - Max GRFs/task: {}", max_task_grfs);
             println!("  - Max Time/task: {:.2}s", max_task_time);
             println!("Total GRFs generated: {}", combined_acc.total);
@@ -370,8 +376,9 @@ fn main() {
             println!("Max steps (single): {}", combined_acc.max_steps_single);
 
             println!("\nTop {}", top_k);
+            println!("{:>10}  {:>12}  {:>12}  {}", "Score", "Sim Steps", "Base Steps", "Expression");
             for (score, steps, base_steps, expr) in combined_acc.top_k.iter_desc() {
-                println!("{:>10} {:>10} {:>10} {}", score, steps, base_steps, expr);
+                println!("{:>10}  {:>12}  {:>12}  {}", score, steps, base_steps, expr);
             }
         }
     }

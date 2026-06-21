@@ -414,20 +414,38 @@ fn main() {
             }
             println!("Total Tasks: {}", completed_tasks);
             println!("  - Non-empty tasks: {} ({:.1}%)", non_empty_tasks, pct_non_empty);
-            println!("  - Max GRFs/task: {}", max_task_grfs);
-            println!("  - Max Time/task: {:.2}s", max_task_time);
-            println!("Total GRFs generated: {}", combined_acc.total);
-            println!("Total processing time: {:.2}s", total_processing_time);
-            println!("Holdouts: {}", combined_acc.holdouts);
-            println!("Diverged: {}", combined_acc.diverged);
-            println!("Total steps: {}", combined_acc.total_steps);
-            println!("Max steps (single): {}", combined_acc.max_steps_single);
+            println!("  - Max GRFs/task: {}", format_num(max_task_grfs as u64));
+            println!("  - Max Time/task: {:.0}s", max_task_time);
+            println!("Total GRFs generated: {}", format_num(combined_acc.total as u64));
+            println!("Total processing time: {:.2} core-hours", total_processing_time / 3600.0);
+            println!("Holdouts: {}", format_num(combined_acc.holdouts as u64));
+            println!("Diverged: {}", format_num(combined_acc.diverged as u64));
+            println!("Total steps: {}", format_num(combined_acc.total_steps));
+            println!("Max steps (single): {}", format_num(combined_acc.max_steps_single));
 
             println!("\nTop {}", top_k);
-            println!("{:>10}  {:>12}  {:>12}  {}", "Score", "Sim Steps", "Base Steps", "Expression");
-            for (score, steps, base_steps, expr) in combined_acc.top_k.iter_desc() {
-                println!("{:>10}  {:>12}  {:>12}  {}", score, steps, base_steps, expr);
+            println!("{:>26}  {:>14}  {}", "Score", "Sim Steps", "Expression");
+            for (score, steps, _base_steps, expr) in combined_acc.top_k.iter_desc() {
+                println!("{:>26}  {:>14}  {}", format_num(*score), format_num(*steps), expr);
             }
         }
     }
+}
+
+fn format_num(mut n: u64) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let mut s = String::new();
+    let mut count = 0;
+    while n > 0 {
+        if count == 3 {
+            s.insert(0, ',');
+            count = 0;
+        }
+        s.insert(0, (b'0' + (n % 10) as u8) as char);
+        n /= 10;
+        count += 1;
+    }
+    s
 }

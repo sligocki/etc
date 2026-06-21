@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use gen_rec::pruning::PruningOpts;
 use gen_rec::search_util::{flush_batch, Accumulator};
 use gen_rec::io_grl::{self, GrfEntry, Status};
+use gen_rec::alias::alias_db_for_stdout;
+use gen_rec::grf::Grf;
 use std::io::{BufReader, Write, BufWriter};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -424,13 +426,24 @@ fn main() {
             println!("Total steps: {}", format_num(combined_acc.total_steps));
             println!("Max steps (single): {}", format_num(combined_acc.max_steps_single));
 
+            let alias_db = alias_db_for_stdout(6, false);
+            let fmt_alias = |expr: &str| -> String {
+                match &alias_db {
+                    Some(db) => expr
+                        .parse::<Grf>()
+                        .map(|g| db.alias(&g))
+                        .unwrap_or_else(|_| expr.to_string()),
+                    None => expr.to_string(),
+                }
+            };
+
             println!("\nTop 10 (out of {} tracked)", combined_acc.top_k.entries.len());
             println!("{:>26}  {:>14}  {}", "Score", "Sim Steps", "Expression");
             for (rank, (score, steps, _base_steps, expr)) in combined_acc.top_k.iter_desc().enumerate() {
                 if rank >= 10 {
                     break;
                 }
-                println!("{:>26}  {:>14}  {}", format_num(*score), format_num(*steps), expr);
+                println!("{:>26}  {:>14}  {}", format_num(*score), format_num(*steps), fmt_alias(expr));
             }
 
             if completed_tasks == total_tasks {

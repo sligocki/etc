@@ -2,12 +2,13 @@ use clap::{Parser, Subcommand};
 use gen_rec::enumerate::{stream_grf_visited, EnumScope, EnumVisitor};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use gen_rec::pruning::PruningOpts;
-use gen_rec::search_util::{flush_batch, Accumulator, fmt_si};
+use gen_rec::search_util::{flush_batch, Accumulator};
+use gen_rec::io_grl::{self, GrfEntry, Status};
+use std::io::{BufReader, Write, BufWriter};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fs::{self, File};
-use std::io::BufReader;
 use std::path::PathBuf;
 use std::rc::Rc;
 use rand::seq::SliceRandom;
@@ -52,7 +53,7 @@ enum Commands {
     /// Phase 3: Combine all results
     Summary {
         results_dir: PathBuf,
-        #[arg(long, default_value_t = 10)]
+        #[arg(long, default_value_t = 100)]
         top_k: usize,
     },
 }
@@ -423,10 +424,70 @@ fn main() {
             println!("Total steps: {}", format_num(combined_acc.total_steps));
             println!("Max steps (single): {}", format_num(combined_acc.max_steps_single));
 
-            println!("\nTop {}", top_k);
+            println!("\nTop 10 (out of {} tracked)", combined_acc.top_k.entries.len());
             println!("{:>26}  {:>14}  {}", "Score", "Sim Steps", "Expression");
-            for (score, steps, _base_steps, expr) in combined_acc.top_k.iter_desc() {
+            for (rank, (score, steps, _base_steps, expr)) in combined_acc.top_k.iter_desc().enumerate() {
+                if rank >= 10 {
+                    break;
+                }
                 println!("{:>26}  {:>14}  {}", format_num(*score), format_num(*steps), expr);
+            }
+
+            if completed_tasks == total_tasks {
+                let halt_path = results_dir.join("halt.max.grl");
+                let mut halt_w = BufWriter::new(std::fs::File::create(&halt_path).expect("failed to create halt.max.grl"));
+                io_grl::write_grl_header(&mut halt_w, &format!("BBµ search task: size={}", m.size)).unwrap();
+                for (score, steps, base_steps, expr) in combined_acc.top_k.iter_desc() {
+                    io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
+                        expr: expr.clone(),
+                        status: Some(Status::Halt),
+                        steps: Some(*steps),
+                        base_steps: Some(*base_steps),
+                        score: Some(*score),
+                        unknown_reason: None,
+                    }).unwrap();
+                }
+                halt_w.flush().unwrap();
+
+                let holdout_path = results_dir.join("holdout.grl");
+                let mut holdout_w = BufWriter::new(std::fs::File::create(&holdout_path).expect("failed to create holdout.grl"));
+                io_grl::write_grl_header(&mut holdout_w, &format!("BBµ search task holdouts: size={}", m.size)).unwrap();
+                for h in all_holdouts {
+                    io_grl::write_grf_entry(&mut holdout_w, &GrfEntry {
+                        expr: h.expr,
+                        status: Some(Status::Unknown),
+                        steps: Some(h.steps),
+                        base_steps: None,
+                        score: None,
+                        unknown_reason: h.reason,
+                    }).unwrap();
+                }
+                holdout_w.flush().unwrap();
+
+                let stats_path = results_dir.join("stats.json");
+                let mut stats_w = BufWriter::new(std::fs::File::create(&stats_path).expect("failed to create stats.json"));
+                let best_json = combined_acc.top_k.best_score().map_or("null".to_string(), |v| v.to_string());
+                writeln!(stats_w, "{{").unwrap();
+                writeln!(stats_w, "  \"num_total\": {},", combined_acc.total).unwrap();
+                writeln!(stats_w, "  \"num_halt\": {},", combined_acc.total - combined_acc.holdouts - combined_acc.diverged).unwrap();
+                writeln!(stats_w, "  \"num_diverged\": {},", combined_acc.diverged).unwrap();
+                writeln!(stats_w, "  \"num_holdouts\": {},", combined_acc.holdouts).unwrap();
+                writeln!(stats_w).unwrap();
+                writeln!(stats_w, "  \"max_score\": {},", best_json).unwrap();
+                writeln!(stats_w, "  \"max_halt_steps\": {},", combined_acc.max_steps_single).unwrap();
+                writeln!(stats_w).unwrap();
+                writeln!(stats_w, "  \"total_runtime_s\": {:.3},", total_processing_time).unwrap();
+                writeln!(stats_w).unwrap();
+                writeln!(stats_w, "  \"num_non_empty_tasks\": {},", non_empty_tasks).unwrap();
+                writeln!(stats_w, "  \"max_task_size\": {},", max_task_grfs).unwrap();
+                writeln!(stats_w, "  \"max_task_time_s\": {:.3}", max_task_time).unwrap();
+                writeln!(stats_w, "}}").unwrap();
+                stats_w.flush().unwrap();
+
+                println!("\nFinal files generated:");
+                println!("  halt.max.grl: {} entries", combined_acc.top_k.entries.len());
+                println!("  holdout.grl:  {} entries", combined_acc.holdouts);
+                println!("  stats.json");
             }
         }
     }

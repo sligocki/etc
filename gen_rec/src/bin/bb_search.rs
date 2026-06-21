@@ -424,17 +424,13 @@ fn run_search(args: &Args) {
         let config_path = dir.join("config.json");
         let mut cfg_w =
             BufWriter::new(fs::File::create(&config_path).expect("failed to create config.json"));
-        let best_json = acc
-            .top_k
-            .best_score()
-            .map_or("null".to_string(), |v| v.to_string());
         writeln!(cfg_w, "{{").unwrap();
         writeln!(cfg_w, "  \"size\": {},", size).unwrap();
         writeln!(cfg_w, "  \"mode\": \"{mode_str}\",").unwrap();
         writeln!(cfg_w, "  \"max_steps\": {},", args.max_steps).unwrap();
         writeln!(cfg_w, "  \"batch_size\": {},", args.batch_size).unwrap();
         writeln!(cfg_w, "  \"top_k\": {},", args.top_k).unwrap();
-        writeln!(cfg_w, "  \"enum_scope\": {},", args.enum_scope.as_str()).unwrap();
+        writeln!(cfg_w, "  \"enum_scope\": \"{}\",", args.enum_scope.as_str()).unwrap();
         writeln!(cfg_w, "  \"cf\": {},", cf).unwrap();
         writeln!(
             cfg_w,
@@ -442,19 +438,36 @@ fn run_search(args: &Args) {
             opts.stream_opt_names().join(",")
         )
         .unwrap();
-        writeln!(cfg_w, "  \"threads\": {},", rayon::current_num_threads()).unwrap();
-        writeln!(cfg_w, "  \"total_fns\": {},", acc.total).unwrap();
-        writeln!(cfg_w, "  \"total_holdouts\": {},", acc.holdouts).unwrap();
-        writeln!(cfg_w, "  \"total_diverged\": {},", acc.diverged).unwrap();
-        writeln!(cfg_w, "  \"elapsed_secs\": {:.3},", elapsed).unwrap();
-        writeln!(cfg_w, "  \"best_score\": {}", best_json).unwrap();
+        writeln!(cfg_w, "  \"threads\": {}", rayon::current_num_threads()).unwrap();
         writeln!(cfg_w, "}}").unwrap();
         cfg_w.flush().unwrap();
+
+        // Write stats file.
+        let stats_path = dir.join("stats.json");
+        let mut stats_w =
+            BufWriter::new(fs::File::create(&stats_path).expect("failed to create stats.json"));
+        let best_json = acc
+            .top_k
+            .best_score()
+            .map_or("null".to_string(), |v| v.to_string());
+        writeln!(stats_w, "{{").unwrap();
+        writeln!(stats_w, "  \"num_total\": {},", acc.total).unwrap();
+        writeln!(stats_w, "  \"num_halt\": {},", acc.total - acc.holdouts - acc.diverged).unwrap();
+        writeln!(stats_w, "  \"num_diverged\": {},", acc.diverged).unwrap();
+        writeln!(stats_w, "  \"num_holdouts\": {},", acc.holdouts).unwrap();
+        writeln!(stats_w).unwrap();
+        writeln!(stats_w, "  \"max_score\": {}", best_json).unwrap();
+        writeln!(stats_w, "  \"max_halt_steps\": {},", acc.max_steps_single).unwrap();
+        writeln!(stats_w).unwrap();
+        writeln!(stats_w, "  \"total_runtime_s\": {:.3},", elapsed).unwrap();
+        writeln!(stats_w, "}}").unwrap();
+        stats_w.flush().unwrap();
 
         println!();
         println!("Results written to {}/", dir.display());
         println!("  halt.max.grl: {} entries", acc.top_k.entries.len());
         println!("  holdout.grl:  {} entries", acc.holdouts);
         println!("  config.json");
+        println!("  stats.json");
     }
 }

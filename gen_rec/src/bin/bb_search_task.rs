@@ -10,6 +10,8 @@ use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::rc::Rc;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
 
 #[derive(Parser)]
 #[command(name = "bb_search_task", about = "MapReduce-style distributed GRF enumeration")]
@@ -28,6 +30,8 @@ enum Commands {
         size: usize,
         #[arg(long, default_value_t = 6)]
         task_size: usize,
+        #[arg(long, default_value_t = 1000)]
+        num_tasks: usize,
         #[arg(long)]
         allow_min: bool,
     },
@@ -59,7 +63,32 @@ struct Manifest {
     size: usize,
     task_size: usize,
     allow_min: bool,
-    prefixes: Vec<Vec<usize>>,
+    #[serde(default)]
+    prefixes: Option<Vec<Vec<usize>>>, // Legacy format
+    #[serde(default)]
+    tasks: Option<Vec<Vec<Vec<usize>>>>, // New grouped format
+}
+
+impl Manifest {
+    fn num_tasks(&self) -> usize {
+        if let Some(ref t) = self.tasks {
+            t.len()
+        } else if let Some(ref p) = self.prefixes {
+            p.len()
+        } else {
+            0
+        }
+    }
+
+    fn task_prefixes(&self, task_id: usize) -> Vec<Vec<usize>> {
+        if let Some(ref t) = self.tasks {
+            t[task_id].clone()
+        } else if let Some(ref p) = self.prefixes {
+            vec![p[task_id].clone()]
+        } else {
+            vec![]
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -135,6 +164,7 @@ fn main() {
             enum_scope,
             size,
             task_size,
+            num_tasks,
             allow_min,
         } => {
             if !results_dir.exists() {
@@ -159,7 +189,24 @@ fn main() {
             });
 
             drop(visitor);
-            let prefixes = Rc::try_unwrap(prefixes_ref).unwrap().into_inner();
+            let mut prefixes = Rc::try_unwrap(prefixes_ref).unwrap().into_inner();
+            
+            let raw_len = prefixes.len();
+            let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+            prefixes.shuffle(&mut rng);
+
+            let mut tasks = Vec::new();
+            if num_tasks > 0 && prefixes.len() > 0 {
+                let actual_tasks = std::cmp::min(num_tasks, prefixes.len());
+                tasks.resize(actual_tasks, Vec::new());
+                for (i, prefix) in prefixes.into_iter().enumerate() {
+                    tasks[i % actual_tasks].push(prefix);
+                }
+            } else {
+                // If num_tasks is 0, just put them all in one task?
+                tasks.push(prefixes);
+            }
+
             let manifest = Manifest {
                 enum_scope: match enum_scope {
                     EnumScope::Prf => "prf".to_string(),
@@ -169,13 +216,14 @@ fn main() {
                 size,
                 task_size,
                 allow_min,
-                prefixes,
+                prefixes: None,
+                tasks: Some(tasks),
             };
 
             let out = results_dir.join("manifest.json");
             let f = File::create(&out).unwrap();
             serde_json::to_writer_pretty(f, &manifest).unwrap();
-            println!("Wrote manifest to {:?} with {} tasks", out, manifest.prefixes.len());
+            println!("Wrote manifest to {:?} with {} tasks (from {} raw prefixes)", out, manifest.num_tasks(), raw_len);
         }
 
         Commands::Worker {
@@ -192,7 +240,7 @@ fn main() {
 
             let tasks_to_run: Vec<(usize, PathBuf)> = match task_id {
                 Some(id) => {
-                    if id >= m.prefixes.len() {
+                    if id >= m.num_tasks() {
                         eprintln!("Task ID {} out of bounds", id);
                         std::process::exit(1);
                     }
@@ -204,7 +252,7 @@ fn main() {
                         std::process::exit(1);
                     }
                     let mut tasks = Vec::new();
-                    for i in 0..m.prefixes.len() {
+                    for i in 0..m.num_tasks() {
                         let out_path = results_dir.join(format!("task_{}.json", i));
                         if !out_path.exists() {
                             tasks.push((i, out_path));
@@ -214,7 +262,7 @@ fn main() {
                 }
             };
 
-            let total_tasks = m.prefixes.len();
+            let total_tasks = m.num_tasks();
             let mut already_completed = 0;
             for i in 0..total_tasks {
                 let out_path = results_dir.join(format!("task_{}.json", i));
@@ -242,30 +290,30 @@ fn main() {
 
             tasks_to_run.into_par_iter().for_each(|(tid, out_path)| {
                 let task_start = std::time::Instant::now();
-                let prefix = m.prefixes[tid].clone();
+                let task_prefixes = m.task_prefixes(tid);
                 let opts = PruningOpts::recommended();
-                let mut visitor = WorkerVisitor {
-                    current_path: Vec::new(),
-                    assigned_prefix: prefix,
-                };
 
                 let mut acc = Accumulator::new(top_k);
-                let mut batch = Vec::with_capacity(batch_size);
-
-                // In worker, holdouts are temporarily kept in memory or a scratch file.
-                // To keep it simple and independent, we'll collect them in memory,
-                // then write them into the WorkerResult struct.
                 let mut holdouts_buffer: Vec<u8> = Vec::new();
 
-                stream_grf_visited(m.size, 0, m.allow_min, opts, &mut visitor, &mut |grf| {
-                    batch.push(grf.clone());
-                    acc.total += 1;
-                    if batch.len() >= batch_size {
+                for prefix in task_prefixes {
+                    let mut visitor = WorkerVisitor {
+                        current_path: Vec::new(),
+                        assigned_prefix: prefix,
+                    };
+
+                    let mut batch = Vec::with_capacity(batch_size);
+
+                    stream_grf_visited(m.size, 0, m.allow_min, opts, &mut visitor, &mut |grf| {
+                        batch.push(grf.clone());
+                        acc.total += 1;
+                        if batch.len() >= batch_size {
+                            flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k, false);
+                        }
+                    });
+                    if !batch.is_empty() {
                         flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k, false);
                     }
-                });
-                if !batch.is_empty() {
-                    flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k, false);
                 }
 
                 // Parse holdouts back from buffer to struct form
@@ -323,7 +371,7 @@ fn main() {
 
             let mut completed_tasks = 0;
 
-            for i in 0..m.prefixes.len() {
+            for i in 0..m.num_tasks() {
                 let res_path = results_dir.join(format!("task_{}.json", i));
                 if !res_path.exists() {
                     continue;
@@ -352,7 +400,7 @@ fn main() {
                 all_holdouts.extend(res.holdout_entries);
             }
 
-            let total_tasks = m.prefixes.len();
+            let total_tasks = m.num_tasks();
             let non_empty_tasks = completed_tasks - empty_tasks;
             let pct_non_empty = if completed_tasks > 0 {
                 (non_empty_tasks as f64 / completed_tasks as f64) * 100.0

@@ -28,7 +28,7 @@ enum Commands {
         #[arg(value_enum)]
         enum_scope: EnumScope,
         size: usize,
-        #[arg(long, default_value_t = 6)]
+        #[arg(long, default_value_t = 8)]
         task_size: usize,
         #[arg(long, default_value_t = 1000)]
         num_tasks: usize,

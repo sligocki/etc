@@ -17,13 +17,13 @@ struct Args {
     /// GRF expression or alias name.
     expr: String,
 
+    /// Inclusive maximum input value for I/O tables.
+    #[arg(default_value_t = 10)]
+    max_val: u64,
+
     /// Simulation step budget per evaluation (0 = unlimited).
     #[arg(long, default_value_t = 100_000)]
     max_steps: u64,
-
-    /// Inclusive maximum input value for I/O tables.
-    #[arg(long, default_value_t = 10)]
-    grid: u64,
 
     /// Skip I/O tables; show structural info only.
     #[arg(long)]
@@ -164,8 +164,11 @@ fn main() {
         println!();
         println!("(No nested R/M sub-expressions)");
     } else {
-        println!();
-        println!("=== Sub-expressions ===");
+        // Add decompilation
+        let decomp = gen_rec::mgrf::decompile(&grf);
+        println!("Decompiled: {}", decomp);
+
+        println!("\n=== Sub-expressions ===\n");
 
         for (i, key) in order.iter().enumerate() {
             let sub = &seen[key];
@@ -205,7 +208,7 @@ fn main() {
             if let Some(sem) = sub.closed_form() {
                 sem.print_rules(&name);
             } else if !args.no_sim {
-                print_io_table(sub, args.grid, args.max_steps);
+                print_io_table(sub, args.max_val, args.max_steps);
             }
         }
     }
@@ -224,6 +227,6 @@ fn main() {
     if let Some(sem) = grf.closed_form() {
         sem.print_rules(&root_name);
     } else if !args.no_sim {
-        print_io_table(&grf, args.grid, args.max_steps);
+        print_io_table(&grf, args.max_val, args.max_steps);
     }
 }

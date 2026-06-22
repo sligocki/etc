@@ -742,11 +742,12 @@ mod tests {
 
     #[test]
     fn test_out_of_steps() {
-        // R where h = C(Plus, [P(2,1), P(2,2)]) adds the loop counter to the
-        // accumulator each step.  acc_plus_k returns None so no ff fires, and
-        // each call to Plus itself costs O(i) steps, making the total O(n^2).
-        let r = grf!("R(Z0, C(R(P(1,1), C(S, P(3,2))), P(2,1), P(2,2)))");
+        // R where h = C(Plus, P(2,2), P(2,2)) doubles the accumulator each step.
+        // Geometric growth is not yet fast-forwarded (waiting for Iterated),
+        // and each call to Plus costs O(acc) steps, making the total exponential.
+        let r = grf!("R(C(S, Z0), C(R(P(1,1), C(S, P(3,2))), P(2,2), P(2,2)))");
         let (result, steps) = simulate(&r, &[1_000], 50);
+        println!("RESULT IS: {:?}", result);
         assert!(matches!(result, SimResult::OutOfSteps));
         assert!(steps.sim >= 50);
     }

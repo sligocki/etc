@@ -1,23 +1,26 @@
 use clap::{Parser, Subcommand};
-use gen_rec::enumerate::{stream_grf_visited, EnumScope, EnumVisitor};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use gen_rec::pruning::PruningOpts;
-use gen_rec::search_util::{flush_batch, Accumulator};
-use gen_rec::io_grl::{self, GrfEntry, Status};
 use gen_rec::alias::alias_db_for_stdout;
+use gen_rec::enumerate::{EnumScope, EnumVisitor, stream_grf_visited};
 use gen_rec::grf::Grf;
-use std::io::{BufReader, Write, BufWriter};
+use gen_rec::io_grl::{self, GrfEntry, Status};
+use gen_rec::pruning::PruningOpts;
+use gen_rec::search_util::{Accumulator, flush_batch};
+use rand::SeedableRng;
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fs::{self, File};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
-use rand::seq::SliceRandom;
-use rand::SeedableRng;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Parser)]
-#[command(name = "bb_search_task", about = "MapReduce-style distributed GRF enumeration")]
+#[command(
+    name = "bb_search_task",
+    about = "MapReduce-style distributed GRF enumeration"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -193,7 +196,7 @@ fn main() {
 
             drop(visitor);
             let mut prefixes = Rc::try_unwrap(prefixes_ref).unwrap().into_inner();
-            
+
             let raw_len = prefixes.len();
             let mut rng = rand::rngs::StdRng::seed_from_u64(42);
             prefixes.shuffle(&mut rng);
@@ -226,10 +229,15 @@ fn main() {
             let manifest_path = results_dir.join("manifest.json");
             let f = File::create(&manifest_path).unwrap();
             serde_json::to_writer_pretty(f, &manifest).unwrap();
-            
+
             std::fs::create_dir_all(results_dir.join("tasks")).unwrap();
-            
-            println!("Wrote manifest to {:?} with {} tasks (from {} raw prefixes)", manifest_path, manifest.num_tasks(), raw_len);
+
+            println!(
+                "Wrote manifest to {:?} with {} tasks (from {} raw prefixes)",
+                manifest_path,
+                manifest.num_tasks(),
+                raw_len
+            );
         }
 
         Commands::Worker {
@@ -241,7 +249,8 @@ fn main() {
             top_k,
         } => {
             let manifest_path = results_dir.join("manifest.json");
-            let f = File::open(&manifest_path).expect("Failed to open manifest.json in results dir");
+            let f =
+                File::open(&manifest_path).expect("Failed to open manifest.json in results dir");
             let m: Manifest = serde_json::from_reader(BufReader::new(f)).unwrap();
 
             std::fs::create_dir_all(results_dir.join("tasks")).unwrap();
@@ -285,10 +294,14 @@ fn main() {
                 println!("All {} tasks are already completed.", total_tasks);
                 return;
             }
-            
+
             if all_tasks {
                 if already_completed > 0 {
-                    println!("Resuming: {} tasks already completed, {} remaining.", already_completed, tasks_to_run.len());
+                    println!(
+                        "Resuming: {} tasks already completed, {} remaining.",
+                        already_completed,
+                        tasks_to_run.len()
+                    );
                 } else {
                     println!("Starting all {} tasks...", total_tasks);
                 }
@@ -316,11 +329,25 @@ fn main() {
                         batch.push(grf.clone());
                         acc.total += 1;
                         if batch.len() >= batch_size {
-                            flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k, false);
+                            flush_batch(
+                                &mut batch,
+                                &mut acc,
+                                &mut holdouts_buffer,
+                                max_steps,
+                                top_k,
+                                false,
+                            );
                         }
                     });
                     if !batch.is_empty() {
-                        flush_batch(&mut batch, &mut acc, &mut holdouts_buffer, max_steps, top_k, false);
+                        flush_batch(
+                            &mut batch,
+                            &mut acc,
+                            &mut holdouts_buffer,
+                            max_steps,
+                            top_k,
+                            false,
+                        );
                     }
                 }
 
@@ -352,20 +379,21 @@ fn main() {
 
                 let out_file = File::create(&out_path).unwrap();
                 serde_json::to_writer_pretty(out_file, &result).unwrap();
-                
+
                 let completed = completed_tasks.fetch_add(1, Ordering::SeqCst) + 1;
                 if acc.total > 0 {
-                    println!("Task #{} completed ({}/{}): {} GRFs", tid, completed, total_tasks, acc.total);
+                    println!(
+                        "Task #{} completed ({}/{}): {} GRFs",
+                        tid, completed, total_tasks, acc.total
+                    );
                 }
             });
         }
 
-        Commands::Summary {
-            results_dir,
-            top_k,
-        } => {
+        Commands::Summary { results_dir, top_k } => {
             let manifest_path = results_dir.join("manifest.json");
-            let f = File::open(&manifest_path).expect("Failed to open manifest.json in results dir");
+            let f =
+                File::open(&manifest_path).expect("Failed to open manifest.json in results dir");
             let m: Manifest = serde_json::from_reader(BufReader::new(f)).unwrap();
 
             let mut combined_acc = Accumulator::new(top_k);
@@ -388,23 +416,31 @@ fn main() {
 
                 combined_acc.total += res.total;
                 if res.holdouts != res.holdout_entries.len() {
-                    eprintln!("\x1b[31m*** ERROR: Task {} reported {} holdouts, but saved {} entries! This usually indicates a parsing error or corrupted task file. Re-run this task. ***\x1b[0m", res.task_id, res.holdouts, res.holdout_entries.len());
+                    eprintln!(
+                        "\x1b[31m*** ERROR: Task {} reported {} holdouts, but saved {} entries! This usually indicates a parsing error or corrupted task file. Re-run this task. ***\x1b[0m",
+                        res.task_id,
+                        res.holdouts,
+                        res.holdout_entries.len()
+                    );
                 }
                 combined_acc.holdouts += res.holdouts;
                 combined_acc.diverged += res.diverged;
                 combined_acc.total_steps += res.total_steps;
                 combined_acc.sim_nanos += res.sim_nanos;
-                combined_acc.max_steps_single = combined_acc.max_steps_single.max(res.max_steps_single);
+                combined_acc.max_steps_single =
+                    combined_acc.max_steps_single.max(res.max_steps_single);
                 total_processing_time += res.processing_time_secs;
-                
+
                 if res.total == 0 {
                     empty_tasks += 1;
                 }
                 max_task_grfs = max_task_grfs.max(res.total);
                 max_task_time = max_task_time.max(res.processing_time_secs);
-                
+
                 for entry in res.top_k {
-                    combined_acc.top_k.insert(entry.0, entry.1, entry.2, entry.3);
+                    combined_acc
+                        .top_k
+                        .insert(entry.0, entry.1, entry.2, entry.3);
                 }
                 all_holdouts.extend(res.holdout_entries);
             }
@@ -419,18 +455,33 @@ fn main() {
 
             println!("Summary for manifest {:?}", manifest_path);
             if completed_tasks < total_tasks {
-                println!("\x1b[31m*** WARNING: PARTIAL RESULTS ({} / {} tasks completed) ***\x1b[0m", completed_tasks, total_tasks);
+                println!(
+                    "\x1b[31m*** WARNING: PARTIAL RESULTS ({} / {} tasks completed) ***\x1b[0m",
+                    completed_tasks, total_tasks
+                );
             }
             println!("Total Tasks: {}", completed_tasks);
-            println!("  - Non-empty tasks: {} ({:.1}%)", non_empty_tasks, pct_non_empty);
+            println!(
+                "  - Non-empty tasks: {} ({:.1}%)",
+                non_empty_tasks, pct_non_empty
+            );
             println!("  - Max GRFs/task: {}", format_num(max_task_grfs as u64));
             println!("  - Max Time/task: {:.0}s", max_task_time);
-            println!("Total GRFs generated: {}", format_num(combined_acc.total as u64));
-            println!("Total processing time: {:.2} core-hours", total_processing_time / 3600.0);
+            println!(
+                "Total GRFs generated: {}",
+                format_num(combined_acc.total as u64)
+            );
+            println!(
+                "Total processing time: {:.2} core-hours",
+                total_processing_time / 3600.0
+            );
             println!("Holdouts: {}", format_num(combined_acc.holdouts as u64));
             println!("Diverged: {}", format_num(combined_acc.diverged as u64));
             println!("Total steps: {}", format_num(combined_acc.total_steps));
-            println!("Max steps (single): {}", format_num(combined_acc.max_steps_single));
+            println!(
+                "Max steps (single): {}",
+                format_num(combined_acc.max_steps_single)
+            );
 
             let alias_db = alias_db_for_stdout(6, false);
             let fmt_alias = |expr: &str| -> String {
@@ -443,59 +494,106 @@ fn main() {
                 }
             };
 
-            println!("\nTop 10 (out of {} tracked)", combined_acc.top_k.entries.len());
+            println!(
+                "\nTop 10 (out of {} tracked)",
+                combined_acc.top_k.entries.len()
+            );
             println!("{:>26}  {:>14}  {}", "Score", "Sim Steps", "Expression");
-            for (rank, (score, steps, _base_steps, expr)) in combined_acc.top_k.iter_desc().enumerate() {
+            for (rank, (score, steps, _base_steps, expr)) in
+                combined_acc.top_k.iter_desc().enumerate()
+            {
                 if rank >= 10 {
                     break;
                 }
-                println!("{:>26}  {:>14}  {}", format_num(*score), format_num(*steps), fmt_alias(expr));
+                println!(
+                    "{:>26}  {:>14}  {}",
+                    format_num(*score),
+                    format_num(*steps),
+                    fmt_alias(expr)
+                );
             }
 
             if completed_tasks == total_tasks {
                 let halt_path = results_dir.join("halt.max.grl");
-                let mut halt_w = BufWriter::new(std::fs::File::create(&halt_path).expect("failed to create halt.max.grl"));
-                io_grl::write_grl_header(&mut halt_w, &format!("BBµ search task: size={}", m.size)).unwrap();
+                let mut halt_w = BufWriter::new(
+                    std::fs::File::create(&halt_path).expect("failed to create halt.max.grl"),
+                );
+                io_grl::write_grl_header(&mut halt_w, &format!("BBµ search task: size={}", m.size))
+                    .unwrap();
                 for (score, steps, base_steps, expr) in combined_acc.top_k.iter_desc() {
-                    io_grl::write_grf_entry(&mut halt_w, &GrfEntry {
-                        expr: expr.clone(),
-                        status: Some(Status::Halt),
-                        steps: Some(*steps),
-                        base_steps: Some(*base_steps),
-                        score: Some(*score),
-                        unknown_reason: None,
-                    }).unwrap();
+                    io_grl::write_grf_entry(
+                        &mut halt_w,
+                        &GrfEntry {
+                            expr: expr.clone(),
+                            status: Some(Status::Halt),
+                            steps: Some(*steps),
+                            base_steps: Some(*base_steps),
+                            score: Some(*score),
+                            unknown_reason: None,
+                        },
+                    )
+                    .unwrap();
                 }
                 halt_w.flush().unwrap();
 
                 let holdout_path = results_dir.join("holdout.grl");
-                let mut holdout_w = BufWriter::new(std::fs::File::create(&holdout_path).expect("failed to create holdout.grl"));
-                io_grl::write_grl_header(&mut holdout_w, &format!("BBµ search task holdouts: size={}", m.size)).unwrap();
+                let mut holdout_w = BufWriter::new(
+                    std::fs::File::create(&holdout_path).expect("failed to create holdout.grl"),
+                );
+                io_grl::write_grl_header(
+                    &mut holdout_w,
+                    &format!("BBµ search task holdouts: size={}", m.size),
+                )
+                .unwrap();
                 for h in all_holdouts {
-                    io_grl::write_grf_entry(&mut holdout_w, &GrfEntry {
-                        expr: h.expr,
-                        status: Some(Status::Unknown),
-                        steps: Some(h.steps),
-                        base_steps: None,
-                        score: None,
-                        unknown_reason: h.reason,
-                    }).unwrap();
+                    io_grl::write_grf_entry(
+                        &mut holdout_w,
+                        &GrfEntry {
+                            expr: h.expr,
+                            status: Some(Status::Unknown),
+                            steps: Some(h.steps),
+                            base_steps: None,
+                            score: None,
+                            unknown_reason: h.reason,
+                        },
+                    )
+                    .unwrap();
                 }
                 holdout_w.flush().unwrap();
 
                 let stats_path = results_dir.join("stats.json");
-                let mut stats_w = BufWriter::new(std::fs::File::create(&stats_path).expect("failed to create stats.json"));
-                let best_json = combined_acc.top_k.best_score().map_or("null".to_string(), |v| v.to_string());
+                let mut stats_w = BufWriter::new(
+                    std::fs::File::create(&stats_path).expect("failed to create stats.json"),
+                );
+                let best_json = combined_acc
+                    .top_k
+                    .best_score()
+                    .map_or("null".to_string(), |v| v.to_string());
                 writeln!(stats_w, "{{").unwrap();
                 writeln!(stats_w, "  \"num_total\": {},", combined_acc.total).unwrap();
-                writeln!(stats_w, "  \"num_halt\": {},", combined_acc.total - combined_acc.holdouts - combined_acc.diverged).unwrap();
+                writeln!(
+                    stats_w,
+                    "  \"num_halt\": {},",
+                    combined_acc.total - combined_acc.holdouts - combined_acc.diverged
+                )
+                .unwrap();
                 writeln!(stats_w, "  \"num_diverged\": {},", combined_acc.diverged).unwrap();
                 writeln!(stats_w, "  \"num_holdouts\": {},", combined_acc.holdouts).unwrap();
                 writeln!(stats_w).unwrap();
                 writeln!(stats_w, "  \"max_score\": {},", best_json).unwrap();
-                writeln!(stats_w, "  \"max_halt_steps\": {},", combined_acc.max_steps_single).unwrap();
+                writeln!(
+                    stats_w,
+                    "  \"max_halt_steps\": {},",
+                    combined_acc.max_steps_single
+                )
+                .unwrap();
                 writeln!(stats_w).unwrap();
-                writeln!(stats_w, "  \"total_runtime_s\": {:.3},", total_processing_time).unwrap();
+                writeln!(
+                    stats_w,
+                    "  \"total_runtime_s\": {:.3},",
+                    total_processing_time
+                )
+                .unwrap();
                 writeln!(stats_w).unwrap();
                 writeln!(stats_w, "  \"num_non_empty_tasks\": {},", non_empty_tasks).unwrap();
                 writeln!(stats_w, "  \"max_task_size\": {},", max_task_grfs).unwrap();
@@ -504,7 +602,10 @@ fn main() {
                 stats_w.flush().unwrap();
 
                 println!("\nFinal files generated:");
-                println!("  halt.max.grl: {} entries", combined_acc.top_k.entries.len());
+                println!(
+                    "  halt.max.grl: {} entries",
+                    combined_acc.top_k.entries.len()
+                );
                 println!("  holdout.grl:  {} entries", combined_acc.holdouts);
                 println!("  stats.json");
             }

@@ -75,8 +75,6 @@ struct Args {
     dynamic_rnf: bool,
 }
 
-
-
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -97,7 +95,7 @@ fn run_search(args: &Args) {
     }
     let min_prf = args.enum_scope.min_prf();
     let allow_min = args.enum_scope.allow_min();
-    
+
     // We default `cf` (ClosedForm deduplication) to true for min_prf and grf.
     // For these modes, simulation steps an input variable (or can diverge), so deduplication
     // saves immense amounts of time.
@@ -452,7 +450,12 @@ fn run_search(args: &Args) {
             .map_or("null".to_string(), |v| v.to_string());
         writeln!(stats_w, "{{").unwrap();
         writeln!(stats_w, "  \"num_total\": {},", acc.total).unwrap();
-        writeln!(stats_w, "  \"num_halt\": {},", acc.total - acc.holdouts - acc.diverged).unwrap();
+        writeln!(
+            stats_w,
+            "  \"num_halt\": {},",
+            acc.total - acc.holdouts - acc.diverged
+        )
+        .unwrap();
         writeln!(stats_w, "  \"num_diverged\": {},", acc.diverged).unwrap();
         writeln!(stats_w, "  \"num_holdouts\": {},", acc.holdouts).unwrap();
         writeln!(stats_w).unwrap();

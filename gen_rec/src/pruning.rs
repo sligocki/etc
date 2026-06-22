@@ -265,7 +265,9 @@ impl Pruner {
         let h_is_rec = matches!(&h.kind, GrfKind::Rec(_, _));
         if self.opts.rec_zero_arg
             && h_is_rec
-            && gs.first().map_or(false, |g| matches!(&g.kind, GrfKind::Zero(_)))
+            && gs
+                .first()
+                .map_or(false, |g| matches!(&g.kind, GrfKind::Zero(_)))
         {
             return true;
         }

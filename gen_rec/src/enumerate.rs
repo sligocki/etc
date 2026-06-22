@@ -67,7 +67,9 @@ pub trait EnumVisitor {
 pub struct DummyVisitor;
 
 impl EnumVisitor for DummyVisitor {
-    fn enter_branch(&mut self, _branch_id: usize, _remaining_size: usize) -> bool { true }
+    fn enter_branch(&mut self, _branch_id: usize, _remaining_size: usize) -> bool {
+        true
+    }
     fn exit_branch(&mut self) {}
 }
 
@@ -79,7 +81,9 @@ pub fn stream_grf_visited<F: FnMut(&Grf)>(
     visitor: &mut dyn EnumVisitor,
     callback: &mut F,
 ) {
-    for_each_grf(size, arity, allow_min, opts, visitor, &mut |_, grf| callback(grf));
+    for_each_grf(size, arity, allow_min, opts, visitor, &mut |_, grf| {
+        callback(grf)
+    });
 }
 
 pub fn for_each_grf_pub(
@@ -133,16 +137,22 @@ pub(crate) fn for_each_grf_core(
     }
     if size == 1 {
         let mut b = 0;
-        if visitor.enter_branch(b, 1) { callback(visitor, &Grf::zero_atom(arity)); }
+        if visitor.enter_branch(b, 1) {
+            callback(visitor, &Grf::zero_atom(arity));
+        }
         visitor.exit_branch();
         b += 1;
         for i in 1..=arity {
-            if visitor.enter_branch(b, 1) { callback(visitor, &Grf::proj_atom(arity, i)); }
+            if visitor.enter_branch(b, 1) {
+                callback(visitor, &Grf::proj_atom(arity, i));
+            }
             visitor.exit_branch();
             b += 1;
         }
         if arity == 1 {
-            if visitor.enter_branch(b, 1) { callback(visitor, &Grf::succ_atom()); }
+            if visitor.enter_branch(b, 1) {
+                callback(visitor, &Grf::succ_atom());
+            }
             visitor.exit_branch();
         }
         return;
@@ -200,12 +210,7 @@ pub(crate) fn for_each_grf_core(
                         &mut args,
                         v,
                         &mut |v, gs: &[Grf]| {
-                            if pruner.should_prune_comp_args(
-                                h,
-                                gs,
-                                arity,
-                                inline_c.as_ref(),
-                            ) {
+                            if pruner.should_prune_comp_args(h, gs, arity, inline_c.as_ref()) {
                                 return;
                             }
                             callback(v, &Grf::comp_arity(h.clone(), gs.to_vec(), arity));

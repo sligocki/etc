@@ -4,8 +4,10 @@ use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 use std::sync::Arc;
 
+use crate::analysis::{
+    GrfAnalysis, compute_is_always_zero, compute_lower_bound, guaranteed_diff, min_val,
+};
 use crate::closed_form::{ClosedForm, closed_form_of};
-use crate::analysis::{compute_is_always_zero, compute_lower_bound, guaranteed_diff, min_val, GrfAnalysis};
 
 /// Parse a GRF from a format string, panicking on error.
 ///
@@ -135,7 +137,10 @@ impl Grf {
     }
 
     pub fn closed_form(&self) -> Option<&ClosedForm> {
-        self.analysis.closed_form.get_or_init(|| closed_form_of(self)).as_ref()
+        self.analysis
+            .closed_form
+            .get_or_init(|| closed_form_of(self))
+            .as_ref()
     }
 
     /// Returns true if this GRF can provably never return 0.
@@ -144,26 +149,38 @@ impl Grf {
     /// prune `M(f)` when `f` is always positive (M(f) always diverges).
     pub fn is_never_zero(&self) -> bool {
         *self.analysis.is_never_zero.get_or_init(|| {
-            compute_lower_bound(self, &vec![Bound::Min(0); self.arity()], self.closed_form()).min_value() > 0
+            compute_lower_bound(self, &vec![Bound::Min(0); self.arity()], self.closed_form())
+                .min_value()
+                > 0
         })
     }
 
     /// Returns true if `self(args...) > 0` for all natural-number inputs.
     pub fn is_always_pos(&self) -> bool {
-        *self.analysis.is_always_pos.get_or_init(|| self.is_never_zero())
+        *self
+            .analysis
+            .is_always_pos
+            .get_or_init(|| self.is_never_zero())
     }
 
     /// Returns true if `self(args...) == 0` for all natural-number inputs.
     pub fn is_always_zero(&self) -> bool {
-        *self.analysis.is_always_zero.get_or_init(|| compute_is_always_zero(self))
+        *self
+            .analysis
+            .is_always_zero
+            .get_or_init(|| compute_is_always_zero(self))
     }
 
     pub fn used_args(&self) -> &std::collections::BTreeSet<usize> {
-        self.analysis.used_args.get_or_init(|| crate::analysis::GrfAnalysis::compute_used_args(&self.kind))
+        self.analysis
+            .used_args
+            .get_or_init(|| crate::analysis::GrfAnalysis::compute_used_args(&self.kind))
     }
 
     pub fn canonical_arg_order(&self) -> &Vec<usize> {
-        self.analysis.canonical_arg_order.get_or_init(|| crate::analysis::GrfAnalysis::compute_canonical_arg_order(&self.kind))
+        self.analysis
+            .canonical_arg_order
+            .get_or_init(|| crate::analysis::GrfAnalysis::compute_canonical_arg_order(&self.kind))
     }
 
     /// Checks if this GRF is strictly in Rewire Normal Form (RNF).
@@ -199,7 +216,11 @@ impl Grf {
 
     /// Returns a safe lower bound for the output of this GRF given lower bounds for its arguments.
     pub fn lower_bound(&self, args_bound: &[Bound]) -> Bound {
-        compute_lower_bound(self, args_bound, self.analysis.closed_form.get().unwrap_or(&None).as_ref())
+        compute_lower_bound(
+            self,
+            args_bound,
+            self.analysis.closed_form.get().unwrap_or(&None).as_ref(),
+        )
     }
 
     // --- Atom constructors ---
@@ -384,7 +405,12 @@ impl Grf {
 ///
 /// `map[i-1]` is the outer-arg index for inner arg `i`; 0 means synthetic
 /// (not an outer arg, e.g. Rec's accumulator or Min's search variable).
-pub(crate) fn grf_outer_arg_dfs_kind(kind: &GrfKind, map: &[usize], seen: &mut Vec<bool>, order: &mut Vec<usize>) {
+pub(crate) fn grf_outer_arg_dfs_kind(
+    kind: &GrfKind,
+    map: &[usize],
+    seen: &mut Vec<bool>,
+    order: &mut Vec<usize>,
+) {
     match kind {
         GrfKind::Proj(_, i) => {
             if *i > 0 && *i <= map.len() {
@@ -484,8 +510,8 @@ impl FromStr for Grf {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn test_atom_arities() {

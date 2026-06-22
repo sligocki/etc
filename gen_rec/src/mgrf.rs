@@ -1183,12 +1183,15 @@ pub fn decompile(grf: &Grf) -> String {
         GrfKind::Proj(k, i) => format!("P({k},{i})"),
         GrfKind::Comp(h, gs, k) => {
             let h_str = decompile(h);
-            
+
             // Check for DiagS: C(f, S, S)
-            if gs.len() == 2 && matches!(gs[0].kind, GrfKind::Succ) && matches!(gs[1].kind, GrfKind::Succ) {
+            if gs.len() == 2
+                && matches!(gs[0].kind, GrfKind::Succ)
+                && matches!(gs[1].kind, GrfKind::Succ)
+            {
                 return format!("DiagS[{h_str}]");
             }
-            
+
             // Check for K[1]: C(S, Z0)
             if gs.len() == 1 && matches!(h.kind, GrfKind::Succ) {
                 if let GrfKind::Zero(0) = gs[0].kind {
@@ -1206,7 +1209,7 @@ pub fn decompile(grf: &Grf) -> String {
         GrfKind::Rec(g, h) => {
             let g_str = decompile(g);
             let h_str = decompile(h);
-            
+
             // Match generalized RepFirst shapes: R(base, R(f, P(4,2)))
             if h_str.starts_with("R(") && h_str.ends_with(",P(4,2))") {
                 let inner_f = &h_str[2..h_str.len() - 8];
@@ -1218,7 +1221,7 @@ pub fn decompile(grf: &Grf) -> String {
                     return format!("RepFirstZ1[{inner_f}]");
                 }
             }
-            
+
             // Match RepSucc[f] = R(S, C(f, P(3,2)))
             if h_str.starts_with("C(") && h_str.ends_with(",P(3,2))") {
                 let inner_f = &h_str[2..h_str.len() - 8];
@@ -1233,7 +1236,7 @@ pub fn decompile(grf: &Grf) -> String {
             if g_str == "P(2,1)" && h_str == "C(S,P(4,2))" {
                 return "Add".to_string();
             }
-            
+
             // Match Tri: R(Z0, RepSucc[S]) -> Tri
             if g_str == "Z0" && h_str == "RepSucc[S]" {
                 return "Tri".to_string();

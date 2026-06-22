@@ -111,12 +111,11 @@ impl Default for SimOpts {
     }
 }
 
-
 /// The Intermediate Representation (IR) of a GRF, optimized for high-performance execution.
 ///
 /// By compiling a `Grf` AST into this `OpCode` tree, we resolve all simulation options,
 /// mathematical fast-forwards, and static properties (like `used_args`) ahead of time.
-/// This guarantees that the execution loop (e.g., `eval`) performs zero configuration 
+/// This guarantees that the execution loop (e.g., `eval`) performs zero configuration
 /// branching or redundant property checks. The separation between `Grf` (AST) and `OpCode` (IR)
 /// achieves significant simulation speedups (e.g. >5x on bb_search).
 #[derive(Clone, Debug)]
@@ -127,16 +126,15 @@ pub enum OpCode {
     Succ,
     /// Projection function. Index is 1-based in math, 0-based here. O(1) step.
     Proj(usize),
-    /// Composition `C(h, g1..gm)`. 
+    /// Composition `C(h, g1..gm)`.
     /// Evaluates each inner function `g` sequentially and forwards results to `h`.
     Comp(Box<OpCode>, Vec<OpCode>),
     /// Standard Primitive Recursion `R(g, h)`.
     /// Iterates `h(k, acc, args)` where `k` counts from `0` up to `args[0] - 1`,
     /// starting with `acc = g(args)`.
     Rec(Box<OpCode>, Box<OpCode>),
-    
-    // --- Optimized Recursion Paths ---
 
+    // --- Optimized Recursion Paths ---
     /// Fast-forward for `R(g, h)` where `h` ignores its accumulator (arg 2).
     /// Instead of iterating `n` times, it directly evaluates `h(n-1, 0, rest)` in O(1).
     /// This drastically reduces O(n) recursions to O(1) evaluations.
@@ -144,9 +142,8 @@ pub enum OpCode {
     /// Fast-forward for `R(g, h)` where `h` is strictly `acc + k`.
     /// Evaluates in O(1) via `g(rest) + n * k`, avoiding linear iteration.
     RecAccPlusK(Box<OpCode>, u64),
-    
-    // --- Min Operator Paths ---
 
+    // --- Min Operator Paths ---
     /// Standard Unbounded Minimization `M(f)`.
     Min(Box<OpCode>),
     /// Statically proven to diverge (e.g. `M(S)`). Execution returns `Diverge` immediately.
@@ -167,7 +164,6 @@ pub enum OpCode {
     MinRecFused(Box<OpCode>, Box<OpCode>),
 
     // --- Global Paths ---
-
     /// Direct algebraic evaluation for any node that has a `ClosedForm`.
     ClosedForm(ClosedForm),
 }
@@ -217,7 +213,10 @@ impl Program {
                         );
                     }
                 }
-                OpCode::Rec(Box::new(Self::compile_node(g, opts)), Box::new(Self::compile_node(h, opts)))
+                OpCode::Rec(
+                    Box::new(Self::compile_node(g, opts)),
+                    Box::new(Self::compile_node(h, opts)),
+                )
             }
             GrfKind::Min(f) => {
                 if f.is_never_zero() {
@@ -225,7 +224,11 @@ impl Program {
                 }
                 if opts.min_fast_forward && opts.use_closed_form {
                     if let Some(cf) = f.closed_form() {
-                        return OpCode::MinClosedForm(cf.clone(), f.size() as u64, Box::new(Self::compile_node(f, opts)));
+                        return OpCode::MinClosedForm(
+                            cf.clone(),
+                            f.size() as u64,
+                            Box::new(Self::compile_node(f, opts)),
+                        );
                     }
                 }
                 if opts.min_fast_forward && !f.used_args().contains(&1) {
@@ -309,7 +312,8 @@ impl OpCode {
                     h_args.push(acc);
                     h_args.extend_from_slice(rest);
 
-                    let (res, s) = h.eval(&h_args, step_budget.map(|b| b.saturating_sub(steps.sim)));
+                    let (res, s) =
+                        h.eval(&h_args, step_budget.map(|b| b.saturating_sub(steps.sim)));
                     steps += s;
                     acc = match res {
                         SimResult::Value(v) => v,
@@ -366,12 +370,16 @@ impl OpCode {
             }
             OpCode::MinClosedForm(cf, f_size, fallback_f) => {
                 let res = cf.compute_min(args);
-                if matches!(res, SimResult::Value(_) | SimResult::Diverge | SimResult::ValueOverflow) {
+                if matches!(
+                    res,
+                    SimResult::Value(_) | SimResult::Diverge | SimResult::ValueOverflow
+                ) {
                     steps.base_approx = *f_size;
                     return (res, steps);
                 }
                 // Fallback to evaluating `f` using general min loop!
-                let (fallback_res, min_steps) = OpCode::Min(fallback_f.clone()).eval(args, step_budget.map(|b| b.saturating_sub(steps.sim)));
+                let (fallback_res, min_steps) = OpCode::Min(fallback_f.clone())
+                    .eval(args, step_budget.map(|b| b.saturating_sub(steps.sim)));
                 steps += min_steps;
                 return (fallback_res, steps);
             }
@@ -388,7 +396,8 @@ impl OpCode {
                 };
             }
             OpCode::MinRecFused(rec_g, rec_h) => {
-                let (base, s_g) = rec_g.eval(args, step_budget.map(|b| b.saturating_sub(steps.sim)));
+                let (base, s_g) =
+                    rec_g.eval(args, step_budget.map(|b| b.saturating_sub(steps.sim)));
                 let sg = s_g.base_approx;
                 steps += s_g;
                 let mut acc = match base {
@@ -411,7 +420,8 @@ impl OpCode {
                     h_args.push(acc);
                     h_args.extend_from_slice(args);
 
-                    let (res, s_h) = rec_h.eval(&h_args, step_budget.map(|b| b.saturating_sub(steps.sim)));
+                    let (res, s_h) =
+                        rec_h.eval(&h_args, step_budget.map(|b| b.saturating_sub(steps.sim)));
                     let sh_base = s_h.base_approx;
                     steps += s_h;
                     delta_h = delta_h.saturating_add(sum_h);
@@ -422,7 +432,8 @@ impl OpCode {
                             if v == 0 {
                                 let n = k + 1;
                                 let n_times_sg = sg.checked_mul(n).unwrap_or(u64::MAX);
-                                let base_extra = (n + 1).saturating_add(n_times_sg).saturating_add(delta_h);
+                                let base_extra =
+                                    (n + 1).saturating_add(n_times_sg).saturating_add(delta_h);
                                 steps.base_approx = steps.base_approx.saturating_add(base_extra);
                                 return (SimResult::Value(n), steps);
                             }
@@ -476,7 +487,11 @@ impl OpCode {
 /// Uses `SimOpts::default()` (which enables all min and rec fast-forwards).
 /// Use `simulate_opts` to disable optimizations for benchmarking or exact structural step counts.
 pub fn simulate(grf: &Grf, args: &[u64], max_steps: u64) -> (SimResult, SimSteps) {
-    let step_budget = if max_steps == 0 { None } else { Some(max_steps) };
+    let step_budget = if max_steps == 0 {
+        None
+    } else {
+        Some(max_steps)
+    };
     simulate_opts(grf, args, step_budget, SimOpts::default())
 }
 
@@ -502,10 +517,10 @@ where
     if step_budget == Some(0) {
         return (SimResult::OutOfSteps, SimSteps::zero());
     }
-    
+
     let compiled_f = Program::compile_node(f, opts);
     let mut steps = SimSteps::one();
-    
+
     if let OpCode::MinRecFused(rec_g, rec_h) = &compiled_f {
         let (base, s_g) = rec_g.eval(args, step_budget.map(|b| b.saturating_sub(steps.sim)));
         let sg = s_g.base_approx;

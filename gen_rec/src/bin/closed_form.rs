@@ -337,7 +337,9 @@ fn holdout_reason(grf: &Grf) -> String {
                     Some(ClosedForm::Piecewise(_)) => "Rec[A]: base is Piecewise".into(),
                     Some(ClosedForm::NegMod(_, _, _)) => "Rec[A]: base is NegMod".into(),
                     Some(ClosedForm::Affine(_)) => "Rec[A]: unexpected (should be covered)".into(),
-                    Some(ClosedForm::Polynomial(_)) => "Rec[A]: unexpected (should be covered)".into(),
+                    Some(ClosedForm::Polynomial(_)) => {
+                        "Rec[A]: unexpected (should be covered)".into()
+                    }
                     Some(ClosedForm::Periodic(_)) => "Rec: base is Periodic".into(),
                     Some(ClosedForm::Iterated(_)) => "Rec[A]: base is Iterated".into(),
                 }
@@ -351,7 +353,9 @@ fn holdout_reason(grf: &Grf) -> String {
                             "Rec[B]: step ok (unexpected)".into()
                         }
                         Some(ClosedForm::Affine(_)) => "Rec[B]: step has nonzero acc coeff".into(),
-                        Some(ClosedForm::Polynomial(_)) => "Rec[B]: step has nonzero acc coeff".into(),
+                        Some(ClosedForm::Polynomial(_)) => {
+                            "Rec[B]: step has nonzero acc coeff".into()
+                        }
                         Some(ClosedForm::Piecewise(_)) => "Rec[B]: step is Piecewise".into(),
                         Some(ClosedForm::NegMod(_, _, _)) => "Rec[B]: step is NegMod".into(),
                         Some(ClosedForm::Periodic(_)) => "Rec[B]: step is Periodic".into(),
@@ -362,7 +366,9 @@ fn holdout_reason(grf: &Grf) -> String {
                 match sem_h {
                     None => "Rec: step uses acc, not sem".into(),
                     Some(ClosedForm::Affine(_)) => "Rec: step uses acc, affine (not acc+k)".into(),
-                    Some(ClosedForm::Polynomial(_)) => "Rec: step uses acc, polynomial (not acc+poly)".into(),
+                    Some(ClosedForm::Polynomial(_)) => {
+                        "Rec: step uses acc, polynomial (not acc+poly)".into()
+                    }
                     Some(ClosedForm::Piecewise(_)) => "Rec: step uses acc, Piecewise".into(),
                     Some(ClosedForm::NegMod(_, _, _)) => "Rec: step uses acc, NegMod".into(),
                     Some(ClosedForm::Periodic(_)) => "Rec: step uses acc, Periodic".into(),

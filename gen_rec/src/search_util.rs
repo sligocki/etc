@@ -78,12 +78,21 @@ pub struct BatchResult {
     pub max_steps_single: u64,
 }
 
-pub fn process_batch(batch: &[Grf], max_steps: u64, k: usize, use_parallel_batch: bool) -> BatchResult {
+pub fn process_batch(
+    batch: &[Grf],
+    max_steps: u64,
+    k: usize,
+    use_parallel_batch: bool,
+) -> BatchResult {
     let map_fn = |grf| {
         simulate_opts(
             grf,
             &[],
-            if max_steps == 0 { None } else { Some(max_steps) },
+            if max_steps == 0 {
+                None
+            } else {
+                Some(max_steps)
+            },
             SimOpts::default(),
         )
     };

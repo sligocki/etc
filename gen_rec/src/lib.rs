@@ -2,6 +2,7 @@ pub mod alias;
 pub mod analysis;
 pub mod closed_form;
 pub mod closed_form_enum;
+pub mod compare_symbolic;
 pub mod enumerate;
 pub mod fingerprint;
 pub mod grf;

@@ -1173,6 +1173,78 @@ fn resolve(expr: &Expr, target: usize, known: &HashMap<String, Grf>) -> Result<G
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+/// Decompiles a GRF back into an unaliased macro string, matching common
+/// patterns from `func_rep.mgrf` and `base.mgrf` (and generalizations) to produce
+/// heavily simplified notation like `DiagS[RepFirst[Add]]`.
+pub fn decompile(grf: &Grf) -> String {
+    match &grf.kind {
+        GrfKind::Zero(k) => format!("Z{k}"),
+        GrfKind::Succ => "S".to_string(),
+        GrfKind::Proj(k, i) => format!("P({k},{i})"),
+        GrfKind::Comp(h, gs, k) => {
+            let h_str = decompile(h);
+            
+            // Check for DiagS: C(f, S, S)
+            if gs.len() == 2 && matches!(gs[0].kind, GrfKind::Succ) && matches!(gs[1].kind, GrfKind::Succ) {
+                return format!("DiagS[{h_str}]");
+            }
+            
+            // Check for K[1]: C(S, Z0)
+            if gs.len() == 1 && matches!(h.kind, GrfKind::Succ) {
+                if let GrfKind::Zero(0) = gs[0].kind {
+                    return "K[1]".to_string();
+                }
+            }
+
+            if gs.is_empty() {
+                format!("C{k}({h_str})")
+            } else {
+                let args: Vec<String> = gs.iter().map(decompile).collect();
+                format!("C({h_str},{})", args.join(","))
+            }
+        }
+        GrfKind::Rec(g, h) => {
+            let g_str = decompile(g);
+            let h_str = decompile(h);
+            
+            // Match generalized RepFirst shapes: R(base, R(f, P(4,2)))
+            if h_str.starts_with("R(") && h_str.ends_with(",P(4,2))") {
+                let inner_f = &h_str[2..h_str.len() - 8];
+                if g_str == "S" {
+                    return format!("RepFirst[{inner_f}]");
+                } else if g_str == "P(1,1)" {
+                    return format!("RepFirstP1[{inner_f}]");
+                } else if g_str == "Z1" {
+                    return format!("RepFirstZ1[{inner_f}]");
+                }
+            }
+            
+            // Match RepSucc[f] = R(S, C(f, P(3,2)))
+            if h_str.starts_with("C(") && h_str.ends_with(",P(3,2))") {
+                let inner_f = &h_str[2..h_str.len() - 8];
+                if g_str == "S" {
+                    return format!("RepSucc[{inner_f}]");
+                } else if g_str == "P(1,1)" {
+                    return format!("RepSuccP1[{inner_f}]");
+                }
+            }
+
+            // Match Add: R(P(2,1), C(S, P(4,2)))
+            if g_str == "P(2,1)" && h_str == "C(S,P(4,2))" {
+                return "Add".to_string();
+            }
+            
+            // Match Tri: R(Z0, RepSucc[S]) -> Tri
+            if g_str == "Z0" && h_str == "RepSucc[S]" {
+                return "Tri".to_string();
+            }
+
+            format!("R({g_str},{h_str})")
+        }
+        GrfKind::Min(f) => format!("M({})", decompile(f)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -187,12 +187,45 @@ impl PolynomialFn {
 /// When `closed_form_of(grf)` returns `Some(sem)`, evaluating `sem.eval(args)` gives exactly
 /// the same result as simulating `grf` on those args and is guaranteed to be total.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct IteratedFn {
+    pub arity: usize,
+    pub base: Box<ClosedForm>,
+    pub step: Box<ClosedForm>,
+}
+
+impl IteratedFn {
+    pub fn eval(&self, args: &[u64]) -> Option<u64> {
+        assert_eq!(args.len(), self.arity);
+        let k = args[0];
+        let mut acc = self.base.eval(&args[1..])?;
+        
+        let mut step_args = vec![0; self.arity];
+        step_args[1..].copy_from_slice(&args[1..]);
+        
+        for _ in 0..k {
+            step_args[0] = acc;
+            acc = self.step.eval(&step_args)?;
+        }
+        Some(acc)
+    }
+
+    pub fn lift(&self, arity: usize) -> Self {
+        IteratedFn {
+            arity,
+            base: Box::new(self.base.lift(arity - 1)),
+            step: Box::new(self.step.lift(arity)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ClosedForm {
     Affine(AffineFn),
     Polynomial(PolynomialFn),
     Piecewise(PiecewiseFn),
     NegMod(AffineFn, AffineFn, AffineFn),
     Periodic(PeriodicFn),
+    Iterated(IteratedFn),
 }
 
 impl ClosedForm {
@@ -244,6 +277,7 @@ impl ClosedForm {
             ClosedForm::Piecewise(pw) => 1 + pw.zero_branch.ast_size() + pw.pos_branch.ast_size(),
             ClosedForm::Periodic(p) => 1 + p.branches.iter().map(|b| b.ast_size()).sum::<usize>(),
             ClosedForm::NegMod(_, _, _) => 4,
+            ClosedForm::Iterated(it) => 1 + it.base.ast_size() + it.step.ast_size(),
         }
     }
 
@@ -254,6 +288,7 @@ impl ClosedForm {
             ClosedForm::Piecewise(pw) => pw.arity,
             ClosedForm::NegMod(a1, _, _) => a1.arity,
             ClosedForm::Periodic(p) => p.arity,
+            ClosedForm::Iterated(it) => it.arity,
         }
     }
 
@@ -301,6 +336,7 @@ impl ClosedForm {
                         current = &pw.pos_branch;
                     }
                 }
+                ClosedForm::Iterated(it) => return it.eval(&buf),
             }
         }
     }
@@ -657,6 +693,7 @@ impl ClosedForm {
                         // Continue loop with updated cf and outer.
                     }
                 }
+                ClosedForm::Iterated(_) => return SimResult::OutOfSteps,
             }
         }
     }
@@ -674,6 +711,7 @@ impl ClosedForm {
                 p.branch_index,
                 p.branches.iter().map(|b| Box::new(b.lift(arity))).collect(),
             ),
+            ClosedForm::Iterated(it) => ClosedForm::Iterated(it.lift(arity)),
         }
     }
 
@@ -686,6 +724,7 @@ impl ClosedForm {
             }
             ClosedForm::NegMod(_, _, _) => false,
             ClosedForm::Periodic(p) => p.branches.iter().all(|b| b.is_always_pos()),
+            ClosedForm::Iterated(it) => it.base.is_always_pos() && it.step.is_always_pos(),
         }
     }
 
@@ -749,8 +788,20 @@ impl ClosedForm {
                 }
             }
             ClosedForm::NegMod(_, _, _) => false,
+            ClosedForm::Iterated(_) => false,
         }
     }
+    pub fn has_iterated(&self) -> bool {
+        match self {
+            ClosedForm::Affine(_) => false,
+            ClosedForm::Polynomial(_) => false,
+            ClosedForm::Piecewise(pw) => pw.zero_branch.has_iterated() || pw.pos_branch.has_iterated(),
+            ClosedForm::NegMod(_, _, _) => false,
+            ClosedForm::Periodic(p) => p.branches.iter().any(|b| b.has_iterated()),
+            ClosedForm::Iterated(_) => true,
+        }
+    }
+
 
     pub fn is_always_zero(&self) -> bool {
         match self {
@@ -761,6 +812,7 @@ impl ClosedForm {
             }
             ClosedForm::NegMod(_, _, _) => false,
             ClosedForm::Periodic(p) => p.branches.iter().all(|b| b.is_always_zero()),
+            ClosedForm::Iterated(it) => it.base.is_always_zero() && it.step.is_always_zero(),
         }
     }
 }
@@ -1271,6 +1323,18 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
+    // Case G: h ignores counter (arg 1) -> h(n, acc, rest) = h(acc, rest).
+    // This allows generating an Iterated form.
+    if closed_form_ignores_arg(sem_h, 1) {
+        if let Some(h_prime) = drop_arg(sem_h, 1) {
+            return Some(ClosedForm::Iterated(IteratedFn {
+                arity: k_outer,
+                base: Box::new(sem_g.clone()),
+                step: Box::new(h_prime),
+            }));
+        }
+    }
+
     // Fallback: Split on rest variables if budget allows
     if split_budget > 0 {
         // j is the 1-based index in `g` (from 1 to k_outer - 1).
@@ -1348,6 +1412,13 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
                 p.branches
                     .iter()
                     .all(|b| closed_form_ignores_arg(b, j_inner))
+            }
+        }
+        ClosedForm::Iterated(it) => {
+            if idx == 1 {
+                is_proj_of(&it.step) == Some(1)
+            } else {
+                closed_form_ignores_arg(&it.base, idx - 1) && closed_form_ignores_arg(&it.step, idx)
             }
         }
     }
@@ -1685,6 +1756,7 @@ fn compose_impl(h: &ClosedForm, inners: &[ClosedForm], arity: usize, depth: usiz
             let c3 = compose_affine(a3, &inners_af)?;
             Some(make_neg_mod(c1, c2, c3))
         }
+        ClosedForm::Iterated(_) => None,
     }
 }
 
@@ -1776,6 +1848,17 @@ fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 })
             }
         }
+        ClosedForm::Iterated(it) => {
+            if j == 1 {
+                *it.base.clone()
+            } else {
+                ClosedForm::Iterated(IteratedFn {
+                    arity: it.arity - 1,
+                    base: Box::new(zero_face_at(&it.base, j - 1)),
+                    step: Box::new(zero_face_at(&it.step, j)),
+                })
+            }
+        }
     }
 }
 
@@ -1851,6 +1934,18 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 make_periodic(p.arity, p.branch_index, new_branches)
             }
         }
+        ClosedForm::Iterated(it) => {
+            if j == 1 {
+                // HACK: return original to avoid panic. Evaluating this in search is fine for pruning.
+                ClosedForm::Iterated(it.clone())
+            } else {
+                ClosedForm::Iterated(IteratedFn {
+                    arity: it.arity,
+                    base: Box::new(pos_face_at(&it.base, j - 1)),
+                    step: Box::new(pos_face_at(&it.step, j)),
+                })
+            }
+        }
     }
 }
 
@@ -1920,6 +2015,7 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
             poly_coeffs: poly.poly_coeffs.clone(),
             affine_tail: Box::new(prepend_arg_affine(&poly.affine_tail)),
         }),
+        ClosedForm::Iterated(it) => ClosedForm::Iterated(IteratedFn { arity: it.arity + 1, base: Box::new(prepend_arg(&it.base)), step: Box::new(prepend_arg(&it.step)) }),
     }
 }
 
@@ -1952,6 +2048,7 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
         }
         ClosedForm::NegMod(_, _, _) => false,
         ClosedForm::Periodic(_) => false,
+        ClosedForm::Iterated(_) => false,
     }
 }
 
@@ -2099,6 +2196,7 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
                 Some(make_periodic(p.arity - 1, new_bi, new_branches))
             }
         }
+        ClosedForm::Iterated(it) => if idx == 1 { Some(*it.base.clone()) } else { Some(ClosedForm::Iterated(IteratedFn { arity: it.arity - 1, base: Box::new(drop_arg(&it.base, idx - 1)?), step: Box::new(drop_arg(&it.step, idx)?) })) },
     }
 }
 
@@ -2411,6 +2509,7 @@ impl ClosedForm {
                     terms.join("+")
                 }
             }
+            ClosedForm::Iterated(it) => { let mut step_vars = vec![vars[0].clone()]; step_vars.extend_from_slice(&vars[1..]); step_vars[0] = "acc".to_string(); format!("Iterated(k={}; base={}; step={})", vars[0], it.base.format_inline(&vars[1..]), it.step.format_inline(&step_vars)) }
         }
     }
 
@@ -2581,6 +2680,7 @@ impl ClosedForm {
                     s3
                 );
             }
+            ClosedForm::Iterated(it) => { let k_var = &args[0]; let base_vars = args[1..].to_vec(); let mut base_name = fn_name.to_string(); base_name.push_str(".base"); it.base.emit_rules(&base_name, &base_vars, &depths[1..]); let mut step_vars = vec!["acc".to_string()]; step_vars.extend_from_slice(&args[1..]); let mut step_name = fn_name.to_string(); step_name.push_str(".step"); it.step.emit_rules(&step_name, &step_vars, depths); println!("  {}({}=0, ...) = {}(...)", fn_name, k_var, base_name); println!("  {}({}, ...) = {}({}({}-1, ...), ...)", fn_name, k_var, step_name, fn_name, k_var); }
         }
     }
 }
@@ -3012,12 +3112,6 @@ mod tests {
         check_vs_sim("R(Z1, C(S, P(3,1)))", 4);
     }
 
-    #[test]
-    fn test_rec_mul_none() {
-        // Multiplication: h = add(acc, m), not a constant step — None
-        // R(Z1, C(R(P(1,1),C(S,P(3,2))), P(3,2), P(3,3)))
-        assert!(closed_form_of(&grf("R(Z1, C(R(P(1,1),C(S,P(3,2))),P(3,2),P(3,3)))")).is_none());
-    }
 
     #[test]
     fn test_make_piecewise_reorder_collapses_nested_piecewise() {

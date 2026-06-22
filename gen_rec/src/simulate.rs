@@ -190,7 +190,9 @@ impl Program {
     pub fn compile_node(grf: &Grf, opts: SimOpts) -> OpCode {
         if opts.use_closed_form {
             if let Some(cf) = grf.closed_form() {
-                return OpCode::ClosedForm(cf.clone());
+                if !cf.has_iterated() {
+                    return OpCode::ClosedForm(cf.clone());
+                }
             }
         }
 

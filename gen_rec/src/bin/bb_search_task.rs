@@ -223,10 +223,13 @@ fn main() {
                 tasks: Some(tasks),
             };
 
-            let out = results_dir.join("manifest.json");
-            let f = File::create(&out).unwrap();
+            let manifest_path = results_dir.join("manifest.json");
+            let f = File::create(&manifest_path).unwrap();
             serde_json::to_writer_pretty(f, &manifest).unwrap();
-            println!("Wrote manifest to {:?} with {} tasks (from {} raw prefixes)", out, manifest.num_tasks(), raw_len);
+            
+            std::fs::create_dir_all(results_dir.join("tasks")).unwrap();
+            
+            println!("Wrote manifest to {:?} with {} tasks (from {} raw prefixes)", manifest_path, manifest.num_tasks(), raw_len);
         }
 
         Commands::Worker {
@@ -241,13 +244,15 @@ fn main() {
             let f = File::open(&manifest_path).expect("Failed to open manifest.json in results dir");
             let m: Manifest = serde_json::from_reader(BufReader::new(f)).unwrap();
 
+            std::fs::create_dir_all(results_dir.join("tasks")).unwrap();
+
             let tasks_to_run: Vec<(usize, PathBuf)> = match task_id {
                 Some(id) => {
                     if id >= m.num_tasks() {
                         eprintln!("Task ID {} out of bounds", id);
                         std::process::exit(1);
                     }
-                    vec![(id, results_dir.join(format!("task_{}.json", id)))]
+                    vec![(id, get_task_path(&results_dir, id))]
                 }
                 None => {
                     if !all_tasks {
@@ -256,7 +261,7 @@ fn main() {
                     }
                     let mut tasks = Vec::new();
                     for i in 0..m.num_tasks() {
-                        let out_path = results_dir.join(format!("task_{}.json", i));
+                        let out_path = get_task_path(&results_dir, i);
                         if !out_path.exists() {
                             tasks.push((i, out_path));
                         }
@@ -268,7 +273,7 @@ fn main() {
             let total_tasks = m.num_tasks();
             let mut already_completed = 0;
             for i in 0..total_tasks {
-                let out_path = results_dir.join(format!("task_{}.json", i));
+                let out_path = get_task_path(&results_dir, i);
                 if out_path.exists() {
                     already_completed += 1;
                 }
@@ -322,15 +327,13 @@ fn main() {
                 // Parse holdouts back from buffer to struct form
                 let mut holdout_entries = Vec::new();
                 if !holdouts_buffer.is_empty() {
-                    for line in String::from_utf8(holdouts_buffer).unwrap().lines() {
-                        let fields: Vec<&str> = line.split('\t').collect();
-                        if fields.len() >= 3 {
-                            holdout_entries.push(HoldoutEntry {
-                                expr: fields[1].to_string(),
-                                steps: fields[2].parse().unwrap_or(0),
-                                reason: if fields.len() > 5 { Some(fields[5].to_string()) } else { None },
-                            });
-                        }
+                    let content = String::from_utf8(holdouts_buffer).unwrap();
+                    for entry in io_grl::parse_grf_entries(&content) {
+                        holdout_entries.push(HoldoutEntry {
+                            expr: entry.expr,
+                            steps: entry.steps.unwrap_or(0),
+                            reason: entry.unknown_reason,
+                        });
                     }
                 }
 
@@ -375,7 +378,7 @@ fn main() {
             let mut completed_tasks = 0;
 
             for i in 0..m.num_tasks() {
-                let res_path = results_dir.join(format!("task_{}.json", i));
+                let res_path = get_task_path(&results_dir, i);
                 if !res_path.exists() {
                     continue;
                 }
@@ -384,6 +387,9 @@ fn main() {
                 let res: WorkerResult = serde_json::from_reader(BufReader::new(res_file)).unwrap();
 
                 combined_acc.total += res.total;
+                if res.holdouts != res.holdout_entries.len() {
+                    eprintln!("\x1b[31m*** ERROR: Task {} reported {} holdouts, but saved {} entries! This usually indicates a parsing error or corrupted task file. Re-run this task. ***\x1b[0m", res.task_id, res.holdouts, res.holdout_entries.len());
+                }
                 combined_acc.holdouts += res.holdouts;
                 combined_acc.diverged += res.diverged;
                 combined_acc.total_steps += res.total_steps;
@@ -413,7 +419,7 @@ fn main() {
 
             println!("Summary for manifest {:?}", manifest_path);
             if completed_tasks < total_tasks {
-                println!("*** WARNING: PARTIAL RESULTS ({} / {} tasks completed) ***", completed_tasks, total_tasks);
+                println!("\x1b[31m*** WARNING: PARTIAL RESULTS ({} / {} tasks completed) ***\x1b[0m", completed_tasks, total_tasks);
             }
             println!("Total Tasks: {}", completed_tasks);
             println!("  - Non-empty tasks: {} ({:.1}%)", non_empty_tasks, pct_non_empty);
@@ -522,4 +528,8 @@ fn format_num(mut n: u64) -> String {
         count += 1;
     }
     s
+}
+
+fn get_task_path(results_dir: &PathBuf, id: usize) -> PathBuf {
+    results_dir.join("tasks").join(format!("task_{}.json", id))
 }

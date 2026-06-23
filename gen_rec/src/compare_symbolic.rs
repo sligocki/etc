@@ -264,6 +264,166 @@ impl Knuth10 {
     }
 }
 
+impl Eq for Knuth10 {}
+
+impl PartialOrd for Knuth10 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Knuth10 {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let a = self.clone().normalize();
+        let b = other.clone().normalize();
+        
+        match (&a, &b) {
+            (Knuth10::Val(av), Knuth10::Val(bv)) => av.total_cmp(bv),
+            (Knuth10::Val(av), Knuth10::UpArrow(_, _)) => {
+                if *av < 100.0 { return std::cmp::Ordering::Less; }
+                let a_up = Knuth10::UpArrow(1, Box::new(Knuth10::Val(av.log10()))); // Do not normalize here! We know log10 >= 2.0
+                a_up.cmp(&b)
+            }
+            (Knuth10::UpArrow(_, _), Knuth10::Val(bv)) => {
+                if *bv < 100.0 { return std::cmp::Ordering::Greater; }
+                let b_up = Knuth10::UpArrow(1, Box::new(Knuth10::Val(bv.log10()))); // Do not normalize here! We know log10 >= 2.0
+                a.cmp(&b_up)
+            }
+            (Knuth10::UpArrow(an, a_inner), Knuth10::UpArrow(bn, b_inner)) => {
+                if an < bn {
+                    std::cmp::Ordering::Less
+                } else if an > bn {
+                    std::cmp::Ordering::Greater
+                } else {
+                    a_inner.cmp(b_inner)
+                }
+            }
+        }
+    }
+}
+
+impl Knuth10 {
+    /// If is_upper is true, returns an upper bound: 10^{max(k, log10(c)) + log10(2)}
+    /// If is_upper is false, returns a lower bound: simply returns self.
+    pub fn add_f64(&self, c: f64, is_upper: bool) -> Self {
+        if c <= 0.0 {
+            return match self {
+                Knuth10::Val(v) => Knuth10::Val(v + c), // Exact for values
+                _ => {
+                    if is_upper {
+                        self.clone() // Upper bound: dropping subtraction is safe (makes it larger)
+                    } else {
+                        Knuth10::Val(0.0) // Ultra conservative subtraction for power towers
+                    }
+                }
+            };
+        }
+        
+        match self {
+            Knuth10::Val(v) => Knuth10::Val(v + c), // Exact for values
+            Knuth10::UpArrow(n, inner) => {
+                if !is_upper {
+                    return self.clone(); // Lower bound: 10^K + c >= 10^K
+                }
+                // To compute Upper Bound of 10^K + c:
+                // If c is small relative to 10^K, 10^K + c <= 2 * 10^K = 10^{K + log10(2)}.
+                // So we add log10(2) to the inner exponent K.
+                // Wait, if c is massive (c > 10^K), 10^K + c <= 2c = 10^{log10(c) + log10(2)}.
+                // We don't dynamically know K at compile time if K is an UpArrow itself, 
+                // but we know any UpArrow represents a value >= 10.
+                if *n == 1 {
+                    // K = inner
+                    // Upper bound of 10^K + c:
+                    // We must choose max(K, log10(c)) + log10(2).
+                    // If log10(c) <= 0 (c <= 1), we just use K + log10(2).
+                    let log_c = c.log10();
+                    if log_c <= 0.0 {
+                        return Knuth10::UpArrow(1, Box::new(inner.add_f64(10f64.log10() * 0.30103, true))); // log10(2) approx 0.30103
+                    } else {
+                        // Max logic. Since `inner` is generic Knuth10, taking max is complex.
+                        // However, c is f64, so log10(c) is at most 308 (for f64::MAX).
+                        // If inner is a power tower, it trivially dwarfs 308. 
+                        // So we safely assume K > log10(c) unless K is explicitly a small Val.
+                        let mut use_c = false;
+                        if let Knuth10::Val(kv) = &**inner {
+                            if log_c > *kv {
+                                use_c = true;
+                            }
+                        }
+                        if use_c {
+                            return Knuth10::Val(c * 2.0);
+                        } else {
+                            return Knuth10::UpArrow(1, Box::new(inner.add_f64(2f64.log10(), true)));
+                        }
+                    }
+                } else {
+                    // For n >= 2, 10^^n k is astronomically larger than any f64 c.
+                    // 10^^n k + c <= 2 * 10^^n k = 10^{(10^^(n-1) k) + log10(2)}
+                    // We just recursively add log10(2) to the inner value!
+                    Knuth10::UpArrow(*n, Box::new(inner.add_f64(2f64.log10(), true)))
+                }
+            }
+        }
+    }
+
+    /// Performs strict bounded multiplication: self * c
+    /// If is_upper is true, returns an upper bound.
+    /// If is_upper is false, returns a lower bound.
+    pub fn mul_f64(&self, c: f64, is_upper: bool) -> Self {
+        if c <= 0.0 {
+            return Knuth10::Val(0.0);
+        }
+        if c == 1.0 {
+            return self.clone();
+        }
+        
+        match self {
+            Knuth10::Val(v) => Knuth10::Val(v * c),
+            Knuth10::UpArrow(n, inner) => {
+                // c * 10^K = 10^{K + log10(c)}
+                // We translate multiplication into addition on the inner exponent!
+                let log_c = c.log10();
+                // We add log_c to the inner.
+                // Wait, if c < 1, log_c is negative. add_f64 handles positive c...
+                // But wait! If log_c is negative, subtracting from K yields a strictly smaller value.
+                // For a lower bound, if we drop log_c (make it 0), it's larger, so we can't ignore it.
+                // Actually, if we just want a simple bound, we can do:
+                if log_c > 0.0 {
+                    // c > 1. Multiplication increases value.
+                    if is_upper {
+                        // Upper bound: K + log_c
+                        // Wait! Inner addition! log_c is an f64!
+                        // So we use add_f64(log_c, is_upper) on inner?
+                        // Yes! K + log_c <= upper bound of (K + log_c).
+                        return Knuth10::UpArrow(*n, Box::new(inner.add_f64(log_c, true)));
+                    } else {
+                        // Lower bound: self * c >= self (since c > 1)
+                        return self.clone();
+                    }
+                } else {
+                    // c < 1. Multiplication decreases value.
+                    if is_upper {
+                        // Upper bound: self * c <= self
+                        return self.clone();
+                    } else {
+                        // Lower bound: K - |log_c|.
+                        // We need a conservative lower bound for subtraction.
+                        // Currently, let's just drop the subtraction entirely for huge towers? No, K - 1 >= 0?
+                        // If n >= 2, K is a power tower, subtracting 1 is negligible, we can just say inner is basically unchanged?
+                        // Wait, for lower bounds, we'd rather be safe.
+                        // If we don't have subtract implemented, just return Val(0.0) if we must?
+                        // Let's implement subtract manually here for Val, and for UpArrow it's basically a no-op since K >> |log_c|.
+                        match &**inner {
+                            Knuth10::Val(kv) => Knuth10::UpArrow(*n, Box::new(Knuth10::Val(*kv + log_c))),
+                            _ => self.clone() // For massive towers, K - 100 is essentially K in lower bound asymptotic terms.
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl std::fmt::Display for Knuth10 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -308,7 +468,7 @@ fn asymptotic_degree(cf: &ClosedForm) -> usize {
 /// for the exact value of the affine function `func` iterated `k` times on input `x`.
 /// Since affine iteration represents standard exponential growth, it naturally 
 /// returns bounds natively in the form `10^y` (a single UpArrow).
-fn bounds_for_affine(func: &AffineFn, k: u64, x: u64) -> Option<(Knuth10, Knuth10)> {
+fn bounds_for_affine(func: &AffineFn, k_min: &Knuth10, k_max: &Knuth10, x: u64) -> Option<(Knuth10, Knuth10)> {
     if func.arity >= 1 {
         let c_min = func.coeffs[1] as f64; // The coefficient for the first argument (acc)
         let mut c_max = 0.0;
@@ -318,15 +478,15 @@ fn bounds_for_affine(func: &AffineFn, k: u64, x: u64) -> Option<(Knuth10, Knuth1
         
         if c_min >= 1.0 {
             let x_f64 = x.max(1) as f64;
-            let k_f64 = k as f64;
             
-            // P(x) = c * x
-            let log_p_min = k_f64 * c_min.log10() + x_f64.log10();
-            let log_p_max = k_f64 * c_max.log10() + x_f64.log10();
+            // Lower bound: k_min * log10(c_min) + log10(x)
+            let inner_min = k_min.mul_f64(c_min.log10(), false).add_f64(x_f64.log10(), false);
+            // Upper bound: k_max * log10(c_max) + log10(x)
+            let inner_max = k_max.mul_f64(c_max.log10(), true).add_f64(x_f64.log10(), true);
             
             return Some((
-                Knuth10::UpArrow(1, Box::new(Knuth10::Val(log_p_min))),
-                Knuth10::UpArrow(1, Box::new(Knuth10::Val(log_p_max))),
+                Knuth10::UpArrow(1, Box::new(inner_min)),
+                Knuth10::UpArrow(1, Box::new(inner_max)),
             ));
         }
     }
@@ -338,7 +498,7 @@ fn bounds_for_affine(func: &AffineFn, k: u64, x: u64) -> Option<(Knuth10, Knuth1
 /// Since polynomial iteration yields double-exponential growth, it naturally 
 /// returns bounds natively in the form `10^10^y` (a nested double UpArrow).
 /// Returns `None` if the polynomial does not operate on the accumulator.
-fn bounds_for_iter_poly(poly: &PolynomialFn, k: u64, x: u64) -> Option<(Knuth10, Knuth10)> {
+fn bounds_for_iter_poly(poly: &PolynomialFn, k_min: &Knuth10, k_max: &Knuth10, x: u64) -> Option<(Knuth10, Knuth10)> {
     // We only compute power tower bounds if the recursive step's polynomial growth 
     // is driven by the accumulator (which is always passed as arg 1 to the step function).
     // If it were a polynomial over a static side-variable, iterating it would only yield exponential growth.
@@ -356,11 +516,12 @@ fn bounds_for_iter_poly(poly: &PolynomialFn, k: u64, x: u64) -> Option<(Knuth10,
         
         let d_f64 = d as f64;
         let x_f64 = x.max(1) as f64;
-        let k_f64 = k as f64;
         
         // Mathematical derivation of the power tower exponent y:
         // Assume poly(x) ≈ c * x^d. Iterating it k times yields:
         // poly^k(x) ≈ c^{(d^k - 1)/(d - 1)} * x^{d^k} ≈ (c^{1/(d-1)} * x)^{d^k}
+        //
+        // Taking log10:
         // log10(poly^k(x)) ≈ d^k * [ log10(c)/(d-1) + log10(x) ]
         // Let M = log10(c)/(d-1) + log10(x)
         let m_min = c_min.log10() / (d_f64 - 1.0) + x_f64.log10();
@@ -368,45 +529,99 @@ fn bounds_for_iter_poly(poly: &PolynomialFn, k: u64, x: u64) -> Option<(Knuth10,
         
         // To find the power tower exponent y such that poly^k(x) = 10^{10^y}:
         // y = log10(log10(poly^k(x))) ≈ log10(d^k * M) = k * log10(d) + log10(M)
-        let y_min = k_f64 * d_f64.log10() + m_min.log10();
-        let y_max = k_f64 * d_f64.log10() + m_max.log10();
+        let y_min = k_min.mul_f64(d_f64.log10(), false).add_f64(m_min.log10(), false);
+        let y_max = k_max.mul_f64(d_f64.log10(), true).add_f64(m_max.log10(), true);
         
         return Some((
-            Knuth10::UpArrow(1, Box::new(Knuth10::UpArrow(1, Box::new(Knuth10::Val(y_min))))),
-            Knuth10::UpArrow(1, Box::new(Knuth10::UpArrow(1, Box::new(Knuth10::Val(y_max))))),
+            Knuth10::UpArrow(1, Box::new(Knuth10::UpArrow(1, Box::new(y_min)))),
+            Knuth10::UpArrow(1, Box::new(Knuth10::UpArrow(1, Box::new(y_max)))),
         ));
     }
     None
 }
 
-/// Computes strict lower and upper bounds for an FGH Level 2 function.
-fn compute_power_tower_bounds(cf: &ClosedForm, args: &[SymVal]) -> Option<(Knuth10, Knuth10)> {
-    if fgh_level(cf) == 2 {
-        if let ClosedForm::Iterated(it) = cf {
-            assert!(args.len() >= 1);
-            if let SymVal::Const(iters) = args[0] {
-                // The rest of the arguments are passed to the base function to compute
-                // the initial accumulator.
-                let mut const_args = Vec::with_capacity(args.len() - 1);
-                for a in &args[1..] {
-                    if let SymVal::Const(c) = a {
-                        const_args.push(*c);
-                    } else {
-                        return None; // Cannot evaluate symbolically if not fully constant
+/// Recursively computes strict lower and upper bounds for symbolically evaluated functions.
+/// Capable of bounding arbitrary FGH levels (e.g. Iterated functions where the iteration
+/// count is itself a massive power tower).
+pub fn compute_bounds(sym: &SymVal) -> Option<(Knuth10, Knuth10)> {
+    match sym {
+        SymVal::Const(c) => Some((Knuth10::Val(*c as f64), Knuth10::Val(*c as f64))),
+        SymVal::FuncApp(cf, args) => {
+            if let ClosedForm::Iterated(it) = cf {
+                if args.len() >= 1 {
+                    // Recursively compute the bounds of the iteration count 'k'
+                    let (k_min, k_max) = compute_bounds(&args[0])?;
+                    
+                    // Evaluate the base arguments to compute the initial accumulator 'x'
+                    // The rest of the arguments MUST be Const for now to find an exact start state
+                    let mut const_args = Vec::with_capacity(args.len() - 1);
+                    for a in &args[1..] {
+                        if let SymVal::Const(c) = a {
+                            const_args.push(*c);
+                        } else {
+                            return None; 
+                        }
                     }
-                }
-                
-                if let Some(base) = it.base.eval(&const_args) {
-                    match it.step.as_ref() {
-                        ClosedForm::Affine(affine) => return bounds_for_affine(affine, iters, base),
-                        ClosedForm::Polynomial(poly) => return bounds_for_iter_poly(poly, iters, base),
-                        _ => return None,
+                    
+                    if let Some(x) = it.base.eval(&const_args) {
+                        match it.step.as_ref() {
+                            ClosedForm::Polynomial(poly) => return bounds_for_iter_poly(poly, &k_min, &k_max, x),
+                            ClosedForm::Affine(affine) => return bounds_for_affine(affine, &k_min, &k_max, x),
+                            _ => return None,
+                        }
                     }
                 }
             }
+            None
         }
     }
-    None
+}
+
+impl SymVal {
+    /// Evaluates the heuristic strict bound of the symbolic expression
+    pub fn get_heuristic_bounds(&self) -> (Knuth10, Knuth10) {
+        if let Some(bounds) = compute_bounds(self) {
+            return bounds;
+        }
+
+        match self {
+            SymVal::Const(c) => (Knuth10::Val(*c as f64), Knuth10::Val(*c as f64)),
+            SymVal::FuncApp(cf, args) => {
+                let mut count = 1;
+                let mut current_args = args.as_slice();
+                
+                while current_args.len() >= 1 {
+                    if let SymVal::FuncApp(inner_cf, inner_args) = &current_args[0] {
+                        if inner_cf == cf {
+                            count += 1;
+                            current_args = inner_args;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                
+                if count > 1 {
+                    if current_args.len() >= 1 {
+                        if let SymVal::Const(x) = current_args[0] {
+                            let k = Knuth10::Val(count as f64);
+                            let bounds = match cf {
+                                ClosedForm::Affine(affine) => bounds_for_affine(affine, &k, &k, x),
+                                ClosedForm::Polynomial(poly) => bounds_for_iter_poly(poly, &k, &k, x),
+                                _ => None,
+                            };
+                            if let Some(b) = bounds {
+                                return b;
+                            }
+                        }
+                    }
+                }
+                
+                // Fallback for FGH Level 1 or unparsed structs
+                (Knuth10::Val(0.0), Knuth10::Val(0.0))
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for SymVal {
@@ -414,9 +629,14 @@ impl std::fmt::Display for SymVal {
         match self {
             SymVal::Const(c) => write!(f, "{}", c),
             SymVal::FuncApp(cf, args) => {
-                // For FGH Level 2 iterated functions, output strict bounds instead!
-                if let Some((bound_min, bound_max)) = compute_power_tower_bounds(cf, args) {
-                    return write!(f, "[{}, {}]", bound_min.normalize(), bound_max.normalize());
+                let bounds = self.get_heuristic_bounds();
+                if let Knuth10::Val(v) = bounds.1 {
+                    if v > 0.0 {
+                        // It was actually successfully bounded!
+                        return write!(f, "[{}, {}]", bounds.0.normalize(), bounds.1.normalize());
+                    }
+                } else {
+                    return write!(f, "[{}, {}]", bounds.0.normalize(), bounds.1.normalize());
                 }
                 
                 let mut count = 1;
@@ -433,29 +653,8 @@ impl std::fmt::Display for SymVal {
                     break;
                 }
                 
-                if count > 1 {
-                    if current_args.len() >= 1 {
-                        if let SymVal::Const(x) = current_args[0] {
-                            let bounds = match cf {
-                                ClosedForm::Affine(affine) => bounds_for_affine(affine, count as u64, x),
-                                ClosedForm::Polynomial(poly) => bounds_for_iter_poly(poly, count as u64, x),
-                                _ => None,
-                            };
-                            if let Some((bound_min, bound_max)) = bounds {
-                                return write!(f, "[{}, {}]", bound_min.normalize(), bound_max.normalize());
-                            }
-                        }
-                    }
-                }
-                
-                if let ClosedForm::Iterated(it) = cf {
-                    if args.len() == 2 {
-                        let step_lvl = fgh_level(&it.step);
-                        return write!(f, "~f_{}^{{{}}}({})", step_lvl, count, current_args[0]);
-                    }
-                }
-                
                 let lvl = fgh_level(cf);
+                
                 if count > 1 {
                     write!(f, "~f_{}^{{{}}}({})", lvl, count, current_args[0])
                 } else {

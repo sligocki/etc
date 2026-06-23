@@ -45,6 +45,14 @@ fn main() {
 
     println!("Found {} holdouts with ClosedForm representations.", orig_holdouts.len());
 
+    // Pre-sort the holdouts by their Knuth10 heuristic upper bound!
+    // This allows the dominance table and champions to be ordered primarily by sheer mathematical growth.
+    orig_holdouts.sort_by(|a, b| {
+        let bound_a = &a.5.get_heuristic_bounds().1;
+        let bound_b = &b.5.get_heuristic_bounds().1;
+        bound_a.cmp(bound_b)
+    });
+
     let n = orig_holdouts.len();
     let mut in_degree = vec![0; n];
     let mut adj = vec![vec![]; n];
@@ -90,22 +98,33 @@ fn main() {
     }
 
     println!("\n--- Exact Symbolic Strict Dominance Comparison Grid ---");
-    // Column headers
-    print!("    ");
-    for (orig_idx_j, _, _, _, _, _) in &holdouts {
-        print!(" H{:<2}", orig_idx_j);
+    let show_grid = holdouts.len() <= 30;
+    
+    if show_grid {
+        // Column headers
+        print!("    ");
+        for (orig_idx_j, _, _, _, _, _) in &holdouts {
+            print!(" H{:<2}", orig_idx_j);
+        }
+        println!();
+    } else {
+        println!("(Grid hidden because there are more than 30 holdouts)");
     }
-    println!();
 
     let mut num_uncertain = 0;
 
     for (orig_idx_i, _, _, _, _, sym_i) in &holdouts {
-        print!("H{:<2} ", orig_idx_i);
+        if show_grid {
+            print!("H{:<2} ", orig_idx_i);
+        }
         for (orig_idx_j, _, _, _, _, sym_j) in &holdouts {
-            if orig_idx_i == orig_idx_j {
-                print!("  \x1b[1;30m=\x1b[0m "); // dark gray for Equal
+            let cmp = if orig_idx_i == orig_idx_j {
+                PointwiseOrder::Equal
             } else {
-                let cmp = gen_rec::compare_symbolic::compare_sym(sym_i, sym_j);
+                gen_rec::compare_symbolic::compare_sym(sym_i, sym_j)
+            };
+
+            if show_grid {
                 let sym = match cmp {
                     PointwiseOrder::LessEqual => "  \x1b[1;32m≤\x1b[0m ",       // green
                     PointwiseOrder::GreaterEqual => "  \x1b[1;31m≥\x1b[0m ",    // red
@@ -113,13 +132,15 @@ fn main() {
                     PointwiseOrder::Uncertain => "  \x1b[1;33m?\x1b[0m ",  // yellow
                 };
                 print!("{}", sym);
+            }
 
-                if orig_idx_i < orig_idx_j && cmp == PointwiseOrder::Uncertain {
-                    num_uncertain += 1;
-                }
+            if orig_idx_i != orig_idx_j && orig_idx_i < orig_idx_j && cmp == PointwiseOrder::Uncertain {
+                num_uncertain += 1;
             }
         }
-        println!();
+        if show_grid {
+            println!();
+        }
     }
 
     let total_pairs = n * (n - 1) / 2;

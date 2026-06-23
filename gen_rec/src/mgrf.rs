@@ -1260,6 +1260,10 @@ pub fn decompile(grf: &Grf) -> String {
                 return "Add".to_string();
             }
 
+            if g_str == "P(2,1)" && h_str == "C(S,P(4,2))" {
+                return "Add^3".to_string();
+            }
+
             // Match Tri: R(Z0, RepSucc[S]) -> Tri
             if g_str == "Z0" && h_str == "RepSucc[S]" {
                 return "Tri".to_string();

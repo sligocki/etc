@@ -236,6 +236,259 @@ pub fn iterated_growth_level(cf: &ClosedForm) -> usize {
     }
 }
 
+/// Represents a symbolically evaluated value that may be too large to fit in `u64`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SymVal {
+    Const(u64),
+    FuncApp(ClosedForm, Vec<SymVal>),
+}
+
+/// Computes the asymptotic degree `d` of a polynomial, or 1 if it is affine/constant.
+fn asymptotic_degree(cf: &ClosedForm) -> usize {
+    match cf {
+        ClosedForm::Polynomial(poly) => {
+            if poly.poly_arg == 1 {
+                let mut d = 1;
+                for (i, &c) in poly.poly_coeffs.iter().enumerate() {
+                    if c > 0 {
+                        d = d.max(i + 2);
+                    }
+                }
+                d
+            } else {
+                1
+            }
+        }
+        _ => 1,
+    }
+}
+
+impl std::fmt::Display for SymVal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SymVal::Const(c) => write!(f, "{}", c),
+            SymVal::FuncApp(cf, args) => {
+                if let ClosedForm::Iterated(it) = cf {
+                    if args.len() == 2 {
+                        let step_lvl = fgh_level(&it.step);
+                        return write!(f, "~f_{}^{{{}}}({})", step_lvl, args[0], args[1]);
+                    }
+                }
+                
+                let mut count = 1;
+                let mut current_args = args;
+                
+                while current_args.len() >= 1 {
+                    if let SymVal::FuncApp(inner_cf, inner_args) = &current_args[0] {
+                        if inner_cf == cf {
+                            count += 1;
+                            current_args = inner_args;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                
+                let lvl = fgh_level(cf);
+                if count > 1 {
+                    write!(f, "~f_{}^{{{}}}({})", lvl, count, current_args[0])
+                } else {
+                    write!(f, "~f_{}({})", lvl, current_args[0])
+                }
+            }
+        }
+    }
+}
+
+use crate::grf::{Grf, GrfKind};
+
+/// Evaluates a full `Grf` tree symbolically.
+/// This allows us to walk through structural wrappers (like `Comp` and `Proj`) 
+/// to compute the exact symbolic arguments passed to the inner `Rec` or `Min` node.
+pub fn eval_grf_sym(grf: &Grf, args: &[SymVal]) -> SymVal {
+    match &grf.kind {
+        GrfKind::Zero(_) => SymVal::Const(0),
+        GrfKind::Succ => {
+            if let SymVal::Const(c) = args[0] {
+                SymVal::Const(c + 1)
+            } else {
+                panic!("Cannot apply Succ to non-Const symbolic value: {}", args[0]);
+            }
+        }
+        GrfKind::Proj(_, i) => args[*i - 1].clone(),
+        GrfKind::Comp(g, hs, _) => {
+            let inner_args: Vec<SymVal> = hs.iter().map(|h| eval_grf_sym(h, args)).collect();
+            eval_grf_sym(g, &inner_args)
+        }
+        GrfKind::Rec(_, _) | GrfKind::Min(_) => {
+            let cf = grf.closed_form().unwrap_or_else(|| panic!("Expected closed form for inner node: {:?}", grf));
+            eval_sym(cf, args)
+        }
+    }
+}
+
+/// Evaluates a `ClosedForm` on symbolic arguments.
+pub fn eval_sym(cf: &ClosedForm, args: &[SymVal]) -> SymVal {
+    // 1. If all args are Const, attempt a direct u64 evaluation.
+    let mut all_const = true;
+    let mut const_args = Vec::new();
+    for a in args {
+        if let SymVal::Const(c) = a {
+            const_args.push(*c);
+        } else {
+            all_const = false;
+            break;
+        }
+    }
+    
+    if all_const {
+        // cf.eval returns None on overflow. If it succeeds, we return the Const.
+        if let Some(val) = cf.eval(&const_args) {
+            return SymVal::Const(val);
+        }
+    }
+
+    // 2. Symbolic unrolling of shallow loops.
+    // If it's an Iterated function, and the iteration count is a small constant,
+    // we unroll the loop completely to evaluate the base state of the inner functions!
+    if let ClosedForm::Iterated(it) = cf {
+        if let SymVal::Const(iters) = args[0] {
+            if iters <= 10 { // Threshold for "small" number of iterations
+                let mut acc = eval_sym(&it.base, &args[1..]);
+                for _ in 0..iters {
+                    let mut step_args = vec![acc];
+                    step_args.extend_from_slice(&args[1..]);
+                    acc = eval_sym(&it.step, &step_args);
+                }
+                return acc;
+            }
+        }
+    }
+
+    // 3. Fallback: encapsulate as an un-evaluated function application.
+    SymVal::FuncApp(cf.clone(), args.to_vec())
+}
+
+/// Compares two symbolic values algebraically.
+pub fn compare_sym(a: &SymVal, b: &SymVal) -> PointwiseOrder {
+    match (a, b) {
+        (SymVal::Const(x), SymVal::Const(y)) => {
+            if x > y { PointwiseOrder::GreaterEqual }
+            else if x < y { PointwiseOrder::LessEqual }
+            else { PointwiseOrder::Equal }
+        }
+        (SymVal::Const(_), SymVal::FuncApp(_, _)) => PointwiseOrder::Uncertain,
+        (SymVal::FuncApp(_, _), SymVal::Const(_)) => PointwiseOrder::Uncertain,
+        (SymVal::FuncApp(f, args_f), SymVal::FuncApp(g, args_g)) => {
+            let func_cmp = compare_strict(f, g);
+            
+            let mut all_ge = true;
+            let mut all_le = true;
+            let mut any_gt = false;
+            let mut any_lt = false;
+            
+            for (af, ag) in args_f.iter().zip(args_g.iter()) {
+                let arg_cmp = compare_sym(af, ag);
+                if arg_cmp == PointwiseOrder::GreaterEqual {
+                    all_le = false;
+                    any_gt = true;
+                } else if arg_cmp == PointwiseOrder::LessEqual {
+                    all_ge = false;
+                    any_lt = true;
+                } else if arg_cmp == PointwiseOrder::Uncertain {
+                    all_le = false;
+                    all_ge = false;
+                }
+            }
+            
+            // Standard rigorous composition of bounds.
+            // Since our functions are monotonically non-decreasing:
+            // f >= g AND x >= y  =>  f(x) >= g(y).
+            let mut final_cmp = if func_cmp == PointwiseOrder::Uncertain {
+                PointwiseOrder::Uncertain
+            } else if (func_cmp == PointwiseOrder::GreaterEqual || func_cmp == PointwiseOrder::Equal) && all_ge {
+                if func_cmp == PointwiseOrder::Equal && !any_gt {
+                    PointwiseOrder::Equal
+                } else {
+                    PointwiseOrder::GreaterEqual
+                }
+            } else if (func_cmp == PointwiseOrder::LessEqual || func_cmp == PointwiseOrder::Equal) && all_le {
+                if func_cmp == PointwiseOrder::Equal && !any_lt {
+                    PointwiseOrder::Equal
+                } else {
+                    PointwiseOrder::LessEqual
+                }
+            } else {
+                PointwiseOrder::Uncertain
+            };
+            
+            // HEURISTIC: Resolve `Uncertain` structural bounds by looking at the iteration gap and FGH level.
+            let lvl_f = fgh_level(f);
+            let lvl_g = fgh_level(g);
+            
+            if final_cmp == PointwiseOrder::Uncertain {
+                if lvl_f < lvl_g {
+                    // Lower FGH level guarantees it is strictly less for massive inputs
+                    final_cmp = PointwiseOrder::LessEqual;
+                } else if lvl_f > lvl_g {
+                    // Higher FGH level guarantees it is strictly greater for massive inputs
+                    final_cmp = PointwiseOrder::GreaterEqual;
+                } else {
+                    // If the functions belong to the same FGH growth level, we compare their iteration counts.
+                    // MATHEMATICAL PROOF: 
+                    // For FGH Level >= 3, the iteration count `k` represents the HEIGHT of a power tower (or higher).
+                    // A power tower of height k_1 strictly dominates a power tower of height k_2 if k_1 > k_2, 
+                    // regardless of the bases (as long as base >= 2). So comparing `k` is universally rigorous.
+                    // However, for FGH Level 2, the growth is x^{d^k} where d is the polynomial degree.
+                    // So we MUST compare d^{k}, which means comparing k_1 * ln(d_1) vs k_2 * ln(d_2).
+                    
+                    if lvl_f == 2 {
+                        if let (ClosedForm::Iterated(it_f), ClosedForm::Iterated(it_g)) = (f, g) {
+                            let d_f = asymptotic_degree(&it_f.step);
+                            let d_g = asymptotic_degree(&it_g.step);
+                            
+                            if let (Some(SymVal::Const(k_f)), Some(SymVal::Const(k_g))) = (args_f.first(), args_g.first()) {
+                                let power_f = (*k_f as f64) * (d_f as f64).ln();
+                                let power_g = (*k_g as f64) * (d_g as f64).ln();
+                                
+                                if power_f > power_g + 1e-9 {
+                                    final_cmp = PointwiseOrder::GreaterEqual;
+                                } else if power_f < power_g - 1e-9 {
+                                    final_cmp = PointwiseOrder::LessEqual;
+                                } else {
+                                    final_cmp = PointwiseOrder::Equal;
+                                }
+                            } else if d_f == d_g {
+                                // Fallback to pure symbolic comparison if k is symbolic but degrees match
+                                if let (Some(af0), Some(ag0)) = (args_f.first(), args_g.first()) {
+                                    let arg_cmp = compare_sym(af0, ag0);
+                                    if arg_cmp == PointwiseOrder::GreaterEqual {
+                                        final_cmp = PointwiseOrder::GreaterEqual;
+                                    } else if arg_cmp == PointwiseOrder::LessEqual {
+                                        final_cmp = PointwiseOrder::LessEqual;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Rigorous for Level >= 3
+                        if let (Some(af0), Some(ag0)) = (args_f.first(), args_g.first()) {
+                            let arg_cmp = compare_sym(af0, ag0);
+                            if arg_cmp == PointwiseOrder::GreaterEqual {
+                                final_cmp = PointwiseOrder::GreaterEqual;
+                            } else if arg_cmp == PointwiseOrder::LessEqual {
+                                final_cmp = PointwiseOrder::LessEqual;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            final_cmp
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

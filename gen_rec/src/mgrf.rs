@@ -1192,10 +1192,17 @@ pub fn decompile(grf: &Grf) -> String {
                 return format!("DiagS[{h_str}]");
             }
 
-            // Check for K[1]: C(S, Z0)
+            // Check for K[1]: C(S, Z0) and K[N] recursively
             if gs.len() == 1 && matches!(h.kind, GrfKind::Succ) {
                 if let GrfKind::Zero(0) = gs[0].kind {
                     return "K[1]".to_string();
+                } else {
+                    let inner_str = decompile(&gs[0]);
+                    if inner_str.starts_with("K[") && inner_str.ends_with("]") {
+                        if let Ok(n) = inner_str[2..inner_str.len()-1].parse::<u32>() {
+                            return format!("K[{}]", n + 1);
+                        }
+                    }
                 }
             }
 
@@ -1211,35 +1218,67 @@ pub fn decompile(grf: &Grf) -> String {
             let h_str = decompile(h);
 
             // Match generalized RepFirst shapes: R(base, R(f, P(4,2)))
-            if h_str.starts_with("R(") && h_str.ends_with(",P(4,2))") {
-                let inner_f = &h_str[2..h_str.len() - 8];
-                if g_str == "S" {
-                    return format!("RepFirst[{inner_f}]");
-                } else if g_str == "P(1,1)" {
-                    return format!("RepFirstP1[{inner_f}]");
-                } else if g_str == "Z1" {
-                    return format!("RepFirstZ1[{inner_f}]");
+            if let GrfKind::Rec(f, h_inner) = &h.kind {
+                if let GrfKind::Proj(4, 2) = h_inner.kind {
+                    let inner_f = decompile(f);
+                    if g_str == "S" {
+                        return format!("RepFirst[{inner_f}]");
+                    } else if g_str == "P(1,1)" {
+                        return format!("RepFirstP1[{inner_f}]");
+                    } else if g_str == "Z1" {
+                        return format!("RepFirstZ1[{inner_f}]");
+                    }
                 }
             }
 
-            // Match RepSucc[f] = R(S, C(f, P(3,2)))
-            if h_str.starts_with("C(") && h_str.ends_with(",P(3,2))") {
-                let inner_f = &h_str[2..h_str.len() - 8];
-                if g_str == "S" {
-                    return format!("RepSucc[{inner_f}]");
-                } else if g_str == "P(1,1)" {
-                    return format!("RepSuccP1[{inner_f}]");
+            if let GrfKind::Comp(f, gs, _) = &h.kind {
+                // Match RepSucc[f] = R(S, C(f, P(3,2)))
+                if gs.len() == 1 && matches!(gs[0].kind, GrfKind::Proj(3, 2)) {
+                    let inner_f = decompile(f);
+                    if g_str == "S" {
+                        return format!("RepSucc[{inner_f}]");
+                    } else if g_str == "P(1,1)" {
+                        return format!("RepSuccP1[{inner_f}]");
+                    }
+                }
+                
+                // Match DiagRep[f] = R(base, C(f, P(3,2), P(3,2)))
+                if gs.len() == 2 && matches!(gs[0].kind, GrfKind::Proj(3, 2)) && matches!(gs[1].kind, GrfKind::Proj(3, 2)) {
+                    let inner_f = decompile(f);
+                    if g_str == "Z1" {
+                        return format!("DiagRepZ1[{inner_f}]");
+                    } else if g_str == "S" {
+                        return format!("DiagRep[{inner_f}]"); // Future proofing
+                    } else if g_str == "P(1,1)" {
+                        return format!("DiagRepP1[{inner_f}]");
+                    }
                 }
             }
 
-            // Match Add: R(P(2,1), C(S, P(4,2)))
+            // Match 3-arity addition: R(P(2,1), C(S, P(4,2)))
             if g_str == "P(2,1)" && h_str == "C(S,P(4,2))" {
+                return "Add^3".to_string();
+            }
+
+            // Match 2-arity addition: R(P(1,1), C(S, P(3,2)))
+            if g_str == "P(1,1)" && h_str == "C(S,P(3,2))" {
                 return "Add".to_string();
             }
 
             // Match Tri: R(Z0, RepSucc[S]) -> Tri
             if g_str == "Z0" && h_str == "RepSucc[S]" {
                 return "Tri".to_string();
+            }
+
+            // Match TriP variants
+            if h_str == "Add^3" {
+                if g_str == "Z1" {
+                    return "TriP".to_string();
+                } else if g_str == "P(1,1)" {
+                    return "TriPPlus".to_string();
+                } else if g_str == "S" {
+                    return "TriPPlusS".to_string();
+                }
             }
 
             format!("R({g_str},{h_str})")

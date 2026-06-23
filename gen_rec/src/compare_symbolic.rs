@@ -235,6 +235,47 @@ pub fn iterated_growth_level(cf: &ClosedForm) -> usize {
         }
     }
 }
+/// Represents a massive number via base-10 nested Knuth up-arrows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Knuth10 {
+    /// A pure floating point value
+    Val(f64),
+    /// Represents `10 \uparrow^{arrows} inner`
+    UpArrow(u64, Box<Knuth10>),
+}
+
+impl Knuth10 {
+    /// Standardizes the power tower representation by collapsing trivial exponents
+    pub fn normalize(self) -> Self {
+        match self {
+            Knuth10::Val(v) => Knuth10::Val(v),
+            Knuth10::UpArrow(n, inner) => {
+                let norm_inner = inner.normalize();
+                if n == 1 {
+                    if let Knuth10::Val(v) = &norm_inner {
+                        if *v < 2.0 {
+                            return Knuth10::Val(10f64.powf(*v));
+                        }
+                    }
+                }
+                Knuth10::UpArrow(n, Box::new(norm_inner))
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Knuth10 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Knuth10::Val(v) => write!(f, "{:.2}", v),
+            Knuth10::UpArrow(1, inner) => write!(f, "10^{}", inner),
+            Knuth10::UpArrow(2, inner) => write!(f, "10 ↑↑ {}", inner),
+            Knuth10::UpArrow(3, inner) => write!(f, "10 ↑↑↑ {}", inner),
+            Knuth10::UpArrow(4, inner) => write!(f, "10 ↑↑↑↑ {}", inner),
+            Knuth10::UpArrow(n, inner) => write!(f, "10 ↑^{} {}", n, inner),
+        }
+    }
+}
 
 /// Represents a symbolically evaluated value that may be too large to fit in `u64`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,12 +304,11 @@ fn asymptotic_degree(cf: &ClosedForm) -> usize {
     }
 }
 
-/// Computes strict lower and upper bounds `(y_min, y_max)` such that the exact value of the 
-/// affine function `func` iterated `k` times on input `x` is rigorously bounded by
-/// `[10^10^y_min, 10^10^y_max]`.
-/// Note that affine bounds often produce very small `y` values (y < 2.0) which are automatically 
-/// formatted as `10^A` scientific notation rather than a full power tower.
-fn bounds_for_affine(func: &AffineFn, k: u64, x: u64) -> Option<(f64, f64)> {
+/// Computes strict lower and upper bounds using the `Knuth10` base-10 up-arrow representation 
+/// for the exact value of the affine function `func` iterated `k` times on input `x`.
+/// Since affine iteration represents standard exponential growth, it naturally 
+/// returns bounds natively in the form `10^y` (a single UpArrow).
+fn bounds_for_affine(func: &AffineFn, k: u64, x: u64) -> Option<(Knuth10, Knuth10)> {
     if func.arity >= 1 {
         let c_min = func.coeffs[1] as f64; // The coefficient for the first argument (acc)
         let mut c_max = 0.0;
@@ -284,17 +324,21 @@ fn bounds_for_affine(func: &AffineFn, k: u64, x: u64) -> Option<(f64, f64)> {
             let log_p_min = k_f64 * c_min.log10() + x_f64.log10();
             let log_p_max = k_f64 * c_max.log10() + x_f64.log10();
             
-            return Some((log_p_min.log10(), log_p_max.log10()));
+            return Some((
+                Knuth10::UpArrow(1, Box::new(Knuth10::Val(log_p_min))),
+                Knuth10::UpArrow(1, Box::new(Knuth10::Val(log_p_max))),
+            ));
         }
     }
     None
 }
 
-/// Computes strict lower and upper bounds `(y_min, y_max)` such that the exact value of the 
-/// polynomial `poly` iterated `k` times on input `x` is rigorously bounded by
-/// `[10^10^y_min, 10^10^y_max]`.
+/// Computes strict lower and upper bounds using the `Knuth10` base-10 up-arrow representation 
+/// for the exact value of the polynomial `poly` iterated `k` times on input `x`.
+/// Since polynomial iteration yields double-exponential growth, it naturally 
+/// returns bounds natively in the form `10^10^y` (a nested double UpArrow).
 /// Returns `None` if the polynomial does not operate on the accumulator.
-fn bounds_for_iter_poly(poly: &PolynomialFn, k: u64, x: u64) -> Option<(f64, f64)> {
+fn bounds_for_iter_poly(poly: &PolynomialFn, k: u64, x: u64) -> Option<(Knuth10, Knuth10)> {
     // We only compute power tower bounds if the recursive step's polynomial growth 
     // is driven by the accumulator (which is always passed as arg 1 to the step function).
     // If it were a polynomial over a static side-variable, iterating it would only yield exponential growth.
@@ -327,13 +371,16 @@ fn bounds_for_iter_poly(poly: &PolynomialFn, k: u64, x: u64) -> Option<(f64, f64
         let y_min = k_f64 * d_f64.log10() + m_min.log10();
         let y_max = k_f64 * d_f64.log10() + m_max.log10();
         
-        return Some((y_min, y_max));
+        return Some((
+            Knuth10::UpArrow(1, Box::new(Knuth10::UpArrow(1, Box::new(Knuth10::Val(y_min))))),
+            Knuth10::UpArrow(1, Box::new(Knuth10::UpArrow(1, Box::new(Knuth10::Val(y_max))))),
+        ));
     }
     None
 }
 
-/// Computes strict lower and upper bounds [10^10^y_min, 10^10^y_max] for an FGH Level 2 function.
-fn compute_power_tower_bounds(cf: &ClosedForm, args: &[SymVal]) -> Option<(f64, f64)> {
+/// Computes strict lower and upper bounds for an FGH Level 2 function.
+fn compute_power_tower_bounds(cf: &ClosedForm, args: &[SymVal]) -> Option<(Knuth10, Knuth10)> {
     if fgh_level(cf) == 2 {
         if let ClosedForm::Iterated(it) = cf {
             assert!(args.len() >= 1);
@@ -367,20 +414,9 @@ impl std::fmt::Display for SymVal {
         match self {
             SymVal::Const(c) => write!(f, "{}", c),
             SymVal::FuncApp(cf, args) => {
-                let format_bounds = |y_min: f64, y_max: f64| -> String {
-                    let format_bound = |y: f64| -> String {
-                        if y < 2.0 {
-                            format!("10^{:.2}", 10f64.powf(y))
-                        } else {
-                            format!("10^10^{:.2}", y)
-                        }
-                    };
-                    format!("[{}, {}]", format_bound(y_min), format_bound(y_max))
-                };
-
                 // For FGH Level 2 iterated functions, output strict bounds instead!
-                if let Some((y_min, y_max)) = compute_power_tower_bounds(cf, args) {
-                    return write!(f, "{}", format_bounds(y_min, y_max));
+                if let Some((bound_min, bound_max)) = compute_power_tower_bounds(cf, args) {
+                    return write!(f, "[{}, {}]", bound_min.normalize(), bound_max.normalize());
                 }
                 
                 let mut count = 1;
@@ -405,8 +441,8 @@ impl std::fmt::Display for SymVal {
                                 ClosedForm::Polynomial(poly) => bounds_for_iter_poly(poly, count as u64, x),
                                 _ => None,
                             };
-                            if let Some((y_min, y_max)) = bounds {
-                                return write!(f, "{}", format_bounds(y_min, y_max));
+                            if let Some((bound_min, bound_max)) = bounds {
+                                return write!(f, "[{}, {}]", bound_min.normalize(), bound_max.normalize());
                             }
                         }
                     }

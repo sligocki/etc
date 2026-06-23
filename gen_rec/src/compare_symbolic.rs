@@ -787,67 +787,11 @@ pub fn compare_sym(a: &SymVal, b: &SymVal) -> PointwiseOrder {
                 PointwiseOrder::Uncertain
             };
             
-            // HEURISTIC: Resolve `Uncertain` structural bounds by looking at the iteration gap and FGH level.
-            let lvl_f = fgh_level(f);
-            let lvl_g = fgh_level(g);
-            
-            if final_cmp == PointwiseOrder::Uncertain {
-                if lvl_f < lvl_g {
-                    // Lower FGH level guarantees it is strictly less for massive inputs
-                    final_cmp = PointwiseOrder::LessEqual;
-                } else if lvl_f > lvl_g {
-                    // Higher FGH level guarantees it is strictly greater for massive inputs
-                    final_cmp = PointwiseOrder::GreaterEqual;
-                } else {
-                    // If the functions belong to the same FGH growth level, we compare their iteration counts.
-                    // MATHEMATICAL PROOF: 
-                    // For FGH Level >= 3, the iteration count `k` represents the HEIGHT of a power tower (or higher).
-                    // A power tower of height k_1 strictly dominates a power tower of height k_2 if k_1 > k_2, 
-                    // regardless of the bases (as long as base >= 2). So comparing `k` is universally rigorous.
-                    // However, for FGH Level 2, the growth is x^{d^k} where d is the polynomial degree.
-                    // So we MUST compare d^{k}, which means comparing k_1 * ln(d_1) vs k_2 * ln(d_2).
-                    
-                    if lvl_f == 2 {
-                        if let (ClosedForm::Iterated(it_f), ClosedForm::Iterated(it_g)) = (f, g) {
-                            let d_f = asymptotic_degree(&it_f.step);
-                            let d_g = asymptotic_degree(&it_g.step);
-                            
-                            if let (Some(SymVal::Const(k_f)), Some(SymVal::Const(k_g))) = (args_f.first(), args_g.first()) {
-                                let power_f = (*k_f as f64) * (d_f as f64).ln();
-                                let power_g = (*k_g as f64) * (d_g as f64).ln();
-                                
-                                if power_f > power_g + 1e-9 {
-                                    final_cmp = PointwiseOrder::GreaterEqual;
-                                } else if power_f < power_g - 1e-9 {
-                                    final_cmp = PointwiseOrder::LessEqual;
-                                } else {
-                                    final_cmp = PointwiseOrder::Equal;
-                                }
-                            } else if d_f == d_g {
-                                // Fallback to pure symbolic comparison if k is symbolic but degrees match
-                                if let (Some(af0), Some(ag0)) = (args_f.first(), args_g.first()) {
-                                    let arg_cmp = compare_sym(af0, ag0);
-                                    if arg_cmp == PointwiseOrder::GreaterEqual {
-                                        final_cmp = PointwiseOrder::GreaterEqual;
-                                    } else if arg_cmp == PointwiseOrder::LessEqual {
-                                        final_cmp = PointwiseOrder::LessEqual;
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Rigorous for Level >= 3
-                        if let (Some(af0), Some(ag0)) = (args_f.first(), args_g.first()) {
-                            let arg_cmp = compare_sym(af0, ag0);
-                            if arg_cmp == PointwiseOrder::GreaterEqual {
-                                final_cmp = PointwiseOrder::GreaterEqual;
-                            } else if arg_cmp == PointwiseOrder::LessEqual {
-                                final_cmp = PointwiseOrder::LessEqual;
-                            }
-                        }
-                    }
-                }
-            }
+            // User requested to remove Knuth10 bounds comparison here to keep it separate.
+            // We also must remove the unsafe structural FGH level heuristics because
+            // comparing the outermost function's FGH level is mathematically invalid
+            // when the arguments to those functions are vastly different evaluated numbers.
+            // So if final_cmp is Uncertain at this point, we just leave it as Uncertain.
             
             final_cmp
         }

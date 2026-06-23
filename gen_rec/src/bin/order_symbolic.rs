@@ -60,7 +60,24 @@ fn main() {
     for i in 0..n {
         for j in 0..n {
             if i == j { continue; }
-            if gen_rec::compare_symbolic::compare_sym(&orig_holdouts[i].5, &orig_holdouts[j].5) == PointwiseOrder::LessEqual {
+            let cmp = gen_rec::compare_symbolic::compare_sym(&orig_holdouts[i].5, &orig_holdouts[j].5);
+            
+            let bounds_i = orig_holdouts[i].5.get_heuristic_bounds();
+            let bounds_j = orig_holdouts[j].5.get_heuristic_bounds();
+            if cmp == PointwiseOrder::GreaterEqual && bounds_i.1 < bounds_j.0 {
+                panic!("Sanity check failed: H{} >= H{}, but H{}.upper ({}) < H{}.lower ({})", 
+                       orig_holdouts[i].0, orig_holdouts[j].0, orig_holdouts[i].0, bounds_i.1.normalize(), orig_holdouts[j].0, bounds_j.0.normalize());
+            }
+            if cmp == PointwiseOrder::LessEqual && bounds_i.0 > bounds_j.1 {
+                panic!("Sanity check failed: H{} <= H{}, but H{}.lower ({}) > H{}.upper ({})", 
+                       orig_holdouts[i].0, orig_holdouts[j].0, orig_holdouts[i].0, bounds_i.0.normalize(), orig_holdouts[j].0, bounds_j.1.normalize());
+            }
+            if cmp == PointwiseOrder::Equal && (bounds_i.1 < bounds_j.0 || bounds_i.0 > bounds_j.1) {
+                panic!("Sanity check failed: H{} == H{}, but bounds do not overlap: [{}, {}] vs [{}, {}]",
+                       orig_holdouts[i].0, orig_holdouts[j].0, bounds_i.0.normalize(), bounds_i.1.normalize(), bounds_j.0.normalize(), bounds_j.1.normalize());
+            }
+
+            if cmp == PointwiseOrder::LessEqual {
                 adj[i].push(j);
                 in_degree[j] += 1;
             }
@@ -94,7 +111,7 @@ fn main() {
     println!("--- FGH Levels (Ordered by Exact Symbolic Evaluation) ---");
     for (orig_idx, name, grf, _, lvl, sym_val) in &holdouts {
         println!("H{:<2}: Level {} | \x1b[1;36m{}\x1b[0m", orig_idx, lvl, gen_rec::mgrf::decompile(grf));
-        println!("      SymVal: \x1b[1;35m{}\x1b[0m", sym_val);
+        println!("      Score: \x1b[1;35m{}\x1b[0m", sym_val);
     }
 
     println!("\n--- Exact Symbolic Strict Dominance Comparison Grid ---");
@@ -154,10 +171,12 @@ fn main() {
     println!("(Holdouts that are NOT strictly dominated by any other holdout)");
     let mut num_champs = 0;
     // We iterate over the sorted `holdouts` so that champions are printed in top-down order
-    for (orig_idx, name, grf, _, _, _) in &holdouts {
-        if adj[*orig_idx].is_empty() {
+    for (k, (orig_idx, name, grf, _, _, sym_val)) in holdouts.iter().enumerate() {
+        let i = sorted_indices[k];
+        if adj[i].is_empty() {
             println!("H{:<2}: {}", orig_idx, gen_rec::mgrf::decompile(grf));
             println!("      RAW: {}", name);
+            println!("      Score: {}", sym_val);
             num_champs += 1;
         }
     }

@@ -1255,11 +1255,6 @@ pub fn decompile(grf: &Grf) -> String {
                 }
             }
 
-            // Match 3-arity addition: R(P(2,1), C(S, P(4,2)))
-            if g_str == "P(2,1)" && h_str == "C(S,P(4,2))" {
-                return "Add^3".to_string();
-            }
-
             // Match 2-arity addition: R(P(1,1), C(S, P(3,2)))
             if g_str == "P(1,1)" && h_str == "C(S,P(3,2))" {
                 return "Add".to_string();
@@ -1268,17 +1263,6 @@ pub fn decompile(grf: &Grf) -> String {
             // Match Tri: R(Z0, RepSucc[S]) -> Tri
             if g_str == "Z0" && h_str == "RepSucc[S]" {
                 return "Tri".to_string();
-            }
-
-            // Match TriP variants
-            if h_str == "Add^3" {
-                if g_str == "Z1" {
-                    return "TriP".to_string();
-                } else if g_str == "P(1,1)" {
-                    return "TriPPlus".to_string();
-                } else if g_str == "S" {
-                    return "TriPPlusS".to_string();
-                }
             }
 
             format!("R({g_str},{h_str})")

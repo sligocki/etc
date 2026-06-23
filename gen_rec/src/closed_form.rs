@@ -127,7 +127,44 @@ pub struct PolynomialFn {
     pub affine_tail: Box<AffineFn>,
 }
 
+pub fn make_polynomial(arity: usize, poly_arg: usize, mut poly_coeffs: Vec<u64>, affine_tail: Box<AffineFn>) -> ClosedForm {
+    while poly_coeffs.last() == Some(&0) {
+        poly_coeffs.pop();
+    }
+    if poly_coeffs.is_empty() {
+        ClosedForm::Affine(*affine_tail)
+    } else {
+        ClosedForm::Polynomial(PolynomialFn {
+            arity,
+            poly_arg,
+            poly_coeffs,
+            affine_tail,
+        })
+    }
+}
+
 impl PolynomialFn {
+    pub fn new(arity: usize, poly_arg: usize, mut poly_coeffs: Vec<u64>, affine_tail: Box<AffineFn>) -> Self {
+        while poly_coeffs.last() == Some(&0) {
+            poly_coeffs.pop();
+        }
+        assert!(!poly_coeffs.is_empty(), "PolynomialFn must have degree >= 2; use AffineFn otherwise.");
+        Self {
+            arity,
+            poly_arg,
+            poly_coeffs,
+            affine_tail,
+        }
+    }
+
+    pub fn degree(&self) -> usize {
+        self.poly_coeffs.len() + 1
+    }
+
+    pub fn leading_coef(&self) -> u64 {
+        *self.poly_coeffs.last().unwrap()
+    }
+
     pub fn eval(&self, args: &[u64]) -> Option<u64> {
         assert_eq!(args.len(), self.arity);
         let mut sum = self.affine_tail.eval(args)?;
@@ -154,12 +191,12 @@ impl PolynomialFn {
     }
 
     pub fn lift(&self, arity: usize) -> Self {
-        PolynomialFn {
+        PolynomialFn::new(
             arity,
-            poly_arg: self.poly_arg,
-            poly_coeffs: self.poly_coeffs.clone(),
-            affine_tail: Box::new(self.affine_tail.lift(arity)),
-        }
+            self.poly_arg,
+            self.poly_coeffs.clone(),
+            Box::new(self.affine_tail.lift(arity)),
+        )
     }
 
     pub fn format_expr(&self, vars: &[String]) -> String {
@@ -915,15 +952,15 @@ pub fn closed_form_of_rec_internal(
                     }));
                 } else {
                     // Case D: yields a Polynomial
-                    return Some(ClosedForm::Polynomial(PolynomialFn {
-                        arity: k_outer,
-                        poly_arg: 1,            // n is argument 1
-                        poly_coeffs: vec![c_1], // \binom{n}{2} has coeff c_1
-                        affine_tail: Box::new(AffineFn {
+                    return Some(ClosedForm::Polynomial(PolynomialFn::new(
+                        k_outer,
+                        1,            // n is argument 1
+                        vec![c_1], // \binom{n}{2} has coeff c_1
+                        Box::new(AffineFn {
                             arity: k_outer,
                             coeffs: new_coeffs,
                         }),
-                    }));
+                    )));
                 }
             }
         }
@@ -950,15 +987,15 @@ pub fn closed_form_of_rec_internal(
 
                 // Enforce MAX_DEGREE = 4 for now (so poly_coeffs length max 3, representing up to degree 4)
                 if new_poly_coeffs.len() <= 3 {
-                    return Some(ClosedForm::Polynomial(PolynomialFn {
-                        arity: k_outer,
-                        poly_arg: 1,
-                        poly_coeffs: new_poly_coeffs,
-                        affine_tail: Box::new(AffineFn {
+                    return Some(ClosedForm::Polynomial(PolynomialFn::new(
+                        k_outer,
+                        1,
+                        new_poly_coeffs,
+                        Box::new(AffineFn {
                             arity: k_outer,
                             coeffs: new_coeffs,
                         }),
-                    }));
+                    )));
                 }
             }
         }
@@ -1524,12 +1561,12 @@ fn compose_impl(
 
             let inner_for_poly = &inner_afs[poly_h.poly_arg - 1];
             if let Some(proj_idx) = is_proj_of(&ClosedForm::Affine(inner_for_poly.clone())) {
-                Some(ClosedForm::Polynomial(PolynomialFn {
+                Some(ClosedForm::Polynomial(PolynomialFn::new(
                     arity,
-                    poly_arg: proj_idx,
-                    poly_coeffs: poly_h.poly_coeffs.clone(),
-                    affine_tail: Box::new(compose_affine(&poly_h.affine_tail, &inner_afs)?),
-                }))
+                    proj_idx,
+                    poly_h.poly_coeffs.clone(),
+                    Box::new(compose_affine(&poly_h.affine_tail, &inner_afs)?),
+                )))
             } else if inner_for_poly.coeffs[1..].iter().all(|&c| c == 0) {
                 let mut sum = 0u64;
                 let x = inner_for_poly.coeffs[0];
@@ -1839,12 +1876,12 @@ fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 } else {
                     poly.poly_arg
                 };
-                ClosedForm::Polynomial(PolynomialFn {
-                    arity: poly.arity - 1,
-                    poly_arg: new_poly_arg,
-                    poly_coeffs: poly.poly_coeffs.clone(),
-                    affine_tail: Box::new(zero_face_at_affine(&poly.affine_tail, j)),
-                })
+                ClosedForm::Polynomial(PolynomialFn::new(
+                    poly.arity - 1,
+                    new_poly_arg,
+                    poly.poly_coeffs.clone(),
+                    Box::new(zero_face_at_affine(&poly.affine_tail, j)),
+                ))
             }
         }
         ClosedForm::NegMod(a1, a2, a3) => make_neg_mod(
@@ -2036,12 +2073,12 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
                 .map(|b| Box::new(prepend_arg(b)))
                 .collect(),
         ),
-        ClosedForm::Polynomial(poly) => ClosedForm::Polynomial(PolynomialFn {
-            arity: poly.arity + 1,
-            poly_arg: poly.poly_arg + 1,
-            poly_coeffs: poly.poly_coeffs.clone(),
-            affine_tail: Box::new(prepend_arg_affine(&poly.affine_tail)),
-        }),
+        ClosedForm::Polynomial(poly) => ClosedForm::Polynomial(PolynomialFn::new(
+            poly.arity + 1,
+            poly.poly_arg + 1,
+            poly.poly_coeffs.clone(),
+            Box::new(prepend_arg_affine(&poly.affine_tail)),
+        )),
         ClosedForm::Iterated(it) => ClosedForm::Iterated(IteratedFn {
             arity: it.arity + 1,
             base: Box::new(prepend_arg(&it.base)),
@@ -2184,12 +2221,12 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
             } else {
                 poly.poly_arg
             };
-            Some(ClosedForm::Polynomial(PolynomialFn {
-                arity: poly.arity - 1,
-                poly_arg: new_poly_arg,
-                poly_coeffs: poly.poly_coeffs.clone(),
-                affine_tail: Box::new(drop_arg_affine(&poly.affine_tail, idx)?),
-            }))
+            Some(ClosedForm::Polynomial(PolynomialFn::new(
+                poly.arity - 1,
+                new_poly_arg,
+                poly.poly_coeffs.clone(),
+                Box::new(drop_arg_affine(&poly.affine_tail, idx)?),
+            )))
         }
         ClosedForm::Piecewise(pw) => {
             let b = pw.branch_index + 1; // 1-based

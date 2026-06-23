@@ -1,4 +1,4 @@
-use crate::closed_form::{ClosedForm, AffineFn};
+use crate::closed_form::{ClosedForm, AffineFn, PolynomialFn, closed_form_ignores_arg};
 
 /// Represents the result of comparing two functions f and g for all inputs x >= 0.
 /// If `GreaterEqual`, then f(x) >= g(x) for all x >= 0.
@@ -226,7 +226,7 @@ pub fn iterated_growth_level(cf: &ClosedForm) -> usize {
             p.branches.iter().map(|b| iterated_growth_level(&**b)).max().unwrap_or(0)
         }
         ClosedForm::Iterated(_it) => {
-            if crate::closed_form::closed_form_ignores_arg(cf, 1) {
+            if closed_form_ignores_arg(cf, 1) {
                 0
             } else {
                 let l = fgh_level(cf);
@@ -263,16 +263,124 @@ fn asymptotic_degree(cf: &ClosedForm) -> usize {
     }
 }
 
+/// Computes strict lower and upper bounds `(y_min, y_max)` such that the exact value of the 
+/// affine function `func` iterated `k` times on input `x` is rigorously bounded by
+/// `[10^10^y_min, 10^10^y_max]`.
+/// Note that affine bounds often produce very small `y` values (y < 2.0) which are automatically 
+/// formatted as `10^A` scientific notation rather than a full power tower.
+fn bounds_for_affine(func: &AffineFn, k: u64, x: u64) -> Option<(f64, f64)> {
+    if func.arity >= 1 {
+        let c_min = func.coeffs[1] as f64; // The coefficient for the first argument (acc)
+        let mut c_max = 0.0;
+        for &c in func.coeffs.iter() {
+            c_max += c as f64;
+        }
+        
+        if c_min >= 1.0 {
+            let x_f64 = x.max(1) as f64;
+            let k_f64 = k as f64;
+            
+            // P(x) = c * x
+            let log_p_min = k_f64 * c_min.log10() + x_f64.log10();
+            let log_p_max = k_f64 * c_max.log10() + x_f64.log10();
+            
+            return Some((log_p_min.log10(), log_p_max.log10()));
+        }
+    }
+    None
+}
+
+/// Computes strict lower and upper bounds `(y_min, y_max)` such that the exact value of the 
+/// polynomial `poly` iterated `k` times on input `x` is rigorously bounded by
+/// `[10^10^y_min, 10^10^y_max]`.
+/// Returns `None` if the polynomial does not operate on the accumulator.
+fn bounds_for_iter_poly(poly: &PolynomialFn, k: u64, x: u64) -> Option<(f64, f64)> {
+    // We only compute power tower bounds if the recursive step's polynomial growth 
+    // is driven by the accumulator (which is always passed as arg 1 to the step function).
+    // If it were a polynomial over a static side-variable, iterating it would only yield exponential growth.
+    if poly.poly_arg == 1 {
+        let d = poly.degree();
+        let c_min = poly.leading_coef() as f64;
+        
+        let mut c_max = 0.0;
+        for &c in poly.affine_tail.coeffs.iter() {
+            c_max += c as f64;
+        }
+        for &c in poly.poly_coeffs.iter() {
+            c_max += c as f64;
+        }
+        
+        let d_f64 = d as f64;
+        let x_f64 = x.max(1) as f64;
+        let k_f64 = k as f64;
+        
+        // Mathematical derivation of the power tower exponent y:
+        // Assume poly(x) ≈ c * x^d. Iterating it k times yields:
+        // poly^k(x) ≈ c^{(d^k - 1)/(d - 1)} * x^{d^k} ≈ (c^{1/(d-1)} * x)^{d^k}
+        // log10(poly^k(x)) ≈ d^k * [ log10(c)/(d-1) + log10(x) ]
+        // Let M = log10(c)/(d-1) + log10(x)
+        let m_min = c_min.log10() / (d_f64 - 1.0) + x_f64.log10();
+        let m_max = c_max.log10() / (d_f64 - 1.0) + x_f64.log10();
+        
+        // To find the power tower exponent y such that poly^k(x) = 10^{10^y}:
+        // y = log10(log10(poly^k(x))) ≈ log10(d^k * M) = k * log10(d) + log10(M)
+        let y_min = k_f64 * d_f64.log10() + m_min.log10();
+        let y_max = k_f64 * d_f64.log10() + m_max.log10();
+        
+        return Some((y_min, y_max));
+    }
+    None
+}
+
+/// Computes strict lower and upper bounds [10^10^y_min, 10^10^y_max] for an FGH Level 2 function.
+fn compute_power_tower_bounds(cf: &ClosedForm, args: &[SymVal]) -> Option<(f64, f64)> {
+    if fgh_level(cf) == 2 {
+        if let ClosedForm::Iterated(it) = cf {
+            assert!(args.len() >= 1);
+            if let SymVal::Const(iters) = args[0] {
+                // The rest of the arguments are passed to the base function to compute
+                // the initial accumulator.
+                let mut const_args = Vec::with_capacity(args.len() - 1);
+                for a in &args[1..] {
+                    if let SymVal::Const(c) = a {
+                        const_args.push(*c);
+                    } else {
+                        return None; // Cannot evaluate symbolically if not fully constant
+                    }
+                }
+                
+                if let Some(base) = it.base.eval(&const_args) {
+                    match it.step.as_ref() {
+                        ClosedForm::Affine(affine) => return bounds_for_affine(affine, iters, base),
+                        ClosedForm::Polynomial(poly) => return bounds_for_iter_poly(poly, iters, base),
+                        _ => return None,
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 impl std::fmt::Display for SymVal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SymVal::Const(c) => write!(f, "{}", c),
             SymVal::FuncApp(cf, args) => {
-                if let ClosedForm::Iterated(it) = cf {
-                    if args.len() == 2 {
-                        let step_lvl = fgh_level(&it.step);
-                        return write!(f, "~f_{}^{{{}}}({})", step_lvl, args[0], args[1]);
-                    }
+                let format_bounds = |y_min: f64, y_max: f64| -> String {
+                    let format_bound = |y: f64| -> String {
+                        if y < 2.0 {
+                            format!("10^{:.2}", 10f64.powf(y))
+                        } else {
+                            format!("10^10^{:.2}", y)
+                        }
+                    };
+                    format!("[{}, {}]", format_bound(y_min), format_bound(y_max))
+                };
+
+                // For FGH Level 2 iterated functions, output strict bounds instead!
+                if let Some((y_min, y_max)) = compute_power_tower_bounds(cf, args) {
+                    return write!(f, "{}", format_bounds(y_min, y_max));
                 }
                 
                 let mut count = 1;
@@ -287,6 +395,28 @@ impl std::fmt::Display for SymVal {
                         }
                     }
                     break;
+                }
+                
+                if count > 1 {
+                    if current_args.len() >= 1 {
+                        if let SymVal::Const(x) = current_args[0] {
+                            let bounds = match cf {
+                                ClosedForm::Affine(affine) => bounds_for_affine(affine, count as u64, x),
+                                ClosedForm::Polynomial(poly) => bounds_for_iter_poly(poly, count as u64, x),
+                                _ => None,
+                            };
+                            if let Some((y_min, y_max)) = bounds {
+                                return write!(f, "{}", format_bounds(y_min, y_max));
+                            }
+                        }
+                    }
+                }
+                
+                if let ClosedForm::Iterated(it) = cf {
+                    if args.len() == 2 {
+                        let step_lvl = fgh_level(&it.step);
+                        return write!(f, "~f_{}^{{{}}}({})", step_lvl, count, current_args[0]);
+                    }
                 }
                 
                 let lvl = fgh_level(cf);
@@ -523,30 +653,30 @@ mod tests {
     #[test]
     fn test_compare_polynomial_strict() {
         // p1(x) = (x choose 2) + x
-        let p1 = ClosedForm::Polynomial(PolynomialFn {
-            arity: 1,
-            poly_arg: 1,
-            poly_coeffs: vec![1],
-            affine_tail: Box::new(AffineFn { arity: 1, coeffs: vec![0, 1] })
-        });
+        let p1 = ClosedForm::Polynomial(PolynomialFn::new(
+            1,
+            1,
+            vec![1],
+            Box::new(AffineFn { arity: 1, coeffs: vec![0, 1] })
+        ));
         // p2(x) = (x choose 2) + 2x
-        let p2 = ClosedForm::Polynomial(PolynomialFn {
-            arity: 1,
-            poly_arg: 1,
-            poly_coeffs: vec![1],
-            affine_tail: Box::new(AffineFn { arity: 1, coeffs: vec![0, 2] })
-        });
+        let p2 = ClosedForm::Polynomial(PolynomialFn::new(
+            1,
+            1,
+            vec![1],
+            Box::new(AffineFn { arity: 1, coeffs: vec![0, 2] })
+        ));
 
         // (x choose 2) + x ≤ (x choose 2) + 2x
         assert_eq!(compare_strict(&p1, &p2), PointwiseOrder::LessEqual);
 
         // p3(x) = 2*(x choose 2) + 1
-        let p3 = ClosedForm::Polynomial(PolynomialFn {
-            arity: 1,
-            poly_arg: 1,
-            poly_coeffs: vec![2],
-            affine_tail: Box::new(AffineFn { arity: 1, coeffs: vec![1, 0] })
-        });
+        let p3 = ClosedForm::Polynomial(PolynomialFn::new(
+            1,
+            1,
+            vec![2],
+            Box::new(AffineFn { arity: 1, coeffs: vec![1, 0] })
+        ));
 
         // p2 vs p3 crosses!
         // p2(1) = 0 + 2 = 2, p3(1) = 0 + 1 = 1  (p2 > p3)
@@ -624,9 +754,9 @@ mod tests {
         
         // Funcs that don't quite match FGH:
         // poly(x) = (x choose 2) (Polynomial growth: FGH Level 1)
-        let poly = ClosedForm::Polynomial(PolynomialFn {
-            arity: 1, poly_arg: 1, poly_coeffs: vec![1], affine_tail: Box::new(AffineFn { arity: 1, coeffs: vec![0, 0] })
-        });
+        let poly = ClosedForm::Polynomial(PolynomialFn::new(
+            1, 1, vec![1], Box::new(AffineFn { arity: 1, coeffs: vec![0, 0] })
+        ));
         
         // iter(y, x) = R(x + 1, \acc. acc choose 2)(y, x)
         // iter(0, x) = x + 1
@@ -640,5 +770,49 @@ mod tests {
 
         assert_eq!(fgh_level(&poly), 1);
         assert_eq!(fgh_level(&iter), 2);
+    }
+
+    #[test]
+    fn test_power_tower_bounds_formatting() {
+        // Base function: x + 1 (arity 1)
+        let base_cf = ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] });
+        
+        // Step function: 2x (arity 2, meaning f(acc, x) = 2*acc)
+        let step_affine = ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![0, 2, 0] });
+        
+        // iter_affine(k, x) = (x+1) 2^k
+        let iter_affine = ClosedForm::Iterated(IteratedFn {
+            arity: 2,
+            base: Box::new(base_cf.clone()),
+            step: Box::new(step_affine),
+        });
+        
+        // iter_affine(10, 3) = 4 2^10 ≈ 10^3.61
+        let val_affine = SymVal::FuncApp(iter_affine, vec![SymVal::Const(10), SymVal::Const(3)]);
+        let formatted_affine = format!("{}", val_affine);
+        assert_eq!(formatted_affine, "[10^3.61, 10^3.61]");
+        
+        // Step function: P(acc) = \binom{acc}{2} + acc.
+        let step_poly = ClosedForm::Polynomial(PolynomialFn::new(
+            2, 1, vec![1], Box::new(AffineFn { arity: 2, coeffs: vec![0, 1, 0] })
+        ));
+        
+        let iter_poly = ClosedForm::Iterated(IteratedFn {
+            arity: 2,
+            base: Box::new(base_cf.clone()),
+            step: Box::new(step_poly),
+        });
+        
+        // Test iter_poly with args: k=3, x=2
+        // Initial acc = base(2) = 3.
+        // k=3, x=3. d=2.
+        // c_min=1, c_max=2.
+        // m_min = log10(1)/1 + log10(3) = 0.47712
+        // m_max = log10(2)/1 + log10(3) = 0.30103 + 0.47712 = 0.77815
+        // 10^y_min = 2^3 * m_min = 8 * 0.47712 = 3.81696 ≈ 3.82
+        // 10^y_max = 2^3 * m_max = 8 * 0.77815 = 6.2252 ≈ 6.23
+        let val_poly = SymVal::FuncApp(iter_poly, vec![SymVal::Const(3), SymVal::Const(2)]);
+        let formatted_poly = format!("{}", val_poly);
+        assert_eq!(formatted_poly, "[10^3.82, 10^6.23]");
     }
 }

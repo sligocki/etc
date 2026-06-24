@@ -18,7 +18,7 @@ fn main() {
     // Store (orig_idx, name, Grf, ClosedForm, FGH_level, SymVal)
     let mut orig_holdouts: Vec<(usize, String, Grf, ClosedForm, usize, gen_rec::compare_symbolic::SymVal)> = Vec::new();
 
-    let mut idx = 0;
+    let mut total_count = 0;
     for line in content.lines() {
         if let Some(grf_str) = line.strip_prefix("grf=") {
             let grf_str = grf_str.split_whitespace().next().unwrap();
@@ -37,9 +37,9 @@ fn main() {
                 // and pass the dynamically computed starting arguments (e.g., [2, 2]) to the inner IteratedFn!
                 let sym_val = gen_rec::compare_symbolic::eval_grf_sym(&grf, &[]);
                 
-                orig_holdouts.push((idx, grf_str.to_string(), grf, cf, lvl, sym_val));
-                idx += 1;
+                orig_holdouts.push((total_count, grf_str.to_string(), grf, cf, lvl, sym_val));
             }
+            total_count += 1;
         }
     }
 
@@ -181,4 +181,8 @@ fn main() {
         }
     }
     println!("Total Champion Candidates: {}", num_champs);
+
+    if orig_holdouts.len() < total_count {
+        println!("\n\x1b[1;31mWARNING: Only analyzed {} out of {} total holdouts because some lacked ClosedForm representations!\x1b[0m", orig_holdouts.len(), total_count);
+    }
 }

@@ -248,7 +248,13 @@ impl Knuth10 {
     /// Standardizes the power tower representation by collapsing trivial exponents
     pub fn normalize(self) -> Self {
         match self {
-            Knuth10::Val(v) => Knuth10::Val(v),
+            Knuth10::Val(v) => {
+                if v >= 100.0 && v.is_finite() {
+                    Knuth10::UpArrow(1, Box::new(Knuth10::Val(v.log10()))).normalize()
+                } else {
+                    Knuth10::Val(v)
+                }
+            },
             Knuth10::UpArrow(n, inner) => {
                 let norm_inner = inner.normalize();
                 if n == 1 {

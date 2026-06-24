@@ -231,19 +231,27 @@ pub struct IteratedFn {
 }
 
 impl IteratedFn {
-    pub fn eval(&self, args: &[u64]) -> Option<u64> {
+    pub fn eval_with_budget(&self, args: &[u64], budget: &mut usize) -> Option<u64> {
         assert_eq!(args.len(), self.arity);
         let k = args[0];
-        let mut acc = self.base.eval(&args[1..])?;
+        let mut acc = self.base.eval_with_budget(&args[1..], budget)?;
 
         let mut step_args = vec![0; self.arity];
         step_args[1..].copy_from_slice(&args[1..]);
 
         for _ in 0..k {
+            if *budget == 0 {
+                return None;
+            }
+            *budget -= 1;
             step_args[0] = acc;
-            acc = self.step.eval(&step_args)?;
+            acc = self.step.eval_with_budget(&step_args, budget)?;
         }
         Some(acc)
+    }
+
+    pub fn eval(&self, args: &[u64]) -> Option<u64> {
+        self.eval_with_budget(args, &mut usize::MAX)
     }
 
     pub fn lift(&self, arity: usize) -> Self {
@@ -333,17 +341,14 @@ impl ClosedForm {
         }
     }
 
-    /// Evaluate the semantic function on concrete arguments.
-    ///
-    /// Returns `None` if the result would be negative (e.g. affine with negative sum),
-    /// or on arithmetic overflow of `u64`.
-    ///
-    /// Iterative: follows the Piecewise tree with in-place mutations on a single
-    /// owned buffer, avoiding per-level Vec allocations and deep recursion.
-    pub fn eval(&self, args: &[u64]) -> Option<u64> {
+    pub fn eval_with_budget(&self, args: &[u64], budget: &mut usize) -> Option<u64> {
         let mut current: &ClosedForm = self;
         let mut buf: Vec<u64> = args.to_vec();
         loop {
+            if *budget == 0 {
+                return None;
+            }
+            *budget -= 1;
             match current {
                 ClosedForm::Affine(af) => return af.eval(&buf),
                 ClosedForm::Polynomial(poly) => return poly.eval(&buf),
@@ -377,9 +382,20 @@ impl ClosedForm {
                         current = &pw.pos_branch;
                     }
                 }
-                ClosedForm::Iterated(it) => return it.eval(&buf),
+                ClosedForm::Iterated(it) => return it.eval_with_budget(&buf, budget),
             }
         }
+    }
+
+    /// Evaluate the semantic function on concrete arguments.
+    ///
+    /// Returns `None` if the result would be negative (e.g. affine with negative sum),
+    /// or on arithmetic overflow of `u64`.
+    ///
+    /// Iterative: follows the Piecewise tree with in-place mutations on a single
+    /// owned buffer, avoiding per-level Vec allocations and deep recursion.
+    pub fn eval(&self, args: &[u64]) -> Option<u64> {
+        self.eval_with_budget(args, &mut usize::MAX)
     }
 
     /// Find the minimum i ≥ 0 such that self(i, outer_args) = 0.

@@ -617,8 +617,15 @@ impl SymVal {
                     }
                 }
                 
-                // Fallback for FGH Level 1 or unparsed structs
-                (Knuth10::Val(0.0), Knuth10::Val(0.0))
+                let lvl = fgh_level(cf);
+                if lvl >= 2 {
+                    // Safe fallback for un-evaluable nested functions
+                    let k = Knuth10::UpArrow((lvl - 1) as u64, Box::new(Knuth10::Val(1000.0)));
+                    (k.clone(), k)
+                } else {
+                    // Fallback for FGH Level 1 or unparsed structs
+                    (Knuth10::Val(0.0), Knuth10::Val(0.0))
+                }
             }
         }
     }
@@ -708,7 +715,9 @@ pub fn eval_sym(cf: &ClosedForm, args: &[SymVal]) -> SymVal {
     
     if all_const {
         // cf.eval returns None on overflow. If it succeeds, we return the Const.
-        if let Some(val) = cf.eval(&const_args) {
+        // We supply a step budget so evaluation doesn't hang on large inputs.
+        let mut budget = 100_000;
+        if let Some(val) = cf.eval_with_budget(&const_args, &mut budget) {
             return SymVal::Const(val);
         }
     }

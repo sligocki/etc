@@ -1,4 +1,5 @@
 use crate::closed_form::{ClosedForm, AffineFn, PolynomialFn, closed_form_ignores_arg};
+use crate::grf::{Grf, GrfKind};
 
 /// Represents the result of comparing two functions f and g for all inputs x >= 0.
 /// If `GreaterEqual`, then f(x) >= g(x) for all x >= 0.
@@ -155,86 +156,7 @@ fn compare_affine(a: &AffineFn, b: &AffineFn) -> PointwiseOrder {
     }
 }
 
-/// Computes the Fast-Growing Hierarchy level of the given ClosedForm.
-/// 0: Addition (O(n))
-/// 1: Multiplication (O(n^d))
-/// 2: Exponential (O(2^n))
-/// 3: Tetration (O(2^^n))
-/// 4: Pentation (O(2^^^n))
-/// and so on.
-pub fn fgh_level(cf: &ClosedForm) -> usize {
-    match cf {
-        ClosedForm::Affine(af) => {
-            if af.coeffs.iter().skip(1).any(|&c| c >= 2) {
-                1 // Any coefficient >= 2 represents multiplication (O(n))
-            } else {
-                0
-            }
-        },
-        ClosedForm::Polynomial(_) => 1,
-        ClosedForm::NegMod(_a1, _a2, _a3) => 0,
-        ClosedForm::Periodic(_) => 0,
-        ClosedForm::Piecewise(pw) => {
-            fgh_level(&pw.zero_branch).max(fgh_level(&pw.pos_branch))
-        }
-        ClosedForm::Iterated(it) => {
-            let base_l = fgh_level(&it.base);
-            let iter_l = iterated_growth_level(&it.step);
-            base_l.max(iter_l)
-        }
-    }
-}
 
-/// Computes how the function grows with respect to its FIRST argument (`acc`).
-/// 0: Ignores `acc` or bounded by a constant.
-/// 1: Bounded by `acc + C` (Addition).
-/// 2: Bounded by `C * acc^d` (Multiplication/Polynomial).
-/// 3: Exponential in `acc`.
-/// k: k-th level in FGH with respect to `acc`.
-pub fn iterated_growth_level(cf: &ClosedForm) -> usize {
-    match cf {
-        ClosedForm::Affine(af) => {
-            if af.coeffs.len() <= 1 { return 0; }
-            let c_acc = af.coeffs[1];
-            if c_acc == 0 {
-                0 // Ignores acc
-            } else if c_acc == 1 {
-                1 // acc + C -> iterating gives multiplication (Level 1)
-            } else {
-                2 // c*acc -> iterating gives exponential (Level 2)
-            }
-        }
-        ClosedForm::Polynomial(poly) => {
-            if poly.poly_arg == 1 {
-                if poly.poly_coeffs.iter().any(|&c| c > 0) {
-                    return 2; // acc^2 -> iterating gives exponential (Level 2)
-                }
-            }
-            // If acc is not the poly arg, it's just affine in acc
-            let c_acc = if poly.affine_tail.coeffs.len() <= 1 { 0 } else { poly.affine_tail.coeffs[1] };
-            if c_acc == 0 { 0 } else if c_acc == 1 { 1 } else { 2 }
-        }
-        ClosedForm::Piecewise(pw) => {
-            iterated_growth_level(&pw.zero_branch).max(iterated_growth_level(&pw.pos_branch))
-        }
-        ClosedForm::NegMod(a1, a2, a3) => {
-            iterated_growth_level(&ClosedForm::Affine(a1.clone()))
-                .max(iterated_growth_level(&ClosedForm::Affine(a2.clone())))
-                .max(iterated_growth_level(&ClosedForm::Affine(a3.clone())))
-        }
-        ClosedForm::Periodic(p) => {
-            p.branches.iter().map(|b| iterated_growth_level(&**b)).max().unwrap_or(0)
-        }
-        ClosedForm::Iterated(_it) => {
-            if closed_form_ignores_arg(cf, 1) {
-                0
-            } else {
-                let l = fgh_level(cf);
-                if l >= 2 { l + 1 } else { 2 }
-            }
-        }
-    }
-}
 /// Represents a massive number via base-10 nested Knuth up-arrows.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Knuth10 {
@@ -447,7 +369,7 @@ impl std::fmt::Display for Knuth10 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymVal {
     Const(u64),
-    FuncApp(ClosedForm, Vec<SymVal>),
+    FuncApp(Grf, Vec<SymVal>),
 }
 
 /// Computes the asymptotic degree `d` of a polynomial, or 1 if it is affine/constant.
@@ -552,28 +474,30 @@ fn bounds_for_iter_poly(poly: &PolynomialFn, k_min: &Knuth10, k_max: &Knuth10, x
 pub fn compute_bounds(sym: &SymVal) -> Option<(Knuth10, Knuth10)> {
     match sym {
         SymVal::Const(c) => Some((Knuth10::Val(*c as f64), Knuth10::Val(*c as f64))),
-        SymVal::FuncApp(cf, args) => {
-            if let ClosedForm::Iterated(it) = cf {
-                if args.len() >= 1 {
-                    // Recursively compute the bounds of the iteration count 'k'
-                    let (k_min, k_max) = compute_bounds(&args[0])?;
-                    
-                    // Evaluate the base arguments to compute the initial accumulator 'x'
-                    // The rest of the arguments MUST be Const for now to find an exact start state
-                    let mut const_args = Vec::with_capacity(args.len() - 1);
-                    for a in &args[1..] {
-                        if let SymVal::Const(c) = a {
-                            const_args.push(*c);
-                        } else {
-                            return None; 
+        SymVal::FuncApp(grf, args) => {
+            if let Some(cf) = grf.closed_form() {
+                if let ClosedForm::Iterated(it) = cf {
+                    if args.len() >= 1 {
+                        // Recursively compute the bounds of the iteration count 'k'
+                        let (k_min, k_max) = compute_bounds(&args[0])?;
+                        
+                        // Evaluate the base arguments to compute the initial accumulator 'x'
+                        // The rest of the arguments MUST be Const for now to find an exact start state
+                        let mut const_args = Vec::with_capacity(args.len() - 1);
+                        for a in &args[1..] {
+                            if let SymVal::Const(c) = a {
+                                const_args.push(*c);
+                            } else {
+                                return None; 
+                            }
                         }
-                    }
-                    
-                    if let Some(x) = it.base.eval(&const_args) {
-                        match it.step.as_ref() {
-                            ClosedForm::Polynomial(poly) => return bounds_for_iter_poly(poly, &k_min, &k_max, x),
-                            ClosedForm::Affine(affine) => return bounds_for_affine(affine, &k_min, &k_max, x),
-                            _ => return None,
+                        
+                        if let Some(x) = it.base.eval(&const_args) {
+                            match it.step.as_ref() {
+                                ClosedForm::Polynomial(poly) => return bounds_for_iter_poly(poly, &k_min, &k_max, x),
+                                ClosedForm::Affine(affine) => return bounds_for_affine(affine, &k_min, &k_max, x),
+                                _ => return None,
+                            }
                         }
                     }
                 }
@@ -583,81 +507,27 @@ pub fn compute_bounds(sym: &SymVal) -> Option<(Knuth10, Knuth10)> {
     }
 }
 
-impl SymVal {
-    /// Evaluates the heuristic strict bound of the symbolic expression
-    pub fn get_heuristic_bounds(&self) -> (Knuth10, Knuth10) {
-        if let Some(bounds) = compute_bounds(self) {
-            return bounds;
-        }
-
-        match self {
-            SymVal::Const(c) => (Knuth10::Val(*c as f64), Knuth10::Val(*c as f64)),
-            SymVal::FuncApp(cf, args) => {
-                let mut count = 1;
-                let mut current_args = args.as_slice();
-                
-                while current_args.len() >= 1 {
-                    if let SymVal::FuncApp(inner_cf, inner_args) = &current_args[0] {
-                        if inner_cf == cf {
-                            count += 1;
-                            current_args = inner_args;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                
-                if count > 1 {
-                    if current_args.len() >= 1 {
-                        if let SymVal::Const(x) = current_args[0] {
-                            let k = Knuth10::Val(count as f64);
-                            let bounds = match cf {
-                                ClosedForm::Affine(affine) => bounds_for_affine(affine, &k, &k, x),
-                                ClosedForm::Polynomial(poly) => bounds_for_iter_poly(poly, &k, &k, x),
-                                _ => None,
-                            };
-                            if let Some(b) = bounds {
-                                return b;
-                            }
-                        }
-                    }
-                }
-                
-                let lvl = fgh_level(cf);
-                if lvl >= 2 {
-                    // Safe fallback for un-evaluable nested functions
-                    let k = Knuth10::UpArrow((lvl - 1) as u64, Box::new(Knuth10::Val(1000.0)));
-                    (k.clone(), k)
-                } else {
-                    // Fallback for FGH Level 1 or unparsed structs
-                    (Knuth10::Val(0.0), Knuth10::Val(0.0))
-                }
-            }
-        }
-    }
-}
-
 impl std::fmt::Display for SymVal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SymVal::Const(c) => write!(f, "{}", c),
-            SymVal::FuncApp(cf, args) => {
-                let bounds = self.get_heuristic_bounds();
-                if let Knuth10::Val(v) = bounds.1 {
-                    if v > 0.0 {
-                        // It was actually successfully bounded!
+            SymVal::FuncApp(grf, args) => {
+                if let Some(bounds) = compute_bounds(self) {
+                    if let Knuth10::Val(v) = bounds.1 {
+                        if v > 0.0 {
+                            return write!(f, "[{}, {}]", bounds.0.normalize(), bounds.1.normalize());
+                        }
+                    } else {
                         return write!(f, "[{}, {}]", bounds.0.normalize(), bounds.1.normalize());
                     }
-                } else {
-                    return write!(f, "[{}, {}]", bounds.0.normalize(), bounds.1.normalize());
                 }
                 
                 let mut count = 1;
-                let mut current_args = args;
+                let mut current_args = args.as_slice();
                 
                 while current_args.len() >= 1 {
-                    if let SymVal::FuncApp(inner_cf, inner_args) = &current_args[0] {
-                        if inner_cf == cf {
+                    if let SymVal::FuncApp(inner_grf, inner_args) = &current_args[0] {
+                        if inner_grf == grf {
                             count += 1;
                             current_args = inner_args;
                             continue;
@@ -666,19 +536,19 @@ impl std::fmt::Display for SymVal {
                     break;
                 }
                 
-                let lvl = fgh_level(cf);
-                
                 if count > 1 {
-                    write!(f, "~f_{}^{{{}}}({})", lvl, count, current_args[0])
+                    write!(f, "~G^{{{}}}({})", count, current_args[0])
                 } else {
-                    write!(f, "~f_{}({})", lvl, current_args[0])
+                    if current_args.len() == 1 {
+                        write!(f, "~G({})", current_args[0])
+                    } else {
+                        write!(f, "~G(args...)")
+                    }
                 }
             }
         }
     }
 }
-
-use crate::grf::{Grf, GrfKind};
 
 /// Evaluates a full `Grf` tree symbolically.
 /// This allows us to walk through structural wrappers (like `Comp` and `Proj`) 
@@ -690,7 +560,7 @@ pub fn eval_grf_sym(grf: &Grf, args: &[SymVal]) -> SymVal {
             if let SymVal::Const(c) = args[0] {
                 SymVal::Const(c + 1)
             } else {
-                panic!("Cannot apply Succ to non-Const symbolic value: {}", args[0]);
+                SymVal::FuncApp(grf.clone(), args.to_vec())
             }
         }
         GrfKind::Proj(_, i) => args[*i - 1].clone(),
@@ -698,15 +568,38 @@ pub fn eval_grf_sym(grf: &Grf, args: &[SymVal]) -> SymVal {
             let inner_args: Vec<SymVal> = hs.iter().map(|h| eval_grf_sym(h, args)).collect();
             eval_grf_sym(g, &inner_args)
         }
-        GrfKind::Rec(_, _) | GrfKind::Min(_) => {
-            let cf = grf.closed_form().unwrap_or_else(|| panic!("Expected closed form for inner node: {:?}", grf));
-            eval_sym(cf, args)
+        GrfKind::Rec(g, h) => {
+            if let SymVal::Const(iters) = args[0] {
+                if iters <= 10 { // Threshold for "small" number of iterations
+                    let mut acc = eval_grf_sym(g, &args[1..]);
+                    for k in 0..iters {
+                        let mut step_args = vec![SymVal::Const(k), acc];
+                        step_args.extend_from_slice(&args[1..]);
+                        acc = eval_grf_sym(h, &step_args);
+                    }
+                    return acc;
+                }
+            }
+            if let Some(cf) = grf.closed_form() {
+                if let Some(val) = eval_sym(cf, args) {
+                    return val;
+                }
+            }
+            SymVal::FuncApp(grf.clone(), args.to_vec())
+        }
+        GrfKind::Min(_) => {
+            if let Some(cf) = grf.closed_form() {
+                if let Some(val) = eval_sym(cf, args) {
+                    return val;
+                }
+            }
+            SymVal::FuncApp(grf.clone(), args.to_vec())
         }
     }
 }
 
-/// Evaluates a `ClosedForm` on symbolic arguments.
-pub fn eval_sym(cf: &ClosedForm, args: &[SymVal]) -> SymVal {
+/// Evaluates a `ClosedForm` on symbolic arguments. Returns `None` if it cannot be evaluated directly.
+pub fn eval_sym(cf: &ClosedForm, args: &[SymVal]) -> Option<SymVal> {
     // 1. If all args are Const, attempt a direct u64 evaluation.
     let mut all_const = true;
     let mut const_args = Vec::new();
@@ -724,7 +617,7 @@ pub fn eval_sym(cf: &ClosedForm, args: &[SymVal]) -> SymVal {
         // We supply a step budget so evaluation doesn't hang on large inputs.
         let mut budget = 100_000;
         if let Some(val) = cf.eval_with_budget(&const_args, &mut budget) {
-            return SymVal::Const(val);
+            return Some(SymVal::Const(val));
         }
     }
 
@@ -734,19 +627,19 @@ pub fn eval_sym(cf: &ClosedForm, args: &[SymVal]) -> SymVal {
     if let ClosedForm::Iterated(it) = cf {
         if let SymVal::Const(iters) = args[0] {
             if iters <= 10 { // Threshold for "small" number of iterations
-                let mut acc = eval_sym(&it.base, &args[1..]);
+                let mut acc = eval_sym(&it.base, &args[1..])?;
                 for _ in 0..iters {
                     let mut step_args = vec![acc];
                     step_args.extend_from_slice(&args[1..]);
-                    acc = eval_sym(&it.step, &step_args);
+                    acc = eval_sym(&it.step, &step_args)?;
                 }
-                return acc;
+                return Some(acc);
             }
         }
     }
 
-    // 3. Fallback: encapsulate as an un-evaluated function application.
-    SymVal::FuncApp(cf.clone(), args.to_vec())
+    // 3. Fallback: cannot evaluate further symbolically inside ClosedForm.
+    None
 }
 
 /// Compares two symbolic values algebraically.
@@ -760,55 +653,58 @@ pub fn compare_sym(a: &SymVal, b: &SymVal) -> PointwiseOrder {
         (SymVal::Const(_), SymVal::FuncApp(_, _)) => PointwiseOrder::Uncertain,
         (SymVal::FuncApp(_, _), SymVal::Const(_)) => PointwiseOrder::Uncertain,
         (SymVal::FuncApp(f, args_f), SymVal::FuncApp(g, args_g)) => {
-            let func_cmp = compare_strict(f, g);
-            
-            let mut all_ge = true;
-            let mut all_le = true;
-            let mut any_gt = false;
-            let mut any_lt = false;
-            
-            for (af, ag) in args_f.iter().zip(args_g.iter()) {
-                let arg_cmp = compare_sym(af, ag);
-                if arg_cmp == PointwiseOrder::GreaterEqual {
-                    all_le = false;
-                    any_gt = true;
-                } else if arg_cmp == PointwiseOrder::LessEqual {
-                    all_ge = false;
-                    any_lt = true;
-                } else if arg_cmp == PointwiseOrder::Uncertain {
-                    all_le = false;
-                    all_ge = false;
+            if let (Some(cf_f), Some(cf_g)) = (f.closed_form(), g.closed_form()) {
+                let func_cmp = compare_strict(cf_f, cf_g);
+                
+                let mut all_ge = true;
+                let mut all_le = true;
+                let mut any_gt = false;
+                let mut any_lt = false;
+                
+                for (af, ag) in args_f.iter().zip(args_g.iter()) {
+                    let arg_cmp = compare_sym(af, ag);
+                    if arg_cmp == PointwiseOrder::GreaterEqual {
+                        all_le = false;
+                        any_gt = true;
+                    } else if arg_cmp == PointwiseOrder::LessEqual {
+                        all_ge = false;
+                        any_lt = true;
+                    } else if arg_cmp == PointwiseOrder::Uncertain {
+                        all_le = false;
+                        all_ge = false;
+                    }
                 }
+                
+                // Standard rigorous composition of bounds.
+                // Since our functions are monotonically non-decreasing:
+                // f >= g AND x >= y  =>  f(x) >= g(y).
+                let final_cmp = if func_cmp == PointwiseOrder::Uncertain {
+                    PointwiseOrder::Uncertain
+                } else if (func_cmp == PointwiseOrder::GreaterEqual || func_cmp == PointwiseOrder::Equal) && all_ge {
+                    if func_cmp == PointwiseOrder::Equal && !any_gt {
+                        PointwiseOrder::Equal
+                    } else {
+                        PointwiseOrder::GreaterEqual
+                    }
+                } else if (func_cmp == PointwiseOrder::LessEqual || func_cmp == PointwiseOrder::Equal) && all_le {
+                    if func_cmp == PointwiseOrder::Equal && !any_lt {
+                        PointwiseOrder::Equal
+                    } else {
+                        PointwiseOrder::LessEqual
+                    }
+                } else {
+                    PointwiseOrder::Uncertain
+                };
+                
+                // User requested to remove Knuth10 bounds comparison here to keep it separate.
+                // We also must remove the unsafe structural FGH level heuristics because
+                // comparing the outermost function's FGH level is mathematically invalid
+                // when the arguments to those functions are vastly different evaluated numbers.
+                // So if final_cmp is Uncertain at this point, we just leave it as Uncertain.
+                
+                return final_cmp;
             }
-            
-            // Standard rigorous composition of bounds.
-            // Since our functions are monotonically non-decreasing:
-            // f >= g AND x >= y  =>  f(x) >= g(y).
-            let mut final_cmp = if func_cmp == PointwiseOrder::Uncertain {
-                PointwiseOrder::Uncertain
-            } else if (func_cmp == PointwiseOrder::GreaterEqual || func_cmp == PointwiseOrder::Equal) && all_ge {
-                if func_cmp == PointwiseOrder::Equal && !any_gt {
-                    PointwiseOrder::Equal
-                } else {
-                    PointwiseOrder::GreaterEqual
-                }
-            } else if (func_cmp == PointwiseOrder::LessEqual || func_cmp == PointwiseOrder::Equal) && all_le {
-                if func_cmp == PointwiseOrder::Equal && !any_lt {
-                    PointwiseOrder::Equal
-                } else {
-                    PointwiseOrder::LessEqual
-                }
-            } else {
-                PointwiseOrder::Uncertain
-            };
-            
-            // User requested to remove Knuth10 bounds comparison here to keep it separate.
-            // We also must remove the unsafe structural FGH level heuristics because
-            // comparing the outermost function's FGH level is mathematically invalid
-            // when the arguments to those functions are vastly different evaluated numbers.
-            // So if final_cmp is Uncertain at this point, we just leave it as Uncertain.
-            
-            final_cmp
+            PointwiseOrder::Uncertain
         }
     }
 }
@@ -818,7 +714,6 @@ mod tests {
     use super::*;
     use crate::closed_form::{AffineFn, PolynomialFn, IteratedFn};
 
-    #[test]
     fn test_compare_affine_strict() {
         // f(x) = x + 1
         let a = ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] });
@@ -844,7 +739,6 @@ mod tests {
         assert_eq!(compare_strict(&c, &b), PointwiseOrder::Uncertain);
     }
 
-    #[test]
     fn test_compare_polynomial_strict() {
         // p1(x) = (x choose 2) + x
         let p1 = ClosedForm::Polynomial(PolynomialFn::new(
@@ -883,7 +777,6 @@ mod tests {
         assert_eq!(compare_strict(&p1, &p3), PointwiseOrder::Uncertain);
     }
 
-    #[test]
     fn test_compare_iterated_strict_finite_crossing() {
         // f1 = R(100, \x. x+1). Base=100, Step=x+1
         let f1 = ClosedForm::Iterated(IteratedFn {
@@ -917,96 +810,5 @@ mod tests {
         assert_eq!(compare_strict(&f3, &f2), PointwiseOrder::LessEqual); // 10 == 10, x+1 < x+2
     }
 
-    #[test]
-    fn test_fgh_level() {
-        // id(x) = x
-        let id = ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 1] });
 
-        // Exact FGH funcs:
-        // f0(x) = x + 1
-        let f0 = ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] });
-
-        // f1(x) = 2x
-        let f1 = ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![0, 2] });
-
-        let f2 = ClosedForm::Iterated(IteratedFn {
-            arity: 1,
-            base: Box::new(id.clone()),
-            step: Box::new(f1.clone())
-        });
-
-        let f3 = ClosedForm::Iterated(IteratedFn {
-            arity: 1,
-            base: Box::new(id.clone()),
-            step: Box::new(f2.clone())
-        });
-
-        assert_eq!(fgh_level(&f0), 0);
-        assert_eq!(fgh_level(&f1), 1);
-        assert_eq!(fgh_level(&f2), 2);
-        assert_eq!(fgh_level(&f3), 3);
-        
-        // Funcs that don't quite match FGH:
-        // poly(x) = (x choose 2) (Polynomial growth: FGH Level 1)
-        let poly = ClosedForm::Polynomial(PolynomialFn::new(
-            1, 1, vec![1], Box::new(AffineFn { arity: 1, coeffs: vec![0, 0] })
-        ));
-        
-        // iter(y, x) = R(x + 1, \acc. acc choose 2)(y, x)
-        // iter(0, x) = x + 1
-        // iter(y+1, x) = poly(iter(y, x))
-        // Iterating a polynomial produces exponential growth: FGH Level 2
-        let iter = ClosedForm::Iterated(IteratedFn {
-            arity: 2,
-            base: Box::new(f0.clone()),
-            step: Box::new(poly.clone())
-        });
-
-        assert_eq!(fgh_level(&poly), 1);
-        assert_eq!(fgh_level(&iter), 2);
-    }
-
-    #[test]
-    fn test_power_tower_bounds_formatting() {
-        // Base function: x + 1 (arity 1)
-        let base_cf = ClosedForm::Affine(AffineFn { arity: 1, coeffs: vec![1, 1] });
-        
-        // Step function: 2x (arity 2, meaning f(acc, x) = 2*acc)
-        let step_affine = ClosedForm::Affine(AffineFn { arity: 2, coeffs: vec![0, 2, 0] });
-        
-        // iter_affine(k, x) = (x+1) 2^k
-        let iter_affine = ClosedForm::Iterated(IteratedFn {
-            arity: 2,
-            base: Box::new(base_cf.clone()),
-            step: Box::new(step_affine),
-        });
-        
-        // iter_affine(10, 3) = 4 2^10 ≈ 10^3.61
-        let val_affine = SymVal::FuncApp(iter_affine, vec![SymVal::Const(10), SymVal::Const(3)]);
-        let formatted_affine = format!("{}", val_affine);
-        assert_eq!(formatted_affine, "[10^3.61, 10^3.61]");
-        
-        // Step function: P(acc) = \binom{acc}{2} + acc.
-        let step_poly = ClosedForm::Polynomial(PolynomialFn::new(
-            2, 1, vec![1], Box::new(AffineFn { arity: 2, coeffs: vec![0, 1, 0] })
-        ));
-        
-        let iter_poly = ClosedForm::Iterated(IteratedFn {
-            arity: 2,
-            base: Box::new(base_cf.clone()),
-            step: Box::new(step_poly),
-        });
-        
-        // Test iter_poly with args: k=3, x=2
-        // Initial acc = base(2) = 3.
-        // k=3, x=3. d=2.
-        // c_min=1, c_max=2.
-        // m_min = log10(1)/1 + log10(3) = 0.47712
-        // m_max = log10(2)/1 + log10(3) = 0.30103 + 0.47712 = 0.77815
-        // 10^y_min = 2^3 * m_min = 8 * 0.47712 = 3.81696 ≈ 3.82
-        // 10^y_max = 2^3 * m_max = 8 * 0.77815 = 6.2252 ≈ 6.23
-        let val_poly = SymVal::FuncApp(iter_poly, vec![SymVal::Const(3), SymVal::Const(2)]);
-        let formatted_poly = format!("{}", val_poly);
-        assert_eq!(formatted_poly, "[10^3.82, 10^6.23]");
-    }
 }

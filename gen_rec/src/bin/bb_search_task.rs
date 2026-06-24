@@ -189,10 +189,17 @@ fn main() {
                 task_size,
             };
 
-            stream_grf_visited(size, arity, allow_min, opts, &mut visitor, &mut |_grf| {
-                let path = path_ref.borrow();
-                prefixes_ref.borrow_mut().push(path.clone());
-            });
+            if enum_scope == EnumScope::PrfDiag {
+                gen_rec::enumerate::stream_prf_diag_visited(size, opts, &mut visitor, &mut |_grf| {
+                    let path = path_ref.borrow();
+                    prefixes_ref.borrow_mut().push(path.clone());
+                });
+            } else {
+                stream_grf_visited(size, arity, allow_min, opts, &mut visitor, &mut |_grf| {
+                    let path = path_ref.borrow();
+                    prefixes_ref.borrow_mut().push(path.clone());
+                });
+            }
 
             drop(visitor);
             let mut prefixes = Rc::try_unwrap(prefixes_ref).unwrap().into_inner();
@@ -216,6 +223,7 @@ fn main() {
             let manifest = Manifest {
                 enum_scope: match enum_scope {
                     EnumScope::Prf => "prf".to_string(),
+                    EnumScope::PrfDiag => "prf_diag".to_string(),
                     EnumScope::MinPrf => "min_prf".to_string(),
                     EnumScope::Grf => "grf".to_string(),
                 },
@@ -325,7 +333,7 @@ fn main() {
 
                     let mut batch = Vec::with_capacity(batch_size);
 
-                    stream_grf_visited(m.size, 0, m.allow_min, opts, &mut visitor, &mut |grf| {
+                    let mut handle_grf = |grf: &Grf| {
                         batch.push(grf.clone());
                         acc.total += 1;
                         if batch.len() >= batch_size {
@@ -338,7 +346,13 @@ fn main() {
                                 false,
                             );
                         }
-                    });
+                    };
+
+                    if m.enum_scope == "prf_diag" {
+                        gen_rec::enumerate::stream_prf_diag_visited(m.size, opts, &mut visitor, &mut handle_grf);
+                    } else {
+                        stream_grf_visited(m.size, 0, m.allow_min, opts, &mut visitor, &mut handle_grf);
+                    }
                     if !batch.is_empty() {
                         flush_batch(
                             &mut batch,

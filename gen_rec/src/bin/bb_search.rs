@@ -106,8 +106,13 @@ fn run_search(args: &Args) {
     } else if args.no_cf {
         false
     } else {
-        !matches!(args.enum_scope, EnumScope::Prf)
+        !matches!(args.enum_scope, EnumScope::Prf | EnumScope::PrfDiag)
     };
+
+    if cf && args.enum_scope == EnumScope::PrfDiag {
+        panic!("ClosedForm deduplication (+cf) is not supported with prf_diag because prf_diag structural search is strictly 0-arity PRFs.");
+    }
+
     let mode_str = {
         let base = args.enum_scope.as_str();
         if cf {
@@ -285,7 +290,7 @@ fn run_search(args: &Args) {
             }
         });
     } else if !min_prf {
-        stream_grf(size, 0, allow_min, opts, &mut |grf: &Grf| {
+        let mut handle_grf = |grf: &Grf| {
             let cur = idx;
             idx += 1;
             if cur < seek_start || cur >= seek_start + seek_count {
@@ -304,7 +309,13 @@ fn run_search(args: &Args) {
                 );
                 maybe_progress!();
             }
-        });
+        };
+
+        if args.enum_scope == EnumScope::PrfDiag {
+            gen_rec::enumerate::stream_prf_diag(size, opts, &mut handle_grf);
+        } else {
+            stream_grf(size, 0, allow_min, opts, &mut handle_grf);
+        }
     }
     flush_batch(
         &mut batch,

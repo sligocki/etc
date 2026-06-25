@@ -122,11 +122,11 @@ pub fn stream_prf_diag_visited<F: FnMut(&Grf)>(
     // size = |f| + 2n + 5.
     // So |f| = size - 2n - 5.
     // n can range from 0 up to whatever keeps |f| >= 1.
-    
+
     // We treat `n` as the top-level branches for the distributed visitor pattern.
     let max_n = size.saturating_sub(6) / 2;
     let mut b = 0;
-    
+
     for n in 1..=max_n {
         let f_size = size - 2 * n - 5;
         // Intercept at the root level using `f_size` as the budget.
@@ -134,7 +134,7 @@ pub fn stream_prf_diag_visited<F: FnMut(&Grf)>(
         if visitor.enter_branch(b, f_size) {
             let kn = make_k(n, 0);
             let succ = Grf::succ_atom();
-            
+
             // Generate all 2-arity f's
             for_each_grf(f_size, 2, false, opts, visitor, &mut |_, f| {
                 let diag_s = Grf::comp(f.clone(), vec![succ.clone(), succ.clone()]);
@@ -164,11 +164,7 @@ pub fn stream_grf<F: FnMut(&Grf)>(
     stream_grf_visited(size, arity, allow_min, opts, &mut visitor, callback);
 }
 
-pub fn stream_prf_diag<F: FnMut(&Grf)>(
-    size: usize,
-    opts: PruningOpts,
-    callback: &mut F,
-) {
+pub fn stream_prf_diag<F: FnMut(&Grf)>(size: usize, opts: PruningOpts, callback: &mut F) {
     let mut visitor = DummyVisitor;
     stream_prf_diag_visited(size, opts, &mut visitor, callback);
 }

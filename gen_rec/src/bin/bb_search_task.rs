@@ -191,10 +191,15 @@ fn main() {
             };
 
             if enum_scope == EnumScope::PrfDiag {
-                gen_rec::enumerate::stream_prf_diag_visited(size, opts, &mut visitor, &mut |_grf| {
-                    let path = path_ref.borrow();
-                    prefixes_ref.borrow_mut().push(path.clone());
-                });
+                gen_rec::enumerate::stream_prf_diag_visited(
+                    size,
+                    opts,
+                    &mut visitor,
+                    &mut |_grf| {
+                        let path = path_ref.borrow();
+                        prefixes_ref.borrow_mut().push(path.clone());
+                    },
+                );
             } else if enum_scope == EnumScope::MinPrf && size >= 2 {
                 stream_grf_visited(size - 1, 1, false, opts, &mut visitor, &mut |_grf| {
                     let path = path_ref.borrow();
@@ -202,10 +207,17 @@ fn main() {
                 });
             } else {
                 let actual_allow_min = allow_min || enum_scope == EnumScope::Grf;
-                stream_grf_visited(size, arity, actual_allow_min, opts, &mut visitor, &mut |_grf| {
-                    let path = path_ref.borrow();
-                    prefixes_ref.borrow_mut().push(path.clone());
-                });
+                stream_grf_visited(
+                    size,
+                    arity,
+                    actual_allow_min,
+                    opts,
+                    &mut visitor,
+                    &mut |_grf| {
+                        let path = path_ref.borrow();
+                        prefixes_ref.borrow_mut().push(path.clone());
+                    },
+                );
             }
 
             drop(visitor);
@@ -357,7 +369,12 @@ fn main() {
                     };
 
                     if m.enum_scope == "prf_diag" {
-                        gen_rec::enumerate::stream_prf_diag_visited(m.size, opts, &mut visitor, &mut handle_grf);
+                        gen_rec::enumerate::stream_prf_diag_visited(
+                            m.size,
+                            opts,
+                            &mut visitor,
+                            &mut handle_grf,
+                        );
                     } else if m.enum_scope == "min_prf" && m.size >= 2 {
                         let mut min_handler = |grf: &Grf| {
                             if opts.min_dom {
@@ -370,10 +387,24 @@ fn main() {
                             }
                             handle_grf(&Grf::min(grf.clone()));
                         };
-                        stream_grf_visited(m.size - 1, 1, false, opts, &mut visitor, &mut min_handler);
+                        stream_grf_visited(
+                            m.size - 1,
+                            1,
+                            false,
+                            opts,
+                            &mut visitor,
+                            &mut min_handler,
+                        );
                     } else {
                         let actual_allow_min = m.allow_min || m.enum_scope == "grf";
-                        stream_grf_visited(m.size, 0, actual_allow_min, opts, &mut visitor, &mut handle_grf);
+                        stream_grf_visited(
+                            m.size,
+                            0,
+                            actual_allow_min,
+                            opts,
+                            &mut visitor,
+                            &mut handle_grf,
+                        );
                     }
                     if !batch.is_empty() {
                         flush_batch(

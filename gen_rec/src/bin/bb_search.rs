@@ -110,7 +110,9 @@ fn run_search(args: &Args) {
     };
 
     if cf && args.enum_scope == EnumScope::PrfDiag {
-        panic!("ClosedForm deduplication (+cf) is not supported with prf_diag because prf_diag structural search is strictly 0-arity PRFs.");
+        panic!(
+            "ClosedForm deduplication (+cf) is not supported with prf_diag because prf_diag structural search is strictly 0-arity PRFs."
+        );
     }
 
     let mode_str = {

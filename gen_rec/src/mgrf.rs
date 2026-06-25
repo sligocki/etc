@@ -1199,7 +1199,7 @@ pub fn decompile(grf: &Grf) -> String {
                 } else {
                     let inner_str = decompile(&gs[0]);
                     if inner_str.starts_with("K[") && inner_str.ends_with("]") {
-                        if let Ok(n) = inner_str[2..inner_str.len()-1].parse::<u32>() {
+                        if let Ok(n) = inner_str[2..inner_str.len() - 1].parse::<u32>() {
                             return format!("K[{}]", n + 1);
                         }
                     }
@@ -1241,9 +1241,12 @@ pub fn decompile(grf: &Grf) -> String {
                         return format!("RepSuccP1[{inner_f}]");
                     }
                 }
-                
+
                 // Match DiagRep[f] = R(base, C(f, P(3,2), P(3,2)))
-                if gs.len() == 2 && matches!(gs[0].kind, GrfKind::Proj(3, 2)) && matches!(gs[1].kind, GrfKind::Proj(3, 2)) {
+                if gs.len() == 2
+                    && matches!(gs[0].kind, GrfKind::Proj(3, 2))
+                    && matches!(gs[1].kind, GrfKind::Proj(3, 2))
+                {
                     let inner_f = decompile(f);
                     if g_str == "Z1" {
                         return format!("DiagRepZ1[{inner_f}]");

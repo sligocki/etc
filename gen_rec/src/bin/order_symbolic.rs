@@ -1,8 +1,8 @@
+use gen_rec::closed_form::ClosedForm;
+use gen_rec::compare_symbolic::{PointwiseOrder, compare_strict};
+use gen_rec::grf::{Grf, GrfKind};
 use std::env;
 use std::fs;
-use gen_rec::closed_form::ClosedForm;
-use gen_rec::compare_symbolic::{compare_strict, PointwiseOrder};
-use gen_rec::grf::{Grf, GrfKind};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -12,11 +12,17 @@ fn main() {
     }
     let filename = &args[1];
 
-    let content = fs::read_to_string(filename)
-        .unwrap_or_else(|_| panic!("Failed to read file {}", filename));
+    let content =
+        fs::read_to_string(filename).unwrap_or_else(|_| panic!("Failed to read file {}", filename));
 
     // Store (orig_idx, name, Grf, Option<ClosedForm>, FGH_level, SymVal)
-    let mut orig_holdouts: Vec<(usize, String, Grf, Option<ClosedForm>, gen_rec::compare_symbolic::SymVal)> = Vec::new();
+    let mut orig_holdouts: Vec<(
+        usize,
+        String,
+        Grf,
+        Option<ClosedForm>,
+        gen_rec::compare_symbolic::SymVal,
+    )> = Vec::new();
 
     let mut total_count = 0;
     for line in content.lines() {
@@ -25,7 +31,7 @@ fn main() {
             let grf = grf_str.parse::<Grf>().expect("Failed to parse GRF");
             let sym_val = gen_rec::compare_symbolic::eval_grf_sym(&grf, &[]);
             let cf = grf.closed_form().cloned();
-            
+
             orig_holdouts.push((total_count, grf_str.to_string(), grf, cf, sym_val));
             total_count += 1;
         }
@@ -33,7 +39,11 @@ fn main() {
 
     println!("Analyzed {} holdouts.", orig_holdouts.len());
     if orig_holdouts.len() < total_count {
-        eprintln!("\x1b[31mWARNING: Only {}/{} holdouts analyzed!\x1b[0m", orig_holdouts.len(), total_count);
+        eprintln!(
+            "\x1b[31mWARNING: Only {}/{} holdouts analyzed!\x1b[0m",
+            orig_holdouts.len(),
+            total_count
+        );
     }
 
     // Pre-sort the holdouts by their Knuth10 heuristic upper bound!
@@ -55,23 +65,49 @@ fn main() {
 
     for i in 0..n {
         for j in 0..n {
-            if i == j { continue; }
-            let cmp = gen_rec::compare_symbolic::compare_sym(&orig_holdouts[i].4, &orig_holdouts[j].4);
-            
+            if i == j {
+                continue;
+            }
+            let cmp =
+                gen_rec::compare_symbolic::compare_sym(&orig_holdouts[i].4, &orig_holdouts[j].4);
+
             let bounds_i = gen_rec::compare_symbolic::compute_bounds(&orig_holdouts[i].4);
             let bounds_j = gen_rec::compare_symbolic::compute_bounds(&orig_holdouts[j].4);
             if let (Some(bounds_i), Some(bounds_j)) = (bounds_i, bounds_j) {
                 if cmp == PointwiseOrder::GreaterEqual && bounds_i.1 < bounds_j.0 {
-                    panic!("Sanity check failed: H{} >= H{}, but H{}.upper ({}) < H{}.lower ({})", 
-                           orig_holdouts[i].0, orig_holdouts[j].0, orig_holdouts[i].0, bounds_i.1.normalize(), orig_holdouts[j].0, bounds_j.0.normalize());
+                    panic!(
+                        "Sanity check failed: H{} >= H{}, but H{}.upper ({}) < H{}.lower ({})",
+                        orig_holdouts[i].0,
+                        orig_holdouts[j].0,
+                        orig_holdouts[i].0,
+                        bounds_i.1.normalize(),
+                        orig_holdouts[j].0,
+                        bounds_j.0.normalize()
+                    );
                 }
                 if cmp == PointwiseOrder::LessEqual && bounds_i.0 > bounds_j.1 {
-                    panic!("Sanity check failed: H{} <= H{}, but H{}.lower ({}) > H{}.upper ({})", 
-                           orig_holdouts[i].0, orig_holdouts[j].0, orig_holdouts[i].0, bounds_i.0.normalize(), orig_holdouts[j].0, bounds_j.1.normalize());
+                    panic!(
+                        "Sanity check failed: H{} <= H{}, but H{}.lower ({}) > H{}.upper ({})",
+                        orig_holdouts[i].0,
+                        orig_holdouts[j].0,
+                        orig_holdouts[i].0,
+                        bounds_i.0.normalize(),
+                        orig_holdouts[j].0,
+                        bounds_j.1.normalize()
+                    );
                 }
-                if cmp == PointwiseOrder::Equal && (bounds_i.1 < bounds_j.0 || bounds_i.0 > bounds_j.1) {
-                    panic!("Sanity check failed: H{} == H{}, but bounds do not overlap: [{}, {}] vs [{}, {}]",
-                           orig_holdouts[i].0, orig_holdouts[j].0, bounds_i.0.normalize(), bounds_i.1.normalize(), bounds_j.0.normalize(), bounds_j.1.normalize());
+                if cmp == PointwiseOrder::Equal
+                    && (bounds_i.1 < bounds_j.0 || bounds_i.0 > bounds_j.1)
+                {
+                    panic!(
+                        "Sanity check failed: H{} == H{}, but bounds do not overlap: [{}, {}] vs [{}, {}]",
+                        orig_holdouts[i].0,
+                        orig_holdouts[j].0,
+                        bounds_i.0.normalize(),
+                        bounds_i.1.normalize(),
+                        bounds_j.0.normalize(),
+                        bounds_j.1.normalize()
+                    );
                 }
             }
 
@@ -104,17 +140,24 @@ fn main() {
     }
 
     // Now sorted_indices maps [sorted_pos] -> orig_idx.
-    let holdouts: Vec<_> = sorted_indices.iter().map(|&i| orig_holdouts[i].clone()).collect();
+    let holdouts: Vec<_> = sorted_indices
+        .iter()
+        .map(|&i| orig_holdouts[i].clone())
+        .collect();
 
     println!("--- FGH Levels (Ordered by Exact Symbolic Evaluation) ---");
     for (orig_idx, name, grf, _, sym_val) in &holdouts {
-        println!("H{:<2}: [1;36m{}[0m", orig_idx, gen_rec::mgrf::decompile(grf));
+        println!(
+            "H{:<2}: [1;36m{}[0m",
+            orig_idx,
+            gen_rec::mgrf::decompile(grf)
+        );
         println!("      Score: [1;35m{}[0m", sym_val);
     }
 
     println!("\n--- Exact Symbolic Strict Dominance Comparison Grid ---");
     let show_grid = holdouts.len() <= 30;
-    
+
     if show_grid {
         // Column headers
         print!("    ");
@@ -141,15 +184,18 @@ fn main() {
 
             if show_grid {
                 let sym = match cmp {
-                    PointwiseOrder::LessEqual => "  \x1b[1;32m≤\x1b[0m ",       // green
-                    PointwiseOrder::GreaterEqual => "  \x1b[1;31m≥\x1b[0m ",    // red
+                    PointwiseOrder::LessEqual => "  \x1b[1;32m≤\x1b[0m ", // green
+                    PointwiseOrder::GreaterEqual => "  \x1b[1;31m≥\x1b[0m ", // red
                     PointwiseOrder::Equal => "  \x1b[1;30m=\x1b[0m ",     // dark gray
-                    PointwiseOrder::Uncertain => "  \x1b[1;33m?\x1b[0m ",  // yellow
+                    PointwiseOrder::Uncertain => "  \x1b[1;33m?\x1b[0m ", // yellow
                 };
                 print!("{}", sym);
             }
 
-            if orig_idx_i != orig_idx_j && orig_idx_i < orig_idx_j && cmp == PointwiseOrder::Uncertain {
+            if orig_idx_i != orig_idx_j
+                && orig_idx_i < orig_idx_j
+                && cmp == PointwiseOrder::Uncertain
+            {
                 num_uncertain += 1;
             }
         }
@@ -159,7 +205,8 @@ fn main() {
     }
 
     let total_pairs = n * (n - 1) / 2;
-    println!("\nSummary: Total Pairs: {}, Ordered by Strict Domination: {}, Uncertains: {}", 
+    println!(
+        "\nSummary: Total Pairs: {}, Ordered by Strict Domination: {}, Uncertains: {}",
         total_pairs,
         total_pairs - num_uncertain,
         num_uncertain
@@ -181,6 +228,10 @@ fn main() {
     println!("Total Champion Candidates: {}", num_champs);
 
     if orig_holdouts.len() < total_count {
-        println!("\n\x1b[1;31mWARNING: Only analyzed {} out of {} total holdouts because some lacked ClosedForm representations!\x1b[0m", orig_holdouts.len(), total_count);
+        println!(
+            "\n\x1b[1;31mWARNING: Only analyzed {} out of {} total holdouts because some lacked ClosedForm representations!\x1b[0m",
+            orig_holdouts.len(),
+            total_count
+        );
     }
 }

@@ -1656,28 +1656,54 @@ fn compose_impl(
                 _ => return None,
             };
 
-            if let Some(proj_idx) = is_proj_of(inner_for_poly) {
+            if let Some((proj_idx, delta)) = is_proj_plus_const_of(inner_for_poly_af) {
                 // The tail is AffineFn. We can compose AffineFn with ANY supported inners using compose_impl!
                 let new_tail_cf = compose_impl(&ClosedForm::Affine(*poly_h.affine_tail.clone()), inners, arity, depth + 1)?;
+                
+                let mut shifted_coeffs = vec![0u64; poly_h.poly_coeffs.len()];
+                let mut extra_const = 0u64;
+                let mut extra_linear = 0u64;
+                
+                for (i, &c) in poly_h.poly_coeffs.iter().enumerate() {
+                    if c == 0 { continue; }
+                    let k = (i + 2) as u64;
+                    for j in 0..=k {
+                        let term = c.checked_mul(choose(delta, k - j)?)?;
+                        if term == 0 { continue; }
+                        if j == 0 {
+                            extra_const = extra_const.checked_add(term)?;
+                        } else if j == 1 {
+                            extra_linear = extra_linear.checked_add(term)?;
+                        } else {
+                            let idx = (j - 2) as usize;
+                            shifted_coeffs[idx] = shifted_coeffs[idx].checked_add(term)?;
+                        }
+                    }
+                }
+                
                 let new_tail_af = match new_tail_cf {
-                    ClosedForm::Affine(af) => Box::new(af),
-                    ClosedForm::Polynomial(poly) => {
-                        // If composing the tail yields a Polynomial, we have TWO polynomials!
-                        // But wait! PolynomialFn only supports ONE polynomial variable.
-                        // So if the tail yields a Polynomial, and it has the SAME poly_arg, we can merge them!
+                    ClosedForm::Affine(mut af) => {
+                        af.coeffs[0] = af.coeffs[0].checked_add(extra_const)?;
+                        af.coeffs[proj_idx] = af.coeffs[proj_idx].checked_add(extra_linear)?;
+                        Box::new(af)
+                    },
+                    ClosedForm::Polynomial(mut poly) => {
                         if poly.poly_arg == proj_idx {
-                            let mut merged_coeffs = poly_h.poly_coeffs.clone();
+                            let mut merged_coeffs = shifted_coeffs.clone();
                             if merged_coeffs.len() < poly.poly_coeffs.len() {
                                 merged_coeffs.resize(poly.poly_coeffs.len(), 0);
                             }
                             for (i, &c) in poly.poly_coeffs.iter().enumerate() {
                                 merged_coeffs[i] = merged_coeffs[i].checked_add(c)?;
                             }
+                            let mut new_affine = poly.affine_tail.clone();
+                            new_affine.coeffs[0] = new_affine.coeffs[0].checked_add(extra_const)?;
+                            new_affine.coeffs[proj_idx] = new_affine.coeffs[proj_idx].checked_add(extra_linear)?;
                             return Some(ClosedForm::Polynomial(PolynomialFn::new(
                                 arity,
                                 proj_idx,
                                 merged_coeffs,
-                                poly.affine_tail.clone(),
+                                new_affine,
                             )));
                         } else {
                             return None;
@@ -1689,7 +1715,7 @@ fn compose_impl(
                 Some(ClosedForm::Polynomial(PolynomialFn::new(
                     arity,
                     proj_idx,
-                    poly_h.poly_coeffs.clone(),
+                    shifted_coeffs,
                     new_tail_af,
                 )))
             } else if inner_for_poly_af.coeffs[1..].iter().all(|&c| c == 0) {
@@ -3702,6 +3728,7 @@ impl IteratedFn {
     pub fn partial_eval_first_arg(&self, val: u64) -> Option<ClosedForm> {
         if self.iter_arg == 1 {
             let mut curr = *self.base.clone();
+        if val > 10000 { return None; }
             for _ in 0..val {
                 let mut inners = vec![curr];
                 for i in 1..self.arity {
@@ -3715,7 +3742,9 @@ impl IteratedFn {
             // Since iter_arg > 1, the first arg is just a normal variable.
             // We substitute it in base and step.
             let mut base_inners = Vec::with_capacity(self.arity - 1);
-            base_inners.push(ClosedForm::Affine(AffineFn { arity: self.arity - 2, coeffs: vec![val] }));
+            let mut base_const = vec![0; self.arity - 1];
+            base_const[0] = val;
+            base_inners.push(ClosedForm::Affine(AffineFn { arity: self.arity - 2, coeffs: base_const }));
             for i in 1..self.arity-1 {
                 base_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 2, i)));
             }
@@ -3723,7 +3752,9 @@ impl IteratedFn {
             
             let mut step_inners = Vec::with_capacity(self.arity);
             step_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 1, 1))); // acc
-            step_inners.push(ClosedForm::Affine(AffineFn { arity: self.arity - 1, coeffs: vec![val] })); // the fixed val
+            let mut step_const = vec![0; self.arity];
+            step_const[0] = val;
+            step_inners.push(ClosedForm::Affine(AffineFn { arity: self.arity - 1, coeffs: step_const })); // the fixed val
             for i in 1..self.arity-1 {
                 step_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 1, i + 1)));
             }
@@ -3737,4 +3768,29 @@ impl IteratedFn {
             }))
         }
     }
+}
+
+fn choose(n: u64, k: u64) -> Option<u64> {
+    if k > n { return Some(0); }
+    if k == 0 || k == n { return Some(1); }
+    let k = k.min(n - k);
+    let mut res: u64 = 1;
+    for i in 1..=k {
+        res = res.checked_mul(n - i + 1)?;
+        res /= i;
+    }
+    Some(res)
+}
+
+fn is_proj_plus_const_of(af: &AffineFn) -> Option<(usize, u64)> {
+    let mut proj_idx = None;
+    for (i, &c) in af.coeffs[1..].iter().enumerate() {
+        if c == 1 {
+            if proj_idx.is_some() { return None; }
+            proj_idx = Some(i + 1);
+        } else if c != 0 {
+            return None;
+        }
+    }
+    proj_idx.map(|idx| (idx, af.coeffs[0]))
 }

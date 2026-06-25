@@ -335,6 +335,17 @@ impl ClosedForm {
                     None
                 }
             }
+            ClosedForm::Iterated(it) => {
+                if arg_idx == it.iter_arg - 1 {
+                    return None;
+                }
+                let base_arg_idx = if arg_idx < it.iter_arg - 1 { arg_idx } else { arg_idx - 1 };
+                if it.step.min_diff_from_arg(0).unwrap_or(-1) >= 0 {
+                    it.base.min_diff_from_arg(base_arg_idx)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -1403,20 +1414,7 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
-    // Case G: h ignores counter (arg 1) -> h(n, acc, rest) = h(acc, rest).
-    // This allows generating an Iterated form.
-    if closed_form_ignores_arg(sem_h, 1) {
-        if let Some(h_prime) = drop_arg(sem_h, 1) {
-            return Some(ClosedForm::Iterated(IteratedFn {
-                arity: k_outer,
-                iter_arg: 1,
-                base: Box::new(sem_g.clone()),
-                step: Box::new(h_prime),
-            }));
-        }
-    }
-
-    // Fallback: Split on rest variables if budget allows
+    // Fallback 1: Split on rest variables if budget allows
     if split_budget > 0 {
         // j is the 1-based index in `g` (from 1 to k_outer - 1).
         // It corresponds to the 0-based branch_index `j` in `b`.
@@ -1435,6 +1433,19 @@ pub fn closed_form_of_rec_internal(
                     return Some(make_piecewise(k_outer, j, zero_cf, pos_cf));
                 }
             }
+        }
+    }
+
+    // Fallback 2: Iterated form (Case G)
+    // h ignores counter (arg 1) -> h(n, acc, rest) = h(acc, rest).
+    if closed_form_ignores_arg(sem_h, 1) {
+        if let Some(h_prime) = drop_arg(sem_h, 1) {
+            return Some(ClosedForm::Iterated(IteratedFn {
+                arity: k_outer,
+                iter_arg: 1,
+                base: Box::new(sem_g.clone()),
+                step: Box::new(h_prime),
+            }));
         }
     }
 
@@ -2059,7 +2070,7 @@ fn pos_face_at_affine(af: &AffineFn, j: usize) -> AffineFn {
     }
 }
 
-fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
+pub fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
     match sem {
         ClosedForm::Affine(af) => {
             let new_coeffs = drop_index(&af.coeffs, j);

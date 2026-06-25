@@ -357,21 +357,33 @@ pub(crate) fn is_monus_descent_trap(h: &Grf, gs: &[Grf]) -> bool {
             return true;
         }
         if diff + d_g == 0 || diff + d_g == -1 {
-            if let ClosedForm::Piecewise(pw) = cf_h {
-                if let ClosedForm::Affine(z_aff) = &*pw.zero_branch {
-                    if z_aff.coeffs[0] >= 1 {
-                        return true;
+            let zero_branch = match cf_h {
+                ClosedForm::Piecewise(pw) => Some(&*pw.zero_branch),
+                ClosedForm::Iterated(it) => {
+                    // IteratedFn iterates over `iter_arg`.
+                    // We need it to iterate over arg 1 (which is `n`).
+                    if it.iter_arg == 1 {
+                        Some(&*it.base)
+                    } else {
+                        None
                     }
-                    for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
-                        if c > 0 {
-                            if let Some(g_arg) = gs.get(i - 1) {
-                                if g_arg
-                                    .lower_bound(&vec![Bound::Min(0); g_arg.arity()])
-                                    .min_value()
-                                    > 0
-                                {
-                                    return true;
-                                }
+                }
+                _ => None,
+            };
+
+            if let Some(ClosedForm::Affine(z_aff)) = zero_branch {
+                if z_aff.coeffs[0] >= 1 {
+                    return true;
+                }
+                for (i, &c) in z_aff.coeffs.iter().enumerate().skip(1) {
+                    if c > 0 {
+                        if let Some(g_arg) = gs.get(i - 1) {
+                            if g_arg
+                                .lower_bound(&vec![Bound::Min(0); g_arg.arity()])
+                                .min_value()
+                                > 0
+                            {
+                                return true;
                             }
                         }
                     }

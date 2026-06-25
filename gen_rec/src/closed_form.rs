@@ -2869,54 +2869,42 @@ impl ClosedForm {
         self.emit_rules(fn_name, &args, &depths);
     }
 
+    fn format_lhs_arg(name: &str, depth: usize, ignore: bool) -> String {
+        if ignore {
+            "_".to_string()
+        } else if depth > 0 {
+            format!("{}+{}", name, depth)
+        } else {
+            name.to_string()
+        }
+    }
+
     fn emit_rules(&self, fn_name: &str, args: &[String], depths: &[usize]) {
         match self {
             ClosedForm::Affine(af) => {
-                let formula_args: Vec<String> = args
-                    .iter()
-                    .zip(depths.iter())
-                    .map(|(name, &d)| decrement_n(name, d))
-                    .collect();
                 let lhs: Vec<String> = args
                     .iter()
                     .enumerate()
-                    .map(|(j, name)| {
-                        if closed_form_ignores_arg(self, j + 1) {
-                            "_".to_string()
-                        } else {
-                            name.clone()
-                        }
-                    })
+                    .map(|(j, name)| Self::format_lhs_arg(name, depths[j], closed_form_ignores_arg(self, j + 1)))
                     .collect();
                 println!(
                     "  {}({}) = {}",
                     fn_name,
                     lhs.join(", "),
-                    af.format_expr(&formula_args)
+                    af.format_expr(args)
                 );
             }
             ClosedForm::Polynomial(poly) => {
-                let formula_args: Vec<String> = args
-                    .iter()
-                    .zip(depths.iter())
-                    .map(|(name, &d)| decrement_n(name, d))
-                    .collect();
                 let lhs: Vec<String> = args
                     .iter()
                     .enumerate()
-                    .map(|(j, name)| {
-                        if closed_form_ignores_arg(self, j + 1) {
-                            "_".to_string()
-                        } else {
-                            name.clone()
-                        }
-                    })
+                    .map(|(j, name)| Self::format_lhs_arg(name, depths[j], closed_form_ignores_arg(self, j + 1)))
                     .collect();
                 println!(
                     "  {}({}) = {}",
                     fn_name,
                     lhs.join(", "),
-                    poly.format_expr(&formula_args)
+                    poly.format_expr(args)
                 );
             }
             ClosedForm::Piecewise(pw) => {
@@ -2929,11 +2917,7 @@ impl ClosedForm {
                             depths[bi].to_string()
                         } else {
                             let j_in_zero = if j < bi { j } else { j - 1 };
-                            if closed_form_ignores_arg(&pw.zero_branch, j_in_zero + 1) {
-                                "_".to_string()
-                            } else {
-                                name.clone()
-                            }
+                            Self::format_lhs_arg(name, depths[j], closed_form_ignores_arg(&pw.zero_branch, j_in_zero + 1))
                         }
                     })
                     .collect();
@@ -2962,13 +2946,13 @@ impl ClosedForm {
                         .enumerate()
                         .map(|(j, name)| {
                             if j == bi {
-                                format!("{} + {}k", i, p_len)
-                            } else {
-                                if closed_form_ignores_arg(&p.branches[i], j + 1) {
-                                    "_".to_string()
+                                if depths[bi] > 0 {
+                                    format!("{} + {}k + {}", i, p_len, depths[bi])
                                 } else {
-                                    name.clone()
+                                    format!("{} + {}k", i, p_len)
                                 }
+                            } else {
+                                Self::format_lhs_arg(name, depths[j], closed_form_ignores_arg(&p.branches[i], j + 1))
                             }
                         })
                         .collect();
@@ -2981,22 +2965,10 @@ impl ClosedForm {
                 }
             }
             ClosedForm::NegMod(a1, a2, a3) => {
-                let formula_args: Vec<String> = args
-                    .iter()
-                    .zip(depths.iter())
-                    .map(|(name, &d)| decrement_n(name, d))
-                    .collect();
-
                 let lhs: Vec<String> = args
                     .iter()
                     .enumerate()
-                    .map(|(j, name)| {
-                        if closed_form_ignores_arg(self, j + 1) {
-                            "_".to_string()
-                        } else {
-                            name.clone()
-                        }
-                    })
+                    .map(|(j, name)| Self::format_lhs_arg(name, depths[j], closed_form_ignores_arg(self, j + 1)))
                     .collect();
 
                 if a3.coeffs.iter().all(|&c| c == 0) {
@@ -3004,8 +2976,8 @@ impl ClosedForm {
                         "  {}({}) = ({} ∸ {})",
                         fn_name,
                         lhs.join(", "),
-                        a1.format_expr(&formula_args),
-                        a2.format_expr(&formula_args)
+                        a1.format_expr(args),
+                        a2.format_expr(args)
                     );
                     return;
                 }
@@ -3016,16 +2988,16 @@ impl ClosedForm {
                     + (if a3_plus.coeffs[0] != 0 { 1 } else { 0 })
                     > 1
                 {
-                    format!("({})", a3_plus.format_expr(&formula_args))
+                    format!("({})", a3_plus.format_expr(args))
                 } else {
-                    a3_plus.format_expr(&formula_args)
+                    a3_plus.format_expr(args)
                 };
                 println!(
-                    "  {}({}) = ({} - {}) %< {}",
+                    "  {}({}) = ({} ∸ {}) %< {}",
                     fn_name,
                     lhs.join(", "),
-                    a1.format_expr(&formula_args),
-                    a2.format_expr(&formula_args),
+                    a1.format_expr(args),
+                    a2.format_expr(args),
                     s3
                 );
             }

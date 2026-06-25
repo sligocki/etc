@@ -174,7 +174,7 @@ fn main() {
         if adj[i].is_empty() {
             println!("H{:<2}: {}", orig_idx, gen_rec::mgrf::decompile(grf));
             println!("      RAW: {}", name);
-            println!("      Score: {}", sym_val);
+            println!("      Score: {}\n      Debug Score: {:?}", sym_val, sym_val);
             num_champs += 1;
         }
     }

@@ -472,31 +472,113 @@ fn bounds_for_iter_poly(poly: &PolynomialFn, k_min: &Knuth10, k_max: &Knuth10, x
 /// Capable of bounding arbitrary FGH levels (e.g. Iterated functions where the iteration
 /// count is itself a massive power tower).
 pub fn compute_bounds(sym: &SymVal) -> Option<(Knuth10, Knuth10)> {
+    compute_bounds_inner(sym)
+}
+fn compute_bounds_inner(sym: &SymVal) -> Option<(Knuth10, Knuth10)> {
     match sym {
         SymVal::Const(c) => Some((Knuth10::Val(*c as f64), Knuth10::Val(*c as f64))),
         SymVal::FuncApp(grf, args) => {
+            if matches!(&grf.kind, crate::grf::GrfKind::Succ) {
+                if args.len() == 1 {
+                    return compute_bounds(&args[0]);
+                }
+            }
             if let Some(cf) = grf.closed_form() {
-                if let ClosedForm::Iterated(it) = cf {
-                    if args.len() >= 1 {
-                        // Recursively compute the bounds of the iteration count 'k'
-                        let (k_min, k_max) = compute_bounds(&args[0])?;
+                match cf {
+                    ClosedForm::Iterated(it) => {
+                        if args.len() >= 1 {
+                            let (k_min, k_max) = compute_bounds(&args[0])?;
+                            let mut const_args = Vec::with_capacity(args.len() - 1);
+                            for a in &args[1..] {
+                                if let SymVal::Const(c) = a {
+                                    const_args.push(*c);
+                                } else { return None; }
+                            }
+                            if let Some(x) = it.base.eval(&const_args) {
+                                match it.step.as_ref() {
+                                    ClosedForm::Polynomial(poly) => return bounds_for_iter_poly(poly, &k_min, &k_max, x),
+                                    ClosedForm::Affine(affine) => return bounds_for_affine(affine, &k_min, &k_max, x),
+                                    _ => return None,
+                                }
+                            }
+                        }
+                    }
+                    ClosedForm::Polynomial(poly) => {
+                        let (n_min, n_max) = compute_bounds(&args[0])?;
+                        let d = poly.degree() as f64;
+                        let c = poly.leading_coef() as f64;
                         
-                        // Evaluate the base arguments to compute the initial accumulator 'x'
-                        // The rest of the arguments MUST be Const for now to find an exact start state
+                        let max_bound = match n_max {
+                            Knuth10::Val(v) => {
+                                let val = c * v.powf(d);
+                                Knuth10::UpArrow(1, Box::new(Knuth10::Val(val.log10())))
+                            }
+                            Knuth10::UpArrow(1, inner) => {
+                                let inner_max = inner.mul_f64(d, true).add_f64(c.log10(), true);
+                                Knuth10::UpArrow(1, Box::new(inner_max))
+                            }
+                            Knuth10::UpArrow(levels, inner) => Knuth10::UpArrow(levels, inner),
+                        };
+                        
+                        let min_bound = match n_min {
+                            Knuth10::Val(v) => {
+                                let val = c * v.powf(d);
+                                Knuth10::UpArrow(1, Box::new(Knuth10::Val(val.log10())))
+                            }
+                            Knuth10::UpArrow(1, inner) => {
+                                let inner_min = inner.mul_f64(d, false).add_f64(c.log10(), false);
+                                Knuth10::UpArrow(1, Box::new(inner_min))
+                            }
+                            Knuth10::UpArrow(levels, inner) => Knuth10::UpArrow(levels, inner),
+                        };
+                        return Some((min_bound, max_bound));
+                    }
+                    ClosedForm::Affine(_) => {
+                        let mut max_b = Knuth10::Val(0.0);
+                        let mut min_b = Knuth10::Val(0.0);
+                        for a in args {
+                            if let Some((min, max)) = compute_bounds(a) {
+                                max_b = max; // Simplification
+                                min_b = min;
+                            } else { return None; }
+                        }
+                        return Some((min_b, max_b));
+                    }
+                    _ => {}
+                }
+            } else if let crate::grf::GrfKind::Rec(g, h) = &grf.kind {
+                if let (Some(g_cf), Some(h_cf)) = (g.closed_form(), h.closed_form()) {
+                    if args.len() >= 1 {
+                        let (k_min, k_max) = compute_bounds(&args[0])?;
                         let mut const_args = Vec::with_capacity(args.len() - 1);
                         for a in &args[1..] {
                             if let SymVal::Const(c) = a {
                                 const_args.push(*c);
-                            } else {
-                                return None; 
-                            }
+                            } else { return None; }
                         }
-                        
-                        if let Some(x) = it.base.eval(&const_args) {
-                            match it.step.as_ref() {
-                                ClosedForm::Polynomial(poly) => return bounds_for_iter_poly(poly, &k_min, &k_max, x),
-                                ClosedForm::Affine(affine) => return bounds_for_affine(affine, &k_min, &k_max, x),
-                                _ => return None,
+                        if let Some(x) = g_cf.eval(&const_args) {
+                            if let SymVal::Const(n_val) = &args[0] {
+                                let n_u64 = *n_val as u64;
+                                if n_u64 > 0 {
+                                    let cf_lower = h_cf.partial_eval_first_arg(0)?;
+                                    let cf_upper = h_cf.partial_eval_first_arg(n_u64 - 1)?;
+                                    
+                                    let min_bounds = match cf_lower {
+                                        crate::closed_form::ClosedForm::Polynomial(poly) => bounds_for_iter_poly(&poly, &k_min, &k_max, x),
+                                        crate::closed_form::ClosedForm::Affine(affine) => bounds_for_affine(&affine, &k_min, &k_max, x),
+                                        _ => None,
+                                    };
+                                    
+                                    let max_bounds = match cf_upper {
+                                        crate::closed_form::ClosedForm::Polynomial(poly) => bounds_for_iter_poly(&poly, &k_min, &k_max, x),
+                                        crate::closed_form::ClosedForm::Affine(affine) => bounds_for_affine(&affine, &k_min, &k_max, x),
+                                        _ => None,
+                                    };
+                                    
+                                    if let (Some((min, _)), Some((_, max))) = (min_bounds, max_bounds) {
+                                        return Some((min, max));
+                                    }
+                                }
                             }
                         }
                     }

@@ -226,6 +226,7 @@ impl PolynomialFn {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IteratedFn {
     pub arity: usize,
+    pub iter_arg: usize,
     pub base: Box<ClosedForm>,
     pub step: Box<ClosedForm>,
 }
@@ -233,11 +234,15 @@ pub struct IteratedFn {
 impl IteratedFn {
     pub fn eval_with_budget(&self, args: &[u64], budget: &mut usize) -> Option<u64> {
         assert_eq!(args.len(), self.arity);
-        let k = args[0];
-        let mut acc = self.base.eval_with_budget(&args[1..], budget)?;
+        let k = args[self.iter_arg - 1];
+        
+        let mut base_args = args.to_vec();
+        base_args.remove(self.iter_arg - 1);
+        let mut acc = self.base.eval_with_budget(&base_args, budget)?;
 
         let mut step_args = vec![0; self.arity];
-        step_args[1..].copy_from_slice(&args[1..]);
+        step_args[0] = acc;
+        step_args[1..].copy_from_slice(&base_args);
 
         for _ in 0..k {
             if *budget == 0 {
@@ -257,6 +262,7 @@ impl IteratedFn {
     pub fn lift(&self, arity: usize) -> Self {
         IteratedFn {
             arity,
+            iter_arg: self.iter_arg,
             base: Box::new(self.base.lift(arity - 1)),
             step: Box::new(self.step.lift(arity)),
         }
@@ -1390,6 +1396,7 @@ pub fn closed_form_of_rec_internal(
         if let Some(h_prime) = drop_arg(sem_h, 1) {
             return Some(ClosedForm::Iterated(IteratedFn {
                 arity: k_outer,
+                iter_arg: 1,
                 base: Box::new(sem_g.clone()),
                 step: Box::new(h_prime),
             }));
@@ -1476,10 +1483,10 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
             }
         }
         ClosedForm::Iterated(it) => {
-            if idx == 1 {
+            if idx == it.iter_arg {
                 is_proj_of(&it.step) == Some(1)
             } else {
-                closed_form_ignores_arg(&it.base, idx - 1) && closed_form_ignores_arg(&it.step, idx)
+                closed_form_ignores_arg(&it.base, if idx < it.iter_arg { idx } else { idx - 1 }) && closed_form_ignores_arg(&it.step, if idx < it.iter_arg { idx + 1 } else { idx })
             }
         }
     }
@@ -1557,16 +1564,80 @@ fn compose_impl(
     // At this point, NO inner is Piecewise. All inners are Affine!
     match h {
         ClosedForm::Affine(h_af) => {
-            let mut inner_afs = Vec::with_capacity(inners.len());
-            for s in inners {
+            // Optimization: If h_af is a projection, just return the inner!
+            if let Some(idx) = is_proj_of(h) {
+                return Some(inners[idx - 1].clone());
+            }
+            
+            let mut poly_arg_opt = None;
+            let mut has_poly = false;
+            let mut has_unsupported = false;
+            
+            for (i, s) in inners.iter().enumerate() {
+                let outer_c = h_af.coeffs[i + 1];
+                if outer_c == 0 { continue; }
+                
                 match s {
-                    ClosedForm::Affine(af) => inner_afs.push(af.clone()),
-                    _ => return None, // Cannot compose Affine outside of NegMod yet
+                    ClosedForm::Polynomial(poly) => {
+                        has_poly = true;
+                        if let Some(existing_arg) = poly_arg_opt {
+                            if existing_arg != poly.poly_arg {
+                                println!("DEBUG: unsupported because existing_arg={} != poly.poly_arg={}", existing_arg, poly.poly_arg);
+                                has_unsupported = true;
+                            }
+                        } else {
+                            poly_arg_opt = Some(poly.poly_arg);
+                        }
+                    }
+                    ClosedForm::Affine(_) => {},
+                    _ => {
+                        has_unsupported = true;
+                    }
                 }
             }
-            Some(ClosedForm::Affine(compose_affine(h_af, &inner_afs)?))
-        }
-        ClosedForm::Polynomial(poly_h) => {
+            
+            if has_poly && !has_unsupported {
+                let poly_arg = poly_arg_opt.unwrap();
+                let mut new_poly_coeffs: Vec<u64> = Vec::new();
+                let mut new_affine_coeffs = vec![h_af.coeffs[0]];
+                new_affine_coeffs.resize(arity + 1, 0);
+                
+                for (i, inner) in inners.iter().enumerate() {
+                    let outer_c = h_af.coeffs[i + 1];
+                    if outer_c == 0 { continue; }
+                    
+                    match inner {
+                        ClosedForm::Affine(inner_af) => {
+                            new_affine_coeffs[0] = new_affine_coeffs[0].checked_add(outer_c.checked_mul(inner_af.coeffs[0]).unwrap()).unwrap();
+                            for j in 1..=arity {
+                                new_affine_coeffs[j] = new_affine_coeffs[j].checked_add(outer_c.checked_mul(inner_af.coeffs[j]).unwrap()).unwrap();
+                            }
+                        }
+                        ClosedForm::Polynomial(inner_poly) => {
+                            new_affine_coeffs[0] = new_affine_coeffs[0].checked_add(outer_c.checked_mul(inner_poly.affine_tail.coeffs[0]).unwrap()).unwrap();
+                            for j in 1..=arity {
+                                new_affine_coeffs[j] = new_affine_coeffs[j].checked_add(outer_c.checked_mul(inner_poly.affine_tail.coeffs[j]).unwrap()).unwrap();
+                            }
+                            
+                            if new_poly_coeffs.len() < inner_poly.poly_coeffs.len() {
+                                new_poly_coeffs.resize(inner_poly.poly_coeffs.len(), 0);
+                            }
+                            for (k, &c) in inner_poly.poly_coeffs.iter().enumerate() {
+                                new_poly_coeffs[k] = new_poly_coeffs[k].checked_add(outer_c.checked_mul(c).unwrap()).unwrap();
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                
+                return Some(crate::closed_form::make_polynomial(
+                    arity,
+                    poly_arg,
+                    new_poly_coeffs,
+                    Box::new(AffineFn { arity, coeffs: new_affine_coeffs }),
+                ));
+            }
+
             let mut inner_afs = Vec::with_capacity(inners.len());
             for s in inners {
                 match s {
@@ -1574,18 +1645,56 @@ fn compose_impl(
                     _ => return None,
                 }
             }
+            Some(ClosedForm::Affine(compose_affine(h_af, &inner_afs)?))
+        }
+        ClosedForm::Polynomial(poly_h) => {
+            let inner_for_poly = &inners[poly_h.poly_arg - 1];
+            
+            // We must verify inner_for_poly is an AffineFn (projection or constant).
+            let inner_for_poly_af = match inner_for_poly {
+                ClosedForm::Affine(af) => af,
+                _ => return None,
+            };
 
-            let inner_for_poly = &inner_afs[poly_h.poly_arg - 1];
-            if let Some(proj_idx) = is_proj_of(&ClosedForm::Affine(inner_for_poly.clone())) {
+            if let Some(proj_idx) = is_proj_of(inner_for_poly) {
+                // The tail is AffineFn. We can compose AffineFn with ANY supported inners using compose_impl!
+                let new_tail_cf = compose_impl(&ClosedForm::Affine(*poly_h.affine_tail.clone()), inners, arity, depth + 1)?;
+                let new_tail_af = match new_tail_cf {
+                    ClosedForm::Affine(af) => Box::new(af),
+                    ClosedForm::Polynomial(poly) => {
+                        // If composing the tail yields a Polynomial, we have TWO polynomials!
+                        // But wait! PolynomialFn only supports ONE polynomial variable.
+                        // So if the tail yields a Polynomial, and it has the SAME poly_arg, we can merge them!
+                        if poly.poly_arg == proj_idx {
+                            let mut merged_coeffs = poly_h.poly_coeffs.clone();
+                            if merged_coeffs.len() < poly.poly_coeffs.len() {
+                                merged_coeffs.resize(poly.poly_coeffs.len(), 0);
+                            }
+                            for (i, &c) in poly.poly_coeffs.iter().enumerate() {
+                                merged_coeffs[i] = merged_coeffs[i].checked_add(c)?;
+                            }
+                            return Some(ClosedForm::Polynomial(PolynomialFn::new(
+                                arity,
+                                proj_idx,
+                                merged_coeffs,
+                                poly.affine_tail.clone(),
+                            )));
+                        } else {
+                            return None;
+                        }
+                    }
+                    _ => return None,
+                };
+                
                 Some(ClosedForm::Polynomial(PolynomialFn::new(
                     arity,
                     proj_idx,
                     poly_h.poly_coeffs.clone(),
-                    Box::new(compose_affine(&poly_h.affine_tail, &inner_afs)?),
+                    new_tail_af,
                 )))
-            } else if inner_for_poly.coeffs[1..].iter().all(|&c| c == 0) {
+            } else if inner_for_poly_af.coeffs[1..].iter().all(|&c| c == 0) {
                 let mut sum = 0u64;
-                let x = inner_for_poly.coeffs[0];
+                let x = inner_for_poly_af.coeffs[0];
                 let mut binom = x;
                 for (i, &coeff) in poly_h.poly_coeffs.iter().enumerate() {
                     let k = i as u64 + 2;
@@ -1596,9 +1705,18 @@ fn compose_impl(
                     sum = sum.checked_add(binom.checked_mul(coeff)?)?;
                 }
 
-                let mut new_affine = compose_affine(&poly_h.affine_tail, &inner_afs)?;
-                new_affine.coeffs[0] = new_affine.coeffs[0].checked_add(sum)?;
-                Some(ClosedForm::Affine(new_affine))
+                let new_tail_cf = compose_impl(&ClosedForm::Affine(*poly_h.affine_tail.clone()), inners, arity, depth + 1)?;
+                match new_tail_cf {
+                    ClosedForm::Affine(mut af) => {
+                        af.coeffs[0] = af.coeffs[0].checked_add(sum)?;
+                        Some(ClosedForm::Affine(af))
+                    }
+                    ClosedForm::Polynomial(mut poly) => {
+                        poly.affine_tail.coeffs[0] = poly.affine_tail.coeffs[0].checked_add(sum)?;
+                        Some(ClosedForm::Polynomial(poly))
+                    }
+                    _ => None,
+                }
             } else {
                 None // Inner for poly is not a projection or constant, reject composition
             }
@@ -1933,8 +2051,9 @@ fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
             } else {
                 ClosedForm::Iterated(IteratedFn {
                     arity: it.arity - 1,
-                    base: Box::new(zero_face_at(&it.base, j - 1)),
-                    step: Box::new(zero_face_at(&it.step, j)),
+                    iter_arg: if j < it.iter_arg { it.iter_arg - 1 } else { it.iter_arg },
+                    base: Box::new(zero_face_at(&it.base, if j < it.iter_arg { j } else { j - 1 })),
+                    step: Box::new(zero_face_at(&it.step, if j < it.iter_arg { j + 1 } else { j })),
                 })
             }
         }
@@ -2021,8 +2140,9 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
             } else {
                 ClosedForm::Iterated(IteratedFn {
                     arity: it.arity,
-                    base: Box::new(pos_face_at(&it.base, j - 1)),
-                    step: Box::new(pos_face_at(&it.step, j)),
+                    iter_arg: it.iter_arg,
+                    base: Box::new(pos_face_at(&it.base, if j < it.iter_arg { j } else { j - 1 })),
+                    step: Box::new(pos_face_at(&it.step, if j < it.iter_arg { j + 1 } else { j })),
                 })
             }
         }
@@ -2097,6 +2217,7 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
         )),
         ClosedForm::Iterated(it) => ClosedForm::Iterated(IteratedFn {
             arity: it.arity + 1,
+            iter_arg: it.iter_arg + 1,
             base: Box::new(prepend_arg(&it.base)),
             step: Box::new(prepend_arg(&it.step)),
         }),
@@ -2294,8 +2415,9 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
             } else {
                 Some(ClosedForm::Iterated(IteratedFn {
                     arity: it.arity - 1,
-                    base: Box::new(drop_arg(&it.base, idx - 1)?),
-                    step: Box::new(drop_arg(&it.step, idx)?),
+                    iter_arg: if idx < it.iter_arg { it.iter_arg - 1 } else { it.iter_arg },
+                    base: Box::new(drop_arg(&it.base, if idx < it.iter_arg { idx } else { idx - 1 })?),
+                    step: Box::new(drop_arg(&it.step, if idx < it.iter_arg { idx + 1 } else { idx })?),
                 }))
             }
         }
@@ -2612,13 +2734,16 @@ impl ClosedForm {
                 }
             }
             ClosedForm::Iterated(it) => {
-                let mut step_vars = vec![vars[0].clone()];
-                step_vars.extend_from_slice(&vars[1..]);
-                step_vars[0] = "acc".to_string();
+                let mut base_vars = vars.to_vec();
+                base_vars.remove(it.iter_arg - 1);
+                
+                let mut step_vars = vec!["acc".to_string()];
+                step_vars.extend_from_slice(&base_vars);
+                
                 format!(
                     "Iterated(k={}; base={}; step={})",
-                    vars[0],
-                    it.base.format_inline(&vars[1..]),
+                    vars[it.iter_arg - 1],
+                    it.base.format_inline(&base_vars),
                     it.step.format_inline(&step_vars)
                 )
             }
@@ -2793,16 +2918,21 @@ impl ClosedForm {
                 );
             }
             ClosedForm::Iterated(it) => {
-                let k_var = &args[0];
-                let base_vars = args[1..].to_vec();
+                let k_var = &args[it.iter_arg - 1];
+                let mut base_vars = args.to_vec();
+                base_vars.remove(it.iter_arg - 1);
+                let mut base_depths = depths.to_vec();
+                base_depths.remove(it.iter_arg - 1);
                 let mut base_name = fn_name.to_string();
                 base_name.push_str(".base");
-                it.base.emit_rules(&base_name, &base_vars, &depths[1..]);
+                it.base.emit_rules(&base_name, &base_vars, &base_depths);
                 let mut step_vars = vec!["acc".to_string()];
-                step_vars.extend_from_slice(&args[1..]);
+                step_vars.extend_from_slice(&base_vars);
+                let mut step_depths = vec![0];
+                step_depths.extend_from_slice(&base_depths);
                 let mut step_name = fn_name.to_string();
                 step_name.push_str(".step");
-                it.step.emit_rules(&step_name, &step_vars, depths);
+                it.step.emit_rules(&step_name, &step_vars, &step_depths);
                 println!("  {}({}=0, ...) = {}(...)", fn_name, k_var, base_name);
                 println!(
                     "  {}({}, ...) = {}({}({}-1, ...), ...)",
@@ -3464,5 +3594,147 @@ mod tests {
         // This GRF computes saturating subtraction (monus): d(x, y) = y + 1 ∸ x.
         // It relies on Case C parsing of recursive steps into NegMod(af1, n, acc).
         check_vs_sim("R(S, R(P(2,2), R(R(P(2,1), P(4,1)), P(5,2))))", 10);
+    }
+}
+
+impl AffineFn {
+    pub fn partial_eval_first_arg(&self, val: u64) -> Option<Self> {
+        if self.arity == 0 { return None; }
+        let mut new_coeffs = Vec::with_capacity(self.arity);
+        let new_const = self.coeffs[0].checked_add(self.coeffs[1].checked_mul(val)?)?;
+        new_coeffs.push(new_const);
+        new_coeffs.extend_from_slice(&self.coeffs[2..]);
+        Some(AffineFn {
+            arity: self.arity - 1,
+            coeffs: new_coeffs,
+        })
+    }
+}
+
+impl PiecewiseFn {
+    pub fn partial_eval_first_arg(&self, val: u64) -> Option<ClosedForm> {
+        if self.arity == 0 { return None; }
+        if self.branch_index == 0 {
+            if val == 0 {
+                Some(*self.zero_branch.clone())
+            } else {
+                self.pos_branch.partial_eval_first_arg(val - 1)
+            }
+        } else {
+            Some(ClosedForm::Piecewise(PiecewiseFn {
+                arity: self.arity - 1,
+                branch_index: self.branch_index - 1,
+                zero_branch: Box::new(self.zero_branch.partial_eval_first_arg(val)?),
+                pos_branch: Box::new(self.pos_branch.partial_eval_first_arg(val)?),
+            }))
+        }
+    }
+}
+
+impl PolynomialFn {
+    pub fn partial_eval_first_arg(&self, val: u64) -> Option<ClosedForm> {
+        if self.arity == 0 { return None; }
+        if self.poly_arg == 1 {
+            let mut sum: u64 = 0;
+            let x = val;
+            let mut binom = x;
+            for (i, &coeff) in self.poly_coeffs.iter().enumerate() {
+                let k = i as u64 + 2;
+                if x < k { break; }
+                binom = binom.checked_mul(x - k + 1)?.checked_div(k)?;
+                if coeff > 0 {
+                    sum = sum.checked_add(binom.checked_mul(coeff)?)?;
+                }
+            }
+            let mut new_affine = self.affine_tail.partial_eval_first_arg(val)?;
+            new_affine.coeffs[0] = new_affine.coeffs[0].checked_add(sum)?;
+            Some(ClosedForm::Affine(new_affine))
+        } else {
+            Some(ClosedForm::Polynomial(PolynomialFn {
+                arity: self.arity - 1,
+                poly_arg: self.poly_arg - 1,
+                poly_coeffs: self.poly_coeffs.clone(),
+                affine_tail: Box::new(self.affine_tail.partial_eval_first_arg(val)?),
+            }))
+        }
+    }
+}
+
+impl PeriodicFn {
+    pub fn partial_eval_first_arg(&self, val: u64) -> Option<ClosedForm> {
+        if self.arity == 0 { return None; }
+        if self.branch_index == 0 {
+            let branch = &self.branches[(val as usize) % self.branches.len()];
+            branch.partial_eval_first_arg(val)
+        } else {
+            let mut new_branches = Vec::new();
+            for b in &self.branches {
+                new_branches.push(Box::new(b.partial_eval_first_arg(val)?));
+            }
+            Some(ClosedForm::Periodic(PeriodicFn {
+                arity: self.arity - 1,
+                branch_index: self.branch_index - 1,
+                branches: new_branches,
+            }))
+        }
+    }
+}
+
+impl ClosedForm {
+    pub fn partial_eval_first_arg(&self, val: u64) -> Option<ClosedForm> {
+        match self {
+            ClosedForm::Affine(af) => af.partial_eval_first_arg(val).map(ClosedForm::Affine),
+            ClosedForm::Piecewise(pw) => pw.partial_eval_first_arg(val),
+            ClosedForm::Polynomial(poly) => poly.partial_eval_first_arg(val),
+            ClosedForm::Periodic(per) => per.partial_eval_first_arg(val),
+            ClosedForm::NegMod(a1, a2, a3) => {
+                let n1 = a1.partial_eval_first_arg(val)?;
+                let n2 = a2.partial_eval_first_arg(val)?;
+                let n3 = a3.partial_eval_first_arg(val)?;
+                Some(ClosedForm::NegMod(n1, n2, n3))
+            }
+            ClosedForm::Iterated(it) => it.partial_eval_first_arg(val),
+        }
+    }
+}
+
+impl IteratedFn {
+    pub fn partial_eval_first_arg(&self, val: u64) -> Option<ClosedForm> {
+        if self.iter_arg == 1 {
+            let mut curr = *self.base.clone();
+            for _ in 0..val {
+                let mut inners = vec![curr];
+                for i in 1..self.arity {
+                    inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 1, i)));
+                }
+                curr = crate::closed_form::compose(&self.step, &inners, self.arity - 1)?;
+            }
+            Some(curr)
+        } else {
+            // Evaluates IteratedFn by substituting its first arg.
+            // Since iter_arg > 1, the first arg is just a normal variable.
+            // We substitute it in base and step.
+            let mut base_inners = Vec::with_capacity(self.arity - 1);
+            base_inners.push(ClosedForm::Affine(AffineFn { arity: self.arity - 2, coeffs: vec![val] }));
+            for i in 1..self.arity-1 {
+                base_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 2, i)));
+            }
+            let new_base = crate::closed_form::compose(&self.base, &base_inners, self.arity - 2)?;
+            
+            let mut step_inners = Vec::with_capacity(self.arity);
+            step_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 1, 1))); // acc
+            step_inners.push(ClosedForm::Affine(AffineFn { arity: self.arity - 1, coeffs: vec![val] })); // the fixed val
+            for i in 1..self.arity-1 {
+                step_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 1, i + 1)));
+            }
+            let new_step = crate::closed_form::compose(&self.step, &step_inners, self.arity - 1)?;
+            
+            Some(ClosedForm::Iterated(IteratedFn {
+                arity: self.arity - 1,
+                iter_arg: self.iter_arg - 1,
+                base: Box::new(new_base),
+                step: Box::new(new_step),
+            }))
+        }
     }
 }

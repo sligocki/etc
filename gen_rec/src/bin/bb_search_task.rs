@@ -177,7 +177,8 @@ fn main() {
                 fs::create_dir_all(&results_dir).unwrap();
             }
 
-            let opts = PruningOpts::recommended();
+            let mut opts = PruningOpts::recommended();
+            opts.min_dom = true;
             let arity = 0;
 
             let path_ref = Rc::new(RefCell::new(Vec::new()));
@@ -194,8 +195,14 @@ fn main() {
                     let path = path_ref.borrow();
                     prefixes_ref.borrow_mut().push(path.clone());
                 });
+            } else if enum_scope == EnumScope::MinPrf && size >= 2 {
+                stream_grf_visited(size - 1, 1, false, opts, &mut visitor, &mut |_grf| {
+                    let path = path_ref.borrow();
+                    prefixes_ref.borrow_mut().push(path.clone());
+                });
             } else {
-                stream_grf_visited(size, arity, allow_min, opts, &mut visitor, &mut |_grf| {
+                let actual_allow_min = allow_min || enum_scope == EnumScope::Grf;
+                stream_grf_visited(size, arity, actual_allow_min, opts, &mut visitor, &mut |_grf| {
                     let path = path_ref.borrow();
                     prefixes_ref.borrow_mut().push(path.clone());
                 });
@@ -320,7 +327,8 @@ fn main() {
             tasks_to_run.into_par_iter().for_each(|(tid, out_path)| {
                 let task_start = std::time::Instant::now();
                 let task_prefixes = m.task_prefixes(tid);
-                let opts = PruningOpts::recommended();
+                let mut opts = PruningOpts::recommended();
+                opts.min_dom = true;
 
                 let mut acc = Accumulator::new(top_k);
                 let mut holdouts_buffer: Vec<u8> = Vec::new();
@@ -350,8 +358,22 @@ fn main() {
 
                     if m.enum_scope == "prf_diag" {
                         gen_rec::enumerate::stream_prf_diag_visited(m.size, opts, &mut visitor, &mut handle_grf);
+                    } else if m.enum_scope == "min_prf" && m.size >= 2 {
+                        let mut min_handler = |grf: &Grf| {
+                            if opts.min_dom {
+                                if !grf.used_args().contains(&1) {
+                                    return;
+                                }
+                                if grf.is_never_zero() {
+                                    return;
+                                }
+                            }
+                            handle_grf(&Grf::min(grf.clone()));
+                        };
+                        stream_grf_visited(m.size - 1, 1, false, opts, &mut visitor, &mut min_handler);
                     } else {
-                        stream_grf_visited(m.size, 0, m.allow_min, opts, &mut visitor, &mut handle_grf);
+                        let actual_allow_min = m.allow_min || m.enum_scope == "grf";
+                        stream_grf_visited(m.size, 0, actual_allow_min, opts, &mut visitor, &mut handle_grf);
                     }
                     if !batch.is_empty() {
                         flush_batch(

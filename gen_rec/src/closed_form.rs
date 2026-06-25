@@ -1741,7 +1741,7 @@ fn compose_impl(
                         af.coeffs[proj_idx] = af.coeffs[proj_idx].checked_add(extra_linear)?;
                         Box::new(af)
                     }
-                    ClosedForm::Polynomial(mut poly) => {
+                    ClosedForm::Polynomial(poly) => {
                         if poly.poly_arg == proj_idx {
                             let mut merged_coeffs = shifted_coeffs.clone();
                             if merged_coeffs.len() < poly.poly_coeffs.len() {

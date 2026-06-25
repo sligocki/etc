@@ -1,4 +1,4 @@
-use crate::closed_form::{AffineFn, ClosedForm, PolynomialFn, closed_form_ignores_arg};
+use crate::closed_form::{AffineFn, ClosedForm, PolynomialFn};
 use crate::grf::{Grf, GrfKind};
 
 /// Represents the result of comparing two functions f and g for all inputs x >= 0.

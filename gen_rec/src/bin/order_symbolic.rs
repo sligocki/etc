@@ -1,6 +1,6 @@
 use gen_rec::closed_form::ClosedForm;
-use gen_rec::compare_symbolic::{PointwiseOrder, compare_strict};
-use gen_rec::grf::{Grf, GrfKind};
+use gen_rec::compare_symbolic::PointwiseOrder;
+use gen_rec::grf::Grf;
 use std::env;
 use std::fs;
 
@@ -146,7 +146,7 @@ fn main() {
         .collect();
 
     println!("--- FGH Levels (Ordered by Exact Symbolic Evaluation) ---");
-    for (orig_idx, name, grf, _, sym_val) in &holdouts {
+    for (orig_idx, _name, grf, _, sym_val) in &holdouts {
         println!(
             "H{:<2}: [1;36m{}[0m",
             orig_idx,

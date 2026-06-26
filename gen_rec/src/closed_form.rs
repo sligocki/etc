@@ -1135,6 +1135,48 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
+    // Case D: Alternating Periodic Function
+    // h(n, acc, rest) = Piecewise(acc == 0 ? A(n, rest) : 0)
+    // Because A(n) evaluates to > 0 eventually, the sequence S_n = h(n-1, S_{n-1}) 
+    // will alternate between 0 and A(n-1). 
+    // We can represent this perfectly with a PeriodicFn switching on n % 2.
+    if let ClosedForm::Piecewise(pw) = sem_h {
+        if pw.branch_index == 1 { // acc is arg 2 (0-based index 1)
+            // check if pos_branch is zero
+            let mut is_pos_zero = false;
+            if let ClosedForm::Affine(af) = &*pw.pos_branch {
+                if af.coeffs.iter().all(|&c| c == 0) {
+                    is_pos_zero = true;
+                }
+            }
+            if is_pos_zero {
+                // If pos branch is 0, the zero branch determines A.
+                // pw.zero_branch takes (n, rest...), which is perfectly shaped to be the
+                // pos_branch of our new PiecewiseFn (which feeds it n-1, rest...).
+                let a_outer = *pw.zero_branch.clone();
+                // check if the base case g is exactly 0
+                let mut is_g_zero = false;
+                if let ClosedForm::Affine(af) = sem_g {
+                    if af.coeffs.iter().all(|&c| c == 0) {
+                        is_g_zero = true;
+                    }
+                }
+                if is_g_zero {
+                    let odd_branch = make_piecewise(k_outer, 0, sem_g.clone(), a_outer.clone());
+                    let even_branch = ClosedForm::Affine(AffineFn::zero(k_outer));
+                    
+                    let a_eval_0 = a_outer.eval(&vec![0; k_outer]).unwrap_or(0);
+                    let branches = if a_eval_0 > 0 {
+                        vec![Box::new(even_branch), Box::new(odd_branch)]
+                    } else {
+                        vec![Box::new(odd_branch), Box::new(even_branch)]
+                    };
+                    return Some(make_periodic(k_outer, 0, branches));
+                }
+            }
+        }
+    }
+
     // --- Unified Symbolic Sequence Analyzer ---
     // Simulates the sequence S_n = h(n-1, S_{n-1}).
     // Detects:
@@ -3781,6 +3823,18 @@ mod tests {
         let f = format!("R(Z1, {h})");
 
         check_vs_sim(&f, 3); // 3^3 is 27, easy to fit
+    }
+
+    #[test]
+    fn test_alternating_periodic_1() {
+        // R(Z0, C(R(P(1,1), Z3), P(2,2), P(2,1)))
+        check_vs_sim("R(Z0, C(R(P(1,1), Z3), P(2,2), P(2,1)))", 10);
+    }
+
+    #[test]
+    fn test_alternating_periodic_2() {
+        // R(Z0, C(R(S, Z3), P(2,2), P(2,1)))
+        check_vs_sim("R(Z0, C(R(S, Z3), P(2,2), P(2,1)))", 10);
     }
 }
 

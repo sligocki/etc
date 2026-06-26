@@ -840,6 +840,7 @@ mod tests {
     use super::*;
     use crate::closed_form::{AffineFn, PolynomialFn};
 
+    #[test]
     fn test_compare_affine_strict() {
         // f(x) = x + 1
         let a = ClosedForm::Affine(AffineFn {
@@ -874,6 +875,7 @@ mod tests {
         assert_eq!(compare_strict(&c, &b), PointwiseOrder::Uncertain);
     }
 
+    #[test]
     fn test_compare_polynomial_strict() {
         // p1(x) = (x choose 2) + x
         let p1 = ClosedForm::Polynomial(PolynomialFn::new(

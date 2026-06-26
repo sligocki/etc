@@ -2834,10 +2834,16 @@ impl ClosedForm {
                 let a1_str = a1.format_expr(vars);
                 let a2_str = a2.format_expr(vars);
 
+                // If the modulo term is identically 0, it means the modulus is 0+1 = 1.
+                // Modulo 1 wraps all negative values to 0, making this equivalent to 
+                // saturating subtraction (monus), commonly denoted by `∸`.
                 if a3.coeffs.iter().all(|&c| c == 0) {
                     return format!("({a1_str} ∸ {a2_str})");
                 }
 
+                // Otherwise, this is true integer subtraction wrapping around the modulus.
+                // We use standard `-` subtraction here, not `∸`, because a negative 
+                // result is preserved and mathematically wrapped, not floored to 0.
                 let mut a3_plus = a3.clone();
                 a3_plus.coeffs[0] += 1;
                 let a3_str = if a3_plus.coeffs[1..].iter().filter(|&&c| c != 0).count()
@@ -2848,7 +2854,7 @@ impl ClosedForm {
                 } else {
                     a3_plus.format_expr(vars)
                 };
-                format!("({} ∸ {}) %< {}", a1_str, a2_str, a3_str)
+                format!("({} - {}) %< {}", a1_str, a2_str, a3_str)
             }
             ClosedForm::Polynomial(poly) => {
                 let mut terms = Vec::new();
@@ -2992,6 +2998,9 @@ impl ClosedForm {
                     .map(|(j, name)| Self::format_lhs_arg(name, depths[j], closed_form_ignores_arg(self, j + 1)))
                     .collect();
 
+                // Simplified printing special case:
+                //   (a-b)%1 = a ∸ b = max(0, a-b)
+                // modulus 1 is represented by a3 = 0
                 if a3.coeffs.iter().all(|&c| c == 0) {
                     println!(
                         "  {}({}) = ({} ∸ {})",
@@ -3003,6 +3012,9 @@ impl ClosedForm {
                     return;
                 }
 
+                // Otherwise, this is true integer subtraction wrapping around the modulus.
+                // We use standard `-` subtraction here, not `∸`, because a negative 
+                // result is preserved and mathematically wrapped, not floored to 0.
                 let mut a3_plus = a3.clone();
                 a3_plus.coeffs[0] += 1;
                 let s3 = if a3_plus.coeffs[1..].iter().filter(|&&c| c != 0).count()
@@ -3014,7 +3026,7 @@ impl ClosedForm {
                     a3_plus.format_expr(args)
                 };
                 println!(
-                    "  {}({}) = ({} ∸ {}) %< {}",
+                    "  {}({}) = ({} - {}) %< {}",
                     fn_name,
                     lhs.join(", "),
                     a1.format_expr(args),

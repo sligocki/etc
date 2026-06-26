@@ -389,25 +389,7 @@ pub enum SymVal {
     FuncApp(Grf, Vec<SymVal>),
 }
 
-/// Computes the asymptotic degree `d` of a polynomial, or 1 if it is affine/constant.
-fn asymptotic_degree(cf: &ClosedForm) -> usize {
-    match cf {
-        ClosedForm::Polynomial(poly) => {
-            if poly.poly_arg == 1 {
-                let mut d = 1;
-                for (i, &c) in poly.poly_coeffs.iter().enumerate() {
-                    if c > 0 {
-                        d = d.max(i + 2);
-                    }
-                }
-                d
-            } else {
-                1
-            }
-        }
-        _ => 1,
-    }
-}
+
 
 /// Computes strict lower and upper bounds using the `Knuth10` base-10 up-arrow representation
 /// for the exact value of the affine function `func` iterated `k` times on input `x`.

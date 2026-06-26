@@ -306,7 +306,7 @@ impl ClosedForm {
                     .filter(|&c| c == 1)?;
                 Some(poly.affine_tail.coeffs[0] as i64)
             }
-            ClosedForm::Exponential(exp) => {
+            ClosedForm::Exponential(_exp) => {
                 // Exponential is monotonic and grows much faster than linear.
                 // Its min diff from arg is just evaluated at n=0 or n=1 depending on the variable.
                 // For safety and simplicity, we can just say if the initial term has min diff, we can bound it.
@@ -410,7 +410,8 @@ impl ClosedForm {
     /// Iterative: follows the Piecewise tree with in-place mutations on a single
     /// owned buffer, avoiding per-level Vec allocations and deep recursion.
     pub fn eval(&self, args: &[u64]) -> Option<u64> {
-        self.eval_with_budget(args, &mut usize::MAX)
+        let mut budget = usize::MAX;
+        self.eval_with_budget(args, &mut budget)
     }
 
     /// Find the minimum i ≥ 0 such that self(i, outer_args) = 0.
@@ -3034,7 +3035,7 @@ impl ClosedForm {
                     s3
                 );
             }
-            ClosedForm::Exponential(exp) => {
+            ClosedForm::Exponential(_exp) => {
                 let lhs: Vec<String> = args
                     .iter()
                     .enumerate()

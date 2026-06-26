@@ -141,6 +141,7 @@ impl ClosedFormEnumerator {
     }
 
     /// Return the cached canonical input set for `(arity, size)`, or empty slice.
+    #[allow(dead_code)]
     fn candidates(&self, arity: usize, size: usize) -> &[Grf] {
         self.memo
             .get(&(arity, size))

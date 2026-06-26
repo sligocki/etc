@@ -96,6 +96,33 @@ pub fn compare_strict(a: &ClosedForm, b: &ClosedForm) -> PointwiseOrder {
                 PointwiseOrder::Uncertain
             }
         }
+        (ClosedForm::Exponential(e1), ClosedForm::Exponential(e2)) => {
+            if e1.arity != e2.arity || e1.exp_arg != e2.exp_arg {
+                return PointwiseOrder::Uncertain;
+            }
+            let init_cmp = compare_strict(&e1.init_term, &e2.init_term);
+            let step_cmp = compare_affine(&e1.affine_step, &e2.affine_step);
+
+            if e1.exp_base >= e2.exp_base {
+                if matches!(init_cmp, PointwiseOrder::GreaterEqual | PointwiseOrder::Equal) &&
+                   matches!(step_cmp, PointwiseOrder::GreaterEqual | PointwiseOrder::Equal) {
+                    if e1.exp_base == e2.exp_base && init_cmp == PointwiseOrder::Equal && step_cmp == PointwiseOrder::Equal {
+                        return PointwiseOrder::Equal;
+                    }
+                    return PointwiseOrder::GreaterEqual;
+                }
+            }
+            if e1.exp_base <= e2.exp_base {
+                if matches!(init_cmp, PointwiseOrder::LessEqual | PointwiseOrder::Equal) &&
+                   matches!(step_cmp, PointwiseOrder::LessEqual | PointwiseOrder::Equal) {
+                    if e1.exp_base == e2.exp_base && init_cmp == PointwiseOrder::Equal && step_cmp == PointwiseOrder::Equal {
+                        return PointwiseOrder::Equal;
+                    }
+                    return PointwiseOrder::LessEqual;
+                }
+            }
+            PointwiseOrder::Uncertain
+        }
         // Basic cross-type fallback checks
         (ClosedForm::Affine(_), ClosedForm::Polynomial(_)) => PointwiseOrder::Uncertain, // Strict bounds cross often
         (ClosedForm::Polynomial(_), ClosedForm::Affine(_)) => PointwiseOrder::Uncertain,
@@ -523,6 +550,21 @@ fn compute_bounds_inner(sym: &SymVal) -> Option<(Knuth10, Knuth10)> {
                         };
                         return Some((min_bound, max_bound));
                     }
+                    ClosedForm::Exponential(exp) => {
+                        if exp.exp_arg < 1 || exp.exp_arg > args.len() {
+                            return None;
+                        }
+                        let (n_min, n_max) = compute_bounds(&args[exp.exp_arg - 1])?;
+
+                        let min_bound = n_min;
+
+                        let max_bound = match n_max {
+                            Knuth10::Val(v) => Knuth10::UpArrow(1, Box::new(Knuth10::UpArrow(1, Box::new(Knuth10::Val(v))))),
+                            Knuth10::UpArrow(levels, inner) => Knuth10::UpArrow(levels + 1, inner),
+                        };
+
+                        return Some((min_bound, max_bound));
+                    }
                     ClosedForm::Affine(_) => {
                         let mut max_b = Knuth10::Val(0.0);
                         let mut min_b = Knuth10::Val(0.0);
@@ -801,7 +843,7 @@ pub fn compare_sym(a: &SymVal, b: &SymVal) -> PointwiseOrder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::closed_form::{AffineFn, IteratedFn, PolynomialFn};
+    use crate::closed_form::{AffineFn, PolynomialFn};
 
     fn test_compare_affine_strict() {
         // f(x) = x + 1

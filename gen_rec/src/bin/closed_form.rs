@@ -341,7 +341,7 @@ fn holdout_reason(grf: &Grf) -> String {
                         "Rec[A]: unexpected (should be covered)".into()
                     }
                     Some(ClosedForm::Periodic(_)) => "Rec: base is Periodic".into(),
-
+                    Some(ClosedForm::Exponential(_)) => "Rec: base is Exponential".into(),
                 }
             } else if !uses_acc {
                 if g.closed_form().is_none() {
@@ -359,7 +359,7 @@ fn holdout_reason(grf: &Grf) -> String {
                         Some(ClosedForm::Piecewise(_)) => "Rec[B]: step is Piecewise".into(),
                         Some(ClosedForm::NegMod(_, _, _)) => "Rec[B]: step is NegMod".into(),
                         Some(ClosedForm::Periodic(_)) => "Rec[B]: step is Periodic".into(),
-
+                        Some(ClosedForm::Exponential(_)) => "Rec[B]: step is Exponential".into(),
                     }
                 }
             } else {
@@ -372,7 +372,7 @@ fn holdout_reason(grf: &Grf) -> String {
                     Some(ClosedForm::Piecewise(_)) => "Rec: step uses acc, Piecewise".into(),
                     Some(ClosedForm::NegMod(_, _, _)) => "Rec: step uses acc, NegMod".into(),
                     Some(ClosedForm::Periodic(_)) => "Rec: step uses acc, Periodic".into(),
-
+                    Some(ClosedForm::Exponential(_)) => "Rec: step uses acc, Exponential".into(),
                 }
             }
         }
@@ -385,7 +385,7 @@ fn holdout_reason(grf: &Grf) -> String {
                     Some(ClosedForm::Affine(_)) => {}
                     Some(ClosedForm::Polynomial(_)) => return "Comp: arg is Polynomial".into(),
                     Some(ClosedForm::Periodic(_)) => return "Comp: arg is Periodic".into(),
-
+                    Some(ClosedForm::Exponential(_)) => return "Comp: arg is Exponential".into(),
                 }
             }
             match h.closed_form() {
@@ -395,7 +395,7 @@ fn holdout_reason(grf: &Grf) -> String {
                 Some(ClosedForm::Affine(_)) => "Comp: all affine (unexpected)".into(),
                 Some(ClosedForm::Polynomial(_)) => "Comp: head is Polynomial".into(),
                 Some(ClosedForm::Periodic(_)) => "Comp: Periodic".into(),
-
+                Some(ClosedForm::Exponential(_)) => "Comp: head is Exponential".into(),
             }
         }
         _ => "atom (unexpected)".into(),

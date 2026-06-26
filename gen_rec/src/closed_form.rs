@@ -237,47 +237,35 @@ impl PolynomialFn {
 /// When `closed_form_of(grf)` returns `Some(sem)`, evaluating `sem.eval(args)` gives exactly
 /// the same result as simulating `grf` on those args and is guaranteed to be total.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct IteratedFn {
+pub struct ExponentialFn {
     pub arity: usize,
-    pub iter_arg: usize,
-    pub base: Box<ClosedForm>,
-    pub step: Box<ClosedForm>,
+    pub exp_base: u64, // 'c' where c >= 2
+    pub exp_arg: usize, // The iteration counter 'n' (1-based index)
+    pub init_term: Box<ClosedForm>, // g(x), the initial accumulator value
+    pub affine_step: Box<AffineFn>, // A(x), the affine addition at each step
 }
 
-impl IteratedFn {
-    pub fn eval_with_budget(&self, args: &[u64], budget: &mut usize) -> Option<u64> {
-        assert_eq!(args.len(), self.arity);
-        let k = args[self.iter_arg - 1];
-
-        let mut base_args = args.to_vec();
-        base_args.remove(self.iter_arg - 1);
-        let mut acc = self.base.eval_with_budget(&base_args, budget)?;
-
-        let mut step_args = vec![0; self.arity];
-        step_args[0] = acc;
-        step_args[1..].copy_from_slice(&base_args);
-
-        for _ in 0..k {
-            if *budget == 0 {
-                return None;
-            }
-            *budget -= 1;
-            step_args[0] = acc;
-            acc = self.step.eval_with_budget(&step_args, budget)?;
-        }
-        Some(acc)
-    }
-
+impl ExponentialFn {
     pub fn eval(&self, args: &[u64]) -> Option<u64> {
-        self.eval_with_budget(args, &mut usize::MAX)
+        assert_eq!(args.len(), self.arity);
+        let n = args[self.exp_arg - 1];
+        let c = self.exp_base;
+        let c_n = c.checked_pow(n as u32)?;
+        let g_val = self.init_term.eval(args)?;
+        let a_val = self.affine_step.eval(args)?;
+        
+        let sum_term = a_val.checked_mul(c_n.checked_sub(1)?)?.checked_div(c - 1)?;
+        g_val.checked_mul(c_n)?.checked_add(sum_term)
     }
 
     pub fn lift(&self, arity: usize) -> Self {
-        IteratedFn {
+        assert!(arity >= self.arity);
+        ExponentialFn {
             arity,
-            iter_arg: self.iter_arg,
-            base: Box::new(self.base.lift(arity - 1)),
-            step: Box::new(self.step.lift(arity)),
+            exp_base: self.exp_base,
+            exp_arg: self.exp_arg,
+            init_term: Box::new(self.init_term.lift(arity)),
+            affine_step: Box::new(self.affine_step.lift(arity)),
         }
     }
 }
@@ -289,6 +277,7 @@ pub enum ClosedForm {
     Piecewise(PiecewiseFn),
     NegMod(AffineFn, AffineFn, AffineFn),
     Periodic(PeriodicFn),
+    Exponential(ExponentialFn),
 }
 
 impl ClosedForm {
@@ -317,6 +306,14 @@ impl ClosedForm {
                     .filter(|&c| c == 1)?;
                 Some(poly.affine_tail.coeffs[0] as i64)
             }
+            ClosedForm::Exponential(exp) => {
+                // Exponential is monotonic and grows much faster than linear.
+                // Its min diff from arg is just evaluated at n=0 or n=1 depending on the variable.
+                // For safety and simplicity, we can just say if the initial term has min diff, we can bound it.
+                // Actually, exponential grows so fast that it's always eventually > arg. 
+                // We'll just be conservative and return None for now unless we implement precise algebra.
+                None
+            }
             ClosedForm::Piecewise(pw) => {
                 if pw.branch_index == arg_idx {
                     // For zero_branch, arg_idx evaluates to 0. So self - arg = self - 0.
@@ -344,6 +341,7 @@ impl ClosedForm {
             ClosedForm::Piecewise(pw) => 1 + pw.zero_branch.ast_size() + pw.pos_branch.ast_size(),
             ClosedForm::Periodic(p) => 1 + p.branches.iter().map(|b| b.ast_size()).sum::<usize>(),
             ClosedForm::NegMod(_, _, _) => 4,
+            ClosedForm::Exponential(exp) => 1 + exp.init_term.ast_size(),
         }
     }
 
@@ -354,6 +352,7 @@ impl ClosedForm {
             ClosedForm::Piecewise(pw) => pw.arity,
             ClosedForm::NegMod(a1, _, _) => a1.arity,
             ClosedForm::Periodic(p) => p.arity,
+            ClosedForm::Exponential(exp) => exp.arity,
         }
     }
 
@@ -368,6 +367,7 @@ impl ClosedForm {
             match current {
                 ClosedForm::Affine(af) => return af.eval(&buf),
                 ClosedForm::Polynomial(poly) => return poly.eval(&buf),
+                ClosedForm::Exponential(exp) => return exp.eval(&buf),
                 ClosedForm::NegMod(a1, a2, a3) => {
                     let v1 = a1.eval(&buf)?;
                     let v2 = a2.eval(&buf)?;
@@ -429,6 +429,7 @@ impl ClosedForm {
                 ClosedForm::Affine(af) => {
                     // Evaluate at i=0. Non-negative coefficients mean f is non-decreasing
                     // in i, so f(0, outer) > 0 implies f(i, outer) > 0 for all i.
+                    // Even if af.eval overflows, the value is > 0, so it is guaranteed to diverge.
                     let mut full = Vec::with_capacity(outer.len() + 1);
                     full.push(0);
                     full.extend(outer.iter().cloned());
@@ -442,6 +443,15 @@ impl ClosedForm {
                     full.push(0);
                     full.extend(outer.iter().cloned());
                     return match poly.eval(&full) {
+                        Some(v) if v == 0 => SimResult::Value(0),
+                        _ => SimResult::Diverge,
+                    };
+                }
+                ClosedForm::Exponential(exp) => {
+                    let mut full = Vec::with_capacity(outer.len() + 1);
+                    full.push(0);
+                    full.extend(outer.iter().cloned());
+                    return match exp.eval(&full) {
                         Some(v) if v == 0 => SimResult::Value(0),
                         _ => SimResult::Diverge,
                     };
@@ -782,6 +792,7 @@ impl ClosedForm {
                 p.branch_index,
                 p.branches.iter().map(|b| Box::new(b.lift(arity))).collect(),
             ),
+            ClosedForm::Exponential(exp) => ClosedForm::Exponential(exp.lift(arity)),
         }
     }
 
@@ -794,6 +805,9 @@ impl ClosedForm {
             }
             ClosedForm::NegMod(_, _, _) => false,
             ClosedForm::Periodic(p) => p.branches.iter().all(|b| b.is_always_pos()),
+            ClosedForm::Exponential(exp) => {
+                exp.init_term.is_always_pos() || exp.affine_step.coeffs[0] > 0
+            }
         }
     }
 
@@ -857,19 +871,10 @@ impl ClosedForm {
                 }
             }
             ClosedForm::NegMod(_, _, _) => false,
+            ClosedForm::Exponential(exp) => exp.init_term.is_always_pos() || exp.affine_step.coeffs[0] > 0,
         }
     }
-    pub fn has_iterated(&self) -> bool {
-        match self {
-            ClosedForm::Affine(_) => false,
-            ClosedForm::Polynomial(_) => false,
-            ClosedForm::Piecewise(pw) => {
-                pw.zero_branch.has_iterated() || pw.pos_branch.has_iterated()
-            }
-            ClosedForm::NegMod(_, _, _) => false,
-            ClosedForm::Periodic(p) => p.branches.iter().any(|b| b.has_iterated()),
-        }
-    }
+
 
     pub fn is_always_zero(&self) -> bool {
         match self {
@@ -883,6 +888,7 @@ impl ClosedForm {
             }
             ClosedForm::NegMod(_, _, _) => false,
             ClosedForm::Periodic(p) => p.branches.iter().all(|b| b.is_always_zero()),
+            ClosedForm::Exponential(_) => false,
         }
     }
 }
@@ -958,8 +964,32 @@ pub fn closed_form_of_rec_internal(
         sem_h
     );
     // Case A & D: h(n, acc, rest) = j + c*n + acc  (acc-coeff=1, rest-coeffs=0)
+    // OR Exponential case: acc-coeff >= 2, n-coeff = 0
     if let ClosedForm::Affine(af_h) = sem_h {
-        if af_h.coeffs[2] == 1 && af_h.coeffs[3..].iter().all(|&c| c == 0) {
+        let c_acc = af_h.coeffs[2];
+        let c_n = af_h.coeffs[1];
+
+        if c_acc >= 2 && c_n == 0 {
+            let mut step_coeffs = Vec::with_capacity(k_outer + 1);
+            step_coeffs.push(af_h.coeffs[0]); // c_0
+            step_coeffs.push(0); // coeff for n
+            step_coeffs.extend_from_slice(&af_h.coeffs[3..]);
+
+            let affine_step = Box::new(AffineFn {
+                arity: k_outer,
+                coeffs: step_coeffs,
+            });
+
+            return Some(ClosedForm::Exponential(ExponentialFn {
+                arity: k_outer,
+                exp_base: c_acc,
+                exp_arg: 1, // n is argument 1
+                init_term: Box::new(prepend_arg(&sem_g)),
+                affine_step,
+            }));
+        }
+
+        if c_acc == 1 && af_h.coeffs[3..].iter().all(|&c| c == 0) {
             if let ClosedForm::Affine(g_af) = sem_g {
                 let c_0 = af_h.coeffs[0];
                 let c_1 = af_h.coeffs[1];
@@ -1473,6 +1503,11 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
                     .iter()
                     .all(|b| closed_form_ignores_arg(b, j_inner))
             }
+        }
+        ClosedForm::Exponential(exp) => {
+            idx != exp.exp_arg
+                && closed_form_ignores_arg(&exp.init_term, idx)
+                && affine_ignores_arg(&exp.affine_step, idx)
         }
     }
 }
@@ -2003,6 +2038,7 @@ fn compose_impl(
             let c3 = compose_affine(a3, &inners_af)?;
             Some(make_neg_mod(c1, c2, c3))
         }
+        ClosedForm::Exponential(_) => return None,
     }
 }
 
@@ -2098,6 +2134,58 @@ pub fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 })
             }
         }
+        ClosedForm::Exponential(exp) => {
+            if j == exp.exp_arg {
+                zero_face_at(&exp.init_term, j)
+            } else {
+                ClosedForm::Exponential(ExponentialFn {
+                    arity: exp.arity - 1,
+                    exp_base: exp.exp_base,
+                    exp_arg: if exp.exp_arg > j { exp.exp_arg - 1 } else { exp.exp_arg },
+                    init_term: Box::new(zero_face_at(&exp.init_term, j)),
+                    affine_step: Box::new(match zero_face_at(&ClosedForm::Affine(*exp.affine_step.clone()), j) {
+                        ClosedForm::Affine(af) => af,
+                        _ => unreachable!(),
+                    }),
+                })
+            }
+        }
+    }
+}
+
+fn mul_const_add_affine(sem: &ClosedForm, c: u64, a: &AffineFn) -> ClosedForm {
+    match sem {
+        ClosedForm::Affine(af) => {
+            let mut new_coeffs = af.coeffs.clone();
+            for i in 0..new_coeffs.len() {
+                new_coeffs[i] = new_coeffs[i].checked_mul(c).unwrap().checked_add(a.coeffs[i]).unwrap();
+            }
+            ClosedForm::Affine(AffineFn { arity: af.arity, coeffs: new_coeffs })
+        }
+        ClosedForm::Piecewise(pw) => ClosedForm::Piecewise(PiecewiseFn {
+            arity: pw.arity,
+            branch_index: pw.branch_index,
+            zero_branch: Box::new(mul_const_add_affine(&pw.zero_branch, c, a)),
+            pos_branch: Box::new(mul_const_add_affine(&pw.pos_branch, c, a)),
+        }),
+        ClosedForm::Periodic(p) => ClosedForm::Periodic(PeriodicFn {
+            arity: p.arity,
+            branch_index: p.branch_index,
+            branches: p.branches.iter().map(|b| Box::new(mul_const_add_affine(b, c, a))).collect(),
+        }),
+        ClosedForm::Polynomial(poly) => {
+            let mut new_poly = poly.clone();
+            new_poly.affine_tail = Box::new(match mul_const_add_affine(&ClosedForm::Affine(*poly.affine_tail.clone()), c, a) {
+                ClosedForm::Affine(af) => af,
+                _ => unreachable!(),
+            });
+            for i in 0..new_poly.poly_coeffs.len() {
+                new_poly.poly_coeffs[i] = new_poly.poly_coeffs[i].checked_mul(c).unwrap();
+            }
+            ClosedForm::Polynomial(new_poly)
+        }
+        ClosedForm::NegMod(_, _, _) => unimplemented!("mul_const_add_affine for NegMod"),
+        ClosedForm::Exponential(_) => unimplemented!("mul_const_add_affine for Exponential"),
     }
 }
 
@@ -2174,6 +2262,28 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 make_periodic(p.arity, p.branch_index, new_branches)
             }
         }
+        ClosedForm::Exponential(exp) => {
+            if j == exp.exp_arg {
+                ClosedForm::Exponential(ExponentialFn {
+                    arity: exp.arity,
+                    exp_base: exp.exp_base,
+                    exp_arg: exp.exp_arg,
+                    init_term: Box::new(mul_const_add_affine(&exp.init_term, exp.exp_base, &exp.affine_step)),
+                    affine_step: Box::new(*exp.affine_step.clone()),
+                })
+            } else {
+                ClosedForm::Exponential(ExponentialFn {
+                    arity: exp.arity,
+                    exp_base: exp.exp_base,
+                    exp_arg: exp.exp_arg,
+                    init_term: Box::new(pos_face_at(&exp.init_term, j)),
+                    affine_step: Box::new(match pos_face_at(&ClosedForm::Affine(*exp.affine_step.clone()), j) {
+                        ClosedForm::Affine(af) => af,
+                        _ => unreachable!(),
+                    }),
+                })
+            }
+        }
     }
 }
 
@@ -2243,6 +2353,13 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
             poly.poly_coeffs.clone(),
             Box::new(prepend_arg_affine(&poly.affine_tail)),
         )),
+        ClosedForm::Exponential(exp) => ClosedForm::Exponential(ExponentialFn {
+            arity: exp.arity + 1,
+            exp_base: exp.exp_base,
+            exp_arg: exp.exp_arg + 1,
+            init_term: Box::new(prepend_arg(&exp.init_term)),
+            affine_step: Box::new(prepend_arg_affine(&exp.affine_step)),
+        }),
     }
 }
 
@@ -2279,6 +2396,7 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
         }
         ClosedForm::NegMod(_, _, _) => false,
         ClosedForm::Periodic(_) => false,
+        ClosedForm::Exponential(_) => false,
     }
 }
 
@@ -2428,6 +2546,19 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
                     p.branch_index
                 };
                 Some(make_periodic(p.arity - 1, new_bi, new_branches))
+            }
+        }
+        ClosedForm::Exponential(exp) => {
+            if idx == exp.exp_arg {
+                None
+            } else {
+                Some(ClosedForm::Exponential(ExponentialFn {
+                    arity: exp.arity - 1,
+                    exp_base: exp.exp_base,
+                    exp_arg: if exp.exp_arg > idx { exp.exp_arg - 1 } else { exp.exp_arg },
+                    init_term: Box::new(drop_arg(&exp.init_term, idx)?),
+                    affine_step: Box::new(drop_arg_affine(&exp.affine_step, idx)?),
+                }))
             }
         }
     }
@@ -2742,6 +2873,13 @@ impl ClosedForm {
                     terms.join("+")
                 }
             }
+            ClosedForm::Exponential(exp) => {
+                let n = &vars[exp.exp_arg - 1];
+                let c = exp.exp_base;
+                let g = exp.init_term.format_inline(vars);
+                let a = ClosedForm::Affine(*exp.affine_step.clone()).format_inline(vars);
+                format!("({}^{} * {} + ({}^{} - 1)/{} * {})", c, n, g, c, n, c-1, a)
+            }
         }
     }
 
@@ -2882,6 +3020,19 @@ impl ClosedForm {
                     a1.format_expr(args),
                     a2.format_expr(args),
                     s3
+                );
+            }
+            ClosedForm::Exponential(exp) => {
+                let lhs: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(j, name)| Self::format_lhs_arg(name, depths[j], closed_form_ignores_arg(self, j + 1)))
+                    .collect();
+                println!(
+                    "  {}({}) = {}",
+                    fn_name,
+                    lhs.join(", "),
+                    self.format_inline(args)
                 );
             }
         }
@@ -3540,6 +3691,28 @@ mod tests {
         // It relies on Case C parsing of recursive steps into NegMod(af1, n, acc).
         check_vs_sim("R(S, R(P(2,2), R(R(P(2,1), P(4,1)), P(5,2))))", 10);
     }
+    #[test]
+    fn test_exponential_fn() {
+        // Pow2_S(n, x) = 2^n * (x+1). 
+        // Built as R(S, C(C(Add, P(1,1), P(1,1)), P(3,2)))
+        // Add = R(P(1,1), C(S, P(3,2)))
+        // We evaluate it up to n=4, x=4
+        check_vs_sim("R(S, C(C(R(P(1,1), C(S, P(3,2))), P(1,1), P(1,1)), P(3,2)))", 4);
+
+        // Exponential with side arguments in the step:
+        // h(n, acc, x) = 3 * acc + x
+        // We use Tri = C(Add, C(Add, P(1,1), P(1,1)), P(1,1))
+        // h = C(Add, C(Tri, P(3,2)), P(3,3))
+        // f = R(Z1, h)
+        // Tri is C(R(P(1,1), C(S, P(3,2))), C(R(P(1,1), C(S, P(3,2))), P(1,1), P(1,1)), P(1,1))
+        // Let's just use string replacement for readability
+        let add = "R(P(1,1), C(S, P(3,2)))";
+        let tri = format!("C({add}, C({add}, P(1,1), P(1,1)), P(1,1))");
+        let h = format!("C({add}, C({tri}, P(3,2)), P(3,3))");
+        let f = format!("R(Z1, {h})");
+        
+        check_vs_sim(&f, 3); // 3^3 is 27, easy to fit
+    }
 }
 
 impl AffineFn {
@@ -3647,6 +3820,20 @@ impl ClosedForm {
                 let n2 = a2.partial_eval_first_arg(val)?;
                 let n3 = a3.partial_eval_first_arg(val)?;
                 Some(ClosedForm::NegMod(n1, n2, n3))
+            }
+            ClosedForm::Exponential(exp) => {
+                let mut new_exp = exp.clone();
+                if exp.exp_arg == 1 {
+                    return None;
+                }
+                new_exp.arity -= 1;
+                new_exp.exp_arg -= 1;
+                new_exp.init_term = Box::new(exp.init_term.partial_eval_first_arg(val)?);
+                new_exp.affine_step = Box::new(match ClosedForm::Affine(*exp.affine_step.clone()).partial_eval_first_arg(val)? {
+                    ClosedForm::Affine(af) => af,
+                    _ => return None,
+                });
+                Some(ClosedForm::Exponential(new_exp))
             }
         }
     }

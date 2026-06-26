@@ -186,9 +186,7 @@ impl Program {
     pub fn compile_node(grf: &Grf, opts: SimOpts) -> OpCode {
         if opts.use_closed_form {
             if let Some(cf) = grf.closed_form() {
-                if !cf.has_iterated() {
-                    return OpCode::ClosedForm(cf.clone());
-                }
+                return OpCode::ClosedForm(cf.clone());
             }
         }
 
@@ -760,11 +758,12 @@ mod tests {
     #[test]
     fn test_out_of_steps() {
         // R where h = C(Plus, P(2,2), P(2,2)) doubles the accumulator each step.
-        // Geometric growth is not yet fast-forwarded (waiting for Iterated),
-        // and each call to Plus costs O(acc) steps, making the total exponential.
+        // If we disable closed_form fast-forwarding, each call to Plus costs O(acc) steps, 
+        // making the total structural simulation exponential and easily exhausting the budget.
         let r = grf!("R(C(S, Z0), C(R(P(1,1), C(S, P(3,2))), P(2,2), P(2,2)))");
-        let (result, steps) = simulate(&r, &[1_000], 50);
-        println!("RESULT IS: {:?}", result);
+        let mut no_cf = SimOpts::default();
+        no_cf.use_closed_form = false;
+        let (result, steps) = simulate_opts(&r, &[1_000], Some(50), no_cf);
         assert!(matches!(result, SimResult::OutOfSteps));
         assert!(steps.sim >= 50);
     }

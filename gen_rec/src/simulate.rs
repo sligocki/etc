@@ -758,7 +758,7 @@ mod tests {
     #[test]
     fn test_out_of_steps() {
         // R where h = C(Plus, P(2,2), P(2,2)) doubles the accumulator each step.
-        // If we disable closed_form fast-forwarding, each call to Plus costs O(acc) steps, 
+        // If we disable closed_form fast-forwarding, each call to Plus costs O(acc) steps,
         // making the total structural simulation exponential and easily exhausting the budget.
         let r = grf!("R(C(S, Z0), C(R(P(1,1), C(S, P(3,2))), P(2,2), P(2,2)))");
         let mut no_cf = SimOpts::default();

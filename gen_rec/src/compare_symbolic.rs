@@ -104,18 +104,30 @@ pub fn compare_strict(a: &ClosedForm, b: &ClosedForm) -> PointwiseOrder {
             let step_cmp = compare_affine(&e1.affine_step, &e2.affine_step);
 
             if e1.exp_base >= e2.exp_base {
-                if matches!(init_cmp, PointwiseOrder::GreaterEqual | PointwiseOrder::Equal) &&
-                   matches!(step_cmp, PointwiseOrder::GreaterEqual | PointwiseOrder::Equal) {
-                    if e1.exp_base == e2.exp_base && init_cmp == PointwiseOrder::Equal && step_cmp == PointwiseOrder::Equal {
+                if matches!(
+                    init_cmp,
+                    PointwiseOrder::GreaterEqual | PointwiseOrder::Equal
+                ) && matches!(
+                    step_cmp,
+                    PointwiseOrder::GreaterEqual | PointwiseOrder::Equal
+                ) {
+                    if e1.exp_base == e2.exp_base
+                        && init_cmp == PointwiseOrder::Equal
+                        && step_cmp == PointwiseOrder::Equal
+                    {
                         return PointwiseOrder::Equal;
                     }
                     return PointwiseOrder::GreaterEqual;
                 }
             }
             if e1.exp_base <= e2.exp_base {
-                if matches!(init_cmp, PointwiseOrder::LessEqual | PointwiseOrder::Equal) &&
-                   matches!(step_cmp, PointwiseOrder::LessEqual | PointwiseOrder::Equal) {
-                    if e1.exp_base == e2.exp_base && init_cmp == PointwiseOrder::Equal && step_cmp == PointwiseOrder::Equal {
+                if matches!(init_cmp, PointwiseOrder::LessEqual | PointwiseOrder::Equal)
+                    && matches!(step_cmp, PointwiseOrder::LessEqual | PointwiseOrder::Equal)
+                {
+                    if e1.exp_base == e2.exp_base
+                        && init_cmp == PointwiseOrder::Equal
+                        && step_cmp == PointwiseOrder::Equal
+                    {
                         return PointwiseOrder::Equal;
                     }
                     return PointwiseOrder::LessEqual;
@@ -389,8 +401,6 @@ pub enum SymVal {
     FuncApp(Grf, Vec<SymVal>),
 }
 
-
-
 /// Computes strict lower and upper bounds using the `Knuth10` base-10 up-arrow representation
 /// for the exact value of the affine function `func` iterated `k` times on input `x`.
 /// Since affine iteration represents standard exponential growth, it naturally
@@ -541,7 +551,10 @@ fn compute_bounds_inner(sym: &SymVal) -> Option<(Knuth10, Knuth10)> {
                         let min_bound = n_min;
 
                         let max_bound = match n_max {
-                            Knuth10::Val(v) => Knuth10::UpArrow(1, Box::new(Knuth10::UpArrow(1, Box::new(Knuth10::Val(v))))),
+                            Knuth10::Val(v) => Knuth10::UpArrow(
+                                1,
+                                Box::new(Knuth10::UpArrow(1, Box::new(Knuth10::Val(v)))),
+                            ),
                             Knuth10::UpArrow(levels, inner) => Knuth10::UpArrow(levels + 1, inner),
                         };
 
@@ -907,6 +920,4 @@ mod tests {
         // Same for p1 vs p3
         assert_eq!(compare_strict(&p1, &p3), PointwiseOrder::Uncertain);
     }
-
-
 }

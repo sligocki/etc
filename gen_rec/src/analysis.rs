@@ -359,15 +359,6 @@ pub(crate) fn is_monus_descent_trap(h: &Grf, gs: &[Grf]) -> bool {
         if diff + d_g == 0 || diff + d_g == -1 {
             let zero_branch = match cf_h {
                 ClosedForm::Piecewise(pw) => Some(&*pw.zero_branch),
-                ClosedForm::Iterated(it) => {
-                    // IteratedFn iterates over `iter_arg`.
-                    // We need it to iterate over arg 1 (which is `n`).
-                    if it.iter_arg == 1 {
-                        Some(&*it.base)
-                    } else {
-                        None
-                    }
-                }
                 _ => None,
             };
 

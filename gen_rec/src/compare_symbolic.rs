@@ -47,28 +47,6 @@ pub fn compare_strict(a: &ClosedForm, b: &ClosedForm) -> PointwiseOrder {
 
     match (a, b) {
         (ClosedForm::Affine(af1), ClosedForm::Affine(af2)) => compare_affine(af1, af2),
-        (ClosedForm::Iterated(it1), ClosedForm::Iterated(it2)) => {
-            if it1.arity != it2.arity {
-                return PointwiseOrder::Uncertain;
-            }
-            let base_cmp = compare_strict(&it1.base, &it2.base);
-            let step_cmp = compare_strict(&it1.step, &it2.step);
-
-            if base_cmp == PointwiseOrder::Equal && step_cmp == PointwiseOrder::Equal {
-                PointwiseOrder::Equal
-            } else if (base_cmp == PointwiseOrder::GreaterEqual
-                || base_cmp == PointwiseOrder::Equal)
-                && (step_cmp == PointwiseOrder::GreaterEqual || step_cmp == PointwiseOrder::Equal)
-            {
-                PointwiseOrder::GreaterEqual
-            } else if (base_cmp == PointwiseOrder::LessEqual || base_cmp == PointwiseOrder::Equal)
-                && (step_cmp == PointwiseOrder::LessEqual || step_cmp == PointwiseOrder::Equal)
-            {
-                PointwiseOrder::LessEqual
-            } else {
-                PointwiseOrder::Uncertain
-            }
-        }
         (ClosedForm::Polynomial(p1), ClosedForm::Polynomial(p2)) => {
             if p1.arity != p2.arity || p1.poly_arg != p2.poly_arg {
                 return PointwiseOrder::Uncertain;
@@ -119,8 +97,6 @@ pub fn compare_strict(a: &ClosedForm, b: &ClosedForm) -> PointwiseOrder {
             }
         }
         // Basic cross-type fallback checks
-        (ClosedForm::Affine(_), ClosedForm::Iterated(_)) => PointwiseOrder::LessEqual,
-        (ClosedForm::Iterated(_), ClosedForm::Affine(_)) => PointwiseOrder::GreaterEqual,
         (ClosedForm::Affine(_), ClosedForm::Polynomial(_)) => PointwiseOrder::Uncertain, // Strict bounds cross often
         (ClosedForm::Polynomial(_), ClosedForm::Affine(_)) => PointwiseOrder::Uncertain,
         // Add more recursive structural comparisons here
@@ -517,30 +493,6 @@ fn compute_bounds_inner(sym: &SymVal) -> Option<(Knuth10, Knuth10)> {
             }
             if let Some(cf) = grf.closed_form() {
                 match cf {
-                    ClosedForm::Iterated(it) => {
-                        if args.len() >= 1 {
-                            let (k_min, k_max) = compute_bounds(&args[0])?;
-                            let mut const_args = Vec::with_capacity(args.len() - 1);
-                            for a in &args[1..] {
-                                if let SymVal::Const(c) = a {
-                                    const_args.push(*c);
-                                } else {
-                                    return None;
-                                }
-                            }
-                            if let Some(x) = it.base.eval(&const_args) {
-                                match it.step.as_ref() {
-                                    ClosedForm::Polynomial(poly) => {
-                                        return bounds_for_iter_poly(poly, &k_min, &k_max, x);
-                                    }
-                                    ClosedForm::Affine(affine) => {
-                                        return bounds_for_affine(affine, &k_min, &k_max, x);
-                                    }
-                                    _ => return None,
-                                }
-                            }
-                        }
-                    }
                     ClosedForm::Polynomial(poly) => {
                         let (n_min, n_max) = compute_bounds(&args[0])?;
                         let d = poly.degree() as f64;
@@ -764,20 +716,6 @@ pub fn eval_sym(cf: &ClosedForm, args: &[SymVal]) -> Option<SymVal> {
     // 2. Symbolic unrolling of shallow loops.
     // If it's an Iterated function, and the iteration count is a small constant,
     // we unroll the loop completely to evaluate the base state of the inner functions!
-    if let ClosedForm::Iterated(it) = cf {
-        if let SymVal::Const(iters) = args[0] {
-            if iters <= 10 {
-                // Threshold for "small" number of iterations
-                let mut acc = eval_sym(&it.base, &args[1..])?;
-                for _ in 0..iters {
-                    let mut step_args = vec![acc];
-                    step_args.extend_from_slice(&args[1..]);
-                    acc = eval_sym(&it.step, &step_args)?;
-                }
-                return Some(acc);
-            }
-        }
-    }
 
     // 3. Fallback: cannot evaluate further symbolically inside ClosedForm.
     None
@@ -946,54 +884,5 @@ mod tests {
         assert_eq!(compare_strict(&p1, &p3), PointwiseOrder::Uncertain);
     }
 
-    fn test_compare_iterated_strict_finite_crossing() {
-        // f1 = R(100, \x. x+1). Base=100, Step=x+1
-        let f1 = ClosedForm::Iterated(IteratedFn {
-            arity: 2,
-            base: Box::new(ClosedForm::Affine(AffineFn {
-                arity: 1,
-                coeffs: vec![100],
-            })),
-            step: Box::new(ClosedForm::Affine(AffineFn {
-                arity: 2,
-                coeffs: vec![1, 1, 0],
-            })), // acc + 1
-        });
 
-        // f2 = R(10, \x. x+2). Base=10, Step=x+2
-        let f2 = ClosedForm::Iterated(IteratedFn {
-            arity: 2,
-            base: Box::new(ClosedForm::Affine(AffineFn {
-                arity: 1,
-                coeffs: vec![10],
-            })),
-            step: Box::new(ClosedForm::Affine(AffineFn {
-                arity: 2,
-                coeffs: vec![2, 1, 0],
-            })), // acc + 2
-        });
-
-        // Because f1 has a larger base but smaller step than f2, they cross.
-        // Asymptotically, f2 will eventually outgrow f1 (e.g. for y=100).
-        // But for small y (e.g. y=1), f1(1) = 101, whereas f2(1) = 12. So f1 > f2.
-        // Strict ordering MUST recognize they cross and return Uncertain!
-        assert_eq!(compare_strict(&f1, &f2), PointwiseOrder::Uncertain);
-
-        // Verify that if both base and step are strictly larger, it works.
-        // f3 = R(10, \x. x+1)
-        let f3 = ClosedForm::Iterated(IteratedFn {
-            arity: 2,
-            base: Box::new(ClosedForm::Affine(AffineFn {
-                arity: 1,
-                coeffs: vec![10],
-            })),
-            step: Box::new(ClosedForm::Affine(AffineFn {
-                arity: 2,
-                coeffs: vec![1, 1, 0],
-            })),
-        });
-
-        assert_eq!(compare_strict(&f3, &f1), PointwiseOrder::LessEqual); // 10 < 100, x+1 == x+1
-        assert_eq!(compare_strict(&f3, &f2), PointwiseOrder::LessEqual); // 10 == 10, x+1 < x+2
-    }
 }

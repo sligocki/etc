@@ -289,7 +289,6 @@ pub enum ClosedForm {
     Piecewise(PiecewiseFn),
     NegMod(AffineFn, AffineFn, AffineFn),
     Periodic(PeriodicFn),
-    Iterated(IteratedFn),
 }
 
 impl ClosedForm {
@@ -335,17 +334,6 @@ impl ClosedForm {
                     None
                 }
             }
-            ClosedForm::Iterated(it) => {
-                if arg_idx == it.iter_arg - 1 {
-                    return None;
-                }
-                let base_arg_idx = if arg_idx < it.iter_arg - 1 { arg_idx } else { arg_idx - 1 };
-                if it.step.min_diff_from_arg(0).unwrap_or(-1) >= 0 {
-                    it.base.min_diff_from_arg(base_arg_idx)
-                } else {
-                    None
-                }
-            }
             _ => None,
         }
     }
@@ -356,7 +344,6 @@ impl ClosedForm {
             ClosedForm::Piecewise(pw) => 1 + pw.zero_branch.ast_size() + pw.pos_branch.ast_size(),
             ClosedForm::Periodic(p) => 1 + p.branches.iter().map(|b| b.ast_size()).sum::<usize>(),
             ClosedForm::NegMod(_, _, _) => 4,
-            ClosedForm::Iterated(it) => 1 + it.base.ast_size() + it.step.ast_size(),
         }
     }
 
@@ -367,7 +354,6 @@ impl ClosedForm {
             ClosedForm::Piecewise(pw) => pw.arity,
             ClosedForm::NegMod(a1, _, _) => a1.arity,
             ClosedForm::Periodic(p) => p.arity,
-            ClosedForm::Iterated(it) => it.arity,
         }
     }
 
@@ -412,7 +398,6 @@ impl ClosedForm {
                         current = &pw.pos_branch;
                     }
                 }
-                ClosedForm::Iterated(it) => return it.eval_with_budget(&buf, budget),
             }
         }
     }
@@ -780,7 +765,6 @@ impl ClosedForm {
                         // Continue loop with updated cf and outer.
                     }
                 }
-                ClosedForm::Iterated(_) => return SimResult::OutOfSteps,
             }
         }
     }
@@ -798,7 +782,6 @@ impl ClosedForm {
                 p.branch_index,
                 p.branches.iter().map(|b| Box::new(b.lift(arity))).collect(),
             ),
-            ClosedForm::Iterated(it) => ClosedForm::Iterated(it.lift(arity)),
         }
     }
 
@@ -811,7 +794,6 @@ impl ClosedForm {
             }
             ClosedForm::NegMod(_, _, _) => false,
             ClosedForm::Periodic(p) => p.branches.iter().all(|b| b.is_always_pos()),
-            ClosedForm::Iterated(it) => it.base.is_always_pos() && it.step.is_always_pos(),
         }
     }
 
@@ -875,7 +857,6 @@ impl ClosedForm {
                 }
             }
             ClosedForm::NegMod(_, _, _) => false,
-            ClosedForm::Iterated(_) => false,
         }
     }
     pub fn has_iterated(&self) -> bool {
@@ -887,7 +868,6 @@ impl ClosedForm {
             }
             ClosedForm::NegMod(_, _, _) => false,
             ClosedForm::Periodic(p) => p.branches.iter().any(|b| b.has_iterated()),
-            ClosedForm::Iterated(_) => true,
         }
     }
 
@@ -903,7 +883,6 @@ impl ClosedForm {
             }
             ClosedForm::NegMod(_, _, _) => false,
             ClosedForm::Periodic(p) => p.branches.iter().all(|b| b.is_always_zero()),
-            ClosedForm::Iterated(it) => it.base.is_always_zero() && it.step.is_always_zero(),
         }
     }
 }
@@ -1436,18 +1415,7 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
-    // Fallback 2: Iterated form (Case G)
-    // h ignores counter (arg 1) -> h(n, acc, rest) = h(acc, rest).
-    if closed_form_ignores_arg(sem_h, 1) {
-        if let Some(h_prime) = drop_arg(sem_h, 1) {
-            return Some(ClosedForm::Iterated(IteratedFn {
-                arity: k_outer,
-                iter_arg: 1,
-                base: Box::new(sem_g.clone()),
-                step: Box::new(h_prime),
-            }));
-        }
-    }
+
 
     None
 }
@@ -1504,17 +1472,6 @@ pub fn closed_form_ignores_arg(sem: &ClosedForm, idx: usize) -> bool {
                 p.branches
                     .iter()
                     .all(|b| closed_form_ignores_arg(b, j_inner))
-            }
-        }
-        ClosedForm::Iterated(it) => {
-            if idx == it.iter_arg {
-                is_proj_of(&it.step) == Some(1)
-            } else {
-                closed_form_ignores_arg(&it.base, if idx < it.iter_arg { idx } else { idx - 1 })
-                    && closed_form_ignores_arg(
-                        &it.step,
-                        if idx < it.iter_arg { idx + 1 } else { idx },
-                    )
             }
         }
     }
@@ -2046,7 +2003,6 @@ fn compose_impl(
             let c3 = compose_affine(a3, &inners_af)?;
             Some(make_neg_mod(c1, c2, c3))
         }
-        ClosedForm::Iterated(_) => None,
     }
 }
 
@@ -2142,28 +2098,6 @@ pub fn zero_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 })
             }
         }
-        ClosedForm::Iterated(it) => {
-            if j == 1 {
-                *it.base.clone()
-            } else {
-                ClosedForm::Iterated(IteratedFn {
-                    arity: it.arity - 1,
-                    iter_arg: if j < it.iter_arg {
-                        it.iter_arg - 1
-                    } else {
-                        it.iter_arg
-                    },
-                    base: Box::new(zero_face_at(
-                        &it.base,
-                        if j < it.iter_arg { j } else { j - 1 },
-                    )),
-                    step: Box::new(zero_face_at(
-                        &it.step,
-                        if j < it.iter_arg { j + 1 } else { j },
-                    )),
-                })
-            }
-        }
     }
 }
 
@@ -2240,25 +2174,6 @@ fn pos_face_at(sem: &ClosedForm, j: usize) -> ClosedForm {
                 make_periodic(p.arity, p.branch_index, new_branches)
             }
         }
-        ClosedForm::Iterated(it) => {
-            if j == 1 {
-                // HACK: return original to avoid panic. Evaluating this in search is fine for pruning.
-                ClosedForm::Iterated(it.clone())
-            } else {
-                ClosedForm::Iterated(IteratedFn {
-                    arity: it.arity,
-                    iter_arg: it.iter_arg,
-                    base: Box::new(pos_face_at(
-                        &it.base,
-                        if j < it.iter_arg { j } else { j - 1 },
-                    )),
-                    step: Box::new(pos_face_at(
-                        &it.step,
-                        if j < it.iter_arg { j + 1 } else { j },
-                    )),
-                })
-            }
-        }
     }
 }
 
@@ -2328,12 +2243,6 @@ fn prepend_arg(sem: &ClosedForm) -> ClosedForm {
             poly.poly_coeffs.clone(),
             Box::new(prepend_arg_affine(&poly.affine_tail)),
         )),
-        ClosedForm::Iterated(it) => ClosedForm::Iterated(IteratedFn {
-            arity: it.arity + 1,
-            iter_arg: it.iter_arg + 1,
-            base: Box::new(prepend_arg(&it.base)),
-            step: Box::new(prepend_arg(&it.step)),
-        }),
     }
 }
 
@@ -2370,7 +2279,6 @@ fn h_prime_is_stable(h_prime: &ClosedForm) -> bool {
         }
         ClosedForm::NegMod(_, _, _) => false,
         ClosedForm::Periodic(_) => false,
-        ClosedForm::Iterated(_) => false,
     }
 }
 
@@ -2520,28 +2428,6 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
                     p.branch_index
                 };
                 Some(make_periodic(p.arity - 1, new_bi, new_branches))
-            }
-        }
-        ClosedForm::Iterated(it) => {
-            if idx == 1 {
-                Some(*it.base.clone())
-            } else {
-                Some(ClosedForm::Iterated(IteratedFn {
-                    arity: it.arity - 1,
-                    iter_arg: if idx < it.iter_arg {
-                        it.iter_arg - 1
-                    } else {
-                        it.iter_arg
-                    },
-                    base: Box::new(drop_arg(
-                        &it.base,
-                        if idx < it.iter_arg { idx } else { idx - 1 },
-                    )?),
-                    step: Box::new(drop_arg(
-                        &it.step,
-                        if idx < it.iter_arg { idx + 1 } else { idx },
-                    )?),
-                }))
             }
         }
     }
@@ -2856,20 +2742,6 @@ impl ClosedForm {
                     terms.join("+")
                 }
             }
-            ClosedForm::Iterated(it) => {
-                let mut base_vars = vars.to_vec();
-                base_vars.remove(it.iter_arg - 1);
-
-                let mut step_vars = vec!["acc".to_string()];
-                step_vars.extend_from_slice(&base_vars);
-
-                format!(
-                    "Iterated(k={}; base={}; step={})",
-                    vars[it.iter_arg - 1],
-                    it.base.format_inline(&base_vars),
-                    it.step.format_inline(&step_vars)
-                )
-            }
         }
     }
 
@@ -3010,28 +2882,6 @@ impl ClosedForm {
                     a1.format_expr(args),
                     a2.format_expr(args),
                     s3
-                );
-            }
-            ClosedForm::Iterated(it) => {
-                let k_var = &args[it.iter_arg - 1];
-                let mut base_vars = args.to_vec();
-                base_vars.remove(it.iter_arg - 1);
-                let mut base_depths = depths.to_vec();
-                base_depths.remove(it.iter_arg - 1);
-                let mut base_name = fn_name.to_string();
-                base_name.push_str(".base");
-                it.base.emit_rules(&base_name, &base_vars, &base_depths);
-                let mut step_vars = vec!["acc".to_string()];
-                step_vars.extend_from_slice(&base_vars);
-                let mut step_depths = vec![0];
-                step_depths.extend_from_slice(&base_depths);
-                let mut step_name = fn_name.to_string();
-                step_name.push_str(".step");
-                it.step.emit_rules(&step_name, &step_vars, &step_depths);
-                println!("  {}({}=0, ...) = {}(...)", fn_name, k_var, base_name);
-                println!(
-                    "  {}({}, ...) = {}({}({}-1, ...), ...)",
-                    fn_name, k_var, step_name, fn_name, k_var
                 );
             }
         }
@@ -3798,64 +3648,11 @@ impl ClosedForm {
                 let n3 = a3.partial_eval_first_arg(val)?;
                 Some(ClosedForm::NegMod(n1, n2, n3))
             }
-            ClosedForm::Iterated(it) => it.partial_eval_first_arg(val),
         }
     }
 }
 
-impl IteratedFn {
-    pub fn partial_eval_first_arg(&self, val: u64) -> Option<ClosedForm> {
-        if self.iter_arg == 1 {
-            let mut curr = *self.base.clone();
-            if val > 10000 {
-                return None;
-            }
-            for _ in 0..val {
-                let mut inners = vec![curr];
-                for i in 1..self.arity {
-                    inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 1, i)));
-                }
-                curr = crate::closed_form::compose(&self.step, &inners, self.arity - 1)?;
-            }
-            Some(curr)
-        } else {
-            // Evaluates IteratedFn by substituting its first arg.
-            // Since iter_arg > 1, the first arg is just a normal variable.
-            // We substitute it in base and step.
-            let mut base_inners = Vec::with_capacity(self.arity - 1);
-            let mut base_const = vec![0; self.arity - 1];
-            base_const[0] = val;
-            base_inners.push(ClosedForm::Affine(AffineFn {
-                arity: self.arity - 2,
-                coeffs: base_const,
-            }));
-            for i in 1..self.arity - 1 {
-                base_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 2, i)));
-            }
-            let new_base = crate::closed_form::compose(&self.base, &base_inners, self.arity - 2)?;
 
-            let mut step_inners = Vec::with_capacity(self.arity);
-            step_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 1, 1))); // acc
-            let mut step_const = vec![0; self.arity];
-            step_const[0] = val;
-            step_inners.push(ClosedForm::Affine(AffineFn {
-                arity: self.arity - 1,
-                coeffs: step_const,
-            })); // the fixed val
-            for i in 1..self.arity - 1 {
-                step_inners.push(ClosedForm::Affine(AffineFn::proj(self.arity - 1, i + 1)));
-            }
-            let new_step = crate::closed_form::compose(&self.step, &step_inners, self.arity - 1)?;
-
-            Some(ClosedForm::Iterated(IteratedFn {
-                arity: self.arity - 1,
-                iter_arg: self.iter_arg - 1,
-                base: Box::new(new_base),
-                step: Box::new(new_step),
-            }))
-        }
-    }
-}
 
 fn choose(n: u64, k: u64) -> Option<u64> {
     if k > n {

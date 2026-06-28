@@ -191,8 +191,10 @@ pub fn compute_lower_bound(grf: &Grf, args_bound: &[Bound], cf: Option<&ClosedFo
     let mut bound = 0;
 
     if let Some(cf) = cf {
-        if cf.is_always_pos() {
-            bound = 1;
+        let args_min: Vec<u64> = args_bound.iter().map(|b| b.min_value() as u64).collect();
+        let cf_min = cf.min_val_with_bounds(&args_min);
+        if cf_min as usize > bound {
+            bound = cf_min as usize;
         }
         for (i, arg) in args_bound.iter().enumerate() {
             if let Some(c) = cf.min_diff_from_arg(i) {
@@ -253,7 +255,13 @@ pub fn compute_lower_bound(grf: &Grf, args_bound: &[Bound], cf: Option<&ClosedFo
                 } else {
                     let mut global_min = current_min.min_value();
                     let mut possible_acc = current_min.min_value();
+                    let mut iters = 0;
                     loop {
+                        iters += 1;
+                        if iters > 100 {
+                            global_min = 0;
+                            break;
+                        }
                         let mut h_args = vec![Bound::Min(unroll_limit)];
                         h_args.push(Bound::Min(possible_acc));
                         h_args.extend_from_slice(rest_bound);
@@ -269,32 +277,46 @@ pub fn compute_lower_bound(grf: &Grf, args_bound: &[Bound], cf: Option<&ClosedFo
                 }
             } else {
                 let c_min = c_bound.min_value();
-                let unroll_limit = std::cmp::min(c_min, 3);
-                for c_val in 0..unroll_limit {
+                let unroll_target = std::cmp::min(std::cmp::max(c_min, 3), 5);
+                
+                let mut current_min_val = current_min;
+                let mut global_min = current_min.min_value();
+                
+                for c_val in 0..unroll_target {
+                    if c_val >= c_min {
+                        global_min = std::cmp::min(global_min, current_min_val.min_value());
+                    }
+                    
                     let mut h_args = vec![Bound::Exact(c_val)];
-                    h_args.push(current_min);
+                    h_args.push(current_min_val);
                     h_args.extend_from_slice(rest_bound);
 
                     let mut use_sim = false;
-                    if rest_bound.is_empty() && current_min.is_exact() {
+                    if rest_bound.is_empty() && current_min_val.is_exact() {
                         let sim_args: Vec<u64> =
                             h_args.iter().map(|x| x.min_value() as u64).collect();
                         if let crate::simulate::SimResult::Value(v) =
                             crate::simulate::simulate(h, &sim_args, 100).0
                         {
-                            current_min = Bound::Exact(v as usize);
+                            current_min_val = Bound::Exact(v as usize);
                             use_sim = true;
                         }
                     }
                     if !use_sim {
-                        current_min = h.lower_bound(&h_args);
+                        current_min_val = h.lower_bound(&h_args);
                     }
                 }
+                global_min = std::cmp::min(global_min, current_min_val.min_value());
 
-                let mut global_min = current_min.min_value();
-                let mut possible_acc = current_min.min_value();
+                let mut possible_acc = current_min_val.min_value();
+                let mut iters = 0;
                 loop {
-                    let mut h_args = vec![Bound::Min(std::cmp::max(c_min, unroll_limit))];
+                    iters += 1;
+                    if iters > 100 {
+                        global_min = 0;
+                        break;
+                    }
+                    let mut h_args = vec![Bound::Min(unroll_target)];
                     h_args.push(Bound::Min(possible_acc));
                     h_args.extend_from_slice(rest_bound);
                     let next_acc = h.lower_bound(&h_args).min_value();

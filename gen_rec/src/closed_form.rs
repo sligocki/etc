@@ -797,6 +797,74 @@ impl ClosedForm {
         }
     }
 
+    pub fn min_val_with_bounds(&self, args_min: &[u64]) -> u64 {
+        match self {
+            ClosedForm::Affine(af) => {
+                let mut min_val = af.coeffs[0];
+                let num_args = std::cmp::min(args_min.len(), af.coeffs.len() - 1);
+                for i in 0..num_args {
+                    min_val += af.coeffs[i + 1] * args_min[i];
+                }
+                min_val
+            }
+            ClosedForm::Polynomial(poly) => {
+                let mut min_val = poly.affine_tail.coeffs[0];
+                let num_args = std::cmp::min(args_min.len(), poly.affine_tail.coeffs.len() - 1);
+                for i in 0..num_args {
+                    min_val += poly.affine_tail.coeffs[i + 1] * args_min[i];
+                }
+                min_val
+            }
+            ClosedForm::Piecewise(pw) => {
+                let bi = pw.branch_index;
+                let b_min = if bi < args_min.len() { args_min[bi] } else { 0 };
+
+                if b_min > 0 {
+                    let mut p_args = [0u64; 16];
+                    let p_len = args_min.len();
+                    if p_len > 0 {
+                        p_args[..p_len].copy_from_slice(args_min);
+                        p_args[bi] = p_args[bi].saturating_sub(1);
+                    }
+                    pw.pos_branch.min_val_with_bounds(&p_args[..p_len])
+                } else {
+                    let mut z_args = [0u64; 16];
+                    let mut z_len = 0;
+                    for i in 0..args_min.len() {
+                        if i != bi {
+                            z_args[z_len] = args_min[i];
+                            z_len += 1;
+                        }
+                    }
+                    let m_zero = pw.zero_branch.min_val_with_bounds(&z_args[..z_len]);
+                    
+                    let mut p_args = [0u64; 16];
+                    let p_len = args_min.len();
+                    if p_len > 0 {
+                        p_args[..p_len].copy_from_slice(args_min);
+                        p_args[bi] = 0;
+                    }
+                    let m_pos = pw.pos_branch.min_val_with_bounds(&p_args[..p_len]);
+                    
+                    std::cmp::min(m_zero, m_pos)
+                }
+            }
+            ClosedForm::Periodic(per) => {
+                let mut min_val = u64::MAX;
+                for b in &per.branches {
+                    min_val = std::cmp::min(min_val, b.min_val_with_bounds(args_min));
+                }
+                min_val
+            }
+            ClosedForm::Exponential(exp) => {
+                exp.init_term.min_val_with_bounds(args_min)
+            }
+            ClosedForm::NegMod(_, _, _) => 0,
+        }
+    }
+
+
+
     pub fn is_always_pos(&self) -> bool {
         match self {
             ClosedForm::Affine(af) => af.coeffs[0] > 0,

@@ -143,7 +143,9 @@ pub enum OpCode {
     /// Evaluates in O(1) via `g(rest) + n * k`, avoiding linear iteration.
     RecAccPlusK(Box<OpCode>, u64),
 
-    // --- Min Operator Paths ---
+    /// Fast-forward for `R(g, h)` where `h` asymptotically behaves as `acc - C`.
+    /// Skips ahead by evaluating the constant subtraction in O(1) time while `acc >= min_acc` and `k >= min_k`.
+    RecAsymptoticSub(Box<OpCode>, Box<OpCode>, u64, u64, u64),
     /// Standard Unbounded Minimization `M(f)`.
     Min(Box<OpCode>),
     /// Statically proven to diverge (e.g. `M(S)`). Execution returns `Diverge` immediately.
@@ -166,6 +168,61 @@ pub enum OpCode {
     // --- Global Paths ---
     /// Direct algebraic evaluation for any node that has a `ClosedForm`.
     ClosedForm(ClosedForm),
+}
+
+struct AsymptoticSub {
+    min_k: u64,
+    min_acc: u64,
+    sub_c: u64,
+}
+
+fn find_asymptotic_sub(cf: &ClosedForm) -> Option<AsymptoticSub> {
+    let mut current = cf;
+    let mut min_k = 0;
+    let mut min_acc = 0;
+    
+    loop {
+        match current {
+            ClosedForm::Piecewise(p) => {
+                if p.branch_index == 0 {
+                    min_k += 1;
+                    current = &p.pos_branch;
+                } else if p.branch_index == 1 {
+                    min_acc += 1;
+                    current = &p.pos_branch;
+                } else {
+                    return None;
+                }
+            }
+            ClosedForm::Affine(af) => {
+                if af.coeffs[1] != 0 {
+                    return None;
+                }
+                if af.coeffs[2] != 1 {
+                    return None;
+                }
+                for c in &af.coeffs[3..] {
+                    if *c != 0 {
+                        return None;
+                    }
+                }
+                let c_leaf = af.coeffs[0];
+                if min_acc < c_leaf {
+                    return None;
+                }
+                let c = min_acc - c_leaf;
+                if c == 0 {
+                    return None;
+                }
+                return Some(AsymptoticSub {
+                    min_k,
+                    min_acc,
+                    sub_c: c,
+                });
+            }
+            _ => return None,
+        }
+    }
 }
 
 /// A compiled GRF program ready for execution.
@@ -209,6 +266,19 @@ impl Program {
                             Box::new(Self::compile_node(g, opts)),
                             Box::new(Self::compile_node(h, opts)),
                         );
+                    }
+                    if opts.use_closed_form {
+                        if let Some(cf) = h.closed_form() {
+                            if let Some(asub) = find_asymptotic_sub(cf) {
+                                return OpCode::RecAsymptoticSub(
+                                    Box::new(Self::compile_node(g, opts)),
+                                    Box::new(Self::compile_node(h, opts)),
+                                    asub.min_k,
+                                    asub.min_acc,
+                                    asub.sub_c,
+                                );
+                            }
+                        }
                     }
                 }
                 OpCode::Rec(
@@ -342,6 +412,44 @@ impl OpCode {
                 let approx = n_m1.checked_mul(sh_base).unwrap_or(u64::MAX);
                 steps.base_approx = steps.base_approx.saturating_add(approx);
                 return (res, steps);
+            }
+            OpCode::RecAsymptoticSub(g, h, min_k, min_acc, sub_c) => {
+                let n = args[0];
+                let rest = &args[1..];
+                let (base, s) = g.eval(rest, step_budget.map(|b| b.saturating_sub(steps.sim)));
+                steps += s;
+                let mut acc = match base {
+                    SimResult::Value(v) => v,
+                    other => return (other, steps),
+                };
+
+                let mut i = 0;
+                while i < n {
+                    if i >= *min_k && acc >= *min_acc {
+                        let m = 1 + (acc - *min_acc) / *sub_c;
+                        let jump = m.min(n - i);
+                        if jump > 1 {
+                            acc -= jump * *sub_c;
+                            steps.base_approx = steps.base_approx.saturating_add(jump);
+                            i += jump;
+                            continue;
+                        }
+                    }
+
+                    let mut h_args = Vec::with_capacity(rest.len() + 2);
+                    h_args.push(i);
+                    h_args.push(acc);
+                    h_args.extend_from_slice(rest);
+
+                    let (res, s) = h.eval(&h_args, step_budget.map(|b| b.saturating_sub(steps.sim)));
+                    steps += s;
+                    acc = match res {
+                        SimResult::Value(v) => v,
+                        other => return (other, steps),
+                    };
+                    i += 1;
+                }
+                SimResult::Value(acc)
             }
             OpCode::RecAccPlusK(g, k) => {
                 let n = args[0];

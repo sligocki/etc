@@ -280,7 +280,7 @@ pub fn compute_lower_bound(grf: &Grf, args_bound: &[Bound], cf: Option<&ClosedFo
                 let unroll_target = std::cmp::min(std::cmp::max(c_min, 3), 5);
                 
                 let mut current_min_val = current_min;
-                let mut global_min = current_min.min_value();
+                let mut global_min = usize::MAX;
                 
                 for c_val in 0..unroll_target {
                     if c_val >= c_min {
@@ -306,7 +306,12 @@ pub fn compute_lower_bound(grf: &Grf, args_bound: &[Bound], cf: Option<&ClosedFo
                         current_min_val = h.lower_bound(&h_args);
                     }
                 }
-                global_min = std::cmp::min(global_min, current_min_val.min_value());
+                let limit = std::cmp::max(c_min, unroll_target);
+                if unroll_target >= c_min {
+                    global_min = std::cmp::min(global_min, current_min_val.min_value());
+                } else {
+                    global_min = current_min_val.min_value();
+                }
 
                 let mut possible_acc = current_min_val.min_value();
                 let mut iters = 0;
@@ -316,7 +321,7 @@ pub fn compute_lower_bound(grf: &Grf, args_bound: &[Bound], cf: Option<&ClosedFo
                         global_min = 0;
                         break;
                     }
-                    let mut h_args = vec![Bound::Min(unroll_target)];
+                    let mut h_args = vec![Bound::Min(limit)];
                     h_args.push(Bound::Min(possible_acc));
                     h_args.extend_from_slice(rest_bound);
                     let next_acc = h.lower_bound(&h_args).min_value();

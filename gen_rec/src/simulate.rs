@@ -1,5 +1,5 @@
 use crate::closed_form::ClosedForm;
-use crate::grf::{Grf, GrfKind};
+use crate::grf::{Bound, Grf, GrfKind};
 
 /// Result of simulating a GRF.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,7 +147,9 @@ pub enum OpCode {
     /// Skips ahead by evaluating the constant subtraction in O(1) time while `acc >= min_acc` and `k >= min_k`.
     RecAsymptoticSub(Box<OpCode>, Box<OpCode>, u64, u64, u64),
     /// Standard Unbounded Minimization `M(f)`.
-    Min(Box<OpCode>),
+    /// The original `Grf` is retained (when fast-forwards are enabled) to perform
+    /// dynamic divergence detection inside the evaluation loop via `lower_bound`.
+    Min(Box<OpCode>, Option<Grf>),
     /// Statically proven to diverge (e.g. `M(S)`). Execution returns `Diverge` immediately.
     MinDiverge,
     /// Fast-forward for `M(f)` when `f` has a known `ClosedForm`.
@@ -163,7 +165,8 @@ pub enum OpCode {
     MinPosArg(Box<OpCode>),
     /// Fused execution of `M(R(g, h))`. Instead of re-evaluating the recursion from scratch
     /// for every candidate `i` (O(n²)), it carries the accumulator forward in O(n) time.
-    MinRecFused(Box<OpCode>, Box<OpCode>),
+    /// Retains the original `R(g, h)` Grf for dynamic divergence detection if enabled.
+    MinRecFused(Box<OpCode>, Box<OpCode>, Option<Grf>),
 
     // --- Global Paths ---
     /// Direct algebraic evaluation for any node that has a `ClosedForm`.
@@ -310,10 +313,11 @@ impl Program {
                         return OpCode::MinRecFused(
                             Box::new(Self::compile_node(rec_g, opts)),
                             Box::new(Self::compile_node(rec_h, opts)),
+                            if opts.min_fast_forward { Some((**f).clone()) } else { None },
                         );
                     }
                 }
-                OpCode::Min(Box::new(Self::compile_node(f, opts)))
+                OpCode::Min(Box::new(Self::compile_node(f, opts)), if opts.min_fast_forward { Some((**f).clone()) } else { None })
             }
         }
     }
@@ -484,7 +488,7 @@ impl OpCode {
                     return (res, steps);
                 }
                 // Fallback to evaluating `f` using general min loop!
-                let (fallback_res, min_steps) = OpCode::Min(fallback_f.clone())
+                let (fallback_res, min_steps) = OpCode::Min(fallback_f.clone(), None) // Hack for fallback
                     .eval(args, step_budget.map(|b| b.saturating_sub(steps.sim)));
                 steps += min_steps;
                 return (fallback_res, steps);
@@ -501,7 +505,7 @@ impl OpCode {
                     other => (other, steps),
                 };
             }
-            OpCode::MinRecFused(rec_g, rec_h) => {
+            OpCode::MinRecFused(rec_g, rec_h, f_grf) => {
                 let (base, s_g) =
                     rec_g.eval(args, step_budget.map(|b| b.saturating_sub(steps.sim)));
                 let sg = s_g.base_approx;
@@ -520,8 +524,22 @@ impl OpCode {
                 let mut k: u64 = 0;
                 let mut sum_h: u64 = 0;
                 let mut delta_h: u64 = 0;
+                let mut next_check: u64 = 0;
 
                 loop {
+                    if k == next_check {
+                        if let Some(grf_node) = f_grf {
+                            let mut bounds = Vec::with_capacity(args.len() + 1);
+                            bounds.push(Bound::Min(k as usize));
+                            for &a in args {
+                                bounds.push(Bound::Exact(a as usize));
+                            }
+                            if grf_node.lower_bound(&bounds).min_value() > 0 {
+                                return (SimResult::Diverge, steps);
+                            }
+                        }
+                        next_check = if next_check == 0 { 1 } else { next_check * 2 };
+                    }
                     let mut h_args = Vec::with_capacity(args.len() + 2);
                     h_args.push(k);
                     h_args.push(acc);
@@ -552,9 +570,23 @@ impl OpCode {
                     k += 1;
                 }
             }
-            OpCode::Min(f) => {
-                let mut i = 0;
+            OpCode::Min(f, f_grf) => {
+                let mut i: u64 = 0;
+                let mut next_check: u64 = 0;
                 loop {
+                    if i == next_check {
+                        if let Some(grf_node) = f_grf {
+                            let mut bounds = Vec::with_capacity(args.len() + 1);
+                            bounds.push(Bound::Min(i as usize));
+                            for &a in args {
+                                bounds.push(Bound::Exact(a as usize));
+                            }
+                            if grf_node.lower_bound(&bounds).min_value() > 0 {
+                                return (SimResult::Diverge, steps);
+                            }
+                        }
+                        next_check = if next_check == 0 { 1 } else { next_check * 2 };
+                    }
                     let remaining = step_budget.map(|b| b.saturating_sub(steps.sim));
                     if remaining == Some(0) {
                         return (SimResult::OutOfSteps(Some(i)), steps);
@@ -630,7 +662,7 @@ where
     let compiled_f = Program::compile_node(f, opts);
     let mut steps = SimSteps::one();
 
-    if let OpCode::MinRecFused(rec_g, rec_h) = &compiled_f {
+    if let OpCode::MinRecFused(rec_g, rec_h, _) = &compiled_f {
         let (base, s_g) = rec_g.eval(args, step_budget.map(|b| b.saturating_sub(steps.sim)));
         let sg = s_g.base_approx;
         steps += s_g;

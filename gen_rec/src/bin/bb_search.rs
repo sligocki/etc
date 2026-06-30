@@ -425,6 +425,7 @@ fn run_search(args: &Args) {
                     base_steps: Some(*base_steps),
                     score: Some(*score),
                     unknown_reason: None,
+                    score_bound: None,
                 },
             )
             .unwrap();

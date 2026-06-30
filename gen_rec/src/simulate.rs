@@ -7,7 +7,7 @@ pub enum SimResult {
     /// The function terminated with this value.
     Value(u64),
     /// The function exceeded the step budget (may or may not terminate with more steps).
-    OutOfSteps,
+    OutOfSteps(Option<u64>),
     /// The function will provably never terminate regardless of step budget.
     Diverge,
     /// The function was called with the wrong number of arguments.
@@ -320,7 +320,7 @@ impl Program {
 
     pub fn eval(&self, args: &[u64], step_budget: Option<u64>) -> (SimResult, SimSteps) {
         if step_budget == Some(0) {
-            return (SimResult::OutOfSteps, SimSteps::zero());
+            return (SimResult::OutOfSteps(None), SimSteps::zero());
         }
         if args.len() != self.arity {
             return (SimResult::ArityMismatch, SimSteps::zero());
@@ -332,7 +332,7 @@ impl Program {
 impl OpCode {
     pub fn eval(&self, args: &[u64], step_budget: Option<u64>) -> (SimResult, SimSteps) {
         if step_budget == Some(0) {
-            return (SimResult::OutOfSteps, SimSteps::zero());
+            return (SimResult::OutOfSteps(None), SimSteps::zero());
         }
         let mut steps = SimSteps::one();
 
@@ -508,6 +508,7 @@ impl OpCode {
                 steps += s_g;
                 let mut acc = match base {
                     SimResult::Value(v) => v,
+                    SimResult::OutOfSteps(_) => return (SimResult::OutOfSteps(Some(0)), steps),
                     other => return (other, steps),
                 };
 
@@ -545,6 +546,7 @@ impl OpCode {
                             }
                             acc = v;
                         }
+                        SimResult::OutOfSteps(_) => return (SimResult::OutOfSteps(Some(k + 1)), steps),
                         other => return (other, steps),
                     }
                     k += 1;
@@ -555,7 +557,7 @@ impl OpCode {
                 loop {
                     let remaining = step_budget.map(|b| b.saturating_sub(steps.sim));
                     if remaining == Some(0) {
-                        return (SimResult::OutOfSteps, steps);
+                        return (SimResult::OutOfSteps(Some(i)), steps);
                     }
                     let mut f_args = Vec::with_capacity(args.len() + 1);
                     f_args.push(i);
@@ -572,6 +574,7 @@ impl OpCode {
                                 None => return (SimResult::ValueOverflow, steps),
                             };
                         }
+                        SimResult::OutOfSteps(_) => return (SimResult::OutOfSteps(Some(i)), steps),
                         other => return (other, steps),
                     }
                 }
@@ -621,7 +624,7 @@ where
     F: FnMut(u64, &SimResult, SimSteps),
 {
     if step_budget == Some(0) {
-        return (SimResult::OutOfSteps, SimSteps::zero());
+        return (SimResult::OutOfSteps(None), SimSteps::zero());
     }
 
     let compiled_f = Program::compile_node(f, opts);
@@ -633,6 +636,7 @@ where
         steps += s_g;
         let mut acc = match base {
             SimResult::Value(v) => v,
+            SimResult::OutOfSteps(_) => return (SimResult::OutOfSteps(Some(0)), steps),
             other => return (other, steps),
         };
 
@@ -669,6 +673,7 @@ where
                     }
                     acc = v;
                 }
+                SimResult::OutOfSteps(_) => return (SimResult::OutOfSteps(Some(k + 1)), steps),
                 other => return (other, steps),
             }
             k += 1;
@@ -679,7 +684,7 @@ where
     loop {
         let remaining = step_budget.map(|b| b.saturating_sub(steps.sim));
         if remaining == Some(0) {
-            return (SimResult::OutOfSteps, steps);
+            return (SimResult::OutOfSteps(Some(i)), steps);
         }
         let mut f_args = Vec::with_capacity(args.len() + 1);
         f_args.push(i);
@@ -697,6 +702,7 @@ where
                     None => return (SimResult::ValueOverflow, steps),
                 };
             }
+            SimResult::OutOfSteps(_) => return (SimResult::OutOfSteps(Some(i)), steps),
             other => return (other, steps),
         }
     }
@@ -872,7 +878,7 @@ mod tests {
         let mut no_cf = SimOpts::default();
         no_cf.use_closed_form = false;
         let (result, steps) = simulate_opts(&r, &[1_000], Some(50), no_cf);
-        assert!(matches!(result, SimResult::OutOfSteps));
+        assert!(matches!(result, SimResult::OutOfSteps(_)));
         assert!(steps.sim >= 50);
     }
 
@@ -1040,7 +1046,7 @@ mod tests {
         let (r_ff, _) = simulate(&f, &[3], 0); // unlimited
         assert_eq!(r_ff, SimResult::Diverge);
         let (r_no, _) = simulate_opts(&f, &[3], Some(100), no_min_ff());
-        assert_eq!(r_no, SimResult::OutOfSteps);
+        assert!(matches!(r_no, SimResult::OutOfSteps(_)));
     }
 
     #[test]

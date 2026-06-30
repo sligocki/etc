@@ -72,7 +72,7 @@ impl Accumulator {
 
 pub struct BatchResult {
     pub top_k: TopK,
-    pub holdouts: Vec<(u64, String, Option<&'static str>)>,
+    pub holdouts: Vec<(u64, String, Option<&'static str>, Option<u64>)>,
     pub diverged: usize,
     pub total_steps: u64,
     pub max_steps_single: u64,
@@ -113,8 +113,8 @@ pub fn process_batch(
         let steps = sim_steps.sim;
         total_steps += steps;
         match result {
-            SimResult::OutOfSteps => {
-                holdouts.push((steps, batch[idx].to_string(), Some("OutOfSteps")))
+            SimResult::OutOfSteps(bound) => {
+                holdouts.push((steps, batch[idx].to_string(), Some("OutOfSteps"), bound))
             }
             SimResult::Diverge => diverged += 1,
             SimResult::Value(v) => {
@@ -123,7 +123,7 @@ pub fn process_batch(
             }
             SimResult::ArityMismatch => panic!("arity mismatch in bb_search for {}", batch[idx]),
             SimResult::ValueOverflow => {
-                holdouts.push((steps, batch[idx].to_string(), Some("Overflow")))
+                holdouts.push((steps, batch[idx].to_string(), Some("Overflow"), None))
             }
         }
     }
@@ -154,7 +154,7 @@ pub fn flush_batch<W: Write>(
     acc.diverged += br.diverged;
     acc.total_steps += br.total_steps;
     acc.max_steps_single = acc.max_steps_single.max(br.max_steps_single);
-    for (steps, expr, reason) in br.holdouts {
+    for (steps, expr, reason, bound) in br.holdouts {
         io_grl::write_grf_entry(
             holdout_w,
             &GrfEntry {
@@ -164,6 +164,7 @@ pub fn flush_batch<W: Write>(
                 base_steps: None,
                 score: None,
                 unknown_reason: reason.map(|r| r.to_string()),
+                score_bound: bound,
             },
         )
         .unwrap();

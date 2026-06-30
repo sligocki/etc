@@ -181,7 +181,7 @@ pub fn compute_fp(grf: &Grf, inputs: &[Vec<u64>], max_steps: u64) -> Fingerprint
             match result {
                 SimResult::Value(v) => FpEntry::Value(v),
                 SimResult::Diverge => FpEntry::Diverge,
-                SimResult::OutOfSteps => FpEntry::Unknown,
+                SimResult::OutOfSteps(_) => FpEntry::Unknown,
                 SimResult::ArityMismatch => FpEntry::Unknown,
                 SimResult::ValueOverflow => FpEntry::Unknown,
             }

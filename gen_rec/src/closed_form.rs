@@ -720,7 +720,7 @@ impl ClosedForm {
                     } else if e > 0 || a_val == 1 || a_val == 0 {
                         return SimResult::Diverge;
                     } else {
-                        return SimResult::OutOfSteps;
+                        return SimResult::OutOfSteps(None);
                     }
                 }
                 ClosedForm::Periodic(p) => {
@@ -737,7 +737,7 @@ impl ClosedForm {
                         if all_pos {
                             return SimResult::Diverge;
                         }
-                        return SimResult::OutOfSteps;
+                        return SimResult::OutOfSteps(None);
                     } else {
                         let oi = bi - 1;
                         let val = outer[oi] as usize;
@@ -3728,7 +3728,7 @@ mod tests {
                         let (sim_result, _) = simulate(grf, args, max_steps);
                         let sim_val = match sim_result {
                             SimResult::Value(v) => Some(v),
-                            SimResult::Diverge | SimResult::OutOfSteps => None,
+                            SimResult::Diverge | SimResult::OutOfSteps(_) => None,
                             SimResult::ArityMismatch => {
                                 panic!("arity mismatch for {} on {:?}", grf, args);
                             }

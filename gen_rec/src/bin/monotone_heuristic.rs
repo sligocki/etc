@@ -244,6 +244,7 @@ fn process_file(path: &PathBuf, args: &Args) {
                         base_steps: None,
                         score: None,
                         unknown_reason: None,
+                        score_bound: None,
                     },
                 )
                 .ok();

@@ -56,6 +56,7 @@ pub struct GrfEntry {
     pub base_steps: Option<u64>,
     pub score: Option<u64>,
     pub unknown_reason: Option<String>,
+    pub score_bound: Option<u64>,
 }
 
 impl GrfEntry {
@@ -69,6 +70,7 @@ impl GrfEntry {
                 base_steps: Some(steps.base_approx),
                 score: Some(score),
                 unknown_reason: None,
+                score_bound: None,
             },
             SimResult::Diverge => GrfEntry {
                 expr,
@@ -77,14 +79,16 @@ impl GrfEntry {
                 base_steps: None,
                 score: None,
                 unknown_reason: None,
+                score_bound: None,
             },
-            SimResult::OutOfSteps => GrfEntry {
+            SimResult::OutOfSteps(bound) => GrfEntry {
                 expr,
                 status: Some(Status::Unknown),
                 steps: Some(steps.sim),
                 base_steps: None,
                 score: None,
                 unknown_reason: Some("OutOfSteps".to_string()),
+                score_bound: bound,
             },
             SimResult::ValueOverflow => GrfEntry {
                 expr,
@@ -93,6 +97,7 @@ impl GrfEntry {
                 base_steps: None,
                 score: None,
                 unknown_reason: Some("Overflow".to_string()),
+                score_bound: None,
             },
             SimResult::ArityMismatch => {
                 panic!("arity mismatch");
@@ -139,6 +144,7 @@ fn parse_line(line: &str) -> GrfEntry {
             base_steps: None,
             score: None,
             unknown_reason: None,
+            score_bound: None,
         }
     } else {
         GrfEntry {
@@ -148,6 +154,7 @@ fn parse_line(line: &str) -> GrfEntry {
             base_steps: None,
             score: None,
             unknown_reason: None,
+            score_bound: None,
         }
     }
 }
@@ -159,6 +166,7 @@ fn parse_kv_line(line: &str) -> GrfEntry {
     let mut base_steps = None;
     let mut score = None;
     let mut unknown_reason = None;
+    let mut score_bound = None;
 
     for token in line.split_whitespace() {
         if let Some(v) = token.strip_prefix("grf=") {
@@ -173,6 +181,8 @@ fn parse_kv_line(line: &str) -> GrfEntry {
             score = v.parse::<u64>().ok();
         } else if let Some(v) = token.strip_prefix("unknown_reason=") {
             unknown_reason = Some(v.to_string());
+        } else if let Some(v) = token.strip_prefix("score_bound=") {
+            score_bound = v.parse::<u64>().ok();
         }
         // other unknown keys are ignored
     }
@@ -184,6 +194,7 @@ fn parse_kv_line(line: &str) -> GrfEntry {
         base_steps,
         score,
         unknown_reason,
+        score_bound,
     }
 }
 
@@ -216,6 +227,9 @@ pub fn write_grf_entry(w: &mut dyn Write, entry: &GrfEntry) -> io::Result<()> {
     }
     if let Some(r) = &entry.unknown_reason {
         write!(w, " unknown_reason={}", r)?;
+    }
+    if let Some(sb) = entry.score_bound {
+        write!(w, " score_bound={}", sb)?;
     }
     if let Some(n) = entry.steps {
         write!(w, " steps={}", n)?;
@@ -297,6 +311,7 @@ mod tests {
             base_steps: None,
             score: None,
             unknown_reason: None,
+            score_bound: None,
         };
         let mut buf = Vec::new();
         write_grf_entry(&mut buf, &entry).unwrap();
@@ -319,6 +334,7 @@ mod tests {
             base_steps: Some(113),
             score: Some(7),
             unknown_reason: None,
+            score_bound: None,
         };
         let mut buf = Vec::new();
         write_grf_entry(&mut buf, &entry).unwrap();
@@ -344,6 +360,7 @@ mod tests {
             base_steps: None,
             score: None,
             unknown_reason: None,
+            score_bound: None,
         };
         let mut buf = Vec::new();
         write_grf_entry(&mut buf, &entry).unwrap();

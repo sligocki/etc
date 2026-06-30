@@ -597,6 +597,7 @@ fn main() {
                             base_steps: Some(*base_steps),
                             score: Some(*score),
                             unknown_reason: None,
+                            score_bound: None,
                         },
                     )
                     .unwrap();
@@ -622,6 +623,7 @@ fn main() {
                             base_steps: None,
                             score: None,
                             unknown_reason: h.reason,
+                            score_bound: None,
                         },
                     )
                     .unwrap();

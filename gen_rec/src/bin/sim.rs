@@ -28,7 +28,7 @@ struct Args {
     inputs: Vec<String>,
 
     /// Maximum simulation steps before giving up (0 = unlimited).
-    #[arg(long, default_value_t = 100_000_000)]
+    #[arg(long, default_value_t = 0)]
     max_steps: u64,
 
     /// Upper bound (inclusive) for each argument in sweep mode.
@@ -147,7 +147,7 @@ fn main() {
                         let f_val = match result {
                             SimResult::Value(v) => v.to_string(),
                             SimResult::Diverge => "Diverge".to_string(),
-                            SimResult::OutOfSteps => "?".to_string(),
+                            SimResult::OutOfSteps(_) => "?".to_string(),
                             SimResult::ArityMismatch => "arity mismatch".to_string(),
                             SimResult::ValueOverflow => "!overflow".to_string(),
                         };
@@ -173,7 +173,7 @@ fn main() {
                 v, steps.sim, steps.base_approx
             ),
             SimResult::Diverge => println!("result: diverges  ({} steps)", steps.sim),
-            SimResult::OutOfSteps => {
+            SimResult::OutOfSteps(_) => {
                 let limit = if args.max_steps == 0 {
                     "unlimited".to_string()
                 } else {

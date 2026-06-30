@@ -296,7 +296,7 @@ fn value_preview(f: &Grf, max_steps: u64) -> String {
         match res {
             SimResult::Value(v) => v.to_string(),
             SimResult::Diverge => "∞".to_string(),
-            SimResult::OutOfSteps => "?".to_string(),
+            SimResult::OutOfSteps(_) => "?".to_string(),
             SimResult::ArityMismatch => "!".to_string(),
             SimResult::ValueOverflow => "!overflow".to_string(),
         }
@@ -600,7 +600,7 @@ fn check_size(arity: usize, size: usize, max_steps: u64) -> (usize, usize) {
             let (sim_result, _) = simulate_opts(grf, args, step_budget, sim_opts);
             let sim_val = match sim_result {
                 SimResult::Value(v) => Some(v),
-                SimResult::Diverge | SimResult::OutOfSteps => None,
+                SimResult::Diverge | SimResult::OutOfSteps(_) => None,
                 SimResult::ArityMismatch => panic!("arity mismatch for {} on {:?}", grf, args),
                 SimResult::ValueOverflow => None,
             };
@@ -672,7 +672,7 @@ fn check_one_grf(grf_str: &str, explicit_args: &[u64], max_steps: u64) {
         let (sim_result, _) = simulate_opts(&grf, input, step_budget, sim_opts);
         let sim_val = match sim_result {
             SimResult::Value(v) => Some(v),
-            SimResult::Diverge | SimResult::OutOfSteps => None,
+            SimResult::Diverge | SimResult::OutOfSteps(_) => None,
             SimResult::ArityMismatch => panic!("arity mismatch for {grf_str} on {input:?}"),
             SimResult::ValueOverflow => None,
         };

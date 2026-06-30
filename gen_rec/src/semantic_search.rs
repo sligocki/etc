@@ -281,7 +281,7 @@ fn test_candidate(
     for inp in fast_inputs {
         match simulate(grf, inp, max_steps).0 {
             SimResult::Diverge => return None,
-            SimResult::OutOfSteps | SimResult::ArityMismatch | SimResult::ValueOverflow => {}
+            SimResult::OutOfSteps(_) | SimResult::ArityMismatch | SimResult::ValueOverflow => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
@@ -300,7 +300,7 @@ fn test_candidate(
     for inp in conf_inputs {
         match simulate(grf, inp, max_steps).0 {
             SimResult::Diverge => return None,
-            SimResult::OutOfSteps | SimResult::ArityMismatch | SimResult::ValueOverflow => {}
+            SimResult::OutOfSteps(_) | SimResult::ArityMismatch | SimResult::ValueOverflow => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
@@ -316,7 +316,7 @@ fn test_candidate(
     for inp in verify_inputs {
         match simulate(grf, inp, max_steps).0 {
             SimResult::Diverge => return None,
-            SimResult::OutOfSteps | SimResult::ArityMismatch | SimResult::ValueOverflow => {}
+            SimResult::OutOfSteps(_) | SimResult::ArityMismatch | SimResult::ValueOverflow => {}
             SimResult::Value(v) => {
                 if !spec(inp, v) {
                     return None;
@@ -414,7 +414,7 @@ pub fn probe_spec(
                     inputs: inp.clone(),
                 };
             }
-            SimResult::OutOfSteps | SimResult::ValueOverflow => {
+            SimResult::OutOfSteps(_) | SimResult::ValueOverflow => {
                 return ProbeResult::TimedOut {
                     inputs: inp.clone(),
                 };
@@ -714,7 +714,7 @@ mod tests {
                     eprintln!("  {:?} -> DIVERGE", inp);
                     false
                 }
-                SimResult::OutOfSteps => {
+                SimResult::OutOfSteps(_) => {
                     eprintln!("  {:?} -> TIMEOUT", inp);
                     false
                 }
@@ -741,7 +741,7 @@ mod tests {
                     );
                 }
                 SimResult::Diverge => eprintln!("  {:?} -> DIVERGE", inp),
-                SimResult::OutOfSteps => eprintln!("  {:?} -> TIMEOUT", inp),
+                SimResult::OutOfSteps(_) => eprintln!("  {:?} -> TIMEOUT", inp),
                 SimResult::ArityMismatch => panic!("arity mismatch in probe diagnostics"),
                 SimResult::ValueOverflow => eprintln!("  {:?} -> OVERFLOW", inp),
             }
@@ -761,7 +761,7 @@ mod tests {
                     );
                 }
                 SimResult::Diverge => eprintln!("  {:?} -> DIVERGE", inp),
-                SimResult::OutOfSteps => eprintln!("  {:?} -> TIMEOUT", inp),
+                SimResult::OutOfSteps(_) => eprintln!("  {:?} -> TIMEOUT", inp),
                 SimResult::ArityMismatch => panic!("arity mismatch in probe diagnostics"),
                 SimResult::ValueOverflow => eprintln!("  {:?} -> OVERFLOW", inp),
             }

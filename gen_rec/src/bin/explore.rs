@@ -49,10 +49,18 @@ fn collect_subexprs(grf: &Grf, seen: &mut BTreeMap<String, Grf>, order: &mut Vec
         _ => return,
     }
     if matches!(&grf.kind, GrfKind::Rec(..) | GrfKind::Min(..)) {
-        let key = grf.to_string();
-        if !seen.contains_key(&key) {
-            seen.insert(key.clone(), grf.clone());
-            order.push(key);
+        let is_rewire = if let GrfKind::Rec(g, h) = &grf.kind {
+            matches!(h.kind, GrfKind::Proj(n, 2) if n == g.arity() + 2)
+        } else {
+            false
+        };
+        
+        if !is_rewire {
+            let key = grf.to_string();
+            if !seen.contains_key(&key) {
+                seen.insert(key.clone(), grf.clone());
+                order.push(key);
+            }
         }
     }
 }

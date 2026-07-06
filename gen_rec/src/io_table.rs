@@ -44,7 +44,7 @@ pub fn fmt_val(v: Option<u64>) -> String {
     }
 }
 
-fn print_1d(grf: &Grf, template: &[Option<u64>], sweep_idx: usize, grid: u64, max_steps: u64) {
+fn print_1d(grf: &Grf, template: &[Option<u64>], sweep_idx: usize, grid: u64, max_steps: u64, markdown: bool) {
     let axis = format!("x{}", sweep_idx + 1);
     let f_hdr = format!("f(x{})", sweep_idx + 1);
     let vals: Vec<String> = (0..=grid)
@@ -58,10 +58,18 @@ fn print_1d(grf: &Grf, template: &[Option<u64>], sweep_idx: usize, grid: u64, ma
         .max(f_hdr.len());
     let n_w = grid.to_string().len().max(axis.len());
 
-    println!("{:>n_w$}  |  {:>val_w$}", axis, f_hdr);
-    println!("{}--+--{}", "-".repeat(n_w), "-".repeat(val_w));
-    for (a, v) in vals.iter().enumerate() {
-        println!("{:>n_w$}  |  {:>val_w$}", a, v);
+    if markdown {
+        println!("| {:>n_w$} | {:>val_w$} |", axis, f_hdr);
+        println!("| {}- | {}- |", "-".repeat(n_w), "-".repeat(val_w));
+        for (a, v) in vals.iter().enumerate() {
+            println!("| {:>n_w$} | {:>val_w$} |", a, v);
+        }
+    } else {
+        println!("{:>n_w$}  |  {:>val_w$}", axis, f_hdr);
+        println!("{}--+--{}", "-".repeat(n_w), "-".repeat(val_w));
+        for (a, v) in vals.iter().enumerate() {
+            println!("{:>n_w$}  |  {:>val_w$}", a, v);
+        }
     }
 }
 
@@ -72,6 +80,7 @@ fn print_2d(
     col_idx: usize,
     grid: u64,
     max_steps: u64,
+    markdown: bool,
 ) {
     let vals: Vec<Vec<String>> = (0..=grid)
         .map(|a| {
@@ -96,26 +105,52 @@ fn print_2d(
         .max()
         .unwrap_or(1);
 
-    let row_label = format!("x{}↓", row_idx + 1);
-    let row_w = grid.to_string().len().max(row_label.chars().count());
+    if markdown {
+        let row_label = format!("x{}\\\\x{}", row_idx + 1, col_idx + 1);
+        let row_w = grid.to_string().len().max(row_label.chars().count());
 
-    let header: String = (0..=grid)
-        .map(|b| format!("{:>cell_w$}", b))
-        .collect::<Vec<_>>()
-        .join("  ");
-    let pad = " ".repeat(row_w);
-    println!("{}  |  x{} →", pad, col_idx + 1);
-    let corner_pad = " ".repeat(row_w - row_label.chars().count());
-    println!("{}{}  |  {}", corner_pad, row_label, header);
-    println!("{}--+--{}", "-".repeat(row_w), "-".repeat(header.len()));
+        let header: String = (0..=grid)
+            .map(|b| format!(" {:>cell_w$} |", b))
+            .collect::<Vec<_>>()
+            .join("");
+        println!("| {:>row_w$} |{}", row_label, header);
+        
+        let sep: String = (0..=grid)
+            .map(|_| format!(" {}- |", "-".repeat(cell_w)))
+            .collect::<Vec<_>>()
+            .join("");
+        println!("| {}- |{}", "-".repeat(row_w), sep);
 
-    for (a, row) in vals.iter().enumerate() {
-        let cells: String = row
-            .iter()
-            .map(|v| format!("{:>cell_w$}", v))
+        for (a, row) in vals.iter().enumerate() {
+            let cells: String = row
+                .iter()
+                .map(|v| format!(" {:>cell_w$} |", v))
+                .collect::<Vec<_>>()
+                .join("");
+            println!("| {:>row_w$} |{}", a, cells);
+        }
+    } else {
+        let row_label = format!("x{}↓", row_idx + 1);
+        let row_w = grid.to_string().len().max(row_label.chars().count());
+
+        let header: String = (0..=grid)
+            .map(|b| format!("{:>cell_w$}", b))
             .collect::<Vec<_>>()
             .join("  ");
-        println!("{:>row_w$}  |  {}", a, cells);
+        let pad = " ".repeat(row_w);
+        println!("{}  |  x{} →", pad, col_idx + 1);
+        let corner_pad = " ".repeat(row_w - row_label.chars().count());
+        println!("{}{}  |  {}", corner_pad, row_label, header);
+        println!("{}--+--{}", "-".repeat(row_w), "-".repeat(header.len()));
+
+        for (a, row) in vals.iter().enumerate() {
+            let cells: String = row
+                .iter()
+                .map(|v| format!("{:>cell_w$}", v))
+                .collect::<Vec<_>>()
+                .join("  ");
+            println!("{:>row_w$}  |  {}", a, cells);
+        }
     }
 }
 
@@ -125,6 +160,7 @@ fn print_3d_slices(
     sweep_indices: &[usize],
     grid: u64,
     max_steps: u64,
+    markdown: bool,
 ) {
     debug_assert_eq!(sweep_indices.len(), 3);
     let (slice_idx, row_idx, col_idx) = (sweep_indices[0], sweep_indices[1], sweep_indices[2]);
@@ -132,7 +168,7 @@ fn print_3d_slices(
         println!("x{}={}:", slice_idx + 1, s);
         let mut tpl = template.to_vec();
         tpl[slice_idx] = Some(s);
-        print_2d(grf, &tpl, row_idx, col_idx, grid, max_steps);
+        print_2d(grf, &tpl, row_idx, col_idx, grid, max_steps, markdown);
         if s < grid {
             println!();
         }
@@ -145,6 +181,7 @@ fn print_flat(
     sweep_indices: &[usize],
     grid: u64,
     max_steps: u64,
+    markdown: bool,
 ) {
     let sc = sweep_indices.len();
     let mut all_sweep_vals: Vec<Vec<u64>> = Vec::new();
@@ -183,25 +220,50 @@ fn print_flat(
     let arg_w = grid.to_string().len().max(2);
     let val_w = results.iter().map(|v| v.len()).max().unwrap_or(1).max(6);
 
-    let arg_headers: String = sweep_indices
-        .iter()
-        .map(|i| format!("{:>arg_w$}", format!("x{}", i + 1)))
-        .collect::<Vec<_>>()
-        .join("  ");
-    println!("{}  |  {:>val_w$}", arg_headers, "result");
-    println!(
-        "{}--+--{}",
-        "-".repeat(arg_w * sc + 2 * (sc - 1)),
-        "-".repeat(val_w)
-    );
-
-    for (sv, v) in all_sweep_vals.iter().zip(results.iter()) {
-        let args_str: String = sv
+    if markdown {
+        let arg_headers: String = sweep_indices
             .iter()
-            .map(|x| format!("{:>arg_w$}", x))
+            .map(|i| format!(" {:>arg_w$} |", format!("x{}", i + 1)))
+            .collect::<Vec<_>>()
+            .join("");
+        println!("|{} {:>val_w$} |", arg_headers, "result");
+        
+        let arg_seps: String = sweep_indices
+            .iter()
+            .map(|_| format!(" {}- |", "-".repeat(arg_w)))
+            .collect::<Vec<_>>()
+            .join("");
+        println!("|{} {}- |", arg_seps, "-".repeat(val_w));
+
+        for (sv, v) in all_sweep_vals.iter().zip(results.iter()) {
+            let args_str: String = sv
+                .iter()
+                .map(|x| format!(" {:>arg_w$} |", x))
+                .collect::<Vec<_>>()
+                .join("");
+            println!("|{} {:>val_w$} |", args_str, v);
+        }
+    } else {
+        let arg_headers: String = sweep_indices
+            .iter()
+            .map(|i| format!("{:>arg_w$}", format!("x{}", i + 1)))
             .collect::<Vec<_>>()
             .join("  ");
-        println!("{}  |  {:>val_w$}", args_str, v);
+        println!("{}  |  {:>val_w$}", arg_headers, "result");
+        println!(
+            "{}--+--{}",
+            "-".repeat(arg_w * sc + 2 * (sc - 1)),
+            "-".repeat(val_w)
+        );
+
+        for (sv, v) in all_sweep_vals.iter().zip(results.iter()) {
+            let args_str: String = sv
+                .iter()
+                .map(|x| format!("{:>arg_w$}", x))
+                .collect::<Vec<_>>()
+                .join("  ");
+            println!("{}  |  {:>val_w$}", args_str, v);
+        }
     }
 }
 
@@ -217,13 +279,14 @@ pub fn print_sweep_table(
     sweep_indices: &[usize],
     grid: u64,
     max_steps: u64,
+    markdown: bool,
 ) {
     match sweep_indices.len() {
         0 => {
             let v = eval(grf, template, &[], max_steps);
             println!("  = {}", v);
         }
-        1 => print_1d(grf, template, sweep_indices[0], grid, max_steps),
+        1 => print_1d(grf, template, sweep_indices[0], grid, max_steps, markdown),
         2 => print_2d(
             grf,
             template,
@@ -231,15 +294,16 @@ pub fn print_sweep_table(
             sweep_indices[1],
             grid,
             max_steps,
+            markdown,
         ),
-        3 => print_3d_slices(grf, template, sweep_indices, grid, max_steps),
-        _ => print_flat(grf, template, sweep_indices, grid, max_steps),
+        3 => print_3d_slices(grf, template, sweep_indices, grid, max_steps, markdown),
+        _ => print_flat(grf, template, sweep_indices, grid, max_steps, markdown),
     }
 }
 
 /// Print an I/O table for `grf`, sweeping only the args reported by `used_args()`.
 /// Unused args are held at 0. Arity-0 or all-unused → prints a single value.
-pub fn print_io_table(grf: &Grf, grid: u64, max_steps: u64) {
+pub fn print_io_table(grf: &Grf, grid: u64, max_steps: u64, markdown: bool) {
     let used: Vec<usize> = grf.used_args().iter().map(|j| j - 1).collect();
     let template: Vec<Option<u64>> = (0..grf.arity())
         .map(|i| if used.contains(&i) { None } else { Some(0) })
@@ -249,6 +313,6 @@ pub fn print_io_table(grf: &Grf, grid: u64, max_steps: u64) {
         let v = eval(grf, &template, &[], max_steps);
         println!("  = {}", v);
     } else {
-        print_sweep_table(grf, &template, &used, grid, max_steps);
+        print_sweep_table(grf, &template, &used, grid, max_steps, markdown);
     }
 }

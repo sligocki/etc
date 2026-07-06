@@ -28,6 +28,10 @@ struct Args {
     /// Skip I/O tables; show structural info only.
     #[arg(long)]
     no_sim: bool,
+
+    /// Format output as Markdown
+    #[arg(long)]
+    markdown: bool,
 }
 
 /// Collect unique R/M nodes in post-order, recording their string keys in `order`.
@@ -142,13 +146,21 @@ fn main() {
     };
 
     let prf_tag = if grf.analysis.is_prf { "PRF" } else { "GRF" };
-    println!("Expression: {}", grf);
-    println!(
-        "Arity: {} | Size: {} | {}",
-        grf.arity(),
-        grf.size(),
-        prf_tag
-    );
+    if args.markdown {
+        println!("# Expression Exploration");
+        println!("**Expression**: `{}`", grf);
+        println!("- **Arity**: {}", grf.arity());
+        println!("- **Size**: {}", grf.size());
+        println!("- **Type**: {}", prf_tag);
+    } else {
+        println!("Expression: {}", grf);
+        println!(
+            "Arity: {} | Size: {} | {}",
+            grf.arity(),
+            grf.size(),
+            prf_tag
+        );
+    }
 
     // Collect R/M sub-expressions in post-order.
     let mut seen: BTreeMap<String, Grf> = BTreeMap::new();
@@ -170,13 +182,21 @@ fn main() {
     // Print each named sub-expression.
     if order.is_empty() {
         println!();
-        println!("(No nested R/M sub-expressions)");
+        if args.markdown {
+            println!("*(No nested R/M sub-expressions)*");
+        } else {
+            println!("(No nested R/M sub-expressions)");
+        }
     } else {
         // Add decompilation
         let decomp = gen_rec::mgrf::decompile(&grf);
-        println!("Decompiled: {}", decomp);
-
-        println!("\n=== Sub-expressions ===\n");
+        if args.markdown {
+            println!("\n**Decompiled**:\n```\n{}\n```", decomp);
+            println!("\n## Sub-expressions\n");
+        } else {
+            println!("Decompiled: {}", decomp);
+            println!("\n=== Sub-expressions ===\n");
+        }
 
         for (i, key) in order.iter().enumerate() {
             let sub = &seen[key];
@@ -196,45 +216,63 @@ fn main() {
                 .map(|j| j.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            let used_tag = if used.is_empty() {
-                String::new()
-            } else {
-                format!(", used={{{}}}", used_str)
-            };
 
             println!();
-            println!(
-                "{} := {}    [arity {}, size {}{}{}]",
-                name,
-                subst,
-                sub.arity(),
-                sub.size(),
-                prf,
-                used_tag,
-            );
+            if args.markdown {
+                println!("### Sub-expression `{}`", name);
+                println!("```text\n{} := {}\n```", name, subst);
+                println!("- **Arity**: {}", sub.arity());
+                println!("- **Size**: {}", sub.size());
+                if !prf.is_empty() { println!("- **Type**: PRF"); }
+                if !used.is_empty() { println!("- **Used args**: {{{}}}", used_str); }
+                println!();
+            } else {
+                let used_tag = if used.is_empty() {
+                    String::new()
+                } else {
+                    format!(", used={{{}}}", used_str)
+                };
+                println!(
+                    "{} := {}    [arity {}, size {}{}{}]",
+                    name,
+                    subst,
+                    sub.arity(),
+                    sub.size(),
+                    prf,
+                    used_tag,
+                );
+            }
 
             if let Some(sem) = sub.closed_form() {
                 sem.print_rules(&name);
             } else if !args.no_sim {
-                print_io_table(sub, args.max_val, args.max_steps);
+                print_io_table(sub, args.max_val, args.max_steps, args.markdown);
             }
         }
     }
 
     // Root summary.
     println!();
-    println!("=== Root ===");
     let root_subst = fmt_subst(&grf, &names);
-    println!(
-        "{}    [arity {}, size {}]",
-        root_subst,
-        grf.arity(),
-        grf.size()
-    );
+    if args.markdown {
+        println!("## Root");
+        println!("```text\nRoot := {}\n```", root_subst);
+        println!("- **Arity**: {}", grf.arity());
+        println!("- **Size**: {}", grf.size());
+        println!();
+    } else {
+        println!("=== Root ===");
+        println!(
+            "{}    [arity {}, size {}]",
+            root_subst,
+            grf.arity(),
+            grf.size()
+        );
+    }
     let root_name = idx_to_name(order.len());
     if let Some(sem) = grf.closed_form() {
         sem.print_rules(&root_name);
     } else if !args.no_sim {
-        print_io_table(&grf, args.max_val, args.max_steps);
+        print_io_table(&grf, args.max_val, args.max_steps, args.markdown);
     }
 }

@@ -8,17 +8,34 @@ use std::io::{self, BufRead};
 // Parse a Fractran program and convert into vector form.
 pub fn parse_program(program_str: &str) -> Program {
     // 1. Clean and split string
-    let clean_str = program_str.replace(['[', ']', ' '], "");
-    let parts: Vec<&str> = clean_str.split(',').collect();
+    let mut inner = program_str;
+    if let Some(start) = inner.find('[') {
+        if let Some(end) = inner.rfind(']') {
+            inner = &inner[start + 1..end];
+        } else {
+            panic!("Program string missing closing ']'");
+        }
+    } else {
+        panic!("Program string missing opening '['");
+    }
 
     // 2. Parse fractions and find max prime
     let mut instrs_fractions: Vec<(u128, u128)> = Vec::new();
     let mut max_prime_found: u128 = 2;
 
-    for part in parts {
+    let normalized = inner.replace(',', " ");
+    for part in normalized.split_whitespace() {
+        if !part.contains('/') {
+            panic!("Invalid fraction format (missing '/'): {}", part);
+        }
+
         let frac: Vec<&str> = part.split('/').collect();
-        let num: u128 = frac[0].parse().expect("Invalid numerator");
-        let den: u128 = frac[1].parse().expect("Invalid denominator");
+        if frac.len() != 2 {
+            panic!("Invalid fraction format: {}", part);
+        }
+
+        let num: u128 = frac[0].parse().unwrap_or_else(|_| panic!("Invalid numerator in {}", part));
+        let den: u128 = frac[1].parse().unwrap_or_else(|_| panic!("Invalid denominator in {}", part));
         instrs_fractions.push((num, den));
 
         // Check factors to find the largest prime needed for dimensions
@@ -108,7 +125,7 @@ pub fn split_filename_record(filename_record: &str) -> (String, usize) {
 
 pub fn load_program(input: &str) -> Option<Program> {
     // First check if it is a literal program
-    if input.contains('[') || input.contains(',') || input.contains(' ') {
+    if input.contains('[') {
         return Some(parse_program(input));
     }
 

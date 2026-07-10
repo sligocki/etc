@@ -106,8 +106,14 @@ pub fn split_filename_record(filename_record: &str) -> (String, usize) {
     }
 }
 
-pub fn load_program(filename_record: &str) -> Option<Program> {
-    let (filename, record_num) = split_filename_record(filename_record);
+pub fn load_program(input: &str) -> Option<Program> {
+    // First check if it is a literal program
+    if input.contains('[') || input.contains(',') || input.contains(' ') {
+        return Some(parse_program(input));
+    }
+
+    // Then attemp to load it as a filename/filename:n
+    let (filename, record_num) = split_filename_record(input);
     let lines = load_lines(&filename);
     let prog_str = lines.iter().nth(record_num)?;
     Some(parse_program(prog_str))

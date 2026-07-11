@@ -43,6 +43,9 @@ pub struct ShiftSim {
     pub base_steps: BigInt,
     pub sim_steps: usize,
     pub num_shift_steps: usize,
+
+    pub transcript_steps: Option<usize>,
+    pub check_interval: usize,
 }
 
 impl ShiftSim {
@@ -54,7 +57,31 @@ impl ShiftSim {
             base_steps: 0.into(),
             sim_steps: 0,
             num_shift_steps: 0,
+            transcript_steps: None,
+            check_interval: 0,
         }
+    }
+
+    pub fn set_dynamic_updates(&mut self, transcript_steps: usize, check_interval: usize) {
+        self.transcript_steps = Some(transcript_steps);
+        self.check_interval = check_interval;
+    }
+
+    pub fn update_shift_rules(&mut self, state: &State) -> usize {
+        let mut added = 0;
+        if let Some(transcript_steps) = self.transcript_steps {
+            let new_rules = find_shift_rules(&self.prog, state.clone(), transcript_steps);
+            for rule in new_rules {
+                if !self.shift_rules.contains(&rule) {
+                    self.shift_rules.push(rule);
+                    added += 1;
+                }
+            }
+            if added > 0 {
+                self.shift_rules.sort_by_key(|r| -r.num_steps);
+            }
+        }
+        added
     }
 
     // Returns true if a step was applied, false if halted.
@@ -96,6 +123,10 @@ impl ShiftSim {
 
     pub fn run(&mut self, mut state: State, num_steps: usize) -> State {
         for _ in 0..num_steps {
+            if self.check_interval > 0 && self.sim_steps > 0 && self.sim_steps % self.check_interval == 0 {
+                self.update_shift_rules(&state);
+            }
+
             state = self.step(state);
             if self.status != SimStatus::Running {
                 break;

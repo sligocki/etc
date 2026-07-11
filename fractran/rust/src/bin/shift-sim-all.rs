@@ -1,5 +1,6 @@
 // Simulate all programs in a file with ShiftSim.
 
+use std::cmp;
 use std::fs;
 use std::time::{Duration, Instant};
 
@@ -24,13 +25,16 @@ struct TaskResult {
 }
 
 // Helper function to run the simulation and collect results
-fn parse_and_sim(program_str: &str, transcript_steps: usize, sim_steps: usize) -> TaskResult {
+fn parse_and_sim(program_str: &str, transcript_steps: usize, sim_steps: usize, check_interval: usize) -> TaskResult {
     let start_time = Instant::now();
     let prog = parse_program(program_str);
     let start_state = State::start(&prog);
 
     let shift_rules = find_shift_rules(&prog, start_state.clone(), transcript_steps);
     let mut sim = ShiftSim::new(prog, shift_rules);
+    if check_interval > 0 {
+        sim.set_dynamic_updates(transcript_steps, check_interval);
+    }
     let config = sim.run(start_state, sim_steps);
 
     TaskResult {
@@ -51,9 +55,13 @@ fn bigint_log10(val: BigInt) -> Float {
 #[command(version, about, long_about = None)]
 struct Args {
     infile: String,
-    transcript_steps: usize,
     sim_steps: usize,
     outfile: String,
+
+    #[arg(long, default_value_t = 1_000)]
+    transcript_steps: usize,
+    #[arg(long, default_value_t = 100_000)]
+    check_interval: usize,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -71,6 +79,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let wallclock_start_time = Instant::now();
 
+    // Make sure we at least check for rules 10 times during sim.
+    let check_interval = cmp::min(args.check_interval, args.sim_steps / 10);
+
     // 3. Parallel Execution using Rayon
     let results: Vec<TaskResult> = programs
         .par_iter()
@@ -80,6 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 program_str,
                 args.transcript_steps,
                 args.sim_steps,
+                check_interval,
             ))
         })
         .collect(); // Collect results back into a Vec on the main thread

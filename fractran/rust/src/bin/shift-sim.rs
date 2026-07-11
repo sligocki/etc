@@ -15,11 +15,14 @@ struct Args {
     #[arg(value_name = "FILE[:NUM]")]
     filename_record: String,
 
-    #[arg(default_value_t = 1_000)]
-    transcript_steps: usize,
-
     #[arg(default_value_t = 1_000_000)]
     print_steps: usize,
+
+    #[arg(long, default_value_t = 1_000)]
+    transcript_steps: usize,
+
+    #[arg(long, default_value_t = 100_000)]
+    check_interval: usize,
 }
 
 fn main() {
@@ -33,8 +36,23 @@ fn main() {
     println!("Discovered {} shift rules", shift_rules.len());
 
     let mut sim = ShiftSim::new(prog, shift_rules);
+    if args.check_interval > 0 {
+        sim.set_dynamic_updates(args.transcript_steps, args.check_interval);
+    }
+
     while sim.status == SimStatus::Running {
+        let old_rules_len = sim.shift_rules.len();
         state = sim.run(state, args.print_steps);
+        let new_rules_len = sim.shift_rules.len();
+
+        if new_rules_len > old_rules_len {
+            println!(
+                "Dynamically discovered {} new shift rules (total: {})",
+                new_rules_len - old_rules_len,
+                new_rules_len
+            );
+        }
+
         println!(
             "Sim Step: {}  {:?}  ({:.2}s)",
             sim.sim_steps,

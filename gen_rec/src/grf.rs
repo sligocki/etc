@@ -399,6 +399,132 @@ impl Grf {
         }
         num_str.parse::<usize>().map_err(|e| e.to_string())
     }
+
+    /// Serializes this GRF to a dense prefix format that uses no grouping symbols
+    /// (e.g., `RZP1`). This format achieves maximal substring sharing for common subexpressions.
+    ///
+    /// The target mathematical arity is dropped, as it can be perfectly reconstructed
+    /// via top-down propagation during parsing (see `from_dense`).
+    pub fn to_dense(&self) -> String {
+        let mut s = String::new();
+        self.to_dense_internal(&mut s);
+        s
+    }
+
+    fn to_dense_internal(&self, s: &mut String) {
+        match &self.kind {
+            GrfKind::Zero(_) => s.push('Z'),
+            GrfKind::Succ => s.push('S'),
+            GrfKind::Proj(_, i) => {
+                s.push('P');
+                s.push(Self::to_base36(*i));
+            }
+            GrfKind::Comp(h, gs, _) => {
+                s.push('C');
+                s.push(Self::to_base36(gs.len()));
+                h.to_dense_internal(s);
+                for g in gs {
+                    g.to_dense_internal(s);
+                }
+            }
+            GrfKind::Rec(g, h) => {
+                s.push('R');
+                g.to_dense_internal(s);
+                h.to_dense_internal(s);
+            }
+            GrfKind::Min(f) => {
+                s.push('M');
+                f.to_dense_internal(s);
+            }
+        }
+    }
+
+    fn to_base36(num: usize) -> char {
+        if num < 10 {
+            (b'0' + num as u8) as char
+        } else if num < 36 {
+            (b'a' + (num - 10) as u8) as char
+        } else {
+            panic!("Number too large for single character dense format: {}", num)
+        }
+    }
+
+    fn from_base36(c: char) -> Result<usize, String> {
+        if c.is_ascii_digit() {
+            Ok((c as u8 - b'0') as usize)
+        } else if c.is_ascii_lowercase() {
+            Ok((c as u8 - b'a' + 10) as usize)
+        } else {
+            Err(format!("Invalid base36 character: {}", c))
+        }
+    }
+
+    /// Parses a GRF from the dense prefix format.
+    ///
+    /// Requires the `target_arity` of the top-level expression to reconstruct the dropped
+    /// mathematical arities top-down.
+    pub fn from_dense(s: &str, target_arity: usize) -> Result<Self, String> {
+        let mut chars = s.chars().peekable();
+        let grf = Self::parse_dense(&mut chars, target_arity)?;
+        if chars.peek().is_some() {
+            return Err("Trailing characters found after valid dense GRF expression".to_string());
+        }
+        Ok(grf)
+    }
+
+    fn parse_dense(chars: &mut Peekable<Chars>, target_arity: usize) -> Result<Self, String> {
+        let c = chars
+            .next()
+            .ok_or_else(|| "Unexpected end of input".to_string())?;
+        match c {
+            'Z' => Ok(Grf::zero_atom(target_arity)),
+            'S' => {
+                if target_arity != 1 {
+                    return Err(format!("S expected target arity 1, got {}", target_arity));
+                }
+                Ok(Grf::succ_atom())
+            }
+            'P' => {
+                let k_char = chars
+                    .next()
+                    .ok_or_else(|| "Expected index character after P".to_string())?;
+                let k = Self::from_base36(k_char)?;
+                if k == 0 || k > target_arity {
+                    return Err(format!("Invalid projection P({}, {})", target_arity, k));
+                }
+                Ok(Grf::proj_atom(target_arity, k))
+            }
+            'R' => {
+                if target_arity == 0 {
+                    return Err("R cannot produce arity 0".to_string());
+                }
+                let g = Self::parse_dense(chars, target_arity - 1)?;
+                let h = Self::parse_dense(chars, target_arity + 1)?;
+                Ok(Grf::rec(g, h))
+            }
+            'M' => {
+                let f = Self::parse_dense(chars, target_arity + 1)?;
+                Ok(Grf::min(f))
+            }
+            'C' => {
+                let k_char = chars
+                    .next()
+                    .ok_or_else(|| "Expected arg count after C".to_string())?;
+                let k = Self::from_base36(k_char)?;
+                let h = Self::parse_dense(chars, k)?;
+                if k == 0 {
+                    Ok(Grf::comp0(h, target_arity))
+                } else {
+                    let mut gs = Vec::with_capacity(k);
+                    for _ in 0..k {
+                        gs.push(Self::parse_dense(chars, target_arity)?);
+                    }
+                    Ok(Grf::comp(h, gs))
+                }
+            }
+            _ => Err(format!("Unexpected character: {}", c)),
+        }
+    }
 }
 
 /// Recursively collects outer-arg indices in DFS first-occurrence order.
@@ -512,6 +638,40 @@ impl FromStr for Grf {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn test_grf_from_str_invalid() {
+        assert!(Grf::from_str("P(2)").is_err());
+        assert!(Grf::from_str("C(S)").is_err());
+        assert!(Grf::from_str("R(Z0)").is_err());
+        assert!(Grf::from_str("X(Y)").is_err());
+        assert!(Grf::from_str("M(Z1").is_err());
+    }
+
+    #[test]
+    fn test_dense_format_roundtrip() {
+        let cases = vec![
+            (grf!("Z0"), "Z", 0),
+            (grf!("Z3"), "Z", 3),
+            (grf!("S"), "S", 1),
+            (grf!("P(3,2)"), "P2", 3),
+            (grf!("R(Z0, P(2,1))"), "RZP1", 1),
+            (grf!("M(S)"), "MS", 0),
+            (grf!("C(S, Z1)"), "C1SZ", 1),
+            (grf!("C(P(3,2), S, R(Z0, P(2,1)), Z3)"), "C3P2SRZP1Z", 3),
+            (grf!("C2(Z0)"), "C0Z", 2),
+            (grf!("C(Z2, C(Z1, S, Z1), Z1)"), "C2ZC2ZSZ", 1),
+        ];
+
+        for (grf, expected_dense, target_arity) in cases {
+            assert_eq!(grf.arity(), target_arity, "Test case arity mismatch for {}", grf);
+            let dense = grf.to_dense();
+            assert_eq!(dense, expected_dense, "Serialization failed for {}", grf);
+            
+            let parsed = Grf::from_dense(&dense, target_arity).expect("Failed to parse dense format");
+            assert_eq!(parsed, grf, "Round-trip parsing failed for dense {}", dense);
+        }
+    }
 
     #[test]
     fn test_atom_arities() {

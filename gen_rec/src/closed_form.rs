@@ -1245,6 +1245,43 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
+    // Case E: Iterated Modulo Decrement (Iterated Piecewise)
+    // h(n, acc, rest) = Piecewise(acc == 0 ? C(rest) : acc - 1)
+    // This evaluates exactly to `NegMod(g, n, C(rest))`
+    if let ClosedForm::Piecewise(pw) = sem_h {
+        if pw.branch_index == 1 {
+            let mut is_pos_acc_minus_1 = false;
+            if let ClosedForm::Affine(af) = &*pw.pos_branch {
+                if af.coeffs.len() > 2 && af.coeffs[0] == 0 && af.coeffs[1] == 0 && af.coeffs[2] == 1 && af.coeffs[3..].iter().all(|&c| c == 0) {
+                    is_pos_acc_minus_1 = true;
+                }
+            }
+
+            if is_pos_acc_minus_1 {
+                let mut is_zero_indep_of_n = false;
+                if let ClosedForm::Affine(af) = &*pw.zero_branch {
+                    if af.coeffs.len() > 1 && af.coeffs[1] == 0 {
+                        is_zero_indep_of_n = true;
+                    }
+                }
+                
+                if is_zero_indep_of_n {
+                    if let ClosedForm::Affine(af) = &*pw.zero_branch {
+                        // NegMod evaluation assumes init <= limit. 
+                        // The safest way to ensure this is if init (sem_g) is exactly 0.
+                        let zero_outer = af.clone();
+                        let p1_outer = AffineFn::proj(k_outer, 1);
+                        
+                        let lifted_g = insert_arg(sem_g, 1);
+                        if let Some(wrapped) = wrap_in_neg_mod(&lifted_g, &p1_outer, &zero_outer) {
+                            return Some(wrapped);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // --- Unified Symbolic Sequence Analyzer ---
     // Simulates the sequence S_n = h(n-1, S_{n-1}).
     // Detects:
@@ -2700,6 +2737,106 @@ fn drop_arg(sem: &ClosedForm, idx: usize) -> Option<ClosedForm> {
                 }))
             }
         }
+    }
+}
+
+fn insert_arg_affine(af: &AffineFn, idx: usize) -> AffineFn {
+    debug_assert!(idx >= 1 && idx <= af.arity + 1);
+    let mut new_coeffs = Vec::with_capacity(af.coeffs.len() + 1);
+    new_coeffs.extend_from_slice(&af.coeffs[0..idx]);
+    new_coeffs.push(0);
+    new_coeffs.extend_from_slice(&af.coeffs[idx..]);
+    AffineFn {
+        arity: af.arity + 1,
+        coeffs: new_coeffs,
+    }
+}
+
+fn insert_arg(sem: &ClosedForm, idx: usize) -> ClosedForm {
+    debug_assert!(idx >= 1 && idx <= sem.arity() + 1);
+    match sem {
+        ClosedForm::Affine(af) => ClosedForm::Affine(insert_arg_affine(af, idx)),
+        ClosedForm::Polynomial(poly) => {
+            let new_poly_arg = if poly.poly_arg >= idx { poly.poly_arg + 1 } else { poly.poly_arg };
+            ClosedForm::Polynomial(PolynomialFn::new(
+                poly.arity + 1,
+                new_poly_arg,
+                poly.poly_coeffs.clone(),
+                Box::new(insert_arg_affine(&poly.affine_tail, idx)),
+            ))
+        }
+        ClosedForm::Piecewise(pw) => {
+            let b = pw.branch_index + 1;
+            let idx_in_zero = if idx <= b { idx } else { idx - 1 };
+            let new_zero = insert_arg(&pw.zero_branch, idx_in_zero);
+            let new_pos = insert_arg(&pw.pos_branch, idx);
+            let new_bi = if idx <= b { pw.branch_index + 1 } else { pw.branch_index };
+            ClosedForm::Piecewise(PiecewiseFn {
+                arity: pw.arity + 1,
+                branch_index: new_bi,
+                zero_branch: Box::new(new_zero),
+                pos_branch: Box::new(new_pos),
+            })
+        }
+        ClosedForm::NegMod(a1, a2, a3) => ClosedForm::NegMod(
+            insert_arg_affine(a1, idx),
+            insert_arg_affine(a2, idx),
+            insert_arg_affine(a3, idx),
+        ),
+        ClosedForm::Periodic(p) => {
+            let new_branches = p.branches.iter().map(|b| Box::new(insert_arg(b, idx))).collect();
+            let new_bi = if idx <= p.branch_index + 1 { p.branch_index + 1 } else { p.branch_index };
+            make_periodic(p.arity + 1, new_bi, new_branches)
+        }
+        ClosedForm::Exponential(exp) => {
+            let new_exp_arg = if exp.exp_arg >= idx { exp.exp_arg + 1 } else { exp.exp_arg };
+            ClosedForm::Exponential(ExponentialFn {
+                arity: exp.arity + 1,
+                exp_base: exp.exp_base,
+                exp_arg: new_exp_arg,
+                init_term: Box::new(insert_arg(&exp.init_term, idx)),
+                affine_step: Box::new(insert_arg_affine(&exp.affine_step, idx)),
+            })
+        }
+    }
+}
+
+fn wrap_in_neg_mod(
+    cf: &ClosedForm,
+    n_arg: &AffineFn,
+    wrap_limit: &AffineFn,
+) -> Option<ClosedForm> {
+    let mut init_is_zero = false;
+    if let ClosedForm::Affine(af) = cf {
+        if af.coeffs.iter().all(|&c| c == 0) {
+            init_is_zero = true;
+        }
+    }
+    
+    if init_is_zero && wrap_limit.coeffs.iter().all(|&c| c == 0) {
+        return Some(ClosedForm::Affine(AffineFn {
+            arity: wrap_limit.arity,
+            coeffs: vec![0; wrap_limit.arity + 1],
+        }));
+    }
+
+    match cf {
+        ClosedForm::Affine(af) => {
+            Some(ClosedForm::NegMod(af.clone(), n_arg.clone(), wrap_limit.clone()))
+        }
+        ClosedForm::Piecewise(pw) => {
+            let n_arg_zero = drop_arg_affine(n_arg, pw.branch_index + 1)?;
+            let wrap_limit_zero = drop_arg_affine(wrap_limit, pw.branch_index + 1)?;
+            let zero_mapped = wrap_in_neg_mod(&pw.zero_branch, &n_arg_zero, &wrap_limit_zero)?;
+            let pos_mapped = wrap_in_neg_mod(&pw.pos_branch, n_arg, wrap_limit)?;
+            Some(ClosedForm::Piecewise(PiecewiseFn {
+                arity: pw.arity,
+                branch_index: pw.branch_index,
+                zero_branch: Box::new(zero_mapped),
+                pos_branch: Box::new(pos_mapped),
+            }))
+        }
+        _ => None,
     }
 }
 

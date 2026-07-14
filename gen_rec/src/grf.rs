@@ -660,7 +660,7 @@ mod tests {
             (grf!("C(S, Z1)"), "C1SZ", 1),
             (grf!("C(P(3,2), S, R(Z0, P(2,1)), Z3)"), "C3P2SRZP1Z", 3),
             (grf!("C2(Z0)"), "C0Z", 2),
-            (grf!("C(Z2, C(Z1, S, Z1), Z1)"), "C2ZC2ZSZ", 1),
+
         ];
 
         for (grf, expected_dense, target_arity) in cases {

@@ -195,7 +195,7 @@ fn main() {
             println!("\n## Sub-expressions\n");
         } else {
             println!("Decompiled: {}", decomp);
-            println!("\n=== Sub-expressions ===\n");
+            println!("\n=== Sub-expressions ===");
         }
 
         for (i, key) in order.iter().enumerate() {
@@ -217,7 +217,6 @@ fn main() {
                 .collect::<Vec<_>>()
                 .join(",");
 
-            println!();
             if args.markdown {
                 println!("### Sub-expression `{}`", name);
                 println!("```text\n{} := {}\n```", name, subst);
@@ -225,7 +224,6 @@ fn main() {
                 println!("- **Size**: {}", sub.size());
                 if !prf.is_empty() { println!("- **Type**: PRF"); }
                 if !used.is_empty() { println!("- **Used args**: {{{}}}", used_str); }
-                println!();
             } else {
                 let used_tag = if used.is_empty() {
                     String::new()
@@ -248,11 +246,11 @@ fn main() {
             } else if !args.no_sim {
                 print_io_table(sub, args.max_val, args.max_steps, args.markdown);
             }
+            println!();
         }
     }
 
     // Root summary.
-    println!();
     let root_subst = fmt_subst(&grf, &names);
     if args.markdown {
         println!("## Root");

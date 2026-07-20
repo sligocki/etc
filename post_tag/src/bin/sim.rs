@@ -15,6 +15,10 @@ struct Args {
     /// Max steps
     #[arg(long, default_value_t = 1_000_000)]
     max_steps: usize,
+
+    /// Verbose (print every step)
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 fn parse_rules(s: &str) -> Vec<Vec<u8>> {
@@ -51,7 +55,13 @@ fn main() {
     
     println!("Simulating: {}", sys.format_rules());
     
-    match sys.simulate_fast(args.max_steps) {
+    let result = if args.verbose {
+        sys.simulate_verbose(args.max_steps)
+    } else {
+        sys.simulate_fast(args.max_steps)
+    };
+
+    match result {
         HaltCondition::Halted(steps, space) => {
             println!("Halted in {} steps! Max space reached: {}", steps, space);
         }

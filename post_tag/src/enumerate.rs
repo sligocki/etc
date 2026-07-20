@@ -18,24 +18,43 @@ fn enum_lengths(
     }
 }
 
+fn enum_strings(
+    n: usize,
+    current: &mut [u8],
+    index: usize,
+    max_seen: u8,
+    callback: &mut impl FnMut(&[u8]),
+) {
+    if index == current.len() {
+        callback(current);
+        return;
+    }
+
+    let limit = std::cmp::min(n as u8 - 1, max_seen + 1);
+    for c in 0..=limit {
+        current[index] = c;
+        let next_max = std::cmp::max(max_seen, c);
+        enum_strings(n, current, index + 1, next_max, callback);
+    }
+}
+
 pub fn enumerate_systems(v: usize, s: usize, callback: &mut impl FnMut(TagSystem)) {
     for n in 1..=s {
         let mut lengths = vec![0; n];
         let remaining = s - n;
         enum_lengths(n, remaining, &mut lengths, 0, &mut |lens| {
-            let total_chars = remaining as u32;
-            let num_assignments = (n as u64).pow(total_chars);
-            for mut i in 0..num_assignments {
+            let mut string_buf = vec![0u8; remaining];
+            enum_strings(n, &mut string_buf, 0, 0, &mut |chars| {
                 let mut rules = vec![vec![]; n];
+                let mut char_idx = 0;
                 for r in 0..n {
                     for _ in 0..lens[r] {
-                        let c = (i % (n as u64)) as u8;
-                        rules[r].push(c);
-                        i /= n as u64;
+                        rules[r].push(chars[char_idx]);
+                        char_idx += 1;
                     }
                 }
                 callback(TagSystem { v, rules });
-            }
+            });
         });
     }
 }

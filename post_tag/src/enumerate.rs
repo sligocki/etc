@@ -43,6 +43,30 @@ fn enum_strings_adaptive(
     }
 }
 
+fn is_valid_reachability(sys: &TagSystem) -> bool {
+    let mut reachable = vec![false; sys.rules.len()];
+    let mut queue = vec![0];
+    reachable[0] = true;
+
+    while let Some(r) = queue.pop() {
+        if let Some(w) = &sys.rules[r as usize] {
+            for &c in w {
+                if !reachable[c as usize] {
+                    reachable[c as usize] = true;
+                    queue.push(c);
+                }
+            }
+        } else {
+            // Reached an undefined rule. The closure is open.
+            return true;
+        }
+    }
+
+    // Closure is fully defined. It is only valid if ALL n symbols are reachable.
+    // If not, it's equivalent to a smaller program (padding).
+    reachable.iter().all(|&b| b)
+}
+
 fn explore_adaptive(
     sys: &mut TagSystem,
     lens: &[usize],
@@ -61,7 +85,9 @@ fn explore_adaptive(
                 }
 
                 sys.rules[c as usize] = Some(chars.to_vec());
-                explore_adaptive(sys, lens, max_steps, new_max_seen, callback);
+                if is_valid_reachability(sys) {
+                    explore_adaptive(sys, lens, max_steps, new_max_seen, callback);
+                }
                 sys.rules[c as usize] = None; // Backtrack
             });
         }

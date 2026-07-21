@@ -21,7 +21,7 @@ struct Args {
     verbose: bool,
 }
 
-fn parse_rules(s: &str) -> Vec<Vec<u8>> {
+fn parse_rules(s: &str) -> Vec<Option<Vec<u8>>> {
     let mut rules = Vec::new();
     for part in s.split(',') {
         let part = part.trim();
@@ -31,17 +31,19 @@ fn parse_rules(s: &str) -> Vec<Vec<u8>> {
         if let Some((lhs, rhs)) = part.split_once("->") {
             let lhs: usize = lhs.trim().parse().unwrap();
             while rules.len() <= lhs {
-                rules.push(vec![]);
+                rules.push(None);
             }
             let rhs = rhs.trim();
-            if rhs == "eps" {
-                rules[lhs] = vec![];
+            if rhs == "?" {
+                rules[lhs] = None;
+            } else if rhs == "eps" {
+                rules[lhs] = Some(vec![]);
             } else {
                 let mut rv = vec![];
                 for c in rhs.chars() {
                     rv.push(c.to_digit(10).unwrap() as u8);
                 }
-                rules[lhs] = rv;
+                rules[lhs] = Some(rv);
             }
         }
     }
@@ -73,6 +75,9 @@ fn main() {
         }
         HaltCondition::Unknown => {
             println!("Hit step limit of {}. (Holdout)", args.max_steps);
+        }
+        HaltCondition::UndefinedRule(c) => {
+            println!("Hit undefined rule for symbol {}", c);
         }
     }
 }

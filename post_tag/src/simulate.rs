@@ -10,6 +10,7 @@ pub enum HaltCondition {
     Halted(usize, usize), // steps, max_length
     Infinite(InfiniteReason, usize), // reason, steps taken to detect
     Unknown,
+    UndefinedRule(u8),
 }
 
 impl TagSystem {
@@ -34,7 +35,12 @@ impl TagSystem {
             let head = tape[head_idx];
             head_idx += self.v;
 
-            for &c in &self.rules[head as usize] {
+            let rule = match &self.rules[head as usize] {
+                Some(r) => r,
+                None => return HaltCondition::UndefinedRule(head),
+            };
+
+            for &c in rule {
                 tape.push(c);
             }
 
@@ -99,7 +105,12 @@ impl TagSystem {
             let head = tape[head_idx];
             head_idx += self.v;
 
-            for &c in &self.rules[head as usize] {
+            let rule = match &self.rules[head as usize] {
+                Some(r) => r,
+                None => return HaltCondition::UndefinedRule(head),
+            };
+
+            for &c in rule {
                 tape.push(c);
             }
 

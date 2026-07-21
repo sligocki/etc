@@ -1,22 +1,24 @@
 #[derive(Clone, Debug)]
 pub struct TagSystem {
     pub v: usize,
-    pub rules: Vec<Vec<u8>>,
+    pub rules: Vec<Option<Vec<u8>>>,
 }
 
 impl TagSystem {
     pub fn format_rules(&self) -> String {
         let mut parts = vec![];
         for (i, r) in self.rules.iter().enumerate() {
-            let mut s = format!("{}->", i);
-            if r.is_empty() {
-                s.push_str("eps");
-            } else {
-                for &c in r {
-                    s.push_str(&c.to_string());
+            match r {
+                Some(w) if w.is_empty() => parts.push(format!("{}->eps", i)),
+                Some(w) => {
+                    let mut s = format!("{}->", i);
+                    for &c in w {
+                        s.push_str(&c.to_string());
+                    }
+                    parts.push(s);
                 }
+                None => parts.push(format!("{}->?", i)),
             }
-            parts.push(s);
         }
         parts.join(", ")
     }
@@ -24,14 +26,16 @@ impl TagSystem {
     pub fn dense_string(&self) -> String {
         let mut parts = vec![];
         for r in &self.rules {
-            if r.is_empty() {
-                parts.push(String::new());
-            } else {
-                let mut s = String::new();
-                for &c in r {
-                    s.push_str(&c.to_string());
+            match r {
+                Some(w) if w.is_empty() => parts.push(String::new()),
+                Some(w) => {
+                    let mut s = String::new();
+                    for &c in w {
+                        s.push_str(&c.to_string());
+                    }
+                    parts.push(s);
                 }
-                parts.push(s);
+                None => parts.push("?".to_string()),
             }
         }
         parts.join("_")

@@ -1,3 +1,4 @@
+use crate::simulate::HaltCondition;
 use crate::tag_system::TagSystem;
 
 fn enum_lengths(
@@ -21,23 +22,16 @@ fn enum_lengths(
     }
 }
 
-fn enum_strings(
+fn enum_strings_adaptive(
     n: usize,
-    lens: &[usize],
+    len: usize,
     current: &mut [u8],
     index: usize,
     max_seen: u8,
-    callback: &mut impl FnMut(&[u8]),
+    callback: &mut impl FnMut(&[u8], u8),
 ) {
-    if index == lens[0] && max_seen == 0 {
-        // Prune! If w_0 does not contain '1', then since the initial tape is purely '0's,
-        // no other symbol will ever be reached. 
-        // Such systems either halt in 1 step (if |w_0| < v) or loop forever (if |w_0| >= v).
-        return;
-    }
-
-    if index == current.len() {
-        callback(current);
+    if index == len {
+        callback(current, max_seen);
         return;
     }
 
@@ -45,27 +39,53 @@ fn enum_strings(
     for c in 0..=limit {
         current[index] = c;
         let next_max = std::cmp::max(max_seen, c);
-        enum_strings(n, lens, current, index + 1, next_max, callback);
+        enum_strings_adaptive(n, len, current, index + 1, next_max, callback);
     }
 }
 
-pub fn enumerate_systems(v: usize, s: usize, callback: &mut impl FnMut(TagSystem)) {
+fn explore_adaptive(
+    sys: &mut TagSystem,
+    lens: &[usize],
+    max_steps: usize,
+    max_seen: u8,
+    callback: &mut impl FnMut(&TagSystem, HaltCondition),
+) {
+    match sys.simulate_fast(max_steps) {
+        HaltCondition::UndefinedRule(c) => {
+            let l = lens[c as usize];
+            let mut string_buf = vec![0u8; l];
+            enum_strings_adaptive(sys.rules.len(), l, &mut string_buf, 0, max_seen, &mut |chars, new_max_seen| {
+                // Prune w_0 must contain '1' if n > 1
+                if c == 0 && new_max_seen == 0 && sys.rules.len() > 1 {
+                    return;
+                }
+
+                sys.rules[c as usize] = Some(chars.to_vec());
+                explore_adaptive(sys, lens, max_steps, new_max_seen, callback);
+                sys.rules[c as usize] = None; // Backtrack
+            });
+        }
+        condition => {
+            callback(sys, condition);
+        }
+    }
+}
+
+pub fn enumerate_systems(
+    v: usize,
+    s: usize,
+    max_steps: usize,
+    callback: &mut impl FnMut(&TagSystem, HaltCondition),
+) {
     for n in 1..=s {
         let mut lengths = vec![0; n];
         let remaining = s - n;
         enum_lengths(n, remaining, &mut lengths, 0, v, &mut |lens| {
-            let mut string_buf = vec![0u8; remaining];
-            enum_strings(n, lens, &mut string_buf, 0, 0, &mut |chars| {
-                let mut rules = vec![vec![]; n];
-                let mut char_idx = 0;
-                for r in 0..n {
-                    for _ in 0..lens[r] {
-                        rules[r].push(chars[char_idx]);
-                        char_idx += 1;
-                    }
-                }
-                callback(TagSystem { v, rules });
-            });
+            let mut sys = TagSystem {
+                v,
+                rules: vec![None; n],
+            };
+            explore_adaptive(&mut sys, lens, max_steps, 0, callback);
         });
     }
 }

@@ -45,10 +45,10 @@ fn main() {
     
     let start_time = Instant::now();
 
-    enumerate_systems(args.v, args.s, &mut |sys| {
+    enumerate_systems(args.v, args.s, args.max_steps, &mut |sys, condition| {
         total += 1;
         let dense = sys.dense_string();
-        match sys.simulate_fast(args.max_steps) {
+        match condition {
             HaltCondition::Halted(steps, space) => {
                 total_steps += steps as u64;
                 if steps > max_halt_steps {
@@ -87,6 +87,9 @@ fn main() {
                 if let Some(ref mut w) = out_file {
                     writeln!(w, "prog={} status=Unknown", dense).unwrap();
                 }
+            }
+            HaltCondition::UndefinedRule(_) => {
+                // This shouldn't happen, explore_adaptive handles it
             }
         }
     });

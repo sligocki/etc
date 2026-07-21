@@ -20,4 +20,20 @@ impl TagSystem {
         }
         parts.join(", ")
     }
+
+    pub fn dense_string(&self) -> String {
+        let mut parts = vec![];
+        for r in &self.rules {
+            if r.is_empty() {
+                parts.push(String::new());
+            } else {
+                let mut s = String::new();
+                for &c in r {
+                    s.push_str(&c.to_string());
+                }
+                parts.push(s);
+            }
+        }
+        parts.join("_")
+    }
 }

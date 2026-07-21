@@ -19,7 +19,8 @@ impl TagSystem {
         let mut steps = 0;
         let mut max_len = self.v;
 
-        let mut saved_tape = tape.clone();
+        let mut saved_tape = Vec::with_capacity(64);
+        saved_tape.extend_from_slice(&tape);
         let mut power = 1;
         let mut lam = 0;
 
@@ -47,9 +48,13 @@ impl TagSystem {
             }
 
             if lam == power {
-                saved_tape = tape[head_idx..].to_vec();
                 power *= 2;
                 lam = 0;
+                // Only take snapshots if the tape is reasonably sized to prevent slow O(N) memcpys
+                if current_len < 10_000 {
+                    saved_tape.clear();
+                    saved_tape.extend_from_slice(&tape[head_idx..]);
+                }
             }
 
             // Keep memory bounded
@@ -68,7 +73,8 @@ impl TagSystem {
         let mut steps = 0;
         let mut max_len = self.v;
 
-        let mut saved_tape = tape.clone();
+        let mut saved_tape = Vec::with_capacity(64);
+        saved_tape.extend_from_slice(&tape);
         let mut power = 1;
         let mut lam = 0;
 
@@ -108,9 +114,12 @@ impl TagSystem {
             }
 
             if lam == power {
-                saved_tape = tape[head_idx..].to_vec();
                 power *= 2;
                 lam = 0;
+                if current_len < 10_000 {
+                    saved_tape.clear();
+                    saved_tape.extend_from_slice(&tape[head_idx..]);
+                }
             }
 
             // Keep memory bounded

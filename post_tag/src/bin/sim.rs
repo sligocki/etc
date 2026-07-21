@@ -1,5 +1,5 @@
 use clap::Parser;
-use post_tag::simulate::HaltCondition;
+use post_tag::simulate::{HaltCondition, InfiniteReason};
 use post_tag::tag_system::TagSystem;
 
 #[derive(Parser, Debug)]
@@ -65,7 +65,13 @@ fn main() {
         HaltCondition::Halted(steps, space) => {
             println!("Halted in {} steps! Max space reached: {}", steps, space);
         }
-        HaltCondition::Infinite => {
+        HaltCondition::Infinite(reason, steps) => {
+            let reason_str = match reason {
+                InfiniteReason::Cycle(period) => format!("Exact cycle of period {}", period),
+            };
+            println!("Infinite in {} steps. Reason: {}", steps, reason_str);
+        }
+        HaltCondition::Unknown => {
             println!("Hit step limit of {}. (Holdout)", args.max_steps);
         }
     }

@@ -1,9 +1,15 @@
 use crate::tag_system::TagSystem;
 
 #[derive(Debug, Clone, Copy)]
+pub enum InfiniteReason {
+    Cycle(usize), // period
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum HaltCondition {
     Halted(usize, usize), // steps, max_length
-    Infinite,
+    Infinite(InfiniteReason, usize), // reason, steps taken to detect
+    Unknown,
 }
 
 impl TagSystem {
@@ -13,11 +19,17 @@ impl TagSystem {
         let mut steps = 0;
         let mut max_len = self.v;
 
+        let mut saved_tape = tape.clone();
+        let mut power = 1;
+        let mut lam = 0;
+
         while tape.len() - head_idx >= self.v {
             if steps >= max_steps {
-                return HaltCondition::Infinite;
+                return HaltCondition::Unknown;
             }
             steps += 1;
+            lam += 1;
+            
             let head = tape[head_idx];
             head_idx += self.v;
 
@@ -28,6 +40,16 @@ impl TagSystem {
             let current_len = tape.len() - head_idx;
             if current_len > max_len {
                 max_len = current_len;
+            }
+
+            if current_len == saved_tape.len() && tape[head_idx..] == saved_tape[..] {
+                return HaltCondition::Infinite(InfiniteReason::Cycle(lam), steps);
+            }
+
+            if lam == power {
+                saved_tape = tape[head_idx..].to_vec();
+                power *= 2;
+                lam = 0;
             }
 
             // Keep memory bounded
@@ -46,9 +68,13 @@ impl TagSystem {
         let mut steps = 0;
         let mut max_len = self.v;
 
+        let mut saved_tape = tape.clone();
+        let mut power = 1;
+        let mut lam = 0;
+
         while tape.len() - head_idx >= self.v {
             if steps >= max_steps {
-                return HaltCondition::Infinite;
+                return HaltCondition::Unknown;
             }
             
             print!("Step {}: Tape ", steps);
@@ -62,6 +88,8 @@ impl TagSystem {
             }
 
             steps += 1;
+            lam += 1;
+            
             let head = tape[head_idx];
             head_idx += self.v;
 
@@ -72,6 +100,17 @@ impl TagSystem {
             let current_len = tape.len() - head_idx;
             if current_len > max_len {
                 max_len = current_len;
+            }
+
+            if current_len == saved_tape.len() && tape[head_idx..] == saved_tape[..] {
+                println!("Exact cycle of period {} detected!", lam);
+                return HaltCondition::Infinite(InfiniteReason::Cycle(lam), steps);
+            }
+
+            if lam == power {
+                saved_tape = tape[head_idx..].to_vec();
+                power *= 2;
+                lam = 0;
             }
 
             // Keep memory bounded

@@ -1,6 +1,6 @@
 use clap::Parser;
 use post_tag::enumerate::enumerate_systems;
-use post_tag::simulate::HaltCondition;
+use post_tag::simulate::{HaltCondition, InfiniteReason};
 use post_tag::tag_system::TagSystem;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -71,7 +71,17 @@ fn main() {
                     writeln!(w, "prog={} status=Halt steps={} space={}", dense, steps, space).unwrap();
                 }
             }
-            HaltCondition::Infinite => {
+            HaltCondition::Infinite(reason, steps) => {
+                let reason_str = match reason {
+                    InfiniteReason::Cycle(_) => "Cycle",
+                };
+                infinite += 1;
+                total_steps += steps as u64;
+                if let Some(ref mut w) = out_file {
+                    writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str).unwrap();
+                }
+            }
+            HaltCondition::Unknown => {
                 total_steps += args.max_steps as u64;
                 holdouts += 1;
                 if let Some(ref mut w) = out_file {

@@ -5,16 +5,19 @@ fn enum_lengths(
     remaining: usize,
     current: &mut [usize],
     index: usize,
+    v: usize,
     callback: &mut impl FnMut(&[usize]),
 ) {
     if index == n - 1 {
         current[index] = remaining;
-        callback(current);
+        if current.iter().any(|&l| l < v) {
+            callback(current);
+        }
         return;
     }
     for i in 0..=remaining {
         current[index] = i;
-        enum_lengths(n, remaining - i, current, index + 1, callback);
+        enum_lengths(n, remaining - i, current, index + 1, v, callback);
     }
 }
 
@@ -50,7 +53,7 @@ pub fn enumerate_systems(v: usize, s: usize, callback: &mut impl FnMut(TagSystem
     for n in 1..=s {
         let mut lengths = vec![0; n];
         let remaining = s - n;
-        enum_lengths(n, remaining, &mut lengths, 0, &mut |lens| {
+        enum_lengths(n, remaining, &mut lengths, 0, v, &mut |lens| {
             let mut string_buf = vec![0u8; remaining];
             enum_strings(n, lens, &mut string_buf, 0, 0, &mut |chars| {
                 let mut rules = vec![vec![]; n];

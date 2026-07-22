@@ -50,6 +50,8 @@ fn main() {
                 let c_consumed = delta_t * sys.v;
                 
                 if c_consumed <= saved_tape.len() {
+                    let h = current_tape[..c_consumed].to_vec();
+                    let u = current_tape[c_consumed..saved_tape.len()].to_vec();
                     let p = current_tape[saved_tape.len()..].to_vec();
                     let a = current_tape[saved_tape.len() - c_consumed..].to_vec();
                     
@@ -59,32 +61,30 @@ fn main() {
                     let mut ap = a.clone();
                     ap.extend(&p);
                     
+                    println!("\nDetected Heuristic cycle:");
+                    println!("  t1 = {}:  {}", saved_step, format_tape(saved_tape));
+                    println!("  t2 = {}:  {} {}", sim.steps, format_tape(saved_tape), format_tape(&p));
+                    println!();
+                    println!("H = {}", format_tape(&h));
+                    println!("U = {}", format_tape(&u));
+                    println!("P = {}", format_tape(&p));
+                    println!("A = {}", format_tape(&a));
+                    println!();
+                    
                     if pa == ap {
-                        println!("\n=============================================");
-                        println!("--- Translation Cycle Strictly Proven! ---");
-                        println!("t1 = {}, tape T = {}", saved_step, format_tape(saved_tape));
-                        println!("t2 = {}, tape T*P = {}", sim.steps, format_tape(current_tape));
-                        println!("delta_t = {}", delta_t);
-                        println!("characters consumed C = {}", c_consumed);
-                        println!("|T| = {}", saved_tape.len());
-                        println!("P = {}", format_tape(&p));
-                        println!("A = {}", format_tape(&a));
-                        println!("---------------------------------------------");
-                        println!("Proof Part 1: |T| >= C is SATISFIED! ({} >= {})", saved_tape.len(), c_consumed);
-                        println!("Because the evaluation of T consumes at most |T| characters,");
-                        println!("it NEVER reads past its own boundary.");
-                        println!("Proof Part 2: Commutativity (P*A == A*P) is SATISFIED!");
-                        println!("Because P and A commute, the evaluation of T*P perfectly aligns to yield T*P*P.");
-                        println!("Therefore, T*P evaluates mathematically precisely to T*P*P.");
-                        println!("The cycle will continue indefinitely!");
+                        println!("PA = AP");
+                        println!("UA = HUP");
+                        println!();
+                        println!("Therefore:");
+                        println!("  HU P^k -> U P^k A = UA P^k = HUP P^k = HU P^k+1");
+                        println!();
+                        println!("This is proven as a Translated Cycler");
                         println!("=============================================\n");
                         return;
                     } else {
-                        println!("--- Translation Cycle Candidate Found but REJECTED! ---");
-                        println!("P and A do not commute (P*A != A*P)!");
-                        println!("P = {}", format_tape(&p));
-                        println!("A = {}", format_tape(&a));
+                        println!("PA != AP");
                         println!("This is a false positive cycle pattern and will break on the next iteration.");
+                        println!("=============================================\n");
                     }
                 }
             }

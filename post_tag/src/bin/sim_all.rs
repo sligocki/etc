@@ -48,9 +48,32 @@ fn main() {
     let start_time = Instant::now();
     let total = unknowns.len();
 
-    for (i, prog_str) in unknowns.iter().enumerate() {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let completed = AtomicUsize::new(0);
+
+    let results: Vec<_> = unknowns.par_iter().map(|prog_str| {
         let sys = TagSystem::parse(2, prog_str);
         let result = simulate(&sys, args.max_steps, false, args.deciders);
+        
+        let c = completed.fetch_add(1, Ordering::SeqCst) + 1;
+        let pct = c as f64 / total as f64;
+        let bar_len = 40;
+        let filled = (pct * bar_len as f64) as usize;
+        let mut bar = String::new();
+        for _ in 0..filled { bar.push('='); }
+        if filled < bar_len { bar.push('>'); }
+        for _ in (filled + 1)..bar_len { bar.push(' '); }
+        
+        let mut stdout = std::io::stdout().lock();
+        write!(stdout, "\r[{}] {:.1}% ({}/{})", bar, pct * 100.0, c, total).unwrap();
+        stdout.flush().unwrap();
+        
+        (sys, result)
+    }).collect();
+
+    for (sys, result) in results {
         write_result(&mut out_file, &sys, &result).unwrap();
         
         match result {
@@ -71,17 +94,6 @@ fn main() {
             }
             post_tag::simulate::HaltCondition::UndefinedRule(_) => {}
         }
-        
-        // Progress bar
-        let pct = (i + 1) as f64 / total as f64;
-        let bar_len = 40;
-        let filled = (pct * bar_len as f64) as usize;
-        let mut bar = String::new();
-        for _ in 0..filled { bar.push('='); }
-        if filled < bar_len { bar.push('>'); }
-        for _ in (filled + 1)..bar_len { bar.push(' '); }
-        print!("\r[{}] {:.1}% ({}/{})", bar, pct * 100.0, i + 1, total);
-        std::io::stdout().flush().unwrap();
     }
     
     let elapsed = start_time.elapsed();

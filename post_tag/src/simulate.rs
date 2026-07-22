@@ -24,6 +24,8 @@ pub struct Simulator<'a> {
     pub saved_tape: Vec<u8>,
     pub power: usize,
     pub lam: usize,
+    pub symbol_counts: Vec<usize>,
+    pub non_decreasing: Vec<u8>,
 }
 
 impl<'a> Simulator<'a> {
@@ -31,6 +33,14 @@ impl<'a> Simulator<'a> {
         let tape = vec![0u8; sys.v];
         let mut saved_tape = Vec::with_capacity(64);
         saved_tape.extend_from_slice(&tape);
+        
+        let mut symbol_counts = vec![0; 256];
+        for &c in &tape {
+            symbol_counts[c as usize] += 1;
+        }
+        
+        let non_decreasing = sys.non_decreasing_symbols();
+
         Simulator {
             sys,
             tape,
@@ -40,10 +50,21 @@ impl<'a> Simulator<'a> {
             saved_tape,
             power: 1,
             lam: 0,
+            symbol_counts,
+            non_decreasing,
         }
     }
 
     pub fn step(&mut self, verbose: bool) -> Option<HaltCondition> {
+        for &c in &self.non_decreasing {
+            if self.symbol_counts[c as usize] >= self.sys.v {
+                if verbose {
+                    println!("Number of symbol {} reached {} (>= {}), will never decrease!", c, self.symbol_counts[c as usize], self.sys.v);
+                }
+                return Some(HaltCondition::Infinite(InfiniteReason::NonDecreasingSymbol(c), self.steps));
+            }
+        }
+
         if verbose {
             print!("Step {}: Tape ", self.steps);
             for i in self.head_idx..self.tape.len() {
@@ -56,7 +77,12 @@ impl<'a> Simulator<'a> {
         self.lam += 1;
         
         let head = self.tape[self.head_idx];
+        let start = self.head_idx;
         self.head_idx += self.sys.v;
+        for i in start..self.head_idx {
+            let c = self.tape[i];
+            self.symbol_counts[c as usize] -= 1;
+        }
 
         let rule = match &self.sys.rules[head as usize] {
             Some(r) => r,
@@ -65,6 +91,7 @@ impl<'a> Simulator<'a> {
 
         for &c in rule {
             self.tape.push(c);
+            self.symbol_counts[c as usize] += 1;
         }
 
         let current_len = self.tape.len() - self.head_idx;

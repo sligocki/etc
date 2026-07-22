@@ -175,8 +175,9 @@ impl TagSystem {
         None
     }
 
-    pub fn has_non_decreasing_symbol(&self) -> Option<u8> {
+    pub fn non_decreasing_symbols(&self) -> Vec<u8> {
         let n = self.rules.len();
+        let mut res = Vec::new();
         for c in 0..n {
             let mut is_non_decreasing = true;
             for h in 0..n {
@@ -193,11 +194,9 @@ impl TagSystem {
                 }
             }
             if is_non_decreasing {
-                if c == 0 {
-                    return Some(c as u8);
-                }
+                res.push(c as u8);
             }
         }
-        None
+        res
     }
 }

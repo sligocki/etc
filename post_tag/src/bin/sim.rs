@@ -14,6 +14,10 @@ struct Args {
     /// Print the tape at each step
     #[arg(short, long)]
     verbose: bool,
+
+    /// Print symbol distribution at each step
+    #[arg(short, long)]
+    distribution: bool,
 }
 
 fn main() {
@@ -29,7 +33,32 @@ fn main() {
 
     while tape.len() - head_idx >= sys.v && steps < args.max_steps {
         if args.verbose {
-            print!("Step {}: Tape ", steps);
+            if args.distribution {
+                let current_len = tape.len() - head_idx;
+                let mut counts = vec![0; sys.rules.len()];
+                for i in head_idx..tape.len() {
+                    let c = tape[i] as usize;
+                    if c < counts.len() {
+                        counts[c] += 1;
+                    }
+                }
+                
+                print!("Step {}: (", steps);
+                for i in 0..counts.len() {
+                    let pct = if current_len > 0 {
+                        (counts[i] as f64 / current_len as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    if i > 0 {
+                        print!(", ");
+                    }
+                    print!("{:.1}%", pct);
+                }
+                print!(") Tape ");
+            } else {
+                print!("Step {}: Tape ", steps);
+            }
             for i in head_idx..tape.len() {
                 print!("{}", tape[i]);
             }

@@ -77,7 +77,7 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
         }
 
         // Take a standard step
-        if let Some(cond) = sim.step(verbose) {
+        if let Some(cond) = sim.step(verbose, true) {
             return cond;
         }
     }

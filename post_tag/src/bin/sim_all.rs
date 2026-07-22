@@ -3,7 +3,7 @@ use post_tag::file_io::{read_unknowns, write_result};
 use post_tag::simulate::simulate;
 use post_tag::tag_system::TagSystem;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -18,6 +18,10 @@ struct Args {
 
     /// Output file
     output: PathBuf,
+
+    /// Use deciders (default false, pure simulation)
+    #[arg(long, default_value_t = false)]
+    deciders: bool,
 }
 
 fn main() {
@@ -35,18 +39,76 @@ fn main() {
 
     let mut out_file = BufWriter::new(File::create(&args.output).unwrap());
     
-    let start_time = Instant::now();
+    let mut halting = 0;
+    let mut infinite = 0;
+    let mut holdouts = 0;
+    let mut max_halt_steps = 0;
+    let mut total_steps = 0u64;
 
-    for prog_str in &unknowns {
+    let start_time = Instant::now();
+    let total = unknowns.len();
+
+    for (i, prog_str) in unknowns.iter().enumerate() {
         let sys = TagSystem::parse(2, prog_str);
-        let result = simulate(&sys, args.max_steps, false);
+        let result = simulate(&sys, args.max_steps, false, args.deciders);
         write_result(&mut out_file, &sys, &result).unwrap();
         
-        // Print progress
-        println!("{} -> {:?}", prog_str, result);
+        match result {
+            post_tag::simulate::HaltCondition::Halted(steps, _) => {
+                halting += 1;
+                total_steps += steps as u64;
+                if steps > max_halt_steps {
+                    max_halt_steps = steps;
+                }
+            }
+            post_tag::simulate::HaltCondition::Infinite(_, steps) => {
+                infinite += 1;
+                total_steps += steps as u64;
+            }
+            post_tag::simulate::HaltCondition::Unknown => {
+                holdouts += 1;
+                total_steps += args.max_steps as u64;
+            }
+            post_tag::simulate::HaltCondition::UndefinedRule(_) => {}
+        }
+        
+        // Progress bar
+        let pct = (i + 1) as f64 / total as f64;
+        let bar_len = 40;
+        let filled = (pct * bar_len as f64) as usize;
+        let mut bar = String::new();
+        for _ in 0..filled { bar.push('='); }
+        if filled < bar_len { bar.push('>'); }
+        for _ in (filled + 1)..bar_len { bar.push(' '); }
+        print!("\r[{}] {:.1}% ({}/{})", bar, pct * 100.0, i + 1, total);
+        std::io::stdout().flush().unwrap();
     }
     
     let elapsed = start_time.elapsed();
-    println!("\nDone. Simulated {} programs in {:.3}s.", unknowns.len(), elapsed.as_secs_f64());
-    println!("Wrote results to {:?}", args.output);
+    println!("\n\nDone. Simulated {} programs in {:.3}s.", total, elapsed.as_secs_f64());
+    
+    let pct_halt = if total > 0 { (halting as f64 / total as f64) * 100.0 } else { 0.0 };
+    let pct_inf = if total > 0 { (infinite as f64 / total as f64) * 100.0 } else { 0.0 };
+    let pct_hold = if total > 0 { (holdouts as f64 / total as f64) * 100.0 } else { 0.0 };
+    
+    println!("Status Breakdown:");
+    println!("  Halting  : {} ({:.2}%)", halting, pct_halt);
+    println!("  Infinite : {} ({:.2}%)", infinite, pct_inf);
+    println!("  Unknown  : {} ({:.2}%)", holdouts, pct_hold);
+    
+    println!("\nRuntime       : {:.3}s", elapsed.as_secs_f64());
+    println!("Total steps   : {}", total_steps);
+    
+    let steps_per_sec = if elapsed.as_secs_f64() > 0.0 {
+        total_steps as f64 / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
+    println!("Speed         : {:.2e} steps/sec", steps_per_sec);
+    
+    if max_halt_steps > 0 {
+        println!("Max Halt Steps: {}", max_halt_steps);
+    }
+    
+    println!("\nWrote results to {:?}", args.output);
 }

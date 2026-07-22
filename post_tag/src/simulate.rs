@@ -61,27 +61,29 @@ impl<'a> Simulator<'a> {
         }
     }
 
-    pub fn step(&mut self, verbose: bool) -> Option<HaltCondition> {
-        if self.steps == 0 && self.closed_symbols.contains(&0) {
-            if verbose {
-                println!(
-                    "Symbol 0 is closed (only outputs 0 at read heads) and initial tape only has 0 at read heads!"
-                );
-            }
-            return Some(HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), 0));
-        }
-        for &c in &self.non_decreasing {
-            if self.symbol_counts[c as usize] >= self.sys.v {
+    pub fn step(&mut self, verbose: bool, use_deciders: bool) -> Option<HaltCondition> {
+        if use_deciders {
+            if self.steps == 0 && self.closed_symbols.contains(&0) {
                 if verbose {
                     println!(
-                        "Number of symbol {} reached {} (>= {}), will never decrease!",
-                        c, self.symbol_counts[c as usize], self.sys.v
+                        "Symbol 0 is closed (only outputs 0 at read heads) and initial tape only has 0 at read heads!"
                     );
                 }
-                return Some(HaltCondition::Infinite(
-                    InfiniteReason::NonDecreasingSymbol(c),
-                    self.steps,
-                ));
+                return Some(HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), 0));
+            }
+            for &c in &self.non_decreasing {
+                if self.symbol_counts[c as usize] >= self.sys.v {
+                    if verbose {
+                        println!(
+                            "Number of symbol {} reached {} (>= {}), will never decrease!",
+                            c, self.symbol_counts[c as usize], self.sys.v
+                        );
+                    }
+                    return Some(HaltCondition::Infinite(
+                        InfiniteReason::NonDecreasingSymbol(c),
+                        self.steps,
+                    ));
+                }
             }
         }
 
@@ -119,24 +121,26 @@ impl<'a> Simulator<'a> {
             self.max_len = current_len;
         }
 
-        if current_len == self.saved_tape.len() && self.tape[self.head_idx..] == self.saved_tape[..]
-        {
-            if verbose {
-                println!("Exact cycle of period {} detected!", self.lam);
+        if use_deciders {
+            if current_len == self.saved_tape.len() && self.tape[self.head_idx..] == self.saved_tape[..]
+            {
+                if verbose {
+                    println!("Exact cycle of period {} detected!", self.lam);
+                }
+                return Some(HaltCondition::Infinite(
+                    InfiniteReason::Cycle(self.lam),
+                    self.steps,
+                ));
             }
-            return Some(HaltCondition::Infinite(
-                InfiniteReason::Cycle(self.lam),
-                self.steps,
-            ));
-        }
 
-        if self.lam == self.power {
-            self.power *= 2;
-            self.lam = 0;
-            if current_len < 10_000 {
-                self.saved_tape.clear();
-                self.saved_tape
-                    .extend_from_slice(&self.tape[self.head_idx..]);
+            if self.lam == self.power {
+                self.power *= 2;
+                self.lam = 0;
+                if current_len < 10_000 {
+                    self.saved_tape.clear();
+                    self.saved_tape
+                        .extend_from_slice(&self.tape[self.head_idx..]);
+                }
             }
         }
 
@@ -148,12 +152,12 @@ impl<'a> Simulator<'a> {
         None
     }
 
-    pub fn run(&mut self, max_steps: usize, verbose: bool) -> HaltCondition {
+    pub fn run(&mut self, max_steps: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
         while self.tape.len() - self.head_idx >= self.sys.v {
             if self.steps >= max_steps {
                 return HaltCondition::Unknown;
             }
-            if let Some(cond) = self.step(verbose) {
+            if let Some(cond) = self.step(verbose, use_deciders) {
                 return cond;
             }
         }
@@ -174,6 +178,6 @@ impl<'a> Simulator<'a> {
     }
 }
 
-pub fn simulate(sys: &TagSystem, max_steps: usize, verbose: bool) -> HaltCondition {
-    Simulator::new(sys).run(max_steps, verbose)
+pub fn simulate(sys: &TagSystem, max_steps: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
+    Simulator::new(sys).run(max_steps, verbose, use_deciders)
 }

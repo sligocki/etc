@@ -28,24 +28,16 @@ fn main() {
 
     println!("Simulating: {}", sys.format_rules());
 
-    let mut tape = vec![0u8; sys.v];
-    let mut head_idx = 0;
-    let mut steps = 0;
+    let mut sim = post_tag::simulate::Simulator::new(&sys);
 
-    while tape.len() - head_idx >= sys.v && steps < args.max_steps {
-        if args.verbose {
+    while sim.true_length >= sys.v && sim.steps < args.max_steps {
+        if args.verbose || args.distribution {
             if args.distribution {
-                let current_len = tape.len() - head_idx;
-                let mut counts = vec![0; sys.rules.len()];
-                for i in head_idx..tape.len() {
-                    let c = tape[i] as usize;
-                    if c < counts.len() {
-                        counts[c] += 1;
-                    }
-                }
+                let current_len = sim.tape.len() - sim.head_idx;
+                let counts = &sim.symbol_counts;
                 
-                print!("Step {}: (", steps);
-                for i in 0..counts.len() {
+                print!("Step {}: (", sim.steps);
+                for i in 0..sys.rules.len() {
                     let pct = if current_len > 0 {
                         (counts[i] as f64 / current_len as f64) * 100.0
                     } else {
@@ -56,46 +48,27 @@ fn main() {
                     }
                     print!("{:.1}%", pct);
                 }
-                print!(") Tape ");
+                print!(") ActiveTape ");
             } else {
-                print!("Step {}: Tape ", steps);
+                print!("Step {}: ActiveTape ", sim.steps);
             }
-            for i in head_idx..tape.len() {
-                print!("{}", tape[i]);
+            for i in sim.head_idx..sim.tape.len() {
+                print!("{}", sim.tape[i]);
             }
-            println!();
+            println!(" (phase {})", sim.true_length % sys.v);
         }
 
-        let head = tape[head_idx];
-        head_idx += sys.v;
-        steps += 1;
-
-        match &sys.rules[head as usize] {
-            Some(rule) => {
-                for &c in rule {
-                    tape.push(c);
-                }
-            }
-            None => {
-                println!(
-                    "Halted at step {}: Undefined rule for symbol {}",
-                    steps, head
-                );
-                return;
-            }
-        }
-
-        if head_idx > 1_000_000 {
-            tape.drain(0..head_idx);
-            head_idx = 0;
+        if let Some(cond) = sim.step(false, false) {
+            println!("Halted at step {}: {:?}", sim.steps, cond);
+            return;
         }
     }
 
-    if tape.len() - head_idx < sys.v {
+    if sim.true_length < sys.v {
         println!(
             "Halted in {} steps. Space: {}",
-            steps,
-            tape.len() - head_idx
+            sim.steps,
+            sim.max_len
         );
     } else {
         println!("Hit step limit of {}.", args.max_steps);

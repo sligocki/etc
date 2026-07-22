@@ -90,6 +90,8 @@ fn main() {
         HaltCondition::Infinite(reason, steps) => {
             let reason_str = match reason {
                 InfiniteReason::Cycle(period) => format!("Exact cycle of period {}", period),
+                InfiniteReason::ImmortalSubstring => "Immortal substring detected".to_string(),
+                InfiniteReason::NonDecreasingSymbol(c) => format!("Number of symbol {} never decreases", c),
             };
             println!("Infinite in {} steps. Reason: {}", steps, reason_str);
         }

@@ -72,11 +72,13 @@ fn main() {
                 }
             }
             HaltCondition::Infinite(reason, steps) => {
-                let reason_str = match reason {
-                    InfiniteReason::Cycle(_) => "Cycle",
-                };
-                infinite += 1;
                 total_steps += steps as u64;
+                infinite += 1;
+                let reason_str = match reason {
+                    InfiniteReason::Cycle(period) => format!("cycle_period_{}", period),
+                    InfiniteReason::ImmortalSubstring => "immortal_substring".to_string(),
+                    InfiniteReason::NonDecreasingSymbol(c) => format!("non_decreasing_symbol_{}", c),
+                };
                 if let Some(ref mut w) = out_file {
                     writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str).unwrap();
                 }

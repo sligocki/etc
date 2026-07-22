@@ -1,4 +1,4 @@
-use crate::simulate::HaltCondition;
+use crate::simulate::{HaltCondition, InfiniteReason};
 use crate::tag_system::TagSystem;
 
 fn enum_lengths(
@@ -74,6 +74,16 @@ fn explore_adaptive(
     max_seen: u8,
     callback: &mut impl FnMut(&TagSystem, HaltCondition),
 ) {
+    if let Some(c) = sys.has_non_decreasing_symbol() {
+        callback(sys, HaltCondition::Infinite(InfiniteReason::NonDecreasingSymbol(c), 0));
+        return;
+    }
+
+    if sys.has_immortal_substring() {
+        callback(sys, HaltCondition::Infinite(InfiniteReason::ImmortalSubstring, 0));
+        return;
+    }
+
     match sys.simulate_fast(max_steps) {
         HaltCondition::UndefinedRule(c) => {
             let l = lens[c as usize];

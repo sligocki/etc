@@ -79,7 +79,7 @@ fn explore_adaptive(
         return;
     }
 
-    match simulate(sys, max_steps, false) {
+    match crate::translation_cycle::check_translation_cycle(sys, max_steps, false) {
         HaltCondition::UndefinedRule(c) => {
             let l = lens[c as usize];
             let mut string_buf = vec![0u8; l];

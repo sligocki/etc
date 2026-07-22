@@ -6,6 +6,7 @@ pub enum InfiniteReason {
     ImmortalSubstring(Vec<u8>),
     NonDecreasingSymbol(u8),
     ClosedSymbol(u8),
+    TranslationCycle(usize, Vec<u8>), // period, appended suffix
 }
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,7 @@ pub enum HaltCondition {
     UndefinedRule(u8),
 }
 
+#[derive(Clone)]
 pub struct Simulator<'a> {
     pub sys: &'a TagSystem,
     pub tape: Vec<u8>,

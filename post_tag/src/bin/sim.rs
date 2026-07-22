@@ -1,58 +1,66 @@
 use clap::Parser;
-use post_tag::simulate::{simulate, HaltCondition, InfiniteReason};
 use post_tag::tag_system::TagSystem;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Rule string (e.g. "0->011, 1->eps")
+    /// The tag system rules (e.g. 00110_)
     rules: String,
 
-    /// Deletion number
-    #[arg(long = "del", default_value_t = 2)]
-    v: usize,
-
-    /// Max steps
-    #[arg(long, default_value_t = 1_000_000)]
+    /// Maximum number of steps to simulate
+    #[arg(short, long, default_value_t = 10_000)]
     max_steps: usize,
 
-    /// Verbose (print every step)
+    /// Print the tape at each step
     #[arg(short, long)]
     verbose: bool,
 }
 
 fn main() {
     let args = Args::parse();
-    let sys = TagSystem::parse(args.v, &args.rules);
+    
+    let sys = TagSystem::parse(2, &args.rules);
     
     println!("Simulating: {}", sys.format_rules());
     
-    let result = simulate(&sys, args.max_steps, args.verbose);
-
-    match result {
-        HaltCondition::Halted(steps, space) => {
-            println!("Halted in {} steps! Max space reached: {}", steps, space);
+    let mut tape = vec![0u8; sys.v];
+    let mut head_idx = 0;
+    let mut steps = 0;
+    
+    while tape.len() - head_idx >= sys.v && steps < args.max_steps {
+        if args.verbose {
+            print!("Step {}: Tape ", steps);
+            for i in head_idx..tape.len() {
+                print!("{}", tape[i]);
+            }
+            println!();
         }
-        HaltCondition::Infinite(reason, steps) => {
-            let reason_str = match reason {
-                InfiniteReason::Cycle(period) => format!("Exact cycle of period {}", period),
-                InfiniteReason::ImmortalSubstring(ref w) => {
-                    let mut s = String::new();
-                    for &c in w {
-                        s.push_str(&c.to_string());
-                    }
-                    format!("Immortal substring detected: {}", s)
-                },
-                InfiniteReason::NonDecreasingSymbol(c) => format!("Number of symbol {} never decreases", c),
-                InfiniteReason::ClosedSymbol(c) => format!("Symbol {} is closed (perfectly aligns and only outputs {})", c, c),
-            };
-            println!("Infinite in {} steps. Reason: {}", steps, reason_str);
+        
+        let head = tape[head_idx];
+        head_idx += sys.v;
+        steps += 1;
+        
+        match &sys.rules[head as usize] {
+            Some(rule) => {
+                for &c in rule {
+                    tape.push(c);
+                }
+            }
+            None => {
+                println!("Halted at step {}: Undefined rule for symbol {}", steps, head);
+                return;
+            }
         }
-        HaltCondition::Unknown => {
-            println!("Hit step limit of {}. (Holdout)", args.max_steps);
+        
+        if head_idx > 1_000_000 {
+            tape.drain(0..head_idx);
+            head_idx = 0;
         }
-        HaltCondition::UndefinedRule(c) => {
-            println!("Hit undefined rule for symbol {}", c);
-        }
+    }
+    
+    if tape.len() - head_idx < sys.v {
+        println!("Halted in {} steps. Space: {}", steps, tape.len() - head_idx);
+    } else {
+        println!("Hit step limit of {}.", args.max_steps);
     }
 }

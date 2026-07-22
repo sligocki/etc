@@ -85,6 +85,7 @@ fn main() {
                     },
                     InfiniteReason::NonDecreasingSymbol(c) => format!("NonDecreasingSymbol symbol={}", c),
                     InfiniteReason::ClosedSymbol(c) => format!("ClosedSymbol symbol={}", c),
+                    InfiniteReason::TranslationCycle(period, _) => format!("TranslationCycle period={}", period),
                 };
                 if let Some(ref mut w) = out_file {
                     writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str).unwrap();

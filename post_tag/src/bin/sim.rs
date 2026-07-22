@@ -22,6 +22,26 @@ struct Args {
 }
 
 fn parse_rules(s: &str) -> Vec<Option<Vec<u8>>> {
+    if !s.contains("->") {
+        // Parse dense format (e.g. "011_?_")
+        let mut rules = Vec::new();
+        for part in s.split('_') {
+            if part == "?" {
+                rules.push(None);
+            } else if part.is_empty() {
+                rules.push(Some(vec![]));
+            } else {
+                let mut rv = vec![];
+                for c in part.chars() {
+                    rv.push(c.to_digit(10).unwrap() as u8);
+                }
+                rules.push(Some(rv));
+            }
+        }
+        return rules;
+    }
+
+    // Parse old format (e.g. "0->011, 1->eps")
     let mut rules = Vec::new();
     for part in s.split(',') {
         let part = part.trim();

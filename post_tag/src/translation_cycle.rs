@@ -8,6 +8,14 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
     let mut snapshots: Vec<(usize, Vec<u8>, usize)> = Vec::new();
     let mut next_snapshot_step = 1;
     
+    struct PendingCandidate {
+        t3: usize,
+        expected_tape: Vec<u8>,
+        delta_t: usize,
+        p: Vec<u8>,
+    }
+    let mut pending: Vec<PendingCandidate> = Vec::new();
+    
     while sim.tape.len() - sim.head_idx >= sys.v && sim.steps < max_steps {
         if sim.steps == next_snapshot_step {
             snapshots.push((sim.steps, sim.tape[sim.head_idx..].to_vec(), sim.head_idx));
@@ -17,9 +25,25 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
         let current_tape = &sim.tape[sim.head_idx..];
         
         // Compare with past snapshots
+        let mut j = 0;
+        while j < pending.len() {
+            if sim.steps == pending[j].t3 {
+                let cand = &pending[j];
+                if current_tape.len() >= cand.expected_tape.len() && current_tape.starts_with(&cand.expected_tape) {
+                    if verbose {
+                        println!("Translation Cycle rigorously proven (3 data points). Period = {}", cand.delta_t);
+                    }
+                    return HaltCondition::Infinite(InfiniteReason::TranslationCycle(cand.delta_t, cand.p.clone()), sim.steps);
+                }
+                pending.swap_remove(j);
+                continue;
+            }
+            j += 1;
+        }
+        
         let mut i = 0;
         while i < snapshots.len() {
-            let (saved_step, ref saved_tape, saved_head_idx) = snapshots[i];
+            let (saved_step, ref saved_tape, _saved_head_idx) = snapshots[i];
             
             if current_tape.len() > saved_tape.len() && current_tape.starts_with(saved_tape) {
                 let delta_t = sim.steps - saved_step;
@@ -27,20 +51,15 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
                 
                 if c_consumed <= saved_tape.len() {
                     let p = current_tape[saved_tape.len()..].to_vec();
-                    let a = current_tape[saved_tape.len() - c_consumed..].to_vec();
+                    let mut expected_tape = current_tape.to_vec();
+                    expected_tape.extend(&p);
                     
-                    let mut pa = p.clone();
-                    pa.extend(&a);
-                    
-                    let mut ap = a.clone();
-                    ap.extend(&p);
-                    
-                    if pa == ap {
-                        if verbose {
-                            println!("Translation Cycle strictly proven (C <= |T| and P*A == A*P). Period = {}", delta_t);
-                        }
-                        return HaltCondition::Infinite(InfiniteReason::TranslationCycle(delta_t, p), sim.steps);
-                    }
+                    pending.push(PendingCandidate {
+                        t3: sim.steps + delta_t,
+                        expected_tape,
+                        delta_t,
+                        p,
+                    });
                 }
             }
             i += 1;

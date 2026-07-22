@@ -58,20 +58,47 @@ fn main() {
                     let mut pa = p.clone();
                     pa.extend(&a);
                     
+
+                    
                     let mut ap = a.clone();
                     ap.extend(&p);
                     
-                    println!("\nDetected Heuristic cycle:");
-                    println!("  t1 = {}:  {}", saved_step, format_tape(saved_tape));
-                    println!("  t2 = {}:  {} {}", sim.steps, format_tape(saved_tape), format_tape(&p));
-                    println!();
-                    println!("H = {}", format_tape(&h));
-                    println!("U = {}", format_tape(&u));
-                    println!("P = {}", format_tape(&p));
-                    println!("A = {}", format_tape(&a));
-                    println!();
-                    
                     if pa == ap {
+                        let mut sim3 = sim.clone();
+                        let mut halted = false;
+                        for _ in 0..delta_t {
+                            if sim3.tape.len() - sim3.head_idx < sys.v {
+                                halted = true;
+                                break;
+                            }
+                            let head = sim3.tape[sim3.head_idx];
+                            sim3.head_idx += sys.v;
+                            sim3.steps += 1;
+                            if let Some(rule) = &sys.rules[head as usize] {
+                                for &c in rule {
+                                    sim3.tape.push(c);
+                                }
+                            } else {
+                                halted = true;
+                                break;
+                            }
+                        }
+                        
+                        println!("\nDetected Heuristic cycle:");
+                        println!("  t1 = {}:  {}", saved_step, format_tape(saved_tape));
+                        println!("  t2 = {}:  {} {}", sim.steps, format_tape(saved_tape), format_tape(&p));
+                        if !halted {
+                            println!("  t3 = {}:  {}", sim3.steps, format_tape(&sim3.tape[sim3.head_idx..]));
+                        } else {
+                            println!("  t3 = {}:  (halted)", sim3.steps);
+                        }
+                        println!();
+                        println!("H = {}", format_tape(&h));
+                        println!("U = {}", format_tape(&u));
+                        println!("P = {}", format_tape(&p));
+                        println!("A = {}", format_tape(&a));
+                        println!();
+                        
                         println!("PA = AP");
                         println!("UA = HUP");
                         println!();
@@ -81,10 +108,6 @@ fn main() {
                         println!("This is proven as a Translated Cycler");
                         println!("=============================================\n");
                         return;
-                    } else {
-                        println!("PA != AP");
-                        println!("This is a false positive cycle pattern and will break on the next iteration.");
-                        println!("=============================================\n");
                     }
                 }
             }

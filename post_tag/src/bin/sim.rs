@@ -44,6 +44,7 @@ fn main() {
                     format!("Immortal substring detected: {}", s)
                 },
                 InfiniteReason::NonDecreasingSymbol(c) => format!("Number of symbol {} never decreases", c),
+                InfiniteReason::ClosedSymbol(c) => format!("Symbol {} is closed (perfectly aligns and only outputs {})", c, c),
             };
             println!("Infinite in {} steps. Reason: {}", steps, reason_str);
         }

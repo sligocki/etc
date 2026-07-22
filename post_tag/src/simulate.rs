@@ -5,6 +5,7 @@ pub enum InfiniteReason {
     Cycle(usize), // period
     ImmortalSubstring(Vec<u8>),
     NonDecreasingSymbol(u8),
+    ClosedSymbol(u8),
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,7 @@ pub struct Simulator<'a> {
     pub lam: usize,
     pub symbol_counts: Vec<usize>,
     pub non_decreasing: Vec<u8>,
+    pub closed_symbols: Vec<u8>,
 }
 
 impl<'a> Simulator<'a> {
@@ -40,6 +42,7 @@ impl<'a> Simulator<'a> {
         }
         
         let non_decreasing = sys.non_decreasing_symbols();
+        let closed_symbols = sys.closed_symbols();
 
         Simulator {
             sys,
@@ -52,10 +55,17 @@ impl<'a> Simulator<'a> {
             lam: 0,
             symbol_counts,
             non_decreasing,
+            closed_symbols,
         }
     }
 
     pub fn step(&mut self, verbose: bool) -> Option<HaltCondition> {
+        if self.steps == 0 && self.closed_symbols.contains(&0) {
+            if verbose {
+                println!("Symbol 0 is closed (only outputs 0 at read heads) and initial tape only has 0 at read heads!");
+            }
+            return Some(HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), 0));
+        }
         for &c in &self.non_decreasing {
             if self.symbol_counts[c as usize] >= self.sys.v {
                 if verbose {

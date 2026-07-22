@@ -84,6 +84,7 @@ fn main() {
                         format!("ImmortalSubstring substring={}", s)
                     },
                     InfiniteReason::NonDecreasingSymbol(c) => format!("NonDecreasingSymbol symbol={}", c),
+                    InfiniteReason::ClosedSymbol(c) => format!("ClosedSymbol symbol={}", c),
                 };
                 if let Some(ref mut w) = out_file {
                     writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str).unwrap();

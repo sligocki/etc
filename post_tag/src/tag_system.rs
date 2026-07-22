@@ -199,4 +199,26 @@ impl TagSystem {
         }
         res
     }
+
+    pub fn closed_symbols(&self) -> Vec<u8> {
+        let n = self.rules.len();
+        let mut res = Vec::new();
+        for c in 0..n {
+            if let Some(rule) = &self.rules[c] {
+                if rule.len() >= self.v && rule.len() % self.v == 0 {
+                    let mut all_match = true;
+                    for i in (0..rule.len()).step_by(self.v) {
+                        if rule[i] != c as u8 {
+                            all_match = false;
+                            break;
+                        }
+                    }
+                    if all_match {
+                        res.push(c as u8);
+                    }
+                }
+            }
+        }
+        res
+    }
 }

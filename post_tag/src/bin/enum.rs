@@ -27,7 +27,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    
+
     let mut out_file = args.out.map(|p| BufWriter::new(File::create(p).unwrap()));
 
     println!("Computing BB_PT(v={}, S={})", args.v, args.s);
@@ -37,12 +37,12 @@ fn main() {
     let mut best_step_sys: Vec<TagSystem> = Vec::new();
     let mut max_halt_space = 0;
     let mut best_space_sys: Vec<TagSystem> = Vec::new();
-    
+
     let mut holdouts = 0;
     let mut infinite = 0;
-    
+
     let mut total_steps: u64 = 0;
-    
+
     let start_time = Instant::now();
 
     enumerate_systems(args.v, args.s, args.max_steps, &mut |sys, condition| {
@@ -58,7 +58,7 @@ fn main() {
                 } else if steps == max_halt_steps {
                     best_step_sys.push(sys.clone());
                 }
-                
+
                 if space > max_halt_space {
                     max_halt_space = space;
                     best_space_sys.clear();
@@ -66,9 +66,14 @@ fn main() {
                 } else if space == max_halt_space {
                     best_space_sys.push(sys.clone());
                 }
-                
+
                 if let Some(ref mut w) = out_file {
-                    writeln!(w, "prog={} status=Halt steps={} space={}", dense, steps, space).unwrap();
+                    writeln!(
+                        w,
+                        "prog={} status=Halt steps={} space={}",
+                        dense, steps, space
+                    )
+                    .unwrap();
                 }
             }
             HaltCondition::Infinite(reason, steps) => {
@@ -82,10 +87,14 @@ fn main() {
                             s.push_str(&c.to_string());
                         }
                         format!("ImmortalSubstring substring={}", s)
-                    },
-                    InfiniteReason::NonDecreasingSymbol(c) => format!("NonDecreasingSymbol symbol={}", c),
+                    }
+                    InfiniteReason::NonDecreasingSymbol(c) => {
+                        format!("NonDecreasingSymbol symbol={}", c)
+                    }
                     InfiniteReason::ClosedSymbol(c) => format!("ClosedSymbol symbol={}", c),
-                    InfiniteReason::TranslationCycle(period, _) => format!("TranslationCycle period={}", period),
+                    InfiniteReason::TranslationCycle(period, _) => {
+                        format!("TranslationCycle period={}", period)
+                    }
                 };
                 if let Some(ref mut w) = out_file {
                     writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str).unwrap();
@@ -109,26 +118,38 @@ fn main() {
 
     println!("\n=== S={} ===", args.s);
     println!("Total systems : {}", total);
-    
-    let pct_halt = if total > 0 { (halting as f64 / total as f64) * 100.0 } else { 0.0 };
-    let pct_inf = if total > 0 { (infinite as f64 / total as f64) * 100.0 } else { 0.0 };
-    let pct_hold = if total > 0 { (holdouts as f64 / total as f64) * 100.0 } else { 0.0 };
-    
+
+    let pct_halt = if total > 0 {
+        (halting as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+    let pct_inf = if total > 0 {
+        (infinite as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+    let pct_hold = if total > 0 {
+        (holdouts as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+
     println!("Status Breakdown:");
     println!("  Halting  : {} ({:.2}%)", halting, pct_halt);
     println!("  Infinite : {} ({:.2}%)", infinite, pct_inf);
     println!("  Unknown  : {} ({:.2}%)", holdouts, pct_hold);
-    
+
     println!("\nTotal steps   : {}", total_steps);
     println!("Runtime       : {:.3}s", elapsed.as_secs_f64());
-    
+
     let steps_per_sec = if elapsed.as_secs_f64() > 0.0 {
         total_steps as f64 / elapsed.as_secs_f64()
     } else {
         0.0
     };
     println!("Speed         : {:.2e} steps/sec", steps_per_sec);
-    
+
     if max_halt_steps > 0 {
         println!("\n  BB_PT Time  : {} steps", max_halt_steps);
         println!("  Champions   :");
@@ -138,7 +159,7 @@ fn main() {
     } else {
         println!("\n  BB_PT Time  : 0 (No systems halted!)");
     }
-    
+
     if max_halt_space > 0 {
         println!("\n  BB_PT Space : {} length", max_halt_space);
         println!("  Champions   :");

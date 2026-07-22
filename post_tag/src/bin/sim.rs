@@ -18,15 +18,15 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    
+
     let sys = TagSystem::parse(2, &args.rules);
-    
+
     println!("Simulating: {}", sys.format_rules());
-    
+
     let mut tape = vec![0u8; sys.v];
     let mut head_idx = 0;
     let mut steps = 0;
-    
+
     while tape.len() - head_idx >= sys.v && steps < args.max_steps {
         if args.verbose {
             print!("Step {}: Tape ", steps);
@@ -35,11 +35,11 @@ fn main() {
             }
             println!();
         }
-        
+
         let head = tape[head_idx];
         head_idx += sys.v;
         steps += 1;
-        
+
         match &sys.rules[head as usize] {
             Some(rule) => {
                 for &c in rule {
@@ -47,19 +47,26 @@ fn main() {
                 }
             }
             None => {
-                println!("Halted at step {}: Undefined rule for symbol {}", steps, head);
+                println!(
+                    "Halted at step {}: Undefined rule for symbol {}",
+                    steps, head
+                );
                 return;
             }
         }
-        
+
         if head_idx > 1_000_000 {
             tape.drain(0..head_idx);
             head_idx = 0;
         }
     }
-    
+
     if tape.len() - head_idx < sys.v {
-        println!("Halted in {} steps. Space: {}", steps, tape.len() - head_idx);
+        println!(
+            "Halted in {} steps. Space: {}",
+            steps,
+            tape.len() - head_idx
+        );
     } else {
         println!("Hit step limit of {}.", args.max_steps);
     }

@@ -11,7 +11,7 @@ pub enum InfiniteReason {
 
 #[derive(Debug, Clone)]
 pub enum HaltCondition {
-    Halted(usize, usize), // steps, max_length
+    Halted(usize, usize),            // steps, max_length
     Infinite(InfiniteReason, usize), // reason, steps taken to detect
     Unknown,
     UndefinedRule(u8),
@@ -37,12 +37,12 @@ impl<'a> Simulator<'a> {
         let tape = vec![0u8; sys.v];
         let mut saved_tape = Vec::with_capacity(64);
         saved_tape.extend_from_slice(&tape);
-        
+
         let mut symbol_counts = vec![0; 256];
         for &c in &tape {
             symbol_counts[c as usize] += 1;
         }
-        
+
         let non_decreasing = sys.non_decreasing_symbols();
         let closed_symbols = sys.closed_symbols();
 
@@ -64,16 +64,24 @@ impl<'a> Simulator<'a> {
     pub fn step(&mut self, verbose: bool) -> Option<HaltCondition> {
         if self.steps == 0 && self.closed_symbols.contains(&0) {
             if verbose {
-                println!("Symbol 0 is closed (only outputs 0 at read heads) and initial tape only has 0 at read heads!");
+                println!(
+                    "Symbol 0 is closed (only outputs 0 at read heads) and initial tape only has 0 at read heads!"
+                );
             }
             return Some(HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), 0));
         }
         for &c in &self.non_decreasing {
             if self.symbol_counts[c as usize] >= self.sys.v {
                 if verbose {
-                    println!("Number of symbol {} reached {} (>= {}), will never decrease!", c, self.symbol_counts[c as usize], self.sys.v);
+                    println!(
+                        "Number of symbol {} reached {} (>= {}), will never decrease!",
+                        c, self.symbol_counts[c as usize], self.sys.v
+                    );
                 }
-                return Some(HaltCondition::Infinite(InfiniteReason::NonDecreasingSymbol(c), self.steps));
+                return Some(HaltCondition::Infinite(
+                    InfiniteReason::NonDecreasingSymbol(c),
+                    self.steps,
+                ));
             }
         }
 
@@ -87,7 +95,7 @@ impl<'a> Simulator<'a> {
 
         self.steps += 1;
         self.lam += 1;
-        
+
         let head = self.tape[self.head_idx];
         let start = self.head_idx;
         self.head_idx += self.sys.v;
@@ -111,11 +119,15 @@ impl<'a> Simulator<'a> {
             self.max_len = current_len;
         }
 
-        if current_len == self.saved_tape.len() && self.tape[self.head_idx..] == self.saved_tape[..] {
+        if current_len == self.saved_tape.len() && self.tape[self.head_idx..] == self.saved_tape[..]
+        {
             if verbose {
                 println!("Exact cycle of period {} detected!", self.lam);
             }
-            return Some(HaltCondition::Infinite(InfiniteReason::Cycle(self.lam), self.steps));
+            return Some(HaltCondition::Infinite(
+                InfiniteReason::Cycle(self.lam),
+                self.steps,
+            ));
         }
 
         if self.lam == self.power {
@@ -123,7 +135,8 @@ impl<'a> Simulator<'a> {
             self.lam = 0;
             if current_len < 10_000 {
                 self.saved_tape.clear();
-                self.saved_tape.extend_from_slice(&self.tape[self.head_idx..]);
+                self.saved_tape
+                    .extend_from_slice(&self.tape[self.head_idx..]);
             }
         }
 
@@ -144,7 +157,7 @@ impl<'a> Simulator<'a> {
                 return cond;
             }
         }
-        
+
         if verbose {
             print!("Step {}: Tape ", self.steps);
             if self.tape.len() == self.head_idx {

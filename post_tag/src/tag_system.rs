@@ -98,28 +98,28 @@ impl TagSystem {
             let n = rules.len();
             let num_left = n.pow(k as u32);
             let num_right = n.pow(p as u32);
-            
+
             for left_val in 0..num_left {
                 for right_val in 0..num_right {
                     let mut s = Vec::with_capacity(l);
-                    
+
                     let mut lv = left_val;
                     for _ in 0..k {
                         s.push((lv % n) as u8);
                         lv /= n;
                     }
-                    
+
                     s.extend_from_slice(w);
-                    
+
                     let mut rv = right_val;
                     for _ in 0..p {
                         s.push((rv % n) as u8);
                         rv /= n;
                     }
-                    
+
                     let mut w_out = Vec::new();
-                    let mut current_len = k + w.len(); 
-                    
+                    let mut current_len = k + w.len();
+
                     for i in (0..l).step_by(v) {
                         let c = s[i];
                         if let Some(rule) = &rules[c as usize] {
@@ -132,21 +132,17 @@ impl TagSystem {
                             return None;
                         }
                     }
-                    
+
                     if w_out.len() < l {
                         return Some(false);
                     }
-                    
+
                     if current_len < v {
                         return Some(false);
                     }
-                    
-                    let slice_to_check = if p <= w_out.len() {
-                        &w_out[p..]
-                    } else {
-                        &[]
-                    };
-                    
+
+                    let slice_to_check = if p <= w_out.len() { &w_out[p..] } else { &[] };
+
                     if slice_to_check.windows(w.len()).all(|window| window != w) {
                         return Some(false);
                     }
@@ -164,7 +160,7 @@ impl TagSystem {
                 }
                 for len in self.v..=rule.len() {
                     for i in 0..=(rule.len() - len) {
-                        let w = &rule[i..i+len];
+                        let w = &rule[i..i + len];
                         if Self::is_immortal_substring(self.v, &self.rules, w) == Some(true) {
                             return Some(w.to_vec());
                         }
@@ -183,7 +179,11 @@ impl TagSystem {
             for h in 0..n {
                 if let Some(rule) = &self.rules[h] {
                     let count = rule.iter().filter(|&&x| x == c as u8).count();
-                    let required = if h == c { self.v } else { self.v.saturating_sub(1) };
+                    let required = if h == c {
+                        self.v
+                    } else {
+                        self.v.saturating_sub(1)
+                    };
                     if count < required {
                         is_non_decreasing = false;
                         break;

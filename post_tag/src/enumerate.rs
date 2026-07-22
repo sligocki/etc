@@ -1,4 +1,4 @@
-use crate::simulate::{simulate, HaltCondition, InfiniteReason};
+use crate::simulate::{HaltCondition, InfiniteReason, simulate};
 use crate::tag_system::TagSystem;
 
 fn enum_lengths(
@@ -75,7 +75,10 @@ fn explore_adaptive(
     callback: &mut impl FnMut(&TagSystem, HaltCondition),
 ) {
     if let Some(w) = sys.has_immortal_substring() {
-        callback(sys, HaltCondition::Infinite(InfiniteReason::ImmortalSubstring(w.clone()), 0));
+        callback(
+            sys,
+            HaltCondition::Infinite(InfiniteReason::ImmortalSubstring(w.clone()), 0),
+        );
         return;
     }
 
@@ -83,18 +86,25 @@ fn explore_adaptive(
         HaltCondition::UndefinedRule(c) => {
             let l = lens[c as usize];
             let mut string_buf = vec![0u8; l];
-            enum_strings_adaptive(sys.rules.len(), l, &mut string_buf, 0, max_seen, &mut |chars, new_max_seen| {
-                // Prune w_0 must contain '1' if n > 1
-                if c == 0 && new_max_seen == 0 && sys.rules.len() > 1 {
-                    return;
-                }
+            enum_strings_adaptive(
+                sys.rules.len(),
+                l,
+                &mut string_buf,
+                0,
+                max_seen,
+                &mut |chars, new_max_seen| {
+                    // Prune w_0 must contain '1' if n > 1
+                    if c == 0 && new_max_seen == 0 && sys.rules.len() > 1 {
+                        return;
+                    }
 
-                sys.rules[c as usize] = Some(chars.to_vec());
-                if is_valid_reachability(sys) {
-                    explore_adaptive(sys, lens, max_steps, new_max_seen, callback);
-                }
-                sys.rules[c as usize] = None; // Backtrack
-            });
+                    sys.rules[c as usize] = Some(chars.to_vec());
+                    if is_valid_reachability(sys) {
+                        explore_adaptive(sys, lens, max_steps, new_max_seen, callback);
+                    }
+                    sys.rules[c as usize] = None; // Backtrack
+                },
+            );
         }
         condition => {
             callback(sys, condition);

@@ -23,7 +23,8 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let sys = TagSystem::parse(2, &args.rules);
+    let resolved_rules = post_tag::file_io::resolve_program_string(&args.rules);
+    let sys = TagSystem::parse(2, &resolved_rules);
 
     println!("Simulating: {}", sys.format_rules());
 

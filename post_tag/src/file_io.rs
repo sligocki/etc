@@ -4,6 +4,28 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
+pub fn resolve_program_string(input: &str) -> String {
+    if let Some((file_path, line_idx_str)) = input.rsplit_once(':') {
+        if let Ok(line_idx) = line_idx_str.parse::<usize>() {
+            let path = Path::new(file_path);
+            if path.exists() && path.is_file() {
+                if let Ok(file) = File::open(path) {
+                    let reader = BufReader::new(file);
+                    if let Some(Ok(line)) = reader.lines().nth(line_idx) {
+                        if let Some(prog_str) = line.split_whitespace().find(|p| p.starts_with("prog=")) {
+                            if let Some(prog) = prog_str.strip_prefix("prog=") {
+                                return prog.to_string();
+                            }
+                        }
+                        return line.trim().to_string();
+                    }
+                }
+            }
+        }
+    }
+    input.to_string()
+}
+
 pub fn write_result<W: Write>(w: &mut W, sys: &TagSystem, condition: &HaltCondition) -> std::io::Result<()> {
     let dense = sys.dense_string();
     match condition {

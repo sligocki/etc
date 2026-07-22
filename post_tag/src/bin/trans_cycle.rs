@@ -23,7 +23,8 @@ fn format_tape(tape: &[u8]) -> String {
 fn main() {
     let args = Args::parse();
 
-    let sys = TagSystem::parse(2, &args.rules);
+    let resolved_rules = post_tag::file_io::resolve_program_string(&args.rules);
+    let sys = TagSystem::parse(2, &resolved_rules);
 
     println!("Analyzing for Translation Cycles: {}", sys.format_rules());
 

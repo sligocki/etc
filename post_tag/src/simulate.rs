@@ -99,11 +99,19 @@ impl<'a> Simulator<'a> {
 
     pub fn step(&mut self, verbose: bool, use_deciders: bool) -> Option<HaltCondition> {
         if use_deciders {
-            if self.steps == 0 && self.closed_symbols.contains(&0) {
-                if verbose {
-                    println!("Symbol 0 is closed and initial tape only has 0!");
+            if self.steps == 0 {
+                if self.closed_symbols.contains(&0) {
+                    if verbose {
+                        println!("Symbol 0 is closed and initial tape only has 0!");
+                    }
+                    return Some(HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), 0));
                 }
-                return Some(HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), 0));
+                if self.sys.non_decreasing_symbols().contains(&0) {
+                    if verbose {
+                        println!("Symbol 0 is non-decreasing and initial tape has {} copies!", self.sys.v);
+                    }
+                    return Some(HaltCondition::Infinite(InfiniteReason::NonDecreasingSymbol(0), 0));
+                }
             }
         }
 
@@ -204,4 +212,50 @@ impl<'a> Simulator<'a> {
 
 pub fn simulate(sys: &TagSystem, max_steps: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
     Simulator::new(sys).run(max_steps, verbose, use_deciders)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tag_system::TagSystem;
+
+    fn run_sim(prog: &str) -> HaltCondition {
+        let sys = TagSystem::parse(2, prog);
+        simulate(&sys, 10_000, false, true)
+    }
+
+    #[test]
+    fn test_halt() {
+        match run_sim("100_") {
+            HaltCondition::Halted(steps, space) => {
+                assert_eq!(steps, 2);
+                assert_eq!(space, 3);
+            }
+            other => panic!("Expected Halted, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cycle() {
+        match run_sim("001_") {
+            HaltCondition::Infinite(InfiniteReason::Cycle(p), _) => assert_eq!(p, 3),
+            other => panic!("Expected Cycle(3), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_non_decreasing() {
+        match run_sim("010_0") {
+            HaltCondition::Infinite(InfiniteReason::NonDecreasingSymbol(0), _) => {}
+            other => panic!("Expected NonDecreasingSymbol(0), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_closed_symbol() {
+        match run_sim("01_?") {
+            HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), _) => {}
+            other => panic!("Expected ClosedSymbol(0), got {:?}", other),
+        }
+    }
 }

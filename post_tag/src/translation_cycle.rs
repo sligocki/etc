@@ -4,7 +4,7 @@ use crate::tag_system::TagSystem;
 pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool) -> HaltCondition {
     let mut sim = Simulator::new(sys);
 
-    // (step, tape, characters_consumed)
+    // (step, tape, phase)
     let mut snapshots: Vec<(usize, Vec<u8>, usize)> = Vec::new();
     let mut next_snapshot_step = 1;
 
@@ -16,13 +16,14 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
     }
     let mut pending: Vec<PendingCandidate> = Vec::new();
 
-    while sim.tape.len() - sim.head_idx >= sys.v && sim.steps < max_steps {
+    while sim.true_length >= sys.v && sim.steps < max_steps {
         if sim.steps == next_snapshot_step {
-            snapshots.push((sim.steps, sim.tape[sim.head_idx..].to_vec(), sim.head_idx));
+            snapshots.push((sim.steps, sim.tape[sim.head_idx..].to_vec(), sim.true_length % sys.v));
             next_snapshot_step *= 2;
         }
 
         let current_tape = &sim.tape[sim.head_idx..];
+        let current_phase = sim.true_length % sys.v;
 
         // Compare with past snapshots
         let mut j = 0;
@@ -51,11 +52,11 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
 
         let mut i = 0;
         while i < snapshots.len() {
-            let (saved_step, ref saved_tape, _saved_head_idx) = snapshots[i];
+            let (saved_step, ref saved_tape, saved_phase) = snapshots[i];
 
-            if current_tape.len() > saved_tape.len() && current_tape.starts_with(saved_tape) {
+            if current_phase == saved_phase && current_tape.len() > saved_tape.len() && current_tape.starts_with(saved_tape) {
                 let delta_t = sim.steps - saved_step;
-                let c_consumed = delta_t * sys.v;
+                let c_consumed = delta_t; // Active tape consumes 1 symbol per step
 
                 if c_consumed <= saved_tape.len() {
                     let p = current_tape[saved_tape.len()..].to_vec();
@@ -82,7 +83,7 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
         }
     }
 
-    if sim.tape.len() - sim.head_idx < sys.v {
+    if sim.true_length < sys.v {
         HaltCondition::Halted(sim.steps, sim.max_len)
     } else {
         HaltCondition::Unknown

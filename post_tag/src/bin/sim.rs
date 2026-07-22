@@ -21,59 +21,9 @@ struct Args {
     verbose: bool,
 }
 
-fn parse_rules(s: &str) -> Vec<Option<Vec<u8>>> {
-    if !s.contains("->") {
-        // Parse dense format (e.g. "011_?_")
-        let mut rules = Vec::new();
-        for part in s.split('_') {
-            if part == "?" {
-                rules.push(None);
-            } else if part.is_empty() {
-                rules.push(Some(vec![]));
-            } else {
-                let mut rv = vec![];
-                for c in part.chars() {
-                    rv.push(c.to_digit(10).unwrap() as u8);
-                }
-                rules.push(Some(rv));
-            }
-        }
-        return rules;
-    }
-
-    // Parse old format (e.g. "0->011, 1->eps")
-    let mut rules = Vec::new();
-    for part in s.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((lhs, rhs)) = part.split_once("->") {
-            let lhs: usize = lhs.trim().parse().unwrap();
-            while rules.len() <= lhs {
-                rules.push(None);
-            }
-            let rhs = rhs.trim();
-            if rhs == "?" {
-                rules[lhs] = None;
-            } else if rhs == "eps" {
-                rules[lhs] = Some(vec![]);
-            } else {
-                let mut rv = vec![];
-                for c in rhs.chars() {
-                    rv.push(c.to_digit(10).unwrap() as u8);
-                }
-                rules[lhs] = Some(rv);
-            }
-        }
-    }
-    rules
-}
-
 fn main() {
     let args = Args::parse();
-    let rules = parse_rules(&args.rules);
-    let sys = TagSystem { v: args.v, rules };
+    let sys = TagSystem::parse(args.v, &args.rules);
     
     println!("Simulating: {}", sys.format_rules());
     
@@ -90,7 +40,13 @@ fn main() {
         HaltCondition::Infinite(reason, steps) => {
             let reason_str = match reason {
                 InfiniteReason::Cycle(period) => format!("Exact cycle of period {}", period),
-                InfiniteReason::ImmortalSubstring => "Immortal substring detected".to_string(),
+                InfiniteReason::ImmortalSubstring(ref w) => {
+                    let mut s = String::new();
+                    for &c in w {
+                        s.push_str(&c.to_string());
+                    }
+                    format!("Immortal substring detected: {}", s)
+                },
                 InfiniteReason::NonDecreasingSymbol(c) => format!("Number of symbol {} never decreases", c),
             };
             println!("Infinite in {} steps. Reason: {}", steps, reason_str);

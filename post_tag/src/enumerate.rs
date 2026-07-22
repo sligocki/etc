@@ -79,8 +79,8 @@ fn explore_adaptive(
         return;
     }
 
-    if sys.has_immortal_substring() {
-        callback(sys, HaltCondition::Infinite(InfiniteReason::ImmortalSubstring, 0));
+    if let Some(w) = sys.has_immortal_substring() {
+        callback(sys, HaltCondition::Infinite(InfiniteReason::ImmortalSubstring(w.clone()), 0));
         return;
     }
 

@@ -1,13 +1,13 @@
 use crate::tag_system::TagSystem;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum InfiniteReason {
     Cycle(usize), // period
-    ImmortalSubstring,
+    ImmortalSubstring(Vec<u8>),
     NonDecreasingSymbol(u8),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum HaltCondition {
     Halted(usize, usize), // steps, max_length
     Infinite(InfiniteReason, usize), // reason, steps taken to detect
@@ -234,7 +234,7 @@ impl TagSystem {
         Some(true)
     }
 
-    pub fn has_immortal_substring(&self) -> bool {
+    pub fn has_immortal_substring(&self) -> Option<Vec<u8>> {
         for rule_opt in &self.rules {
             if let Some(rule) = rule_opt {
                 if rule.len() < self.v {
@@ -244,13 +244,13 @@ impl TagSystem {
                     for i in 0..=(rule.len() - len) {
                         let w = &rule[i..i+len];
                         if Self::is_immortal_substring(self.v, &self.rules, w) == Some(true) {
-                            return true;
+                            return Some(w.to_vec());
                         }
                     }
                 }
             }
         }
-        false
+        None
     }
 
     pub fn has_non_decreasing_symbol(&self) -> Option<u8> {

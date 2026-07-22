@@ -75,9 +75,15 @@ fn main() {
                 total_steps += steps as u64;
                 infinite += 1;
                 let reason_str = match reason {
-                    InfiniteReason::Cycle(period) => format!("cycle_period_{}", period),
-                    InfiniteReason::ImmortalSubstring => "immortal_substring".to_string(),
-                    InfiniteReason::NonDecreasingSymbol(c) => format!("non_decreasing_symbol_{}", c),
+                    InfiniteReason::Cycle(period) => format!("Cycle period={}", period),
+                    InfiniteReason::ImmortalSubstring(ref w) => {
+                        let mut s = String::new();
+                        for &c in w {
+                            s.push_str(&c.to_string());
+                        }
+                        format!("ImmortalSubstring substring={}", s)
+                    },
+                    InfiniteReason::NonDecreasingSymbol(c) => format!("NonDecreasingSymbol symbol={}", c),
                 };
                 if let Some(ref mut w) = out_file {
                     writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str).unwrap();

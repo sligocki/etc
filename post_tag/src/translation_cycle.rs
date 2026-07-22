@@ -69,6 +69,9 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
                         p,
                     });
                 }
+                
+                snapshots.swap_remove(i);
+                continue;
             }
             i += 1;
         }

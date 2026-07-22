@@ -117,6 +117,8 @@ fn main() {
                         return;
                     }
                 }
+                snapshots.swap_remove(i);
+                continue;
             }
             i += 1;
         }

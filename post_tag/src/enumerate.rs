@@ -1,4 +1,4 @@
-use crate::simulate::{HaltCondition, InfiniteReason, simulate};
+use crate::simulate::{HaltCondition, InfiniteReason};
 use crate::tag_system::TagSystem;
 
 fn enum_lengths(

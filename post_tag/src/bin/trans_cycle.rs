@@ -43,7 +43,7 @@ fn main() {
 
         let mut i = 0;
         while i < snapshots.len() {
-            let (saved_step, ref saved_tape, saved_head_idx) = snapshots[i];
+            let (saved_step, ref saved_tape, _saved_head_idx) = snapshots[i];
 
             if current_tape.len() > saved_tape.len() && current_tape.starts_with(saved_tape) {
                 let delta_t = sim.steps - saved_step;

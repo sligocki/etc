@@ -1,4 +1,4 @@
-use crate::simulate::{HaltCondition, InfiniteReason};
+use crate::simulate::{simulate, HaltCondition, InfiniteReason};
 use crate::tag_system::TagSystem;
 
 fn enum_lengths(
@@ -84,7 +84,7 @@ fn explore_adaptive(
         return;
     }
 
-    match sys.simulate_fast(max_steps) {
+    match simulate(sys, max_steps, false) {
         HaltCondition::UndefinedRule(c) => {
             let l = lens[c as usize];
             let mut string_buf = vec![0u8; l];

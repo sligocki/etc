@@ -1,5 +1,5 @@
 use clap::Parser;
-use post_tag::simulate::{HaltCondition, InfiniteReason};
+use post_tag::simulate::{simulate, HaltCondition, InfiniteReason};
 use post_tag::tag_system::TagSystem;
 
 #[derive(Parser, Debug)]
@@ -27,11 +27,7 @@ fn main() {
     
     println!("Simulating: {}", sys.format_rules());
     
-    let result = if args.verbose {
-        sys.simulate_verbose(args.max_steps)
-    } else {
-        sys.simulate_fast(args.max_steps)
-    };
+    let result = simulate(&sys, args.max_steps, args.verbose);
 
     match result {
         HaltCondition::Halted(steps, space) => {

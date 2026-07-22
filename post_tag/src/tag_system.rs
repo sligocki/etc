@@ -52,7 +52,7 @@ impl TagSystem {
                 } else {
                     let mut rv = vec![];
                     for c in part.chars() {
-                        rv.push(c.to_digit(10).unwrap() as u8);
+                        rv.push(c.to_digit(36).unwrap() as u8);
                     }
                     rules.push(Some(rv));
                 }
@@ -79,7 +79,7 @@ impl TagSystem {
                 } else {
                     let mut rv = vec![];
                     for c in rhs.chars() {
-                        rv.push(c.to_digit(10).unwrap() as u8);
+                        rv.push(c.to_digit(36).unwrap() as u8);
                     }
                     rules[lhs] = Some(rv);
                 }

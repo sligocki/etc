@@ -1,9 +1,10 @@
 use clap::Parser;
 use post_tag::enumerate::enumerate_systems;
-use post_tag::simulate::{HaltCondition, InfiniteReason};
+use post_tag::file_io::write_result;
+use post_tag::simulate::HaltCondition;
 use post_tag::tag_system::TagSystem;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::time::Instant;
 
 #[derive(Parser, Debug)]
@@ -66,50 +67,20 @@ fn main() {
                 } else if space == max_halt_space {
                     best_space_sys.push(sys.clone());
                 }
-
-                if let Some(ref mut w) = out_file {
-                    writeln!(
-                        w,
-                        "prog={} status=Halt steps={} space={}",
-                        dense, steps, space
-                    )
-                    .unwrap();
-                }
             }
-            HaltCondition::Infinite(reason, steps) => {
+            HaltCondition::Infinite(_, steps) => {
                 total_steps += steps as u64;
                 infinite += 1;
-                let reason_str = match reason {
-                    InfiniteReason::Cycle(period) => format!("Cycle period={}", period),
-                    InfiniteReason::ImmortalSubstring(ref w) => {
-                        let mut s = String::new();
-                        for &c in w {
-                            s.push_str(&c.to_string());
-                        }
-                        format!("ImmortalSubstring substring={}", s)
-                    }
-                    InfiniteReason::NonDecreasingSymbol(c) => {
-                        format!("NonDecreasingSymbol symbol={}", c)
-                    }
-                    InfiniteReason::ClosedSymbol(c) => format!("ClosedSymbol symbol={}", c),
-                    InfiniteReason::TranslationCycle(period, _) => {
-                        format!("TranslationCycle period={}", period)
-                    }
-                };
-                if let Some(ref mut w) = out_file {
-                    writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str).unwrap();
-                }
             }
             HaltCondition::Unknown => {
                 total_steps += args.max_steps as u64;
                 holdouts += 1;
-                if let Some(ref mut w) = out_file {
-                    writeln!(w, "prog={} status=Unknown", dense).unwrap();
-                }
             }
-            HaltCondition::UndefinedRule(_) => {
-                // This shouldn't happen, explore_adaptive handles it
-            }
+            HaltCondition::UndefinedRule(_) => {}
+        }
+
+        if let Some(ref mut w) = out_file {
+            write_result(w, sys, &condition).unwrap();
         }
     });
 

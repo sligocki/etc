@@ -57,7 +57,6 @@ fn main() {
         args.max_space,
         &mut |sys, condition| {
             total += 1;
-            let dense = sys.dense_string();
             match condition {
                 HaltCondition::Halted(steps, space) => {
                     total_steps += steps as u64;

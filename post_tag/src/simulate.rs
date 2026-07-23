@@ -65,7 +65,7 @@ impl<'a> Simulator<'a> {
             }
         }
 
-        let mut non_decreasing = Vec::new();
+        let non_decreasing = Vec::new();
 
         let mut closed_symbols = Vec::new();
         for c in 0..sys.rules.len() {

@@ -74,8 +74,8 @@ fn main() {
     if sim.true_length < sys.v {
         println!("Halted in {} steps. Space: {}", sim.steps, sim.max_len);
     } else if sim.tape.len() - sim.head_idx > args.max_space {
-        println!("Hit space limit of {}.", args.max_space);
+        println!("Hit space limit of {} at step {}.", args.max_space, sim.steps);
     } else {
-        println!("Hit step limit of {}.", args.max_steps);
+        println!("Hit step limit of {} at step {}.", args.max_steps, sim.steps);
     }
 }

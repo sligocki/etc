@@ -40,7 +40,7 @@ fn main() {
 
     while sim.tape.len() - sim.head_idx >= sys.v && sim.steps < args.max_steps {
         if sim.tape.len() - sim.head_idx > args.max_space {
-            println!("Hit space limit of {}.", args.max_space);
+            println!("Hit space limit of {} at step {}.", args.max_space, sim.steps);
             return;
         }
         if sim.steps == next_snapshot_step {

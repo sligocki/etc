@@ -59,6 +59,7 @@ pub fn write_result<W: Write>(
                 InfiniteReason::TranslationCycle(period, _) => {
                     format!("TranslationCycle period={}", period)
                 }
+                InfiniteReason::Phase0Closed => format!("Phase0Closed"),
             };
             writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str)
         }

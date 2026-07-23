@@ -221,4 +221,34 @@ impl TagSystem {
         }
         res
     }
+
+    pub fn is_phase0_closed(&self) -> bool {
+        let mut reachable = vec![false; 256];
+        let mut queue = Vec::new();
+        
+        reachable[0] = true;
+        queue.push(0);
+
+        while let Some(c) = queue.pop() {
+            if c as usize >= self.rules.len() {
+                return false;
+            }
+            if let Some(rule) = &self.rules[c as usize] {
+                if rule.len() < self.v || rule.len() % self.v != 0 {
+                    return false;
+                }
+                for i in (0..rule.len()).step_by(self.v) {
+                    let next_c = rule[i];
+                    if !reachable[next_c as usize] {
+                        reachable[next_c as usize] = true;
+                        queue.push(next_c);
+                    }
+                }
+            } else {
+                return false;
+            }
+        }
+
+        true
+    }
 }

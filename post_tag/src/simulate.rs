@@ -7,6 +7,7 @@ pub enum InfiniteReason {
     NonDecreasingSymbol(u8),
     ClosedSymbol(u8),
     TranslationCycle(usize, Vec<u8>), // period, appended suffix
+    Phase0Closed,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +112,12 @@ impl<'a> Simulator<'a> {
                         println!("Symbol 0 is closed and initial tape only has 0!");
                     }
                     return Some(HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), 0));
+                }
+                if self.sys.is_phase0_closed() {
+                    if verbose {
+                        println!("Phase 0 is entirely closed (all rules even length and never reach halt)!");
+                    }
+                    return Some(HaltCondition::Infinite(InfiniteReason::Phase0Closed, 0));
                 }
                 if self.sys.non_decreasing_symbols().contains(&0) {
                     if verbose {

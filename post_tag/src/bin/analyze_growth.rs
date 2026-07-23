@@ -239,7 +239,7 @@ fn main() {
             }
         }
 
-        if peaks.len() > 3 {
+        if peaks.len() >= 10 {
             let start_idx = peaks.len() / 2;
             let tail = &peaks[start_idx..];
 
@@ -285,7 +285,8 @@ fn main() {
             }
         }
 
-        let category = if hw_r_squared < 0.75 && peak_r_squared < 0.75 {
+        let best_r2 = hw_r_squared.max(peak_r_squared);
+        let category = if best_r2 < 0.90 {
             "Unknown".to_string()
         } else {
             let shape = if r_squared >= 0.90 { "Smooth" } else { "ZigZag" };

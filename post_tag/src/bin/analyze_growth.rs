@@ -33,7 +33,7 @@ fn main() {
     let out_file = File::create(&args.out).expect("Failed to create output file");
     let mut writer = BufWriter::new(out_file);
 
-    writeln!(writer, "prog,status,final_size,shrink_rate,max_drawdown,p,r_squared,hw_p,hw_r_squared,category").unwrap();
+    writeln!(writer, "prog,status,final_size,shrink_rate,max_drawdown,p,r_squared,hw_p,hw_r_squared,peak_p,peak_r_squared,category").unwrap();
 
     let mut category_map: HashMap<String, Vec<String>> = HashMap::new();
     let mut total_programs = 0;
@@ -229,13 +229,70 @@ fn main() {
             }
         }
 
-        let category = if hw_r_squared < 0.75 {
+        let mut peak_p = 0.0;
+        let mut peak_r_squared = 0.0;
+        
+        let mut peaks = Vec::new();
+        for i in 0..hw_records.len() {
+            if i == hw_records.len() - 1 || hw_records[i+1].0 - hw_records[i].0 > 100 {
+                peaks.push(hw_records[i]);
+            }
+        }
+
+        if peaks.len() > 3 {
+            let start_idx = peaks.len() / 2;
+            let tail = &peaks[start_idx..];
+
+            let mut sum_x = 0.0;
+            let mut sum_y = 0.0;
+            let n = tail.len() as f64;
+            for &(step, len) in tail {
+                let x = (step as f64).ln();
+                let y = (len as f64).ln();
+                sum_x += x;
+                sum_y += y;
+            }
+            let mean_x = sum_x / n;
+            let mean_y = sum_y / n;
+
+            let mut num = 0.0;
+            let mut den = 0.0;
+            for &(step, len) in tail {
+                let x = (step as f64).ln();
+                let y = (len as f64).ln();
+                let dx = x - mean_x;
+                let dy = y - mean_y;
+                num += dx * dy;
+                den += dx * dx;
+            }
+
+            if den > 1e-9 {
+                peak_p = num / den;
+                let mut ss_res = 0.0;
+                let mut ss_tot = 0.0;
+                for &(step, len) in tail {
+                    let x = (step as f64).ln();
+                    let y = (len as f64).ln();
+                    let f_i = peak_p * (x - mean_x) + mean_y;
+                    ss_res += (y - f_i).powi(2);
+                    ss_tot += (y - mean_y).powi(2);
+                }
+                if ss_tot > 1e-9 {
+                    peak_r_squared = 1.0 - (ss_res / ss_tot);
+                } else {
+                    peak_r_squared = 1.0;
+                }
+            }
+        }
+
+        let category = if hw_r_squared < 0.75 && peak_r_squared < 0.75 {
             "Unknown".to_string()
         } else {
-            let shape = if r_squared >= 0.90 { "Smooth" } else { "Oscillating" };
-            let power = if hw_p > 0.90 {
+            let shape = if r_squared >= 0.90 { "Smooth" } else { "ZigZag" };
+            let effective_p = if peak_r_squared > hw_r_squared { peak_p } else { hw_p };
+            let power = if effective_p > 0.90 {
                 "Linear"
-            } else if hw_p > 0.40 && hw_p < 0.60 {
+            } else if effective_p > 0.40 && effective_p < 0.60 {
                 "SquareRoot"
             } else {
                 "Polynomial"
@@ -245,8 +302,8 @@ fn main() {
 
         writeln!(
             writer,
-            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{}",
-            prog_str, status, final_size, shrink_rate, max_drawdown, p, r_squared, hw_p, hw_r_squared, category
+            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{}",
+            prog_str, status, final_size, shrink_rate, max_drawdown, p, r_squared, hw_p, hw_r_squared, peak_p, peak_r_squared, category
         ).unwrap();
 
         category_map.entry(category.to_string()).or_default().push(prog_str.to_string());

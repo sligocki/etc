@@ -1,7 +1,7 @@
 use crate::simulate::{HaltCondition, InfiniteReason, Simulator};
 use crate::tag_system::TagSystem;
 
-pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool) -> HaltCondition {
+pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, max_space: usize, verbose: bool) -> HaltCondition {
     let mut sim = Simulator::new(sys);
 
     // (step, tape, phase)
@@ -17,6 +17,9 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
     let mut pending: Vec<PendingCandidate> = Vec::new();
 
     while sim.true_length >= sys.v && sim.steps < max_steps {
+        if sim.tape.len() - sim.head_idx > max_space {
+            return HaltCondition::Unknown(crate::simulate::UnknownReason::OverSize, sim.steps);
+        }
         if sim.steps == next_snapshot_step {
             snapshots.push((sim.steps, sim.tape[sim.head_idx..].to_vec(), sim.true_length % sys.v));
             next_snapshot_step *= 2;
@@ -86,6 +89,6 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, verbose: bool)
     if sim.true_length < sys.v {
         HaltCondition::Halted(sim.steps, sim.max_len)
     } else {
-        HaltCondition::Unknown
+        HaltCondition::Unknown(crate::simulate::UnknownReason::OverSteps, sim.steps)
     }
 }

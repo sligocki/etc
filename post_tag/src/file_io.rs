@@ -48,8 +48,12 @@ pub fn write_result<W: Write>(w: &mut W, sys: &TagSystem, condition: &HaltCondit
             };
             writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str)
         }
-        HaltCondition::Unknown => {
-            writeln!(w, "prog={} status=Unknown", dense)
+        HaltCondition::Unknown(reason, steps) => {
+            let reason_str = match reason {
+                crate::simulate::UnknownReason::OverSteps => "over_steps",
+                crate::simulate::UnknownReason::OverSize => "over_size",
+            };
+            writeln!(w, "prog={} status=Unknown reason={} steps={}", dense, reason_str, steps)
         }
         HaltCondition::UndefinedRule(_) => Ok(()),
     }

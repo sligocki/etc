@@ -11,6 +11,10 @@ struct Args {
     /// Maximum number of steps to simulate
     #[arg(short, long, default_value_t = 1_000_000)]
     max_steps: usize,
+
+    /// Max active tape size before aborting
+    #[arg(long, default_value_t = 1_000_000)]
+    max_space: usize,
 }
 
 fn format_tape(tape: &[u8]) -> String {
@@ -35,6 +39,10 @@ fn main() {
     let mut next_snapshot_step = 1;
 
     while sim.tape.len() - sim.head_idx >= sys.v && sim.steps < args.max_steps {
+        if sim.tape.len() - sim.head_idx > args.max_space {
+            println!("Hit space limit of {}.", args.max_space);
+            return;
+        }
         if sim.steps == next_snapshot_step {
             snapshots.push((sim.steps, sim.tape[sim.head_idx..].to_vec(), sim.head_idx));
             next_snapshot_step *= 2;

@@ -11,6 +11,10 @@ struct Args {
     #[arg(short, long, default_value_t = 10_000)]
     max_steps: usize,
 
+    /// Max active tape size limit
+    #[arg(long, default_value_t = 1_000_000)]
+    max_space: usize,
+
     /// Print the tape at each step
     #[arg(short, long)]
     verbose: bool,
@@ -31,6 +35,9 @@ fn main() {
     let mut sim = post_tag::simulate::Simulator::new(&sys);
 
     while sim.true_length >= sys.v && sim.steps < args.max_steps {
+        if sim.tape.len() - sim.head_idx > args.max_space {
+            break;
+        }
         if args.verbose || args.distribution {
             if args.distribution {
                 let current_len = sim.tape.len() - sim.head_idx;
@@ -70,6 +77,8 @@ fn main() {
             sim.steps,
             sim.max_len
         );
+    } else if sim.tape.len() - sim.head_idx > args.max_space {
+        println!("Hit space limit of {}.", args.max_space);
     } else {
         println!("Hit step limit of {}.", args.max_steps);
     }

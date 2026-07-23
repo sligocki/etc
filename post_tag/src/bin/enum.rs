@@ -24,6 +24,10 @@ struct Args {
     /// Max steps before classifying as holdout
     #[arg(long, default_value_t = 1_000_000)]
     max_steps: usize,
+
+    /// Max active tape size before classifying as holdout
+    #[arg(long, default_value_t = 1_000_000)]
+    max_space: usize,
 }
 
 fn main() {
@@ -46,7 +50,7 @@ fn main() {
 
     let start_time = Instant::now();
 
-    enumerate_systems(args.v, args.s, args.max_steps, &mut |sys, condition| {
+    enumerate_systems(args.v, args.s, args.max_steps, args.max_space, &mut |sys, condition| {
         total += 1;
         let dense = sys.dense_string();
         match condition {
@@ -72,9 +76,9 @@ fn main() {
                 total_steps += steps as u64;
                 infinite += 1;
             }
-            HaltCondition::Unknown => {
-                total_steps += args.max_steps as u64;
+            HaltCondition::Unknown(_, steps) => {
                 holdouts += 1;
+                total_steps += steps as u64;
             }
             HaltCondition::UndefinedRule(_) => {}
         }

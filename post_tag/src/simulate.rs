@@ -10,10 +10,16 @@ pub enum InfiniteReason {
 }
 
 #[derive(Debug, Clone)]
+pub enum UnknownReason {
+    OverSteps,
+    OverSize,
+}
+
+#[derive(Debug, Clone)]
 pub enum HaltCondition {
     Halted(usize, usize),            // steps, max_length
     Infinite(InfiniteReason, usize), // reason, steps taken to detect
-    Unknown,
+    Unknown(UnknownReason, usize),   // reason, steps taken to abort
     UndefinedRule(u8),
 }
 
@@ -184,10 +190,13 @@ impl<'a> Simulator<'a> {
         None
     }
 
-    pub fn run(&mut self, max_steps: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
+    pub fn run(&mut self, max_steps: usize, max_space: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
         while self.true_length >= self.sys.v {
             if self.steps >= max_steps {
-                return HaltCondition::Unknown;
+                return HaltCondition::Unknown(UnknownReason::OverSteps, self.steps);
+            }
+            if self.tape.len() - self.head_idx > max_space {
+                return HaltCondition::Unknown(UnknownReason::OverSize, self.steps);
             }
             if let Some(cond) = self.step(verbose, use_deciders) {
                 return cond;
@@ -210,8 +219,8 @@ impl<'a> Simulator<'a> {
     }
 }
 
-pub fn simulate(sys: &TagSystem, max_steps: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
-    Simulator::new(sys).run(max_steps, verbose, use_deciders)
+pub fn simulate(sys: &TagSystem, max_steps: usize, max_space: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
+    Simulator::new(sys).run(max_steps, max_space, verbose, use_deciders)
 }
 
 #[cfg(test)]
@@ -219,9 +228,10 @@ mod tests {
     use super::*;
     use crate::tag_system::TagSystem;
 
-    fn run_sim(prog: &str) -> HaltCondition {
-        let sys = TagSystem::parse(2, prog);
-        simulate(&sys, 10_000, false, true)
+    fn run_sim(s: &str) -> HaltCondition {
+        let sys = TagSystem::parse(2, s);
+        let mut sim = Simulator::new(&sys);
+        sim.run(10_000, 1_000_000, false, true)
     }
 
     #[test]
@@ -256,6 +266,48 @@ mod tests {
         match run_sim("01_?") {
             HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), _) => {}
             other => panic!("Expected ClosedSymbol(0), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_champions_halting() {
+        // S=6
+        match run_sim("011_1") {
+            HaltCondition::Halted(steps, _) => assert_eq!(steps, 5),
+            other => panic!("Expected Halted, got {:?}", other),
+        }
+        
+        // S=7
+        match run_sim("0111_1") {
+            HaltCondition::Halted(steps, _) => assert_eq!(steps, 10),
+            other => panic!("Expected Halted, got {:?}", other),
+        }
+        
+        // S=8
+        match run_sim("111_20_") {
+            HaltCondition::Halted(steps, _) => assert_eq!(steps, 19),
+            other => panic!("Expected Halted, got {:?}", other),
+        }
+        
+        // S=9
+        match run_sim("11_021_2") {
+            HaltCondition::Halted(steps, _) => assert_eq!(steps, 49),
+            other => panic!("Expected Halted, got {:?}", other),
+        }
+        
+        // S=10
+        match run_sim("112_1_002") {
+            HaltCondition::Halted(steps, _) => assert_eq!(steps, 779),
+            other => panic!("Expected Halted, got {:?}", other),
+        }
+        
+        // S=11
+        // (Use a larger step limit just in case, though 196841 is within the 10M default of run_sim? 
+        // Wait, run_sim uses 10_000! Let's pass a larger limit for this one)
+        let sys11 = TagSystem::parse(2, "120221_0_2");
+        match simulate(&sys11, 200_000, 1_000_000, false, true) {
+            HaltCondition::Halted(steps, _) => assert_eq!(steps, 196841),
+            other => panic!("Expected Halted, got {:?}", other),
         }
     }
 }

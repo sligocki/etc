@@ -14,7 +14,12 @@ struct Args {
     input: PathBuf,
 
     /// Max steps
+    #[arg(long, default_value_t = 10_000_000)]
     max_steps: usize,
+
+    /// Max active tape size before classifying as holdout
+    #[arg(long, default_value_t = 1_000_000)]
+    max_space: usize,
 
     /// Output file
     output: PathBuf,
@@ -55,7 +60,7 @@ fn main() {
 
     let results: Vec<_> = unknowns.par_iter().map(|prog_str| {
         let sys = TagSystem::parse(2, prog_str);
-        let result = simulate(&sys, args.max_steps, false, args.deciders);
+        let result = simulate(&sys, args.max_steps, args.max_space, false, args.deciders);
         
         let c = completed.fetch_add(1, Ordering::SeqCst) + 1;
         let pct = c as f64 / total as f64;
@@ -88,9 +93,9 @@ fn main() {
                 infinite += 1;
                 total_steps += steps as u64;
             }
-            post_tag::simulate::HaltCondition::Unknown => {
+            post_tag::simulate::HaltCondition::Unknown(_, steps) => {
                 holdouts += 1;
-                total_steps += args.max_steps as u64;
+                total_steps += steps as u64;
             }
             post_tag::simulate::HaltCondition::UndefinedRule(_) => {}
         }

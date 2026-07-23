@@ -1,7 +1,12 @@
 use crate::simulate::{HaltCondition, InfiniteReason, Simulator};
 use crate::tag_system::TagSystem;
 
-pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, max_space: usize, verbose: bool) -> HaltCondition {
+pub fn check_translation_cycle(
+    sys: &TagSystem,
+    max_steps: usize,
+    max_space: usize,
+    verbose: bool,
+) -> HaltCondition {
     let mut sim = Simulator::new(sys);
 
     // (step, tape, phase)
@@ -21,7 +26,11 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, max_space: usi
             return HaltCondition::Unknown(crate::simulate::UnknownReason::OverSize, sim.steps);
         }
         if sim.steps == next_snapshot_step {
-            snapshots.push((sim.steps, sim.tape[sim.head_idx..].to_vec(), sim.true_length % sys.v));
+            snapshots.push((
+                sim.steps,
+                sim.tape[sim.head_idx..].to_vec(),
+                sim.true_length % sys.v,
+            ));
             next_snapshot_step *= 2;
         }
 
@@ -57,7 +66,10 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, max_space: usi
         while i < snapshots.len() {
             let (saved_step, ref saved_tape, saved_phase) = snapshots[i];
 
-            if current_phase == saved_phase && current_tape.len() > saved_tape.len() && current_tape.starts_with(saved_tape) {
+            if current_phase == saved_phase
+                && current_tape.len() > saved_tape.len()
+                && current_tape.starts_with(saved_tape)
+            {
                 let delta_t = sim.steps - saved_step;
                 let c_consumed = delta_t; // Active tape consumes 1 symbol per step
 
@@ -73,7 +85,7 @@ pub fn check_translation_cycle(sys: &TagSystem, max_steps: usize, max_space: usi
                         p,
                     });
                 }
-                
+
                 snapshots.swap_remove(i);
                 continue;
             }

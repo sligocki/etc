@@ -50,43 +50,49 @@ fn main() {
 
     let start_time = Instant::now();
 
-    enumerate_systems(args.v, args.s, args.max_steps, args.max_space, &mut |sys, condition| {
-        total += 1;
-        let dense = sys.dense_string();
-        match condition {
-            HaltCondition::Halted(steps, space) => {
-                total_steps += steps as u64;
-                if steps > max_halt_steps {
-                    max_halt_steps = steps;
-                    best_step_sys.clear();
-                    best_step_sys.push(sys.clone());
-                } else if steps == max_halt_steps {
-                    best_step_sys.push(sys.clone());
-                }
+    enumerate_systems(
+        args.v,
+        args.s,
+        args.max_steps,
+        args.max_space,
+        &mut |sys, condition| {
+            total += 1;
+            let dense = sys.dense_string();
+            match condition {
+                HaltCondition::Halted(steps, space) => {
+                    total_steps += steps as u64;
+                    if steps > max_halt_steps {
+                        max_halt_steps = steps;
+                        best_step_sys.clear();
+                        best_step_sys.push(sys.clone());
+                    } else if steps == max_halt_steps {
+                        best_step_sys.push(sys.clone());
+                    }
 
-                if space > max_halt_space {
-                    max_halt_space = space;
-                    best_space_sys.clear();
-                    best_space_sys.push(sys.clone());
-                } else if space == max_halt_space {
-                    best_space_sys.push(sys.clone());
+                    if space > max_halt_space {
+                        max_halt_space = space;
+                        best_space_sys.clear();
+                        best_space_sys.push(sys.clone());
+                    } else if space == max_halt_space {
+                        best_space_sys.push(sys.clone());
+                    }
                 }
+                HaltCondition::Infinite(_, steps) => {
+                    total_steps += steps as u64;
+                    infinite += 1;
+                }
+                HaltCondition::Unknown(_, steps) => {
+                    holdouts += 1;
+                    total_steps += steps as u64;
+                }
+                HaltCondition::UndefinedRule(_) => {}
             }
-            HaltCondition::Infinite(_, steps) => {
-                total_steps += steps as u64;
-                infinite += 1;
-            }
-            HaltCondition::Unknown(_, steps) => {
-                holdouts += 1;
-                total_steps += steps as u64;
-            }
-            HaltCondition::UndefinedRule(_) => {}
-        }
 
-        if let Some(ref mut w) = out_file {
-            write_result(w, sys, &condition).unwrap();
-        }
-    });
+            if let Some(ref mut w) = out_file {
+                write_result(w, sys, &condition).unwrap();
+            }
+        },
+    );
 
     let elapsed = start_time.elapsed();
     let halting = total - holdouts - infinite;

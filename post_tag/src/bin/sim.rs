@@ -42,7 +42,7 @@ fn main() {
             if args.distribution {
                 let current_len = sim.tape.len() - sim.head_idx;
                 let counts = &sim.symbol_counts;
-                
+
                 print!("Step {}: (", sim.steps);
                 for i in 0..sys.rules.len() {
                     let pct = if current_len > 0 {
@@ -72,11 +72,7 @@ fn main() {
     }
 
     if sim.true_length < sys.v {
-        println!(
-            "Halted in {} steps. Space: {}",
-            sim.steps,
-            sim.max_len
-        );
+        println!("Halted in {} steps. Space: {}", sim.steps, sim.max_len);
     } else if sim.tape.len() - sim.head_idx > args.max_space {
         println!("Hit space limit of {}.", args.max_space);
     } else {

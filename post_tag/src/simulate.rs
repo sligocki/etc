@@ -30,7 +30,7 @@ pub struct Simulator<'a> {
     pub head_idx: usize,
     pub steps: usize,
     pub true_length: usize, // Current space
-    pub max_len: usize, // Max true_length
+    pub max_len: usize,     // Max true_length
     pub saved_tape: Vec<u8>,
     pub saved_phase: usize,
     pub power: usize,
@@ -114,9 +114,15 @@ impl<'a> Simulator<'a> {
                 }
                 if self.sys.non_decreasing_symbols().contains(&0) {
                     if verbose {
-                        println!("Symbol 0 is non-decreasing and initial tape has {} copies!", self.sys.v);
+                        println!(
+                            "Symbol 0 is non-decreasing and initial tape has {} copies!",
+                            self.sys.v
+                        );
                     }
-                    return Some(HaltCondition::Infinite(InfiniteReason::NonDecreasingSymbol(0), 0));
+                    return Some(HaltCondition::Infinite(
+                        InfiniteReason::NonDecreasingSymbol(0),
+                        0,
+                    ));
                 }
             }
         }
@@ -149,7 +155,7 @@ impl<'a> Simulator<'a> {
         }
 
         self.true_length = self.true_length + raw_rule.len() - self.sys.v;
-        
+
         let current_len = self.tape.len() - self.head_idx;
         if self.true_length > self.max_len {
             self.max_len = self.true_length;
@@ -157,7 +163,7 @@ impl<'a> Simulator<'a> {
 
         if use_deciders {
             let next_phase = self.true_length % self.sys.v;
-            if current_len == self.saved_tape.len() 
+            if current_len == self.saved_tape.len()
                 && self.tape[self.head_idx..] == self.saved_tape[..]
                 && next_phase == self.saved_phase
             {
@@ -190,7 +196,13 @@ impl<'a> Simulator<'a> {
         None
     }
 
-    pub fn run(&mut self, max_steps: usize, max_space: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
+    pub fn run(
+        &mut self,
+        max_steps: usize,
+        max_space: usize,
+        verbose: bool,
+        use_deciders: bool,
+    ) -> HaltCondition {
         while self.true_length >= self.sys.v {
             if self.steps >= max_steps {
                 return HaltCondition::Unknown(UnknownReason::OverSteps, self.steps);
@@ -219,7 +231,13 @@ impl<'a> Simulator<'a> {
     }
 }
 
-pub fn simulate(sys: &TagSystem, max_steps: usize, max_space: usize, verbose: bool, use_deciders: bool) -> HaltCondition {
+pub fn simulate(
+    sys: &TagSystem,
+    max_steps: usize,
+    max_space: usize,
+    verbose: bool,
+    use_deciders: bool,
+) -> HaltCondition {
     Simulator::new(sys).run(max_steps, max_space, verbose, use_deciders)
 }
 
@@ -276,33 +294,33 @@ mod tests {
             HaltCondition::Halted(steps, _) => assert_eq!(steps, 5),
             other => panic!("Expected Halted, got {:?}", other),
         }
-        
+
         // S=7
         match run_sim("0111_1") {
             HaltCondition::Halted(steps, _) => assert_eq!(steps, 10),
             other => panic!("Expected Halted, got {:?}", other),
         }
-        
+
         // S=8
         match run_sim("111_20_") {
             HaltCondition::Halted(steps, _) => assert_eq!(steps, 19),
             other => panic!("Expected Halted, got {:?}", other),
         }
-        
+
         // S=9
         match run_sim("11_021_2") {
             HaltCondition::Halted(steps, _) => assert_eq!(steps, 49),
             other => panic!("Expected Halted, got {:?}", other),
         }
-        
+
         // S=10
         match run_sim("112_1_002") {
             HaltCondition::Halted(steps, _) => assert_eq!(steps, 779),
             other => panic!("Expected Halted, got {:?}", other),
         }
-        
+
         // S=11
-        // (Use a larger step limit just in case, though 196841 is within the 10M default of run_sim? 
+        // (Use a larger step limit just in case, though 196841 is within the 10M default of run_sim?
         // Wait, run_sim uses 10_000! Let's pass a larger limit for this one)
         let sys11 = TagSystem::parse(2, "120221_0_2");
         match simulate(&sys11, 200_000, 1_000_000, false, true) {

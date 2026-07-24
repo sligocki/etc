@@ -233,15 +233,19 @@ fn main() {
         let mut peak_r_squared = 0.0;
         
         let mut peaks = Vec::new();
-        for i in 0..hw_records.len() {
-            if i == hw_records.len() - 1 || hw_records[i+1].0 - hw_records[i].0 > 100 {
+        for i in 0..(hw_records.len().saturating_sub(1)) {
+            if hw_records[i+1].0 - hw_records[i].0 > 100 {
                 peaks.push(hw_records[i]);
             }
         }
 
-        if peaks.len() >= 10 {
-            let start_idx = peaks.len() / 2;
-            let tail = &peaks[start_idx..];
+        if peaks.len() >= 4 {
+            let tail = if peaks.len() >= 10 {
+                let start_idx = peaks.len() / 2;
+                &peaks[start_idx..]
+            } else {
+                &peaks[..]
+            };
 
             let mut sum_x = 0.0;
             let mut sum_y = 0.0;
@@ -286,14 +290,14 @@ fn main() {
         }
 
         let best_r2 = hw_r_squared.max(peak_r_squared);
-        let category = if best_r2 < 0.90 {
+        let category = if best_r2 < 0.90 && max_drawdown >= 0.01 {
             "Unknown".to_string()
         } else {
-            let shape = if r_squared >= 0.90 { "Smooth" } else { "ZigZag" };
+            let shape = if r_squared >= 0.95 { "Smooth" } else { "ZigZag" };
             let effective_p = if peak_r_squared > hw_r_squared { peak_p } else { hw_p };
-            let power = if effective_p > 0.90 {
+            let power = if (effective_p - 1.0).abs() < 0.02 {
                 "Linear"
-            } else if effective_p > 0.40 && effective_p < 0.60 {
+            } else if (effective_p - 0.5).abs() < 0.02 {
                 "SquareRoot"
             } else {
                 "Polynomial"

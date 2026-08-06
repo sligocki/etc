@@ -71,7 +71,7 @@ def to_lean(ast):
     elif ast[0] == 'C':
         h = to_lean(ast[1])
         gs = ", ".join(to_lean(g) for g in ast[2])
-        return f"PRF.comp ({h}) ![{gs}]"
+        return f"PRF.comp ({h}) prf_list![{gs}]"
     elif ast[0] == 'R':
         g = to_lean(ast[1])
         h = to_lean(ast[2])
@@ -101,6 +101,8 @@ def process_file(input_path, output_path, module_name):
     with open(output_path, 'w') as out:
         out.write(f"import GenRec.Syntax\n")
         out.write(f"import GenRec.Semantics\n\n")
+        out.write(f"open GenRec\n\n")
+        out.write(f"namespace {module_name}\n\n")
         
         for idx, (expr_part, ast) in enumerate(holdouts):
             lean_code = to_lean(ast)
@@ -112,8 +114,10 @@ def process_file(input_path, output_path, module_name):
             out.write(f"def holdout_{idx + 1} : PRF 1 :=\n")
             out.write(f"  {lean_code}\n\n")
             
-            out.write(f"theorem holdout_{idx + 1}_diverges : ∀ x, evalPRF holdout_{idx + 1} ![x] > 0 := by\n")
+            out.write(f"theorem holdout_{idx + 1}_diverges : ∀ x, evalPRF holdout_{idx + 1} (fun _ => x) > 0 := by\n")
             out.write(f"  sorry\n\n")
+            
+        out.write(f"end {module_name}\n")
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:

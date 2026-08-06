@@ -109,12 +109,12 @@ def process_file(input_path, output_path, module_name):
             # Find the arity of the PRF (which is the inner function of M)
             # The arity should be 1 because M(f) has arity k if f has arity k+1, and these are arity 0 holdouts.
             # So the PRF is arity 1.
-            out.write(f"-- Translating holdout {idx + 1}\n")
+            out.write(f"-- Translating holdout {idx}\n")
             out.write(f"-- {expr_part}\n")
-            out.write(f"def holdout_{idx + 1} : PRF 1 :=\n")
+            out.write(f"def holdout_{idx} : PRF 1 :=\n")
             out.write(f"  {lean_code}\n\n")
             
-            out.write(f"theorem holdout_{idx + 1}_diverges : ∀ x, evalPRF holdout_{idx + 1} (fun _ => x) > 0 := by\n")
+            out.write(f"theorem holdout_{idx}_diverges : ∀ x, evalPRF holdout_{idx} (fun _ => x) > 0 := by\n")
             out.write(f"  sorry\n\n")
             
         out.write(f"end {module_name}\n")

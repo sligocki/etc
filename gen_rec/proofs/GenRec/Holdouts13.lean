@@ -1204,6 +1204,7 @@ lemma H9_c_val_diag_not_zero (x : Nat) : H9_c_val x x ≠ 0 := by
           rw [hx_cases, he] at h3
           omega
 
+-- Proof produced in ~25 minutes (adapted from Poly Div template)
 theorem holdout_9_diverges : ∀ x, evalPRF holdout_9 (fun _ => x) > 0 := by
   intro x
   rw [H9_comp x]
@@ -1471,7 +1472,97 @@ theorem holdout_13_diverges : ∀ x, evalPRF holdout_13 (fun _ => x) > 0 := by
 def holdout_14 : PRF 1 :=
   PRF.primRec (PRF.comp (PRF.succ) prf_list![PRF.zero 0]) (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)]))
 
+def H14_f (u x : Nat) : Nat :=
+  match u with
+  | 0 => x
+  | u' + 1 => u'
+
+def H14_h (u x : Nat) : Nat :=
+  match u with
+  | 0 => x + 1
+  | u' + 1 => H14_f (H14_h u' x) u'
+
+def H14_val (x : Nat) : Nat :=
+  match x with
+  | 0 => 1
+  | x' + 1 => H14_h x' (H14_val x')
+
+lemma H14_f_eq (u x acc : Nat) : evalPRF (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) (mk_args2 u x) = H14_f u x := by
+  induction u with
+  | zero => rfl
+  | succ u ih => rfl
+
+lemma H14_h_inner_eq (v u x : Nat) : evalPRF (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)]) (mk_args3 u v x) = H14_f v u := by
+  change evalPRF (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) (mk_args2 v u) = H14_f v u
+  rw [H14_f_eq v u x]
+
+lemma H14_h_eq (u x : Nat) : evalPRF (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)])) (mk_args2 u x) = H14_h u x := by
+  induction u with
+  | zero => rfl
+  | succ u ih =>
+    change evalPRF (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)]) (mk_args3 u (evalPRF (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)])) (mk_args2 u x)) x) = H14_h (u + 1) x
+    rw [H14_h_inner_eq]
+    rw [ih]
+    rfl
+
+lemma H14_val_eq (x : Nat) : evalPRF holdout_14 (fun _ => x) = H14_val x := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)])) (mk_args2 x (evalPRF holdout_14 (fun _ => x))) = H14_val (x + 1)
+    rw [H14_h_eq]
+    rw [ih]
+    rfl
+
+lemma H14_h_le (u y : Nat) (h : u ≤ y + 1) : H14_h u y = y + 1 - u := by
+  induction u with
+  | zero => rfl
+  | succ u ih =>
+    change H14_f (H14_h u y) u = y + 1 - (u + 1)
+    have h1 : u ≤ y + 1 := by omega
+    rw [ih h1]
+    have h2 : y + 1 - u = (y + 1 - (u + 1)) + 1 := by omega
+    have h3 : y + 1 - (u + 1) + 1 = (y + 1 - (u + 1)) + 1 := by rfl
+    rw [h2]
+    change H14_f ((y + 1 - (u + 1)) + 1) u = y + 1 - (u + 1)
+    rfl
+
+lemma H14_h_y_plus_2 (y : Nat) : H14_h (y + 2) y = y + 1 := by
+  change H14_f (H14_h (y + 1) y) (y + 1) = y + 1
+  have h1 : y + 1 ≤ y + 1 := by omega
+  rw [H14_h_le (y + 1) y h1]
+  have h2 : y + 1 - (y + 1) = 0 := by omega
+  rw [h2]
+  rfl
+
+lemma H14_val_eq_sub_2 (x : Nat) (h : x ≥ 4) : H14_val x = x - 2 := by
+  induction x, h using Nat.le_induction with
+  | base => rfl
+  | succ x hx ih =>
+    change H14_h x (H14_val x) = x + 1 - 2
+    rw [ih]
+    have h1 : (x - 2) + 2 = x := by omega
+    have h2 : H14_h x (x - 2) = H14_h ((x - 2) + 2) (x - 2) := by rw [h1]
+    rw [h2]
+    rw [H14_h_y_plus_2 (x - 2)]
+    omega
+
+-- Proof produced in ~20 minutes (new Induction template)
 theorem holdout_14_diverges : ∀ x, evalPRF holdout_14 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H14_val_eq x]
+  have h_cases : x < 4 ∨ x ≥ 4 := by omega
+  cases h_cases with
+  | inl h1 =>
+    -- Finite check for x < 4
+    have h2 : x = 0 ∨ x = 1 ∨ x = 2 ∨ x = 3 := by omega
+    rcases h2 with h3 | h3 | h3 | h3
+    · rw [h3]; decide
+    · rw [h3]; decide
+    · rw [h3]; decide
+    · rw [h3]; decide
+  | inr h1 =>
+    rw [H14_val_eq_sub_2 x h1]
+    omega
 
 end Holdouts13

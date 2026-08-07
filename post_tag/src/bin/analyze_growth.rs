@@ -290,7 +290,7 @@ fn main() {
         }
 
         let best_r2 = hw_r_squared.max(peak_r_squared);
-        let category = if best_r2 < 0.90 && max_drawdown >= 0.01 {
+        let category = if best_r2 < 0.98 && max_drawdown >= 0.01 {
             "Unknown".to_string()
         } else {
             let shape = if r_squared >= 0.95 { "Smooth" } else { "ZigZag" };

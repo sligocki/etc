@@ -9,6 +9,8 @@ namespace Holdouts13
 -- General
 def mk_args2 (a b : Nat) : Fin 2 → Nat := fun i => if i.val = 0 then a else b
 def mk_args3 (a b c : Nat) : Fin 3 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else c
+def mk_args4 (a b c d : Nat) : Fin 4 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else if i.val = 2 then c else d
+def mk_args5 (a b c d e : Nat) : Fin 5 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else if i.val = 2 then c else if i.val = 3 then d else e
 
 
 -- Translating holdout 0
@@ -1015,17 +1017,216 @@ theorem holdout_8_diverges : ∀ x, evalPRF holdout_8 (fun _ => x) > 0 := by
 def holdout_9 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))) ((PRF.proj 5 ⟨1, by decide⟩))))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
 
+def H9_inner_inner_g : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H9_inner_inner : PRF 4 := PRF.primRec H9_inner_inner_g ((PRF.proj 5 ⟨1, by decide⟩))
+def H9_inner : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) H9_inner_inner
+def H9_c : PRF 2 := PRF.primRec (PRF.succ) H9_inner
+
+lemma H9_comp (x : Nat) : evalPRF holdout_9 (fun _ => x) = evalPRF H9_c (mk_args2 x x) := by
+  change evalPRF H9_c (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)] j (fun _ => x)) = evalPRF H9_c (mk_args2 x x)
+  apply congrArg (evalPRF H9_c); funext ⟨val, isLt⟩; match val with | 0 => rfl | 1 => rfl
+
+def H9_g (m y : Nat) : Nat :=
+  match m with
+  | 0 => y
+  | m' + 1 => m'
+
+def H9_inner_val (u v y : Nat) : Nat :=
+  match u with
+  | 0 => v
+  | u' + 1 => H9_g (H9_inner_val u' v y) y
+
+def H9_c_val (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H9_inner_val x' (H9_c_val x' y) y
+
+lemma H9_g_eq (a b y : Nat) : evalPRF H9_inner_inner_g (mk_args3 a b y) = H9_g a y := by
+  induction a with
+  | zero =>
+    change evalPRF (PRF.proj 2 ⟨1, by decide⟩) (mk_args2 b y) = y
+    rfl
+  | succ a ih =>
+    change evalPRF (PRF.proj 4 ⟨0, by decide⟩) _ = a
+    rfl
+
+lemma H9_inner_inner_eq (u b a y : Nat) : evalPRF H9_inner_inner (mk_args4 u b a y) = H9_g b y := by
+  induction u with
+  | zero =>
+    change evalPRF H9_inner_inner_g (mk_args3 b a y) = H9_g b y
+    exact H9_g_eq b a y
+  | succ u ih =>
+    change evalPRF (PRF.proj 5 ⟨1, by decide⟩) _ = H9_g b y
+    exact ih
+
+lemma H9_inner_eq (u v y : Nat) : evalPRF H9_inner (mk_args3 u v y) = H9_inner_val u v y := by
+  induction u with
+  | zero => rfl
+  | succ u ih =>
+    change evalPRF H9_inner_inner (mk_args4 u (evalPRF H9_inner (mk_args3 u v y)) v y) = H9_g (H9_inner_val u v y) y
+    rw [H9_inner_inner_eq u (evalPRF H9_inner (mk_args3 u v y)) v y]
+    rw [ih]
+
+lemma H9_c_val_eq (x y : Nat) : evalPRF H9_c (mk_args2 x y) = H9_c_val x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF H9_inner (mk_args3 x (evalPRF H9_c (mk_args2 x y)) y) = H9_inner_val x (H9_c_val x y) y
+    rw [H9_inner_eq x (evalPRF H9_c (mk_args2 x y)) y]
+    rw [ih]
+
+def H9_T : Nat → Nat
+  | 0 => 0
+  | x + 1 => H9_T x + x
+
+lemma H9_g_mod (a y : Nat) : H9_g a y ≡ a + y [MOD y + 1] := by
+  cases a with
+  | zero =>
+    change y ≡ 0 + y [MOD y + 1]
+    have h : 0 + y = y := by omega
+    rw [h]
+  | succ a =>
+    change a % (y + 1) = (a + 1 + y) % (y + 1)
+    have h : a + 1 + y = a + (y + 1) := by omega
+    rw [h]
+    exact (Nat.add_mod_right a (y + 1)).symm
+
+lemma H9_inner_val_mod (u v y : Nat) : H9_inner_val u v y ≡ v + u * y [MOD y + 1] := by
+  induction u with
+  | zero =>
+    change v ≡ v + 0 * y [MOD y + 1]
+    have h : v + 0 * y = v := by omega
+    rw [h]
+  | succ u ih =>
+    change H9_g (H9_inner_val u v y) y ≡ v + (u + 1) * y [MOD y + 1]
+    have h1 := H9_g_mod (H9_inner_val u v y) y
+    have h2 : (H9_inner_val u v y) + y ≡ v + u * y + y [MOD y + 1] := Nat.ModEq.add_right y ih
+    have h3 : v + u * y + y = v + (u + 1) * y := by ring
+    rw [h3] at h2
+    exact Nat.ModEq.trans h1 h2
+
+lemma H9_c_val_mod (x y : Nat) : H9_c_val x y + H9_T x ≡ y + 1 [MOD y + 1] := by
+  induction x with
+  | zero =>
+    change y + 1 + 0 ≡ y + 1 [MOD y + 1]
+    have h : y + 1 + 0 = y + 1 := by omega
+    rw [h]
+  | succ x ih =>
+    change H9_inner_val x (H9_c_val x y) y + (H9_T x + x) ≡ y + 1 [MOD y + 1]
+    have h1 := H9_inner_val_mod x (H9_c_val x y) y
+    have h2 : H9_inner_val x (H9_c_val x y) y + (H9_T x + x) ≡ H9_c_val x y + x * y + (H9_T x + x) [MOD y + 1] := Nat.ModEq.add_right (H9_T x + x) h1
+    have h3 : H9_c_val x y + x * y + (H9_T x + x) = H9_c_val x y + H9_T x + x * (y + 1) := by ring
+    rw [h3] at h2
+    have h4 : H9_c_val x y + H9_T x + x * (y + 1) ≡ H9_c_val x y + H9_T x [MOD y + 1] := by
+      change (H9_c_val x y + H9_T x + x * (y + 1)) % (y + 1) = (H9_c_val x y + H9_T x) % (y + 1)
+      have h_mul : x * (y + 1) = (y + 1) * x := by ring
+      rw [h_mul]
+      exact Nat.add_mul_mod_self_left (H9_c_val x y + H9_T x) (y + 1) x
+    have h5 := Nat.ModEq.trans h2 h4
+    exact Nat.ModEq.trans h5 ih
+
+lemma H9_T_val (x : Nat) : 2 * H9_T x + x = x * x := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change 2 * (H9_T x + x) + (x + 1) = (x + 1) * (x + 1)
+    have h1 : 2 * (H9_T x + x) + (x + 1) = (2 * H9_T x + x) + 2 * x + 1 := by ring
+    rw [h1, ih]
+    ring
+
+lemma H9_c_val_diag_not_zero (x : Nat) : H9_c_val x x ≠ 0 := by
+  cases x with
+  | zero =>
+    change H9_c_val 0 0 ≠ 0
+    change 1 ≠ 0
+    intro h
+    contradiction
+  | succ x =>
+    cases x with
+    | zero =>
+      change H9_c_val 1 1 ≠ 0
+      change 2 ≠ 0
+      intro h
+      contradiction
+    | succ x =>
+      intro h
+      have hmod : H9_c_val (x + 2) (x + 2) + H9_T (x + 2) ≡ x + 2 + 1 [MOD x + 2 + 1] := H9_c_val_mod (x + 2) (x + 2)
+      rw [h] at hmod
+      have hmod2 : H9_T (x + 2) ≡ 0 [MOD x + 3] := by
+        have hz : 0 + H9_T (x + 2) = H9_T (x + 2) := by omega
+        rw [hz] at hmod
+        change H9_T (x + 2) % (x + 3) = (x + 3) % (x + 3) at hmod
+        have h_mod_self : (x + 3) % (x + 3) = 0 := Nat.mod_self (x + 3)
+        rw [h_mod_self] at hmod
+        exact hmod
+
+      have h_dvd : (x + 3) ∣ H9_T (x + 2) := Nat.dvd_of_mod_eq_zero hmod2
+      rcases h_dvd with ⟨q, hq⟩
+      have hq2 : H9_T (x + 2) = q * (x + 3) := by
+        rw [hq, Nat.mul_comm]
+      have htval : 2 * H9_T (x + 2) + (x + 2) = (x + 2) * (x + 2) := H9_T_val (x + 2)
+      rw [hq2] at htval
+
+      -- We have 2 * (q * (x + 3)) + (x + 2) = (x + 2) * (x + 2)
+      have h1 : 2 * (q * (x + 3)) + 2 * (x + 3) = (x + 2) * (x + 3) + 2 := by
+        have h_add : 2 * (q * (x + 3)) + (x + 2) + (x + 4) = (x + 2) * (x + 2) + (x + 4) := by omega
+        have hl : 2 * (q * (x + 3)) + (x + 2) + (x + 4) = 2 * (q * (x + 3)) + 2 * (x + 3) := by ring
+        have hr : (x + 2) * (x + 2) + (x + 4) = (x + 2) * (x + 3) + 2 := by ring
+        rw [hl, hr] at h_add
+        exact h_add
+
+      have h2 : 2 * (q * (x + 3)) + 2 * (x + 3) = (2 * q + 2) * (x + 3) := by ring
+      rw [h2] at h1
+
+      have h3 : (2 * q + 2) * (x + 3) - (x + 2) * (x + 3) = 2 := by omega
+      have h4 : (2 * q + 2) * (x + 3) - (x + 2) * (x + 3) = (2 * q + 2 - (x + 2)) * (x + 3) := by
+        rw [Nat.sub_mul]
+      rw [h4] at h3
+
+      cases h_A : (2 * q + 2 - (x + 2)) with
+      | zero =>
+        rw [h_A] at h3
+        have h0 : 0 * (x + 3) = 0 := by ring
+        rw [h0] at h3
+        contradiction
+      | succ A' =>
+        rw [h_A] at h3
+        cases A' with
+        | zero =>
+          have hz : (0 + 1) * (x + 3) = x + 3 := by ring
+          rw [hz] at h3
+          omega
+        | succ A'' =>
+          have hs : (A'' + 2) * (x + 3) = (A'' + 2) * (x + 2) + A'' + 2 := by ring
+          rw [hs] at h3
+          have hx_cases : x + 2 = (x + 2 - 2) + 2 := by omega
+          have he : (A'' + 2) * ((x + 2 - 2) + 2) + A'' + 2 = (A'' + 2) * (x + 2 - 2) + 3 * A'' + 6 := by ring
+          rw [hx_cases, he] at h3
+          omega
+
 theorem holdout_9_diverges : ∀ x, evalPRF holdout_9 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H9_comp x]
+  rw [H9_c_val_eq x x]
+  have h_not_zero : H9_c_val x x ≠ 0 := H9_c_val_diag_not_zero x
+  omega
 
 -- Translating holdout 10
 -- M(C(R(S,R(P(2,1),R(R(P(2,2),P(4,1)),P(5,2)))),S,S))
 def holdout_10 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))) ((PRF.proj 5 ⟨1, by decide⟩))))) prf_list![PRF.succ, PRF.succ]
 
-theorem holdout_10_diverges : ∀ x, evalPRF holdout_10 (fun _ => x) > 0 := by
-  sorry
+lemma H10_comp (x : Nat) : evalPRF holdout_10 (fun _ => x) = evalPRF H9_c (mk_args2 (x + 1) (x + 1)) := by
+  change evalPRF H9_c (fun j => evalPRFList prf_list![PRF.succ, PRF.succ] j (fun _ => x)) = evalPRF H9_c (mk_args2 (x + 1) (x + 1))
+  apply congrArg (evalPRF H9_c); funext ⟨val, isLt⟩; match val with | 0 => rfl | 1 => rfl
 
+-- Proof produced in ~5 minutes (adapted from holdout 9)
+theorem holdout_10_diverges : ∀ x, evalPRF holdout_10 (fun _ => x) > 0 := by
+  intro x
+  rw [H10_comp x]
+  rw [H9_c_val_eq (x + 1) (x + 1)]
+  have h_not_zero : H9_c_val (x + 1) (x + 1) ≠ 0 := H9_c_val_diag_not_zero (x + 1)
+  omega
 -- Translating holdout 11
 -- M(C(R(S,R(R(S,R(P(2,1),P(4,1))),P(4,2))),P(1,1),Z1))
 def holdout_11 : PRF 1 :=
@@ -1077,8 +1278,193 @@ theorem holdout_12_diverges : ∀ x, evalPRF holdout_12 (fun _ => x) > 0 := by
 def holdout_13 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) ((PRF.proj 4 ⟨1, by decide⟩)))) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
 
+lemma H13_comp (x : Nat) : evalPRF holdout_13 (fun _ => x) = evalPRF H11_c (mk_args2 (x + 1) x) := by
+  change evalPRF H11_c (fun j => evalPRFList prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)] j (fun _ => x)) = evalPRF H11_c (mk_args2 (x + 1) x)
+  apply congrArg (evalPRF H11_c); funext ⟨val, isLt⟩; match val with | 0 => rfl | 1 => rfl
+
+def H13_step (v acc _ : Nat) : Nat :=
+  match v with
+  | 0 => acc
+  | v'' + 1 => v''
+
+def H13_g (v y : Nat) : Nat :=
+  match v with
+  | 0 => y + 1
+  | 1 => y + 1
+  | v' + 2 => v'
+
+def H13_c_val (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H13_g (H13_c_val x' y) y
+
+lemma H13_step_eq (v acc y : Nat) : evalPRF (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))) (mk_args3 v acc y) = H13_step v acc y := by
+  induction v with
+  | zero => rfl
+  | succ v ih => rfl
+
+lemma H13_g_succ (v y : Nat) : H13_step v (H13_g v y) y = H13_g (v + 1) y := by
+  cases v with
+  | zero => rfl
+  | succ v' => rfl
+
+lemma H13_g_eq (v y : Nat) : evalPRF (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) (mk_args2 v y) = H13_g v y := by
+  induction v with
+  | zero => rfl
+  | succ v ih =>
+    change evalPRF (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))) (mk_args3 v (evalPRF (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) (mk_args2 v y)) y) = H13_g (v + 1) y
+    rw [H13_step_eq]
+    rw [ih]
+    rw [H13_g_succ]
+
+lemma H13_h_eq (u v y : Nat) : evalPRF H11_h (mk_args3 u v y) = H13_g v y := by
+  induction u with
+  | zero =>
+    exact H13_g_eq v y
+  | succ u ih =>
+    change evalPRF (PRF.proj 4 ⟨1, by decide⟩) _ = H13_g v y
+    exact ih
+
+lemma H13_c_val_eq (x y : Nat) : evalPRF H11_c (mk_args2 x y) = H13_c_val x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF H11_h (mk_args3 x (evalPRF H11_c (mk_args2 x y)) y) = H13_c_val (x + 1) y
+    rw [H13_h_eq]
+    rw [ih]
+    rfl
+
+def seq_even (k x : Nat) : Nat := 2 * k + 1 - 2 * (x % (k + 1))
+def seq_odd (k x : Nat) : Nat := 2 * k + 2 - 2 * (x % (k + 2))
+
+lemma my_mod_helper {x m q c : Nat} (h : x = q * m + c) (hc : c < m) : x % m = c := by
+  rw [h, Nat.add_comm (q * m) c, Nat.mul_comm q m, Nat.add_mul_mod_self_left c m q, Nat.mod_eq_of_lt hc]
+
+lemma mod_add_one_eq_zero_of_eq {x k : Nat} (h : x % (k + 1) = k) : (x + 1) % (k + 1) = 0 := by
+  have h1 := Nat.div_add_mod x (k + 1)
+  have h2 : x + 1 = (x / (k + 1) + 1) * (k + 1) + 0 := by
+    calc x + 1 = ((k + 1) * (x / (k + 1)) + x % (k + 1)) + 1 := by rw [h1]
+         _ = ((k + 1) * (x / (k + 1)) + k) + 1 := by rw [h]
+         _ = (k + 1) * (x / (k + 1)) + (k + 1) := by ring
+         _ = (x / (k + 1) + 1) * (k + 1) + 0 := by ring
+  exact my_mod_helper h2 (by omega)
+
+lemma mod_add_one_eq_succ_of_lt {x k : Nat} (h : x % (k + 1) < k) : (x + 1) % (k + 1) = x % (k + 1) + 1 := by
+  have h1 := Nat.div_add_mod x (k + 1)
+  have h2 : x + 1 = (x / (k + 1)) * (k + 1) + (x % (k + 1) + 1) := by
+    calc x + 1 = ((k + 1) * (x / (k + 1)) + x % (k + 1)) + 1 := by rw [h1]
+         _ = (x / (k + 1)) * (k + 1) + (x % (k + 1) + 1) := by ring
+  exact my_mod_helper h2 (by omega)
+
+lemma H13_even_val (k x : Nat) : H13_c_val x (2 * k) = seq_even k x := by
+  induction x with
+  | zero =>
+    change 2 * k + 1 = 2 * k + 1 - 2 * (0 % (k + 1))
+    rw [Nat.zero_mod]
+    omega
+  | succ x ih =>
+    change H13_g (H13_c_val x (2 * k)) (2 * k) = seq_even k (x + 1)
+    rw [ih]
+    have h_mod_lt : x % (k + 1) < k + 1 := Nat.mod_lt x (by omega)
+    have h_cases : x % (k + 1) = k ∨ x % (k + 1) < k := by omega
+    cases h_cases with
+    | inl h1 =>
+      have h2 : (x + 1) % (k + 1) = 0 := mod_add_one_eq_zero_of_eq h1
+      unfold seq_even
+      rw [h1, h2]
+      have h3 : 2 * k + 1 - 2 * k = 1 := by omega
+      rw [h3]
+      change H13_g 1 (2 * k) = 2 * k + 1 - 2 * 0
+      rfl
+    | inr h1 =>
+      have h2 : (x + 1) % (k + 1) = x % (k + 1) + 1 := mod_add_one_eq_succ_of_lt h1
+      unfold seq_even
+      rw [h2]
+      have h_val : 2 * k + 1 - 2 * (x % (k + 1)) = (2 * k + 1 - 2 * (x % (k + 1)) - 2) + 2 := by omega
+      rw [h_val]
+      change H13_g ((2 * k + 1 - 2 * (x % (k + 1)) - 2) + 2) (2 * k) = 2 * k + 1 - 2 * (x % (k + 1) + 1)
+      change 2 * k + 1 - 2 * (x % (k + 1)) - 2 = 2 * k + 1 - 2 * (x % (k + 1) + 1)
+      omega
+
+lemma H13_odd_val (k x : Nat) : H13_c_val x (2 * k + 1) = seq_odd k x := by
+  induction x with
+  | zero =>
+    change (2 * k + 1) + 1 = 2 * k + 2 - 2 * (0 % (k + 2))
+    rw [Nat.zero_mod]
+    omega
+  | succ x ih =>
+    change H13_g (H13_c_val x (2 * k + 1)) (2 * k + 1) = seq_odd k (x + 1)
+    rw [ih]
+    have h_mod_lt : x % (k + 2) < k + 2 := Nat.mod_lt x (by omega)
+    have h_cases : x % (k + 2) = k + 1 ∨ x % (k + 2) < k + 1 := by omega
+    cases h_cases with
+    | inl h1 =>
+      have h2 : (x + 1) % (k + 2) = 0 := mod_add_one_eq_zero_of_eq h1
+      unfold seq_odd
+      rw [h1, h2]
+      have h3 : 2 * k + 2 - 2 * (k + 1) = 0 := by omega
+      rw [h3]
+      change H13_g 0 (2 * k + 1) = 2 * k + 2 - 2 * 0
+      rfl
+    | inr h1 =>
+      have h2 : (x + 1) % (k + 2) = x % (k + 2) + 1 := mod_add_one_eq_succ_of_lt h1
+      unfold seq_odd
+      rw [h2]
+      have h_cases2 : x % (k + 2) = k ∨ x % (k + 2) < k := by omega
+      cases h_cases2 with
+      | inl h3 =>
+        rw [h3]
+        have h4 : 2 * k + 2 - 2 * k = 2 := by omega
+        rw [h4]
+        change H13_g 2 (2 * k + 1) = 2 * k + 2 - 2 * (k + 1)
+        have h5 : 2 * k + 2 - 2 * (k + 1) = 0 := by omega
+        rw [h5]
+        rfl
+      | inr h3 =>
+        have h_val : 2 * k + 2 - 2 * (x % (k + 2)) = (2 * k + 2 - 2 * (x % (k + 2)) - 2) + 2 := by omega
+        rw [h_val]
+        change H13_g ((2 * k + 2 - 2 * (x % (k + 2)) - 2) + 2) (2 * k + 1) = 2 * k + 2 - 2 * (x % (k + 2) + 1)
+        change 2 * k + 2 - 2 * (x % (k + 2)) - 2 = 2 * k + 2 - 2 * (x % (k + 2) + 1)
+        omega
+
+-- Proof produced in ~20 minutes (adapted from structural cases)
 theorem holdout_13_diverges : ∀ x, evalPRF holdout_13 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H13_comp x]
+  rw [H13_c_val_eq (x + 1) x]
+  have h_cases : (∃ k, x = 2 * k) ∨ (∃ k, x = 2 * k + 1) := by
+    have h1 : x % 2 = 0 ∨ x % 2 = 1 := by omega
+    cases h1 with
+    | inl h2 =>
+      left
+      use x / 2
+      have h3 := Nat.div_add_mod x 2
+      omega
+    | inr h2 =>
+      right
+      use x / 2
+      have h3 := Nat.div_add_mod x 2
+      omega
+  cases h_cases with
+  | inl h1 =>
+    rcases h1 with ⟨k, hk⟩
+    rw [hk]
+    rw [H13_even_val]
+    unfold seq_even
+    have h_mod_lt : (2 * k + 1) % (k + 1) < k + 1 := Nat.mod_lt _ (by omega)
+    have h2 : 2 * k + 1 = 1 * (k + 1) + k := by ring
+    have h_mod_val : (2 * k + 1) % (k + 1) = k := my_mod_helper h2 (by omega)
+    rw [h_mod_val]
+    omega
+  | inr h1 =>
+    rcases h1 with ⟨k, hk⟩
+    rw [hk]
+    rw [H13_odd_val]
+    unfold seq_odd
+    have h2 : 2 * k + 2 = 1 * (k + 2) + k := by ring
+    have h_mod_val : (2 * k + 2) % (k + 2) = k := my_mod_helper h2 (by omega)
+    rw [h_mod_val]
+    omega
 
 -- Translating holdout 14
 -- M(R(C(S,Z0),R(S,C(R(P(1,1),P(3,1)),P(3,2),P(3,1)))))

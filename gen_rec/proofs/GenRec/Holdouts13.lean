@@ -5,13 +5,16 @@ open GenRec
 
 namespace Holdouts13
 
+
+-- General
+def mk_args2 (a b : Nat) : Fin 2 → Nat := fun i => if i.val = 0 then a else b
+def mk_args3 (a b c : Nat) : Fin 3 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else c
+
+
 -- Translating holdout 0
 -- M(C(R(Z1,R(R(S,R(P(2,1),P(4,1))),P(4,2))),S,Z1))
 def holdout_0 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.zero 1) (PRF.primRec (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) ((PRF.proj 4 ⟨1, by decide⟩)))) prf_list![PRF.succ, PRF.zero 1]
-
-def mk_args2 (a b : Nat) : Fin 2 → Nat := fun i => if i.val = 0 then a else b
-def mk_args3 (a b c : Nat) : Fin 3 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else c
 
 def H0_h : PRF 3 := PRF.primRec (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) ((PRF.proj 4 ⟨1, by decide⟩))
 def H0_c : PRF 2 := PRF.primRec (PRF.zero 1) H0_h

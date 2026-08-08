@@ -5,6 +5,10 @@ open GenRec
 
 namespace Holdouts14
 
+def mk_args2 (a b : Nat) : Fin 2 → Nat := fun i => if i.val = 0 then a else b
+def mk_args3 (a b c : Nat) : Fin 3 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else c
+
+
 -- Translating holdout 0
 -- M(C(R(P(1,1),C(R(P(1,1),P(3,1)),P(3,2),P(3,1))),R(Z0,P(2,1)),S))
 def holdout_0 : PRF 1 :=
@@ -194,16 +198,172 @@ theorem holdout_22_diverges : ∀ x, evalPRF holdout_22 (fun _ => x) > 0 := by
 def holdout_23 : PRF 1 :=
   PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
 
+def H23_a_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H23_b_prf : PRF 3 := PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))
+def H23_c_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H23_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H23_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => x'
+
+def H23_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => H23_a (H23_c x' y) (H23_b x' (H23_c x' y) y)
+
+lemma H23_a_val (x y : Nat) : evalPRF H23_a_prf (mk_args2 x y) = H23_a x y := by
+  induction x <;> rfl
+
+lemma H23_b_val (x acc y : Nat) : evalPRF H23_b_prf (mk_args3 x acc y) = H23_b x acc y := by
+  induction x <;> rfl
+
+lemma H23_c_val (x y : Nat) : evalPRF H23_c_prf (mk_args2 x y) = H23_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H23_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H23_b_prf]) (mk_args3 x (evalPRF H23_c_prf (mk_args2 x y)) y) = H23_c (x + 1) y
+    rw [ih]
+    change evalPRF H23_a_prf (mk_args2 (H23_c x y) (evalPRF H23_b_prf (mk_args3 x (H23_c x y) y))) = H23_a (H23_c x y) (H23_b x (H23_c x y) y)
+    rw [H23_b_val, H23_a_val]
+
+lemma H23_c_cf (x y : Nat) (h : x < y + 0) (hx : x > 0) : H23_c x y = y + 0 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H23_a (H23_c x y) (H23_b x (H23_c x y) y) = y + 0 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      have hy : y > 0 := by omega
+      have h3 : ∃ k, y = k + 1 := by use (y - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 0 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 0 - x > 0 := by omega
+      have h3 : ∃ k, y + 0 - x = k + 1 := by use (y + 0 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H23_a (k + 1) (H23_b x (k + 1) y) = y + 0 - (x + 1)
+      change k = y + 0 - (x + 1)
+      omega
+
+lemma H23_comp (x : Nat) : evalPRF holdout_23 (fun _ => x) = evalPRF H23_c_prf (mk_args2 x (x+1)) := by
+  change evalPRF H23_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ] j (fun _ => x)) = evalPRF H23_c_prf (mk_args2 x (x+1))
+  apply congrArg (evalPRF H23_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_23_diverges : ∀ x, evalPRF holdout_23 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H23_comp x]
+  cases x with
+  | zero =>
+    rw [H23_c_val]
+    decide
+  | succ x' =>
+    rw [H23_c_val]
+    have h1 : (x' + 1) < (x' + 1)+1 + 0 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H23_c_cf ((x' + 1)) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 24
 -- M(C(R(P(1,1),C(R(P(1,1),P(3,1)),P(3,2),R(P(2,2),P(4,1)))),P(1,1),S))
 def holdout_24 : PRF 1 :=
   PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
 
+def H24_a_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H24_b_prf : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H24_c_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H24_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H24_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H24_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => H24_a (H24_c x' y) (H24_b x' (H24_c x' y) y)
+
+lemma H24_a_val (x y : Nat) : evalPRF H24_a_prf (mk_args2 x y) = H24_a x y := by
+  induction x <;> rfl
+
+lemma H24_b_val (x acc y : Nat) : evalPRF H24_b_prf (mk_args3 x acc y) = H24_b x acc y := by
+  induction x <;> rfl
+
+lemma H24_c_val (x y : Nat) : evalPRF H24_c_prf (mk_args2 x y) = H24_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H24_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H24_b_prf]) (mk_args3 x (evalPRF H24_c_prf (mk_args2 x y)) y) = H24_c (x + 1) y
+    rw [ih]
+    change evalPRF H24_a_prf (mk_args2 (H24_c x y) (evalPRF H24_b_prf (mk_args3 x (H24_c x y) y))) = H24_a (H24_c x y) (H24_b x (H24_c x y) y)
+    rw [H24_b_val, H24_a_val]
+
+lemma H24_c_cf (x y : Nat) (h : x < y + 0) (hx : x > 0) : H24_c x y = y + 0 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H24_a (H24_c x y) (H24_b x (H24_c x y) y) = y + 0 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      have hy : y > 0 := by omega
+      have h3 : ∃ k, y = k + 1 := by use (y - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 0 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 0 - x > 0 := by omega
+      have h3 : ∃ k, y + 0 - x = k + 1 := by use (y + 0 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H24_a (k + 1) (H24_b x (k + 1) y) = y + 0 - (x + 1)
+      change k = y + 0 - (x + 1)
+      omega
+
+lemma H24_comp (x : Nat) : evalPRF holdout_24 (fun _ => x) = evalPRF H24_c_prf (mk_args2 x (x+1)) := by
+  change evalPRF H24_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ] j (fun _ => x)) = evalPRF H24_c_prf (mk_args2 x (x+1))
+  apply congrArg (evalPRF H24_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_24_diverges : ∀ x, evalPRF holdout_24 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H24_comp x]
+  cases x with
+  | zero =>
+    rw [H24_c_val]
+    decide
+  | succ x' =>
+    rw [H24_c_val]
+    have h1 : (x' + 1) < (x' + 1)+1 + 0 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H24_c_cf ((x' + 1)) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 25
 -- M(C(R(P(1,1),C(R(P(1,1),P(3,1)),R(P(2,2),P(4,3)),P(3,1))),P(1,1),S))
@@ -218,8 +378,86 @@ theorem holdout_25_diverges : ∀ x, evalPRF holdout_25 (fun _ => x) > 0 := by
 def holdout_26 : PRF 1 :=
   PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
 
+def H26_a_prf : PRF 2 := (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H26_b_prf : PRF 3 := PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))
+def H26_c_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H26_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
+
+def H26_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => x'
+
+def H26_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => H26_a (H26_c x' y) (H26_b x' (H26_c x' y) y)
+
+lemma H26_a_val (x y : Nat) : evalPRF H26_a_prf (mk_args2 x y) = H26_a x y := by
+  induction x <;> rfl
+
+lemma H26_b_val (x acc y : Nat) : evalPRF H26_b_prf (mk_args3 x acc y) = H26_b x acc y := by
+  induction x <;> rfl
+
+lemma H26_c_val (x y : Nat) : evalPRF H26_c_prf (mk_args2 x y) = H26_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H26_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H26_b_prf]) (mk_args3 x (evalPRF H26_c_prf (mk_args2 x y)) y) = H26_c (x + 1) y
+    rw [ih]
+    change evalPRF H26_a_prf (mk_args2 (H26_c x y) (evalPRF H26_b_prf (mk_args3 x (H26_c x y) y))) = H26_a (H26_c x y) (H26_b x (H26_c x y) y)
+    rw [H26_b_val, H26_a_val]
+
+lemma H26_c_cf (x y : Nat) (h : x < y + 0) (hx : x > 0) : H26_c x y = y + 0 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H26_a (H26_c x y) (H26_b x (H26_c x y) y) = y + 0 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      have hy : y > 0 := by omega
+      have h3 : ∃ k, y = k + 1 := by use (y - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 0 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 0 - x > 0 := by omega
+      have h3 : ∃ k, y + 0 - x = k + 1 := by use (y + 0 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H26_a (k + 1) (H26_b x (k + 1) y) = y + 0 - (x + 1)
+      change k = y + 0 - (x + 1)
+      omega
+
+lemma H26_comp (x : Nat) : evalPRF holdout_26 (fun _ => x) = evalPRF H26_c_prf (mk_args2 x (x+1)) := by
+  change evalPRF H26_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ] j (fun _ => x)) = evalPRF H26_c_prf (mk_args2 x (x+1))
+  apply congrArg (evalPRF H26_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_26_diverges : ∀ x, evalPRF holdout_26 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H26_comp x]
+  cases x with
+  | zero =>
+    rw [H26_c_val]
+    decide
+  | succ x' =>
+    rw [H26_c_val]
+    have h1 : (x' + 1) < (x' + 1)+1 + 0 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H26_c_cf ((x' + 1)) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 27
 -- M(C(R(P(1,1),C(R(S,P(3,1)),P(3,2),R(Z2,P(4,1)))),S,P(1,1)))
@@ -234,8 +472,86 @@ theorem holdout_27_diverges : ∀ x, evalPRF holdout_27 (fun _ => x) > 0 := by
 def holdout_28 : PRF 1 :=
   PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
 
+def H28_a_prf : PRF 2 := (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H28_b_prf : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H28_c_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H28_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
+
+def H28_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H28_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => H28_a (H28_c x' y) (H28_b x' (H28_c x' y) y)
+
+lemma H28_a_val (x y : Nat) : evalPRF H28_a_prf (mk_args2 x y) = H28_a x y := by
+  induction x <;> rfl
+
+lemma H28_b_val (x acc y : Nat) : evalPRF H28_b_prf (mk_args3 x acc y) = H28_b x acc y := by
+  induction x <;> rfl
+
+lemma H28_c_val (x y : Nat) : evalPRF H28_c_prf (mk_args2 x y) = H28_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H28_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H28_b_prf]) (mk_args3 x (evalPRF H28_c_prf (mk_args2 x y)) y) = H28_c (x + 1) y
+    rw [ih]
+    change evalPRF H28_a_prf (mk_args2 (H28_c x y) (evalPRF H28_b_prf (mk_args3 x (H28_c x y) y))) = H28_a (H28_c x y) (H28_b x (H28_c x y) y)
+    rw [H28_b_val, H28_a_val]
+
+lemma H28_c_cf (x y : Nat) (h : x < y + 0) (hx : x > 0) : H28_c x y = y + 0 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H28_a (H28_c x y) (H28_b x (H28_c x y) y) = y + 0 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      have hy : y > 0 := by omega
+      have h3 : ∃ k, y = k + 1 := by use (y - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 0 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 0 - x > 0 := by omega
+      have h3 : ∃ k, y + 0 - x = k + 1 := by use (y + 0 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H28_a (k + 1) (H28_b x (k + 1) y) = y + 0 - (x + 1)
+      change k = y + 0 - (x + 1)
+      omega
+
+lemma H28_comp (x : Nat) : evalPRF holdout_28 (fun _ => x) = evalPRF H28_c_prf (mk_args2 x (x+1)) := by
+  change evalPRF H28_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ] j (fun _ => x)) = evalPRF H28_c_prf (mk_args2 x (x+1))
+  apply congrArg (evalPRF H28_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_28_diverges : ∀ x, evalPRF holdout_28 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H28_comp x]
+  cases x with
+  | zero =>
+    rw [H28_c_val]
+    decide
+  | succ x' =>
+    rw [H28_c_val]
+    have h1 : (x' + 1) < (x' + 1)+1 + 0 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H28_c_cf ((x' + 1)) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 29
 -- M(C(R(P(1,1),C(R(S,P(3,1)),P(3,2),R(P(2,2),P(4,1)))),S,P(1,1)))
@@ -426,48 +742,492 @@ theorem holdout_51_diverges : ∀ x, evalPRF holdout_51 (fun _ => x) > 0 := by
 def holdout_52 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
 
+def H52_a_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H52_b_prf : PRF 3 := PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))
+def H52_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H52_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H52_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => x'
+
+def H52_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H52_a (H52_c x' y) (H52_b x' (H52_c x' y) y)
+
+lemma H52_a_val (x y : Nat) : evalPRF H52_a_prf (mk_args2 x y) = H52_a x y := by
+  induction x <;> rfl
+
+lemma H52_b_val (x acc y : Nat) : evalPRF H52_b_prf (mk_args3 x acc y) = H52_b x acc y := by
+  induction x <;> rfl
+
+lemma H52_c_val (x y : Nat) : evalPRF H52_c_prf (mk_args2 x y) = H52_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H52_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H52_b_prf]) (mk_args3 x (evalPRF H52_c_prf (mk_args2 x y)) y) = H52_c (x + 1) y
+    rw [ih]
+    change evalPRF H52_a_prf (mk_args2 (H52_c x y) (evalPRF H52_b_prf (mk_args3 x (H52_c x y) y))) = H52_a (H52_c x y) (H52_b x (H52_c x y) y)
+    rw [H52_b_val, H52_a_val]
+
+lemma H52_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H52_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H52_a (H52_c x y) (H52_b x (H52_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H52_a (k + 1) (H52_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H52_comp (x : Nat) : evalPRF holdout_52 (fun _ => x) = evalPRF H52_c_prf (mk_args2 x x) := by
+  change evalPRF H52_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)] j (fun _ => x)) = evalPRF H52_c_prf (mk_args2 x x)
+  apply congrArg (evalPRF H52_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_52_diverges : ∀ x, evalPRF holdout_52 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H52_comp x]
+  cases x with
+  | zero =>
+    rw [H52_c_val]
+    decide
+  | succ x' =>
+    rw [H52_c_val]
+    have h1 : (x' + 1) < (x' + 1) + 1 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H52_c_cf ((x' + 1)) ((x' + 1)) h1 h2]
+    omega
 
 -- Translating holdout 53
 -- M(C(R(S,C(R(P(1,1),P(3,1)),P(3,2),R(Z2,P(4,1)))),P(1,1),S))
 def holdout_53 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
 
+def H53_a_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H53_b_prf : PRF 3 := PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))
+def H53_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H53_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H53_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => x'
+
+def H53_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H53_a (H53_c x' y) (H53_b x' (H53_c x' y) y)
+
+lemma H53_a_val (x y : Nat) : evalPRF H53_a_prf (mk_args2 x y) = H53_a x y := by
+  induction x <;> rfl
+
+lemma H53_b_val (x acc y : Nat) : evalPRF H53_b_prf (mk_args3 x acc y) = H53_b x acc y := by
+  induction x <;> rfl
+
+lemma H53_c_val (x y : Nat) : evalPRF H53_c_prf (mk_args2 x y) = H53_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H53_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H53_b_prf]) (mk_args3 x (evalPRF H53_c_prf (mk_args2 x y)) y) = H53_c (x + 1) y
+    rw [ih]
+    change evalPRF H53_a_prf (mk_args2 (H53_c x y) (evalPRF H53_b_prf (mk_args3 x (H53_c x y) y))) = H53_a (H53_c x y) (H53_b x (H53_c x y) y)
+    rw [H53_b_val, H53_a_val]
+
+lemma H53_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H53_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H53_a (H53_c x y) (H53_b x (H53_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H53_a (k + 1) (H53_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H53_comp (x : Nat) : evalPRF holdout_53 (fun _ => x) = evalPRF H53_c_prf (mk_args2 x (x+1)) := by
+  change evalPRF H53_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ] j (fun _ => x)) = evalPRF H53_c_prf (mk_args2 x (x+1))
+  apply congrArg (evalPRF H53_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_53_diverges : ∀ x, evalPRF holdout_53 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H53_comp x]
+  cases x with
+  | zero =>
+    rw [H53_c_val]
+    decide
+  | succ x' =>
+    rw [H53_c_val]
+    have h1 : (x' + 1) < (x' + 1)+1 + 1 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H53_c_cf ((x' + 1)) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 54
 -- M(C(R(S,C(R(P(1,1),P(3,1)),P(3,2),R(Z2,P(4,1)))),S,S))
 def holdout_54 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![PRF.succ, PRF.succ]
 
+def H54_a_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H54_b_prf : PRF 3 := PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))
+def H54_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H54_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H54_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => x'
+
+def H54_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H54_a (H54_c x' y) (H54_b x' (H54_c x' y) y)
+
+lemma H54_a_val (x y : Nat) : evalPRF H54_a_prf (mk_args2 x y) = H54_a x y := by
+  induction x <;> rfl
+
+lemma H54_b_val (x acc y : Nat) : evalPRF H54_b_prf (mk_args3 x acc y) = H54_b x acc y := by
+  induction x <;> rfl
+
+lemma H54_c_val (x y : Nat) : evalPRF H54_c_prf (mk_args2 x y) = H54_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H54_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H54_b_prf]) (mk_args3 x (evalPRF H54_c_prf (mk_args2 x y)) y) = H54_c (x + 1) y
+    rw [ih]
+    change evalPRF H54_a_prf (mk_args2 (H54_c x y) (evalPRF H54_b_prf (mk_args3 x (H54_c x y) y))) = H54_a (H54_c x y) (H54_b x (H54_c x y) y)
+    rw [H54_b_val, H54_a_val]
+
+lemma H54_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H54_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H54_a (H54_c x y) (H54_b x (H54_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H54_a (k + 1) (H54_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H54_comp (x : Nat) : evalPRF holdout_54 (fun _ => x) = evalPRF H54_c_prf (mk_args2 (x+1) (x+1)) := by
+  change evalPRF H54_c_prf (fun j => evalPRFList prf_list![PRF.succ, PRF.succ] j (fun _ => x)) = evalPRF H54_c_prf (mk_args2 (x+1) (x+1))
+  apply congrArg (evalPRF H54_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_54_diverges : ∀ x, evalPRF holdout_54 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H54_comp x]
+  cases x with
+  | zero =>
+    rw [H54_c_val]
+    decide
+  | succ x' =>
+    rw [H54_c_val]
+    have h1 : (x' + 1)+1 < (x' + 1)+1 + 1 := by omega
+    have h2 : (x' + 1)+1 > 0 := by omega
+    rw [H54_c_cf ((x' + 1)+1) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 55
 -- M(C(R(S,C(R(P(1,1),P(3,1)),P(3,2),R(P(2,2),P(4,1)))),P(1,1),P(1,1)))
 def holdout_55 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
 
+def H55_a_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H55_b_prf : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H55_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H55_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H55_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H55_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H55_a (H55_c x' y) (H55_b x' (H55_c x' y) y)
+
+lemma H55_a_val (x y : Nat) : evalPRF H55_a_prf (mk_args2 x y) = H55_a x y := by
+  induction x <;> rfl
+
+lemma H55_b_val (x acc y : Nat) : evalPRF H55_b_prf (mk_args3 x acc y) = H55_b x acc y := by
+  induction x <;> rfl
+
+lemma H55_c_val (x y : Nat) : evalPRF H55_c_prf (mk_args2 x y) = H55_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H55_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H55_b_prf]) (mk_args3 x (evalPRF H55_c_prf (mk_args2 x y)) y) = H55_c (x + 1) y
+    rw [ih]
+    change evalPRF H55_a_prf (mk_args2 (H55_c x y) (evalPRF H55_b_prf (mk_args3 x (H55_c x y) y))) = H55_a (H55_c x y) (H55_b x (H55_c x y) y)
+    rw [H55_b_val, H55_a_val]
+
+lemma H55_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H55_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H55_a (H55_c x y) (H55_b x (H55_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H55_a (k + 1) (H55_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H55_comp (x : Nat) : evalPRF holdout_55 (fun _ => x) = evalPRF H55_c_prf (mk_args2 x x) := by
+  change evalPRF H55_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)] j (fun _ => x)) = evalPRF H55_c_prf (mk_args2 x x)
+  apply congrArg (evalPRF H55_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_55_diverges : ∀ x, evalPRF holdout_55 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H55_comp x]
+  cases x with
+  | zero =>
+    rw [H55_c_val]
+    decide
+  | succ x' =>
+    rw [H55_c_val]
+    have h1 : (x' + 1) < (x' + 1) + 1 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H55_c_cf ((x' + 1)) ((x' + 1)) h1 h2]
+    omega
 
 -- Translating holdout 56
 -- M(C(R(S,C(R(P(1,1),P(3,1)),P(3,2),R(P(2,2),P(4,1)))),P(1,1),S))
 def holdout_56 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
 
+def H56_a_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H56_b_prf : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H56_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H56_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H56_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H56_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H56_a (H56_c x' y) (H56_b x' (H56_c x' y) y)
+
+lemma H56_a_val (x y : Nat) : evalPRF H56_a_prf (mk_args2 x y) = H56_a x y := by
+  induction x <;> rfl
+
+lemma H56_b_val (x acc y : Nat) : evalPRF H56_b_prf (mk_args3 x acc y) = H56_b x acc y := by
+  induction x <;> rfl
+
+lemma H56_c_val (x y : Nat) : evalPRF H56_c_prf (mk_args2 x y) = H56_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H56_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H56_b_prf]) (mk_args3 x (evalPRF H56_c_prf (mk_args2 x y)) y) = H56_c (x + 1) y
+    rw [ih]
+    change evalPRF H56_a_prf (mk_args2 (H56_c x y) (evalPRF H56_b_prf (mk_args3 x (H56_c x y) y))) = H56_a (H56_c x y) (H56_b x (H56_c x y) y)
+    rw [H56_b_val, H56_a_val]
+
+lemma H56_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H56_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H56_a (H56_c x y) (H56_b x (H56_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H56_a (k + 1) (H56_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H56_comp (x : Nat) : evalPRF holdout_56 (fun _ => x) = evalPRF H56_c_prf (mk_args2 x (x+1)) := by
+  change evalPRF H56_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ] j (fun _ => x)) = evalPRF H56_c_prf (mk_args2 x (x+1))
+  apply congrArg (evalPRF H56_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_56_diverges : ∀ x, evalPRF holdout_56 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H56_comp x]
+  cases x with
+  | zero =>
+    rw [H56_c_val]
+    decide
+  | succ x' =>
+    rw [H56_c_val]
+    have h1 : (x' + 1) < (x' + 1)+1 + 1 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H56_c_cf ((x' + 1)) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 57
 -- M(C(R(S,C(R(P(1,1),P(3,1)),P(3,2),R(P(2,2),P(4,1)))),S,S))
 def holdout_57 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![PRF.succ, PRF.succ]
 
+def H57_a_prf : PRF 2 := (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H57_b_prf : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H57_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H57_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H57_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H57_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H57_a (H57_c x' y) (H57_b x' (H57_c x' y) y)
+
+lemma H57_a_val (x y : Nat) : evalPRF H57_a_prf (mk_args2 x y) = H57_a x y := by
+  induction x <;> rfl
+
+lemma H57_b_val (x acc y : Nat) : evalPRF H57_b_prf (mk_args3 x acc y) = H57_b x acc y := by
+  induction x <;> rfl
+
+lemma H57_c_val (x y : Nat) : evalPRF H57_c_prf (mk_args2 x y) = H57_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H57_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H57_b_prf]) (mk_args3 x (evalPRF H57_c_prf (mk_args2 x y)) y) = H57_c (x + 1) y
+    rw [ih]
+    change evalPRF H57_a_prf (mk_args2 (H57_c x y) (evalPRF H57_b_prf (mk_args3 x (H57_c x y) y))) = H57_a (H57_c x y) (H57_b x (H57_c x y) y)
+    rw [H57_b_val, H57_a_val]
+
+lemma H57_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H57_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H57_a (H57_c x y) (H57_b x (H57_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H57_a (k + 1) (H57_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H57_comp (x : Nat) : evalPRF holdout_57 (fun _ => x) = evalPRF H57_c_prf (mk_args2 (x+1) (x+1)) := by
+  change evalPRF H57_c_prf (fun j => evalPRFList prf_list![PRF.succ, PRF.succ] j (fun _ => x)) = evalPRF H57_c_prf (mk_args2 (x+1) (x+1))
+  apply congrArg (evalPRF H57_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_57_diverges : ∀ x, evalPRF holdout_57 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H57_comp x]
+  cases x with
+  | zero =>
+    rw [H57_c_val]
+    decide
+  | succ x' =>
+    rw [H57_c_val]
+    have h1 : (x' + 1)+1 < (x' + 1)+1 + 1 := by omega
+    have h2 : (x' + 1)+1 > 0 := by omega
+    rw [H57_c_cf ((x' + 1)+1) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 58
 -- M(C(R(S,C(R(P(1,1),P(3,1)),R(P(2,2),P(4,3)),P(3,1))),P(1,1),S))
@@ -482,48 +1242,492 @@ theorem holdout_58_diverges : ∀ x, evalPRF holdout_58 (fun _ => x) > 0 := by
 def holdout_59 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
 
+def H59_a_prf : PRF 2 := (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H59_b_prf : PRF 3 := PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))
+def H59_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H59_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
+
+def H59_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => x'
+
+def H59_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H59_a (H59_c x' y) (H59_b x' (H59_c x' y) y)
+
+lemma H59_a_val (x y : Nat) : evalPRF H59_a_prf (mk_args2 x y) = H59_a x y := by
+  induction x <;> rfl
+
+lemma H59_b_val (x acc y : Nat) : evalPRF H59_b_prf (mk_args3 x acc y) = H59_b x acc y := by
+  induction x <;> rfl
+
+lemma H59_c_val (x y : Nat) : evalPRF H59_c_prf (mk_args2 x y) = H59_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H59_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H59_b_prf]) (mk_args3 x (evalPRF H59_c_prf (mk_args2 x y)) y) = H59_c (x + 1) y
+    rw [ih]
+    change evalPRF H59_a_prf (mk_args2 (H59_c x y) (evalPRF H59_b_prf (mk_args3 x (H59_c x y) y))) = H59_a (H59_c x y) (H59_b x (H59_c x y) y)
+    rw [H59_b_val, H59_a_val]
+
+lemma H59_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H59_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H59_a (H59_c x y) (H59_b x (H59_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H59_a (k + 1) (H59_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H59_comp (x : Nat) : evalPRF holdout_59 (fun _ => x) = evalPRF H59_c_prf (mk_args2 x x) := by
+  change evalPRF H59_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)] j (fun _ => x)) = evalPRF H59_c_prf (mk_args2 x x)
+  apply congrArg (evalPRF H59_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_59_diverges : ∀ x, evalPRF holdout_59 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H59_comp x]
+  cases x with
+  | zero =>
+    rw [H59_c_val]
+    decide
+  | succ x' =>
+    rw [H59_c_val]
+    have h1 : (x' + 1) < (x' + 1) + 1 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H59_c_cf ((x' + 1)) ((x' + 1)) h1 h2]
+    omega
 
 -- Translating holdout 60
 -- M(C(R(S,C(R(S,P(3,1)),P(3,2),R(Z2,P(4,1)))),P(1,1),S))
 def holdout_60 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
 
+def H60_a_prf : PRF 2 := (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H60_b_prf : PRF 3 := PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))
+def H60_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H60_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
+
+def H60_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => x'
+
+def H60_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H60_a (H60_c x' y) (H60_b x' (H60_c x' y) y)
+
+lemma H60_a_val (x y : Nat) : evalPRF H60_a_prf (mk_args2 x y) = H60_a x y := by
+  induction x <;> rfl
+
+lemma H60_b_val (x acc y : Nat) : evalPRF H60_b_prf (mk_args3 x acc y) = H60_b x acc y := by
+  induction x <;> rfl
+
+lemma H60_c_val (x y : Nat) : evalPRF H60_c_prf (mk_args2 x y) = H60_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H60_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H60_b_prf]) (mk_args3 x (evalPRF H60_c_prf (mk_args2 x y)) y) = H60_c (x + 1) y
+    rw [ih]
+    change evalPRF H60_a_prf (mk_args2 (H60_c x y) (evalPRF H60_b_prf (mk_args3 x (H60_c x y) y))) = H60_a (H60_c x y) (H60_b x (H60_c x y) y)
+    rw [H60_b_val, H60_a_val]
+
+lemma H60_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H60_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H60_a (H60_c x y) (H60_b x (H60_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H60_a (k + 1) (H60_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H60_comp (x : Nat) : evalPRF holdout_60 (fun _ => x) = evalPRF H60_c_prf (mk_args2 x (x+1)) := by
+  change evalPRF H60_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ] j (fun _ => x)) = evalPRF H60_c_prf (mk_args2 x (x+1))
+  apply congrArg (evalPRF H60_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_60_diverges : ∀ x, evalPRF holdout_60 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H60_comp x]
+  cases x with
+  | zero =>
+    rw [H60_c_val]
+    decide
+  | succ x' =>
+    rw [H60_c_val]
+    have h1 : (x' + 1) < (x' + 1)+1 + 1 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H60_c_cf ((x' + 1)) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 61
 -- M(C(R(S,C(R(S,P(3,1)),P(3,2),R(Z2,P(4,1)))),S,S))
 def holdout_61 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![PRF.succ, PRF.succ]
 
+def H61_a_prf : PRF 2 := (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H61_b_prf : PRF 3 := PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))
+def H61_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec (PRF.zero 2) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H61_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
+
+def H61_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => x'
+
+def H61_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H61_a (H61_c x' y) (H61_b x' (H61_c x' y) y)
+
+lemma H61_a_val (x y : Nat) : evalPRF H61_a_prf (mk_args2 x y) = H61_a x y := by
+  induction x <;> rfl
+
+lemma H61_b_val (x acc y : Nat) : evalPRF H61_b_prf (mk_args3 x acc y) = H61_b x acc y := by
+  induction x <;> rfl
+
+lemma H61_c_val (x y : Nat) : evalPRF H61_c_prf (mk_args2 x y) = H61_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H61_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H61_b_prf]) (mk_args3 x (evalPRF H61_c_prf (mk_args2 x y)) y) = H61_c (x + 1) y
+    rw [ih]
+    change evalPRF H61_a_prf (mk_args2 (H61_c x y) (evalPRF H61_b_prf (mk_args3 x (H61_c x y) y))) = H61_a (H61_c x y) (H61_b x (H61_c x y) y)
+    rw [H61_b_val, H61_a_val]
+
+lemma H61_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H61_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H61_a (H61_c x y) (H61_b x (H61_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H61_a (k + 1) (H61_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H61_comp (x : Nat) : evalPRF holdout_61 (fun _ => x) = evalPRF H61_c_prf (mk_args2 (x+1) (x+1)) := by
+  change evalPRF H61_c_prf (fun j => evalPRFList prf_list![PRF.succ, PRF.succ] j (fun _ => x)) = evalPRF H61_c_prf (mk_args2 (x+1) (x+1))
+  apply congrArg (evalPRF H61_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_61_diverges : ∀ x, evalPRF holdout_61 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H61_comp x]
+  cases x with
+  | zero =>
+    rw [H61_c_val]
+    decide
+  | succ x' =>
+    rw [H61_c_val]
+    have h1 : (x' + 1)+1 < (x' + 1)+1 + 1 := by omega
+    have h2 : (x' + 1)+1 > 0 := by omega
+    rw [H61_c_cf ((x' + 1)+1) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 62
 -- M(C(R(S,C(R(S,P(3,1)),P(3,2),R(P(2,2),P(4,1)))),P(1,1),P(1,1)))
 def holdout_62 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
 
+def H62_a_prf : PRF 2 := (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H62_b_prf : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H62_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H62_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
+
+def H62_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H62_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H62_a (H62_c x' y) (H62_b x' (H62_c x' y) y)
+
+lemma H62_a_val (x y : Nat) : evalPRF H62_a_prf (mk_args2 x y) = H62_a x y := by
+  induction x <;> rfl
+
+lemma H62_b_val (x acc y : Nat) : evalPRF H62_b_prf (mk_args3 x acc y) = H62_b x acc y := by
+  induction x <;> rfl
+
+lemma H62_c_val (x y : Nat) : evalPRF H62_c_prf (mk_args2 x y) = H62_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H62_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H62_b_prf]) (mk_args3 x (evalPRF H62_c_prf (mk_args2 x y)) y) = H62_c (x + 1) y
+    rw [ih]
+    change evalPRF H62_a_prf (mk_args2 (H62_c x y) (evalPRF H62_b_prf (mk_args3 x (H62_c x y) y))) = H62_a (H62_c x y) (H62_b x (H62_c x y) y)
+    rw [H62_b_val, H62_a_val]
+
+lemma H62_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H62_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H62_a (H62_c x y) (H62_b x (H62_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H62_a (k + 1) (H62_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H62_comp (x : Nat) : evalPRF holdout_62 (fun _ => x) = evalPRF H62_c_prf (mk_args2 x x) := by
+  change evalPRF H62_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)] j (fun _ => x)) = evalPRF H62_c_prf (mk_args2 x x)
+  apply congrArg (evalPRF H62_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_62_diverges : ∀ x, evalPRF holdout_62 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H62_comp x]
+  cases x with
+  | zero =>
+    rw [H62_c_val]
+    decide
+  | succ x' =>
+    rw [H62_c_val]
+    have h1 : (x' + 1) < (x' + 1) + 1 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H62_c_cf ((x' + 1)) ((x' + 1)) h1 h2]
+    omega
 
 -- Translating holdout 63
 -- M(C(R(S,C(R(S,P(3,1)),P(3,2),R(P(2,2),P(4,1)))),P(1,1),S))
 def holdout_63 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
 
+def H63_a_prf : PRF 2 := (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H63_b_prf : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H63_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H63_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
+
+def H63_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H63_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H63_a (H63_c x' y) (H63_b x' (H63_c x' y) y)
+
+lemma H63_a_val (x y : Nat) : evalPRF H63_a_prf (mk_args2 x y) = H63_a x y := by
+  induction x <;> rfl
+
+lemma H63_b_val (x acc y : Nat) : evalPRF H63_b_prf (mk_args3 x acc y) = H63_b x acc y := by
+  induction x <;> rfl
+
+lemma H63_c_val (x y : Nat) : evalPRF H63_c_prf (mk_args2 x y) = H63_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H63_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H63_b_prf]) (mk_args3 x (evalPRF H63_c_prf (mk_args2 x y)) y) = H63_c (x + 1) y
+    rw [ih]
+    change evalPRF H63_a_prf (mk_args2 (H63_c x y) (evalPRF H63_b_prf (mk_args3 x (H63_c x y) y))) = H63_a (H63_c x y) (H63_b x (H63_c x y) y)
+    rw [H63_b_val, H63_a_val]
+
+lemma H63_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H63_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H63_a (H63_c x y) (H63_b x (H63_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H63_a (k + 1) (H63_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H63_comp (x : Nat) : evalPRF holdout_63 (fun _ => x) = evalPRF H63_c_prf (mk_args2 x (x+1)) := by
+  change evalPRF H63_c_prf (fun j => evalPRFList prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ] j (fun _ => x)) = evalPRF H63_c_prf (mk_args2 x (x+1))
+  apply congrArg (evalPRF H63_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_63_diverges : ∀ x, evalPRF holdout_63 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H63_comp x]
+  cases x with
+  | zero =>
+    rw [H63_c_val]
+    decide
+  | succ x' =>
+    rw [H63_c_val]
+    have h1 : (x' + 1) < (x' + 1)+1 + 1 := by omega
+    have h2 : (x' + 1) > 0 := by omega
+    rw [H63_c_cf ((x' + 1)) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 64
 -- M(C(R(S,C(R(S,P(3,1)),P(3,2),R(P(2,2),P(4,1)))),S,S))
 def holdout_64 : PRF 1 :=
   PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![PRF.succ, PRF.succ]
 
+def H64_a_prf : PRF 2 := (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩)))
+def H64_b_prf : PRF 3 := PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))
+def H64_c_prf : PRF 2 := (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))]))
+
+def H64_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
+
+def H64_b (x _acc y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => x'
+
+def H64_c (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => H64_a (H64_c x' y) (H64_b x' (H64_c x' y) y)
+
+lemma H64_a_val (x y : Nat) : evalPRF H64_a_prf (mk_args2 x y) = H64_a x y := by
+  induction x <;> rfl
+
+lemma H64_b_val (x acc y : Nat) : evalPRF H64_b_prf (mk_args3 x acc y) = H64_b x acc y := by
+  induction x <;> rfl
+
+lemma H64_c_val (x y : Nat) : evalPRF H64_c_prf (mk_args2 x y) = H64_c x y := by
+  induction x with
+  | zero => rfl
+  | succ x ih =>
+    change evalPRF (PRF.comp H64_a_prf prf_list![(PRF.proj 3 ⟨1, by decide⟩), H64_b_prf]) (mk_args3 x (evalPRF H64_c_prf (mk_args2 x y)) y) = H64_c (x + 1) y
+    rw [ih]
+    change evalPRF H64_a_prf (mk_args2 (H64_c x y) (evalPRF H64_b_prf (mk_args3 x (H64_c x y) y))) = H64_a (H64_c x y) (H64_b x (H64_c x y) y)
+    rw [H64_b_val, H64_a_val]
+
+lemma H64_c_cf (x y : Nat) (h : x < y + 1) (hx : x > 0) : H64_c x y = y + 1 - x := by
+  induction x with
+  | zero => contradiction
+  | succ x ih =>
+    change H64_a (H64_c x y) (H64_b x (H64_c x y) y) = y + 1 - (x + 1)
+    have hcases : x = 0 ∨ x > 0 := by omega
+    cases hcases with
+    | inl h0 =>
+      rw [h0]
+      rfl
+    | inr hpos =>
+      have h1 : x < y + 1 := by omega
+      rw [ih h1 hpos]
+      have h2 : y + 1 - x > 0 := by omega
+      have h3 : ∃ k, y + 1 - x = k + 1 := by use (y + 1 - x - 1); omega
+      rcases h3 with ⟨k, hk⟩
+      rw [hk]
+      change H64_a (k + 1) (H64_b x (k + 1) y) = y + 1 - (x + 1)
+      change k = y + 1 - (x + 1)
+      omega
+
+lemma H64_comp (x : Nat) : evalPRF holdout_64 (fun _ => x) = evalPRF H64_c_prf (mk_args2 (x+1) (x+1)) := by
+  change evalPRF H64_c_prf (fun j => evalPRFList prf_list![PRF.succ, PRF.succ] j (fun _ => x)) = evalPRF H64_c_prf (mk_args2 (x+1) (x+1))
+  apply congrArg (evalPRF H64_c_prf)
+  funext ⟨val, isLt⟩
+  match val with
+  | 0 => rfl
+  | 1 => rfl
+
 theorem holdout_64_diverges : ∀ x, evalPRF holdout_64 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H64_comp x]
+  cases x with
+  | zero =>
+    rw [H64_c_val]
+    decide
+  | succ x' =>
+    rw [H64_c_val]
+    have h1 : (x' + 1)+1 < (x' + 1)+1 + 1 := by omega
+    have h2 : (x' + 1)+1 > 0 := by omega
+    rw [H64_c_cf ((x' + 1)+1) ((x' + 1)+1) h1 h2]
+    omega
 
 -- Translating holdout 65
 -- M(C(R(S,C(R(S,P(3,1)),R(P(2,2),P(4,3)),P(3,1))),P(1,1),S))

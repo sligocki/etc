@@ -1,5 +1,8 @@
+
 import GenRec.Syntax
 import GenRec.Semantics
+
+
 
 open GenRec
 
@@ -1137,7 +1140,7 @@ lemma H9_T_val (x : Nat) : 2 * H9_T x + x = x * x := by
 lemma H9_c_val_diag_not_zero (x : Nat) : H9_c_val x x ≠ 0 := by
   cases x with
   | zero =>
-    change H9_c_val 0 0 ≠ 0
+--     change H9_c_val 0 0 ≠ 0
     change 1 ≠ 0
     intro h
     contradiction
@@ -1159,14 +1162,12 @@ lemma H9_c_val_diag_not_zero (x : Nat) : H9_c_val x x ≠ 0 := by
         have h_mod_self : (x + 3) % (x + 3) = 0 := Nat.mod_self (x + 3)
         rw [h_mod_self] at hmod
         exact hmod
-
       have h_dvd : (x + 3) ∣ H9_T (x + 2) := Nat.dvd_of_mod_eq_zero hmod2
       rcases h_dvd with ⟨q, hq⟩
       have hq2 : H9_T (x + 2) = q * (x + 3) := by
         rw [hq, Nat.mul_comm]
       have htval : 2 * H9_T (x + 2) + (x + 2) = (x + 2) * (x + 2) := H9_T_val (x + 2)
       rw [hq2] at htval
-
       -- We have 2 * (q * (x + 3)) + (x + 2) = (x + 2) * (x + 2)
       have h1 : 2 * (q * (x + 3)) + 2 * (x + 3) = (x + 2) * (x + 3) + 2 := by
         have h_add : 2 * (q * (x + 3)) + (x + 2) + (x + 4) = (x + 2) * (x + 2) + (x + 4) := by omega
@@ -1174,15 +1175,12 @@ lemma H9_c_val_diag_not_zero (x : Nat) : H9_c_val x x ≠ 0 := by
         have hr : (x + 2) * (x + 2) + (x + 4) = (x + 2) * (x + 3) + 2 := by ring
         rw [hl, hr] at h_add
         exact h_add
-
       have h2 : 2 * (q * (x + 3)) + 2 * (x + 3) = (2 * q + 2) * (x + 3) := by ring
       rw [h2] at h1
-
       have h3 : (2 * q + 2) * (x + 3) - (x + 2) * (x + 3) = 2 := by omega
       have h4 : (2 * q + 2) * (x + 3) - (x + 2) * (x + 3) = (2 * q + 2 - (x + 2)) * (x + 3) := by
         rw [Nat.sub_mul]
       rw [h4] at h3
-
       cases h_A : (2 * q + 2 - (x + 2)) with
       | zero =>
         rw [h_A] at h3
@@ -1487,7 +1485,7 @@ def H14_val (x : Nat) : Nat :=
   | 0 => 1
   | x' + 1 => H14_h x' (H14_val x')
 
-lemma H14_f_eq (u x acc : Nat) : evalPRF (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) (mk_args2 u x) = H14_f u x := by
+lemma H14_f_eq (u x _acc : Nat) : evalPRF (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) (mk_args2 u x) = H14_f u x := by
   induction u with
   | zero => rfl
   | succ u ih => rfl

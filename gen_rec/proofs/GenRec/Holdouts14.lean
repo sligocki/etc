@@ -3385,11 +3385,128 @@ theorem holdout_103_diverges : ∀ x, evalPRF holdout_103 (fun _ => x) > 0 := by
 
 -- Translating holdout 104
 -- M(R(C(S,Z0),R(P(1,1),R(R(S,R(P(2,1),P(4,1))),P(4,2)))))
-def holdout_104 : PRF 1 :=
-  PRF.primRec (PRF.comp (PRF.succ) prf_list![PRF.zero 0]) (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) ((PRF.proj 4 ⟨1, by decide⟩))))
+def H104_h4_prf : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) (PRF.proj 4 ⟨0, by decide⟩)
+def H104_g3_prf : PRF 2 := PRF.primRec (PRF.succ) H104_h4_prf
+def H104_h2_prf : PRF 3 := PRF.primRec H104_g3_prf (PRF.proj 4 ⟨1, by decide⟩)
+def H104_h_prf : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) H104_h2_prf
+def H104_g_prf : PRF 0 := PRF.comp PRF.succ prf_list![PRF.zero 0]
+
+def holdout_104 : PRF 1 := PRF.primRec H104_g_prf H104_h_prf
+
+lemma holdout_104_eq : holdout_104 = PRF.primRec H104_g_prf H104_h_prf := rfl
+
+def H104_h4_val (m4 acc4 : Nat) : Nat :=
+  match m4 with
+  | 0 => acc4
+  | m' + 1 => m'
+
+lemma H104_h4_eval (m4 acc4 acc : Nat) :
+  evalPRF H104_h4_prf (mk_args3 m4 acc4 acc) = H104_h4_val m4 acc4 := by
+  cases m4 <;> rfl
+
+def H104_g3_val (acc2 acc : Nat) : Nat :=
+  match acc2 with
+  | 0 => acc + 1
+  | 1 => acc + 1
+  | 2 => 0
+  | 3 => 1
+  | 4 => 2
+  | x + 2 => x
+
+lemma H104_g3_eval (acc2 acc : Nat) :
+  evalPRF H104_g3_prf (mk_args2 acc2 acc) = H104_g3_val acc2 acc := by
+  induction acc2 with
+  | zero => rfl
+  | succ a ih =>
+    have h_step : evalPRF (PRF.primRec (PRF.succ) H104_h4_prf) (mk_args2 (a + 1) acc) = evalPRF H104_h4_prf (mk_args3 a (evalPRF (PRF.primRec (PRF.succ) H104_h4_prf) (mk_args2 a acc)) acc) := by
+      unfold evalPRF
+      dsimp
+      congr
+    unfold H104_g3_prf
+    rw [h_step]
+    change evalPRF H104_h4_prf (mk_args3 a (evalPRF H104_g3_prf (mk_args2 a acc)) acc) = H104_g3_val (a + 1) acc
+    rw [ih]
+    rw [H104_h4_eval]
+    cases a with
+    | zero => rfl
+    | succ a' => cases a' with
+      | zero => rfl
+      | succ a'' => cases a'' with
+        | zero => rfl
+        | succ a''' => cases a''' with
+          | zero => rfl
+          | succ _ => rfl
+
+def H104_h2_val (acc2 acc : Nat) : Nat := H104_g3_val acc2 acc
+
+lemma H104_h2_eval (m2 acc2 acc : Nat) :
+  evalPRF H104_h2_prf (mk_args3 m2 acc2 acc) = H104_h2_val acc2 acc := by
+  induction m2 with
+  | zero =>
+    have h_step : evalPRF (PRF.primRec H104_g3_prf (PRF.proj 4 ⟨1, by decide⟩)) (mk_args3 0 acc2 acc) = evalPRF H104_g3_prf (mk_args2 acc2 acc) := by
+      unfold evalPRF
+      dsimp
+      congr
+    unfold H104_h2_prf
+    rw [h_step]
+    exact H104_g3_eval acc2 acc
+  | succ m' ih =>
+    have h_step : evalPRF (PRF.primRec H104_g3_prf (PRF.proj 4 ⟨1, by decide⟩)) (mk_args3 (m' + 1) acc2 acc) = evalPRF (PRF.proj 4 ⟨1, by decide⟩) (mk_args4 m' (evalPRF (PRF.primRec H104_g3_prf (PRF.proj 4 ⟨1, by decide⟩)) (mk_args3 m' acc2 acc)) acc2 acc) := by
+      unfold evalPRF
+      dsimp
+      congr
+    unfold H104_h2_prf
+    rw [h_step]
+    change evalPRF H104_h2_prf (mk_args3 m' acc2 acc) = H104_h2_val acc2 acc
+    rw [ih]
+
+def H104_h_val (m acc : Nat) : Nat :=
+  match m with
+  | 0 => acc
+  | m' + 1 => H104_h2_val (H104_h_val m' acc) acc
+
+lemma H104_h_eval (m acc : Nat) :
+  evalPRF H104_h_prf (mk_args2 m acc) = H104_h_val m acc := by
+  induction m with
+  | zero => rfl
+  | succ m' ih =>
+    have h_step : evalPRF (PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) H104_h2_prf) (mk_args2 (m' + 1) acc) = evalPRF H104_h2_prf (mk_args3 m' (evalPRF (PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) H104_h2_prf) (mk_args2 m' acc)) acc) := by
+      unfold evalPRF
+      dsimp
+      congr
+    unfold H104_h_prf
+    rw [h_step]
+    change evalPRF H104_h2_prf (mk_args3 m' (evalPRF H104_h_prf (mk_args2 m' acc)) acc) = H104_h_val (m' + 1) acc
+    rw [ih]
+    exact H104_h2_eval m' (H104_h_val m' acc) acc
+
+def holdout_104_val (x : Nat) : Nat :=
+  match x with
+  | 0 => 1
+  | x' + 1 => H104_h_val x' (holdout_104_val x')
+
+lemma holdout_104_eval (x : Nat) :
+  evalPRF holdout_104 (fun _ => x) = holdout_104_val x := by
+  rw [holdout_104_eq]
+  induction x with
+  | zero => rfl
+  | succ x' ih =>
+    have h_step : evalPRF (PRF.primRec H104_g_prf H104_h_prf) (fun _ => x' + 1) = evalPRF H104_h_prf (mk_args2 x' (evalPRF (PRF.primRec H104_g_prf H104_h_prf) (fun _ => x'))) := by
+      unfold evalPRF
+      dsimp
+      congr
+    rw [h_step]
+    change evalPRF H104_h_prf (mk_args2 x' (evalPRF (PRF.primRec H104_g_prf H104_h_prf) (fun _ => x'))) = holdout_104_val (x' + 1)
+    rw [ih]
+    exact H104_h_eval x' (holdout_104_val x')
+
+lemma holdout_104_val_pos (x : Nat) : holdout_104_val x > 0 := by
+  sorry
 
 theorem holdout_104_diverges : ∀ x, evalPRF holdout_104 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [holdout_104_eval x]
+  exact holdout_104_val_pos x
 
 -- Translating holdout 105
 -- M(R(C(S,Z0),R(P(1,1),R(R(S,R(P(2,2),P(4,1))),P(4,2)))))

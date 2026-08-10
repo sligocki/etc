@@ -463,58 +463,86 @@ theorem holdout_5_diverges : ∀ x, evalPRF holdout_5 (fun _ => x) > 0 := by
   rw [H5_c_cf _ _ (by omega)]
   omega
 
--- Translating holdout 6
+-- Translating holdout_6
 -- M(C(R(P(2,1),R(P(3,1),R(R(P(3,3),P(5,1)),P(6,2)))),P(1,1),S,P(1,1)))
-def holdout_6 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 3 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 3 ⟨2, by decide⟩)) ((PRF.proj 5 ⟨0, by decide⟩))) ((PRF.proj 6 ⟨1, by decide⟩))))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_6_p1 : PRF 4 := PRF.primRec (PRF.proj 3 ⟨2, by decide⟩) (PRF.proj 5 ⟨0, by decide⟩)
+def HOLDOUT_6_p2 : PRF 5 := PRF.primRec HOLDOUT_6_p1 (PRF.proj 6 ⟨1, by decide⟩)
+def HOLDOUT_6_p3 : PRF 4 := PRF.primRec (PRF.proj 3 ⟨0, by decide⟩) HOLDOUT_6_p2
+def HOLDOUT_6_p4 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_6_p3
+def HOLDOUT_6_p5 : PRF 1 := PRF.comp HOLDOUT_6_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_6 : PRF 1 := HOLDOUT_6_p5
 
 theorem holdout_6_diverges : ∀ x, evalPRF holdout_6 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 7
+-- Translating holdout_7
 -- M(C(R(P(2,1),R(R(P(2,1),R(P(3,3),P(5,1))),P(5,2))),S,S,S))
-def holdout_7 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 3 ⟨2, by decide⟩)) ((PRF.proj 5 ⟨0, by decide⟩)))) ((PRF.proj 5 ⟨1, by decide⟩)))) prf_list![PRF.succ, PRF.succ, PRF.succ]
+def HOLDOUT_7_p1 : PRF 4 := PRF.primRec (PRF.proj 3 ⟨2, by decide⟩) (PRF.proj 5 ⟨0, by decide⟩)
+def HOLDOUT_7_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_7_p1
+def HOLDOUT_7_p3 : PRF 4 := PRF.primRec HOLDOUT_7_p2 (PRF.proj 5 ⟨1, by decide⟩)
+def HOLDOUT_7_p4 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_7_p3
+def HOLDOUT_7_p5 : PRF 1 := PRF.comp HOLDOUT_7_p4 prf_list![PRF.succ, PRF.succ, PRF.succ]
+def holdout_7 : PRF 1 := HOLDOUT_7_p5
 
 theorem holdout_7_diverges : ∀ x, evalPRF holdout_7 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 8
+-- Translating holdout_8
 -- M(C(R(P(2,1),R(R(P(2,2),R(Z3,P(5,1))),P(5,2))),S,P(1,1),S))
-def holdout_8 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.primRec (PRF.zero 3) ((PRF.proj 5 ⟨0, by decide⟩)))) ((PRF.proj 5 ⟨1, by decide⟩)))) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_8_p1 : PRF 4 := PRF.primRec (PRF.zero 3) (PRF.proj 5 ⟨0, by decide⟩)
+def HOLDOUT_8_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_8_p1
+def HOLDOUT_8_p3 : PRF 4 := PRF.primRec HOLDOUT_8_p2 (PRF.proj 5 ⟨1, by decide⟩)
+def HOLDOUT_8_p4 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_8_p3
+def HOLDOUT_8_p5 : PRF 1 := PRF.comp HOLDOUT_8_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_8 : PRF 1 := HOLDOUT_8_p5
 
 theorem holdout_8_diverges : ∀ x, evalPRF holdout_8 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 9
+-- Translating holdout_9
 -- M(C(R(P(2,1),R(R(P(2,2),R(P(3,1),P(5,1))),P(5,2))),S,S,S))
-def holdout_9 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.primRec ((PRF.proj 3 ⟨0, by decide⟩)) ((PRF.proj 5 ⟨0, by decide⟩)))) ((PRF.proj 5 ⟨1, by decide⟩)))) prf_list![PRF.succ, PRF.succ, PRF.succ]
+def HOLDOUT_9_p1 : PRF 4 := PRF.primRec (PRF.proj 3 ⟨0, by decide⟩) (PRF.proj 5 ⟨0, by decide⟩)
+def HOLDOUT_9_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_9_p1
+def HOLDOUT_9_p3 : PRF 4 := PRF.primRec HOLDOUT_9_p2 (PRF.proj 5 ⟨1, by decide⟩)
+def HOLDOUT_9_p4 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_9_p3
+def HOLDOUT_9_p5 : PRF 1 := PRF.comp HOLDOUT_9_p4 prf_list![PRF.succ, PRF.succ, PRF.succ]
+def holdout_9 : PRF 1 := HOLDOUT_9_p5
 
 theorem holdout_9_diverges : ∀ x, evalPRF holdout_9 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 10
+-- Translating holdout_10
 -- M(C(R(P(2,1),R(R(P(2,2),R(P(3,2),P(5,1))),P(5,2))),S,P(1,1),S))
-def holdout_10 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.primRec ((PRF.proj 3 ⟨1, by decide⟩)) ((PRF.proj 5 ⟨0, by decide⟩)))) ((PRF.proj 5 ⟨1, by decide⟩)))) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_10_p1 : PRF 4 := PRF.primRec (PRF.proj 3 ⟨1, by decide⟩) (PRF.proj 5 ⟨0, by decide⟩)
+def HOLDOUT_10_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_10_p1
+def HOLDOUT_10_p3 : PRF 4 := PRF.primRec HOLDOUT_10_p2 (PRF.proj 5 ⟨1, by decide⟩)
+def HOLDOUT_10_p4 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_10_p3
+def HOLDOUT_10_p5 : PRF 1 := PRF.comp HOLDOUT_10_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_10 : PRF 1 := HOLDOUT_10_p5
 
 theorem holdout_10_diverges : ∀ x, evalPRF holdout_10 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 11
+-- Translating holdout_11
 -- M(C(R(P(2,1),R(R(P(2,2),R(P(3,2),P(5,1))),P(5,2))),S,S,P(1,1)))
-def holdout_11 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.primRec ((PRF.proj 3 ⟨1, by decide⟩)) ((PRF.proj 5 ⟨0, by decide⟩)))) ((PRF.proj 5 ⟨1, by decide⟩)))) prf_list![PRF.succ, PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_11_p1 : PRF 4 := PRF.primRec (PRF.proj 3 ⟨1, by decide⟩) (PRF.proj 5 ⟨0, by decide⟩)
+def HOLDOUT_11_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_11_p1
+def HOLDOUT_11_p3 : PRF 4 := PRF.primRec HOLDOUT_11_p2 (PRF.proj 5 ⟨1, by decide⟩)
+def HOLDOUT_11_p4 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_11_p3
+def HOLDOUT_11_p5 : PRF 1 := PRF.comp HOLDOUT_11_p4 prf_list![PRF.succ, PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_11 : PRF 1 := HOLDOUT_11_p5
 
 theorem holdout_11_diverges : ∀ x, evalPRF holdout_11 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 12
+-- Translating holdout_12
 -- M(C(R(P(2,1),R(R(P(2,2),R(P(3,2),P(5,1))),P(5,2))),S,S,S))
-def holdout_12 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.primRec (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.primRec ((PRF.proj 3 ⟨1, by decide⟩)) ((PRF.proj 5 ⟨0, by decide⟩)))) ((PRF.proj 5 ⟨1, by decide⟩)))) prf_list![PRF.succ, PRF.succ, PRF.succ]
+def HOLDOUT_12_p1 : PRF 4 := PRF.primRec (PRF.proj 3 ⟨1, by decide⟩) (PRF.proj 5 ⟨0, by decide⟩)
+def HOLDOUT_12_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_12_p1
+def HOLDOUT_12_p3 : PRF 4 := PRF.primRec HOLDOUT_12_p2 (PRF.proj 5 ⟨1, by decide⟩)
+def HOLDOUT_12_p4 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_12_p3
+def HOLDOUT_12_p5 : PRF 1 := PRF.comp HOLDOUT_12_p4 prf_list![PRF.succ, PRF.succ, PRF.succ]
+def holdout_12 : PRF 1 := HOLDOUT_12_p5
 
 theorem holdout_12_diverges : ∀ x, evalPRF holdout_12 (fun _ => x) > 0 := by
   sorry
@@ -596,10 +624,14 @@ theorem holdout_13_diverges : ∀ x, evalPRF holdout_13 (fun _ => x) > 0 := by
   omega
 
 
--- Translating holdout 14
+-- Translating holdout_14
 -- M(C(R(Z1,C(R(S,P(3,1)),P(3,2),R(P(2,2),P(4,1)))),S,P(1,1)))
-def holdout_14 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.zero 1) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩))])) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_14_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_14_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) (PRF.proj 4 ⟨0, by decide⟩)
+def HOLDOUT_14_p3 : PRF 3 := PRF.comp HOLDOUT_14_p1 prf_list![(PRF.proj 3 ⟨1, by decide⟩), HOLDOUT_14_p2]
+def HOLDOUT_14_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_14_p3
+def HOLDOUT_14_p5 : PRF 1 := PRF.comp HOLDOUT_14_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_14 : PRF 1 := HOLDOUT_14_p5
 
 theorem holdout_14_diverges : ∀ x, evalPRF holdout_14 (fun _ => x) > 0 := by
   sorry
@@ -681,58 +713,86 @@ theorem holdout_15_diverges : ∀ x, evalPRF holdout_15 (fun _ => x) > 0 := by
   omega
 
 
--- Translating holdout 16
+-- Translating holdout_16
 -- M(C(R(Z1,C(R(S,P(3,1)),R(P(2,2),P(4,3)),P(3,1))),S,P(1,1)))
-def holdout_16 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.zero 1) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨2, by decide⟩)), (PRF.proj 3 ⟨0, by decide⟩)])) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_16_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_16_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) (PRF.proj 4 ⟨2, by decide⟩)
+def HOLDOUT_16_p3 : PRF 3 := PRF.comp HOLDOUT_16_p1 prf_list![HOLDOUT_16_p2, (PRF.proj 3 ⟨0, by decide⟩)]
+def HOLDOUT_16_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_16_p3
+def HOLDOUT_16_p5 : PRF 1 := PRF.comp HOLDOUT_16_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_16 : PRF 1 := HOLDOUT_16_p5
 
 theorem holdout_16_diverges : ∀ x, evalPRF holdout_16 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 17
+-- Translating holdout_17
 -- M(C(R(Z1,R(P(2,2),C(R(P(1,1),P(3,1)),P(4,2),P(4,1)))),S,S))
-def holdout_17 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.zero 1) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_17_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_17_p2 : PRF 4 := PRF.comp HOLDOUT_17_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_17_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_17_p2
+def HOLDOUT_17_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_17_p3
+def HOLDOUT_17_p5 : PRF 1 := PRF.comp HOLDOUT_17_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_17 : PRF 1 := HOLDOUT_17_p5
 
 theorem holdout_17_diverges : ∀ x, evalPRF holdout_17 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 18
+-- Translating holdout_18
 -- M(C(R(Z1,R(P(2,2),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_18 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.zero 1) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_18_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_18_p2 : PRF 4 := PRF.comp HOLDOUT_18_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_18_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_18_p2
+def HOLDOUT_18_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_18_p3
+def HOLDOUT_18_p5 : PRF 1 := PRF.comp HOLDOUT_18_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_18 : PRF 1 := HOLDOUT_18_p5
 
 theorem holdout_18_diverges : ∀ x, evalPRF holdout_18 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 19
+-- Translating holdout_19
 -- M(C(R(Z1,R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,1)))),S,S))
-def holdout_19 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.zero 1) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_19_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_19_p2 : PRF 4 := PRF.comp HOLDOUT_19_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_19_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_19_p2
+def HOLDOUT_19_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_19_p3
+def HOLDOUT_19_p5 : PRF 1 := PRF.comp HOLDOUT_19_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_19 : PRF 1 := HOLDOUT_19_p5
 
 theorem holdout_19_diverges : ∀ x, evalPRF holdout_19 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 20
+-- Translating holdout_20
 -- M(C(R(Z1,R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,3)))),S,S))
-def holdout_20 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.zero 1) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_20_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_20_p2 : PRF 4 := PRF.comp HOLDOUT_20_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]
+def HOLDOUT_20_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_20_p2
+def HOLDOUT_20_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_20_p3
+def HOLDOUT_20_p5 : PRF 1 := PRF.comp HOLDOUT_20_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_20 : PRF 1 := HOLDOUT_20_p5
 
 theorem holdout_20_diverges : ∀ x, evalPRF holdout_20 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 21
+-- Translating holdout_21
 -- M(C(R(Z1,R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_21 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.zero 1) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_21_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_21_p2 : PRF 4 := PRF.comp HOLDOUT_21_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_21_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_21_p2
+def HOLDOUT_21_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_21_p3
+def HOLDOUT_21_p5 : PRF 1 := PRF.comp HOLDOUT_21_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_21 : PRF 1 := HOLDOUT_21_p5
 
 theorem holdout_21_diverges : ∀ x, evalPRF holdout_21 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 22
+-- Translating holdout_22
 -- M(C(R(Z1,R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,2)))),S,S))
-def holdout_22 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.zero 1) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_22_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_22_p2 : PRF 4 := PRF.comp HOLDOUT_22_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_22_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_22_p2
+def HOLDOUT_22_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_22_p3
+def HOLDOUT_22_p5 : PRF 1 := PRF.comp HOLDOUT_22_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_22 : PRF 1 := HOLDOUT_22_p5
 
 theorem holdout_22_diverges : ∀ x, evalPRF holdout_22 (fun _ => x) > 0 := by
   sorry
@@ -1449,26 +1509,38 @@ theorem holdout_30_diverges : ∀ x, evalPRF holdout_30 (fun _ => x) > 0 := by
     rw [H30_c_cf_succ _ _ (by omega)]
     omega
 
--- Translating holdout 31
+-- Translating holdout_31
 -- M(C(R(P(1,1),C(R(S,P(3,1)),R(P(2,2),P(4,3)),P(3,1))),S,P(1,1)))
-def holdout_31 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨2, by decide⟩)), (PRF.proj 3 ⟨0, by decide⟩)])) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_31_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_31_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) (PRF.proj 4 ⟨2, by decide⟩)
+def HOLDOUT_31_p3 : PRF 3 := PRF.comp HOLDOUT_31_p1 prf_list![HOLDOUT_31_p2, (PRF.proj 3 ⟨0, by decide⟩)]
+def HOLDOUT_31_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_31_p3
+def HOLDOUT_31_p5 : PRF 1 := PRF.comp HOLDOUT_31_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_31 : PRF 1 := HOLDOUT_31_p5
 
 theorem holdout_31_diverges : ∀ x, evalPRF holdout_31 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 32
+-- Translating holdout_32
 -- M(C(R(P(1,1),C(R(S,R(P(2,1),P(4,1))),P(3,2),Z3)),S,Z1))
-def holdout_32 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.zero 3])) prf_list![PRF.succ, PRF.zero 1]
+def HOLDOUT_32_p1 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) (PRF.proj 4 ⟨0, by decide⟩)
+def HOLDOUT_32_p2 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_32_p1
+def HOLDOUT_32_p3 : PRF 3 := PRF.comp HOLDOUT_32_p2 prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.zero 3)]
+def HOLDOUT_32_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_32_p3
+def HOLDOUT_32_p5 : PRF 1 := PRF.comp HOLDOUT_32_p4 prf_list![PRF.succ, (PRF.zero 1)]
+def holdout_32 : PRF 1 := HOLDOUT_32_p5
 
 theorem holdout_32_diverges : ∀ x, evalPRF holdout_32 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 33
+-- Translating holdout_33
 -- M(C(R(P(1,1),C(R(S,R(P(2,1),P(4,1))),P(3,2),Z3)),S,P(1,1)))
-def holdout_33 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.zero 3])) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_33_p1 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) (PRF.proj 4 ⟨0, by decide⟩)
+def HOLDOUT_33_p2 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_33_p1
+def HOLDOUT_33_p3 : PRF 3 := PRF.comp HOLDOUT_33_p2 prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.zero 3)]
+def HOLDOUT_33_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_33_p3
+def HOLDOUT_33_p5 : PRF 1 := PRF.comp HOLDOUT_33_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_33 : PRF 1 := HOLDOUT_33_p5
 
 theorem holdout_33_diverges : ∀ x, evalPRF holdout_33 (fun _ => x) > 0 := by
   sorry
@@ -1558,138 +1630,206 @@ theorem holdout_34_diverges : ∀ x, evalPRF holdout_34 (fun _ => x) > 0 := by
   simp only [if_pos h]
   omega
 
--- Translating holdout 35
+-- Translating holdout_35
 -- M(C(R(P(1,1),C(R(R(Z0,P(2,1)),P(3,1)),P(3,2),P(3,1))),P(1,1),S))
-def holdout_35 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.primRec (PRF.zero 0) ((PRF.proj 2 ⟨0, by decide⟩))) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_35_p1 : PRF 1 := PRF.primRec (PRF.zero 0) (PRF.proj 2 ⟨0, by decide⟩)
+def HOLDOUT_35_p2 : PRF 2 := PRF.primRec HOLDOUT_35_p1 (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_35_p3 : PRF 3 := PRF.comp HOLDOUT_35_p2 prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)]
+def HOLDOUT_35_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_35_p3
+def HOLDOUT_35_p5 : PRF 1 := PRF.comp HOLDOUT_35_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_35 : PRF 1 := HOLDOUT_35_p5
 
 theorem holdout_35_diverges : ∀ x, evalPRF holdout_35 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 36
+-- Translating holdout_36
 -- M(C(R(P(1,1),R(P(2,1),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),P(1,1),S))
-def holdout_36 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_36_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_36_p2 : PRF 4 := PRF.comp HOLDOUT_36_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_36_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_36_p2
+def HOLDOUT_36_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_36_p3
+def HOLDOUT_36_p5 : PRF 1 := PRF.comp HOLDOUT_36_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_36 : PRF 1 := HOLDOUT_36_p5
 
 theorem holdout_36_diverges : ∀ x, evalPRF holdout_36 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 37
+-- Translating holdout_37
 -- M(C(R(P(1,1),R(P(2,1),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_37 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_37_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_37_p2 : PRF 4 := PRF.comp HOLDOUT_37_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_37_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_37_p2
+def HOLDOUT_37_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_37_p3
+def HOLDOUT_37_p5 : PRF 1 := PRF.comp HOLDOUT_37_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_37 : PRF 1 := HOLDOUT_37_p5
 
 theorem holdout_37_diverges : ∀ x, evalPRF holdout_37 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 38
+-- Translating holdout_38
 -- M(C(R(P(1,1),R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,1)))),P(1,1),S))
-def holdout_38 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_38_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_38_p2 : PRF 4 := PRF.comp HOLDOUT_38_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_38_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_38_p2
+def HOLDOUT_38_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_38_p3
+def HOLDOUT_38_p5 : PRF 1 := PRF.comp HOLDOUT_38_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_38 : PRF 1 := HOLDOUT_38_p5
 
 theorem holdout_38_diverges : ∀ x, evalPRF holdout_38 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 39
+-- Translating holdout_39
 -- M(C(R(P(1,1),R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_39 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_39_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_39_p2 : PRF 4 := PRF.comp HOLDOUT_39_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_39_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_39_p2
+def HOLDOUT_39_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_39_p3
+def HOLDOUT_39_p5 : PRF 1 := PRF.comp HOLDOUT_39_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_39 : PRF 1 := HOLDOUT_39_p5
 
 theorem holdout_39_diverges : ∀ x, evalPRF holdout_39 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 40
+-- Translating holdout_40
 -- M(C(R(P(1,1),R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,2)))),P(1,1),S))
-def holdout_40 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_40_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_40_p2 : PRF 4 := PRF.comp HOLDOUT_40_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_40_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_40_p2
+def HOLDOUT_40_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_40_p3
+def HOLDOUT_40_p5 : PRF 1 := PRF.comp HOLDOUT_40_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_40 : PRF 1 := HOLDOUT_40_p5
 
 theorem holdout_40_diverges : ∀ x, evalPRF holdout_40 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 41
+-- Translating holdout_41
 -- M(C(R(P(1,1),R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,2)))),S,S))
-def holdout_41 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_41_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_41_p2 : PRF 4 := PRF.comp HOLDOUT_41_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_41_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_41_p2
+def HOLDOUT_41_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_41_p3
+def HOLDOUT_41_p5 : PRF 1 := PRF.comp HOLDOUT_41_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_41 : PRF 1 := HOLDOUT_41_p5
 
 theorem holdout_41_diverges : ∀ x, evalPRF holdout_41 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 42
+-- Translating holdout_42
 -- M(C(R(P(1,1),R(P(2,2),C(R(P(1,1),P(3,1)),P(4,2),P(4,1)))),P(1,1),S))
-def holdout_42 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_42_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_42_p2 : PRF 4 := PRF.comp HOLDOUT_42_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_42_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_42_p2
+def HOLDOUT_42_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_42_p3
+def HOLDOUT_42_p5 : PRF 1 := PRF.comp HOLDOUT_42_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_42 : PRF 1 := HOLDOUT_42_p5
 
 theorem holdout_42_diverges : ∀ x, evalPRF holdout_42 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 43
+-- Translating holdout_43
 -- M(C(R(P(1,1),R(P(2,2),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),P(1,1),S))
-def holdout_43 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_43_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_43_p2 : PRF 4 := PRF.comp HOLDOUT_43_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_43_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_43_p2
+def HOLDOUT_43_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_43_p3
+def HOLDOUT_43_p5 : PRF 1 := PRF.comp HOLDOUT_43_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_43 : PRF 1 := HOLDOUT_43_p5
 
 theorem holdout_43_diverges : ∀ x, evalPRF holdout_43 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 44
+-- Translating holdout_44
 -- M(C(R(P(1,1),R(P(2,2),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_44 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_44_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_44_p2 : PRF 4 := PRF.comp HOLDOUT_44_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_44_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_44_p2
+def HOLDOUT_44_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_44_p3
+def HOLDOUT_44_p5 : PRF 1 := PRF.comp HOLDOUT_44_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_44 : PRF 1 := HOLDOUT_44_p5
 
 theorem holdout_44_diverges : ∀ x, evalPRF holdout_44 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 45
+-- Translating holdout_45
 -- M(C(R(P(1,1),R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,1)))),P(1,1),S))
-def holdout_45 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_45_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_45_p2 : PRF 4 := PRF.comp HOLDOUT_45_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_45_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_45_p2
+def HOLDOUT_45_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_45_p3
+def HOLDOUT_45_p5 : PRF 1 := PRF.comp HOLDOUT_45_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_45 : PRF 1 := HOLDOUT_45_p5
 
 theorem holdout_45_diverges : ∀ x, evalPRF holdout_45 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 46
+-- Translating holdout_46
 -- M(C(R(P(1,1),R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,3)))),P(1,1),S))
-def holdout_46 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_46_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_46_p2 : PRF 4 := PRF.comp HOLDOUT_46_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]
+def HOLDOUT_46_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_46_p2
+def HOLDOUT_46_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_46_p3
+def HOLDOUT_46_p5 : PRF 1 := PRF.comp HOLDOUT_46_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_46 : PRF 1 := HOLDOUT_46_p5
 
 theorem holdout_46_diverges : ∀ x, evalPRF holdout_46 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 47
+-- Translating holdout_47
 -- M(C(R(P(1,1),R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,3)))),S,S))
-def holdout_47 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_47_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_47_p2 : PRF 4 := PRF.comp HOLDOUT_47_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]
+def HOLDOUT_47_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_47_p2
+def HOLDOUT_47_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_47_p3
+def HOLDOUT_47_p5 : PRF 1 := PRF.comp HOLDOUT_47_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_47 : PRF 1 := HOLDOUT_47_p5
 
 theorem holdout_47_diverges : ∀ x, evalPRF holdout_47 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 48
+-- Translating holdout_48
 -- M(C(R(P(1,1),R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,1)))),P(1,1),S))
-def holdout_48 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_48_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_48_p2 : PRF 4 := PRF.comp HOLDOUT_48_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_48_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_48_p2
+def HOLDOUT_48_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_48_p3
+def HOLDOUT_48_p5 : PRF 1 := PRF.comp HOLDOUT_48_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_48 : PRF 1 := HOLDOUT_48_p5
 
 theorem holdout_48_diverges : ∀ x, evalPRF holdout_48 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 49
+-- Translating holdout_49
 -- M(C(R(P(1,1),R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_49 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_49_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_49_p2 : PRF 4 := PRF.comp HOLDOUT_49_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_49_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_49_p2
+def HOLDOUT_49_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_49_p3
+def HOLDOUT_49_p5 : PRF 1 := PRF.comp HOLDOUT_49_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_49 : PRF 1 := HOLDOUT_49_p5
 
 theorem holdout_49_diverges : ∀ x, evalPRF holdout_49 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 50
+-- Translating holdout_50
 -- M(C(R(P(1,1),R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,2)))),P(1,1),S))
-def holdout_50 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_50_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_50_p2 : PRF 4 := PRF.comp HOLDOUT_50_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_50_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_50_p2
+def HOLDOUT_50_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_50_p3
+def HOLDOUT_50_p5 : PRF 1 := PRF.comp HOLDOUT_50_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_50 : PRF 1 := HOLDOUT_50_p5
 
 theorem holdout_50_diverges : ∀ x, evalPRF holdout_50 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 51
+-- Translating holdout_51
 -- M(C(R(P(1,1),R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,2)))),S,S))
-def holdout_51 : PRF 1 :=
-  PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_51_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_51_p2 : PRF 4 := PRF.comp HOLDOUT_51_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_51_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_51_p2
+def HOLDOUT_51_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT_51_p3
+def HOLDOUT_51_p5 : PRF 1 := PRF.comp HOLDOUT_51_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_51 : PRF 1 := HOLDOUT_51_p5
 
 theorem holdout_51_diverges : ∀ x, evalPRF holdout_51 (fun _ => x) > 0 := by
   sorry
@@ -2844,18 +2984,26 @@ theorem holdout_65_diverges : ∀ x, evalPRF holdout_65 (fun _ => x) > 0 := by
     rw [H65_c_cf_succ _ _ (by omega)]
     omega
 
--- Translating holdout 66
+-- Translating holdout_66
 -- M(C(R(S,C(R(S,P(3,1)),R(P(2,2),P(4,3)),P(3,1))),S,P(1,1)))
-def holdout_66 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) ((PRF.proj 4 ⟨2, by decide⟩)), (PRF.proj 3 ⟨0, by decide⟩)])) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_66_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_66_p2 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) (PRF.proj 4 ⟨2, by decide⟩)
+def HOLDOUT_66_p3 : PRF 3 := PRF.comp HOLDOUT_66_p1 prf_list![HOLDOUT_66_p2, (PRF.proj 3 ⟨0, by decide⟩)]
+def HOLDOUT_66_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_66_p3
+def HOLDOUT_66_p5 : PRF 1 := PRF.comp HOLDOUT_66_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_66 : PRF 1 := HOLDOUT_66_p5
 
 theorem holdout_66_diverges : ∀ x, evalPRF holdout_66 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 67
+-- Translating holdout_67
 -- M(C(R(S,C(R(S,R(P(2,1),P(4,1))),P(3,2),Z3)),P(1,1),Z1))
-def holdout_67 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.zero 3])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.zero 1]
+def HOLDOUT_67_p1 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) (PRF.proj 4 ⟨0, by decide⟩)
+def HOLDOUT_67_p2 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_67_p1
+def HOLDOUT_67_p3 : PRF 3 := PRF.comp HOLDOUT_67_p2 prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.zero 3)]
+def HOLDOUT_67_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_67_p3
+def HOLDOUT_67_p5 : PRF 1 := PRF.comp HOLDOUT_67_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.zero 1)]
+def holdout_67 : PRF 1 := HOLDOUT_67_p5
 
 theorem holdout_67_diverges : ∀ x, evalPRF holdout_67 (fun _ => x) > 0 := by
   sorry
@@ -2945,26 +3093,38 @@ theorem holdout_68_diverges : ∀ x, evalPRF holdout_68 (fun _ => x) > 0 := by
   simp only [if_pos h]
   omega
 
--- Translating holdout 69
+-- Translating holdout_69
 -- M(C(R(S,C(R(S,R(P(2,1),P(4,1))),P(3,2),Z3)),S,P(1,1)))
-def holdout_69 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) ((PRF.proj 4 ⟨0, by decide⟩)))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), PRF.zero 3])) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_69_p1 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) (PRF.proj 4 ⟨0, by decide⟩)
+def HOLDOUT_69_p2 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_69_p1
+def HOLDOUT_69_p3 : PRF 3 := PRF.comp HOLDOUT_69_p2 prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.zero 3)]
+def HOLDOUT_69_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_69_p3
+def HOLDOUT_69_p5 : PRF 1 := PRF.comp HOLDOUT_69_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_69 : PRF 1 := HOLDOUT_69_p5
 
 theorem holdout_69_diverges : ∀ x, evalPRF holdout_69 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 70
+-- Translating holdout_70
 -- M(C(R(S,C(R(R(Z0,P(2,1)),P(3,1)),P(3,2),P(3,1))),P(1,1),P(1,1)))
-def holdout_70 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.primRec (PRF.zero 0) ((PRF.proj 2 ⟨0, by decide⟩))) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_70_p1 : PRF 1 := PRF.primRec (PRF.zero 0) (PRF.proj 2 ⟨0, by decide⟩)
+def HOLDOUT_70_p2 : PRF 2 := PRF.primRec HOLDOUT_70_p1 (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_70_p3 : PRF 3 := PRF.comp HOLDOUT_70_p2 prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)]
+def HOLDOUT_70_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_70_p3
+def HOLDOUT_70_p5 : PRF 1 := PRF.comp HOLDOUT_70_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_70 : PRF 1 := HOLDOUT_70_p5
 
 theorem holdout_70_diverges : ∀ x, evalPRF holdout_70 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 71
+-- Translating holdout_71
 -- M(C(R(S,C(R(R(Z0,P(2,1)),P(3,1)),P(3,2),P(3,1))),P(1,1),S))
-def holdout_71 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.comp (PRF.primRec (PRF.primRec (PRF.zero 0) ((PRF.proj 2 ⟨0, by decide⟩))) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)])) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_71_p1 : PRF 1 := PRF.primRec (PRF.zero 0) (PRF.proj 2 ⟨0, by decide⟩)
+def HOLDOUT_71_p2 : PRF 2 := PRF.primRec HOLDOUT_71_p1 (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_71_p3 : PRF 3 := PRF.comp HOLDOUT_71_p2 prf_list![(PRF.proj 3 ⟨1, by decide⟩), (PRF.proj 3 ⟨0, by decide⟩)]
+def HOLDOUT_71_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_71_p3
+def HOLDOUT_71_p5 : PRF 1 := PRF.comp HOLDOUT_71_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_71 : PRF 1 := HOLDOUT_71_p5
 
 theorem holdout_71_diverges : ∀ x, evalPRF holdout_71 (fun _ => x) > 0 := by
   sorry
@@ -3049,226 +3209,338 @@ theorem holdout_72_diverges : ∀ x, evalPRF holdout_72 (fun _ => x) > 0 := by
   rw [H72_c_cf (x + 1) (x + 1) (by omega)]
   omega
 
--- Translating holdout 73
+-- Translating holdout_73
 -- M(C(R(S,R(P(2,1),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),P(1,1),P(1,1)))
-def holdout_73 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_73_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_73_p2 : PRF 4 := PRF.comp HOLDOUT_73_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_73_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_73_p2
+def HOLDOUT_73_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_73_p3
+def HOLDOUT_73_p5 : PRF 1 := PRF.comp HOLDOUT_73_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_73 : PRF 1 := HOLDOUT_73_p5
 
 theorem holdout_73_diverges : ∀ x, evalPRF holdout_73 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 74
+-- Translating holdout_74
 -- M(C(R(S,R(P(2,1),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),P(1,1),S))
-def holdout_74 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_74_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_74_p2 : PRF 4 := PRF.comp HOLDOUT_74_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_74_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_74_p2
+def HOLDOUT_74_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_74_p3
+def HOLDOUT_74_p5 : PRF 1 := PRF.comp HOLDOUT_74_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_74 : PRF 1 := HOLDOUT_74_p5
 
 theorem holdout_74_diverges : ∀ x, evalPRF holdout_74 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 75
+-- Translating holdout_75
 -- M(C(R(S,R(P(2,1),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),S,P(1,1)))
-def holdout_75 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_75_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_75_p2 : PRF 4 := PRF.comp HOLDOUT_75_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_75_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_75_p2
+def HOLDOUT_75_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_75_p3
+def HOLDOUT_75_p5 : PRF 1 := PRF.comp HOLDOUT_75_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_75 : PRF 1 := HOLDOUT_75_p5
 
 theorem holdout_75_diverges : ∀ x, evalPRF holdout_75 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 76
+-- Translating holdout_76
 -- M(C(R(S,R(P(2,1),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_76 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_76_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_76_p2 : PRF 4 := PRF.comp HOLDOUT_76_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_76_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_76_p2
+def HOLDOUT_76_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_76_p3
+def HOLDOUT_76_p5 : PRF 1 := PRF.comp HOLDOUT_76_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_76 : PRF 1 := HOLDOUT_76_p5
 
 theorem holdout_76_diverges : ∀ x, evalPRF holdout_76 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 77
+-- Translating holdout_77
 -- M(C(R(S,R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,1)))),P(1,1),P(1,1)))
-def holdout_77 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_77_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_77_p2 : PRF 4 := PRF.comp HOLDOUT_77_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_77_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_77_p2
+def HOLDOUT_77_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_77_p3
+def HOLDOUT_77_p5 : PRF 1 := PRF.comp HOLDOUT_77_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_77 : PRF 1 := HOLDOUT_77_p5
 
 theorem holdout_77_diverges : ∀ x, evalPRF holdout_77 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 78
+-- Translating holdout_78
 -- M(C(R(S,R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,1)))),P(1,1),S))
-def holdout_78 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_78_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_78_p2 : PRF 4 := PRF.comp HOLDOUT_78_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_78_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_78_p2
+def HOLDOUT_78_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_78_p3
+def HOLDOUT_78_p5 : PRF 1 := PRF.comp HOLDOUT_78_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_78 : PRF 1 := HOLDOUT_78_p5
 
 theorem holdout_78_diverges : ∀ x, evalPRF holdout_78 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 79
+-- Translating holdout_79
 -- M(C(R(S,R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,1)))),S,P(1,1)))
-def holdout_79 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_79_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_79_p2 : PRF 4 := PRF.comp HOLDOUT_79_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_79_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_79_p2
+def HOLDOUT_79_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_79_p3
+def HOLDOUT_79_p5 : PRF 1 := PRF.comp HOLDOUT_79_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_79 : PRF 1 := HOLDOUT_79_p5
 
 theorem holdout_79_diverges : ∀ x, evalPRF holdout_79 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 80
+-- Translating holdout_80
 -- M(C(R(S,R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_80 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_80_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_80_p2 : PRF 4 := PRF.comp HOLDOUT_80_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_80_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_80_p2
+def HOLDOUT_80_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_80_p3
+def HOLDOUT_80_p5 : PRF 1 := PRF.comp HOLDOUT_80_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_80 : PRF 1 := HOLDOUT_80_p5
 
 theorem holdout_80_diverges : ∀ x, evalPRF holdout_80 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 81
+-- Translating holdout_81
 -- M(C(R(S,R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,2)))),P(1,1),P(1,1)))
-def holdout_81 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_81_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_81_p2 : PRF 4 := PRF.comp HOLDOUT_81_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_81_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_81_p2
+def HOLDOUT_81_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_81_p3
+def HOLDOUT_81_p5 : PRF 1 := PRF.comp HOLDOUT_81_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_81 : PRF 1 := HOLDOUT_81_p5
 
 theorem holdout_81_diverges : ∀ x, evalPRF holdout_81 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 82
+-- Translating holdout_82
 -- M(C(R(S,R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,2)))),P(1,1),S))
-def holdout_82 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_82_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_82_p2 : PRF 4 := PRF.comp HOLDOUT_82_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_82_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_82_p2
+def HOLDOUT_82_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_82_p3
+def HOLDOUT_82_p5 : PRF 1 := PRF.comp HOLDOUT_82_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_82 : PRF 1 := HOLDOUT_82_p5
 
 theorem holdout_82_diverges : ∀ x, evalPRF holdout_82 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 83
+-- Translating holdout_83
 -- M(C(R(S,R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,2)))),S,P(1,1)))
-def holdout_83 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_83_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_83_p2 : PRF 4 := PRF.comp HOLDOUT_83_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_83_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_83_p2
+def HOLDOUT_83_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_83_p3
+def HOLDOUT_83_p5 : PRF 1 := PRF.comp HOLDOUT_83_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_83 : PRF 1 := HOLDOUT_83_p5
 
 theorem holdout_83_diverges : ∀ x, evalPRF holdout_83 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 84
+-- Translating holdout_84
 -- M(C(R(S,R(P(2,1),C(R(S,P(3,1)),P(4,3),P(4,2)))),S,S))
-def holdout_84 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨0, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_84_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_84_p2 : PRF 4 := PRF.comp HOLDOUT_84_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_84_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_84_p2
+def HOLDOUT_84_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_84_p3
+def HOLDOUT_84_p5 : PRF 1 := PRF.comp HOLDOUT_84_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_84 : PRF 1 := HOLDOUT_84_p5
 
 theorem holdout_84_diverges : ∀ x, evalPRF holdout_84 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 85
+-- Translating holdout_85
 -- M(C(R(S,R(P(2,2),C(R(P(1,1),P(3,1)),P(4,2),P(4,1)))),P(1,1),P(1,1)))
-def holdout_85 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_85_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_85_p2 : PRF 4 := PRF.comp HOLDOUT_85_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_85_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_85_p2
+def HOLDOUT_85_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_85_p3
+def HOLDOUT_85_p5 : PRF 1 := PRF.comp HOLDOUT_85_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_85 : PRF 1 := HOLDOUT_85_p5
 
 theorem holdout_85_diverges : ∀ x, evalPRF holdout_85 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 86
+-- Translating holdout_86
 -- M(C(R(S,R(P(2,2),C(R(P(1,1),P(3,1)),P(4,2),P(4,1)))),P(1,1),S))
-def holdout_86 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_86_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_86_p2 : PRF 4 := PRF.comp HOLDOUT_86_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_86_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_86_p2
+def HOLDOUT_86_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_86_p3
+def HOLDOUT_86_p5 : PRF 1 := PRF.comp HOLDOUT_86_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_86 : PRF 1 := HOLDOUT_86_p5
 
 theorem holdout_86_diverges : ∀ x, evalPRF holdout_86 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 87
+-- Translating holdout_87
 -- M(C(R(S,R(P(2,2),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),P(1,1),P(1,1)))
-def holdout_87 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_87_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_87_p2 : PRF 4 := PRF.comp HOLDOUT_87_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_87_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_87_p2
+def HOLDOUT_87_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_87_p3
+def HOLDOUT_87_p5 : PRF 1 := PRF.comp HOLDOUT_87_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_87 : PRF 1 := HOLDOUT_87_p5
 
 theorem holdout_87_diverges : ∀ x, evalPRF holdout_87 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 88
+-- Translating holdout_88
 -- M(C(R(S,R(P(2,2),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),P(1,1),S))
-def holdout_88 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_88_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_88_p2 : PRF 4 := PRF.comp HOLDOUT_88_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_88_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_88_p2
+def HOLDOUT_88_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_88_p3
+def HOLDOUT_88_p5 : PRF 1 := PRF.comp HOLDOUT_88_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_88 : PRF 1 := HOLDOUT_88_p5
 
 theorem holdout_88_diverges : ∀ x, evalPRF holdout_88 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 89
+-- Translating holdout_89
 -- M(C(R(S,R(P(2,2),C(R(P(1,1),P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_89 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec ((PRF.proj 1 ⟨0, by decide⟩)) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_89_p1 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_89_p2 : PRF 4 := PRF.comp HOLDOUT_89_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_89_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_89_p2
+def HOLDOUT_89_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_89_p3
+def HOLDOUT_89_p5 : PRF 1 := PRF.comp HOLDOUT_89_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_89 : PRF 1 := HOLDOUT_89_p5
 
 theorem holdout_89_diverges : ∀ x, evalPRF holdout_89 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 90
+-- Translating holdout_90
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,1)))),P(1,1),P(1,1)))
-def holdout_90 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_90_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_90_p2 : PRF 4 := PRF.comp HOLDOUT_90_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_90_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_90_p2
+def HOLDOUT_90_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_90_p3
+def HOLDOUT_90_p5 : PRF 1 := PRF.comp HOLDOUT_90_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_90 : PRF 1 := HOLDOUT_90_p5
 
 theorem holdout_90_diverges : ∀ x, evalPRF holdout_90 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 91
+-- Translating holdout_91
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,1)))),P(1,1),S))
-def holdout_91 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_91_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_91_p2 : PRF 4 := PRF.comp HOLDOUT_91_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_91_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_91_p2
+def HOLDOUT_91_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_91_p3
+def HOLDOUT_91_p5 : PRF 1 := PRF.comp HOLDOUT_91_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_91 : PRF 1 := HOLDOUT_91_p5
 
 theorem holdout_91_diverges : ∀ x, evalPRF holdout_91 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 92
+-- Translating holdout_92
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,3)))),P(1,1),P(1,1)))
-def holdout_92 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_92_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_92_p2 : PRF 4 := PRF.comp HOLDOUT_92_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]
+def HOLDOUT_92_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_92_p2
+def HOLDOUT_92_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_92_p3
+def HOLDOUT_92_p5 : PRF 1 := PRF.comp HOLDOUT_92_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_92 : PRF 1 := HOLDOUT_92_p5
 
 theorem holdout_92_diverges : ∀ x, evalPRF holdout_92 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 93
+-- Translating holdout_93
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,3)))),P(1,1),S))
-def holdout_93 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_93_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_93_p2 : PRF 4 := PRF.comp HOLDOUT_93_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]
+def HOLDOUT_93_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_93_p2
+def HOLDOUT_93_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_93_p3
+def HOLDOUT_93_p5 : PRF 1 := PRF.comp HOLDOUT_93_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_93 : PRF 1 := HOLDOUT_93_p5
 
 theorem holdout_93_diverges : ∀ x, evalPRF holdout_93 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 94
+-- Translating holdout_94
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,2),P(4,3)))),S,S))
-def holdout_94 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_94_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_94_p2 : PRF 4 := PRF.comp HOLDOUT_94_p1 prf_list![(PRF.proj 4 ⟨1, by decide⟩), (PRF.proj 4 ⟨2, by decide⟩)]
+def HOLDOUT_94_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_94_p2
+def HOLDOUT_94_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_94_p3
+def HOLDOUT_94_p5 : PRF 1 := PRF.comp HOLDOUT_94_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_94 : PRF 1 := HOLDOUT_94_p5
 
 theorem holdout_94_diverges : ∀ x, evalPRF holdout_94 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 95
+-- Translating holdout_95
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,1)))),P(1,1),P(1,1)))
-def holdout_95 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_95_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_95_p2 : PRF 4 := PRF.comp HOLDOUT_95_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_95_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_95_p2
+def HOLDOUT_95_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_95_p3
+def HOLDOUT_95_p5 : PRF 1 := PRF.comp HOLDOUT_95_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_95 : PRF 1 := HOLDOUT_95_p5
 
 theorem holdout_95_diverges : ∀ x, evalPRF holdout_95 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 96
+-- Translating holdout_96
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,1)))),P(1,1),S))
-def holdout_96 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_96_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_96_p2 : PRF 4 := PRF.comp HOLDOUT_96_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_96_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_96_p2
+def HOLDOUT_96_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_96_p3
+def HOLDOUT_96_p5 : PRF 1 := PRF.comp HOLDOUT_96_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_96 : PRF 1 := HOLDOUT_96_p5
 
 theorem holdout_96_diverges : ∀ x, evalPRF holdout_96 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 97
+-- Translating holdout_97
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,1)))),S,S))
-def holdout_97 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_97_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_97_p2 : PRF 4 := PRF.comp HOLDOUT_97_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨0, by decide⟩)]
+def HOLDOUT_97_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_97_p2
+def HOLDOUT_97_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_97_p3
+def HOLDOUT_97_p5 : PRF 1 := PRF.comp HOLDOUT_97_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_97 : PRF 1 := HOLDOUT_97_p5
 
 theorem holdout_97_diverges : ∀ x, evalPRF holdout_97 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 98
+-- Translating holdout_98
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,2)))),P(1,1),P(1,1)))
-def holdout_98 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def HOLDOUT_98_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_98_p2 : PRF 4 := PRF.comp HOLDOUT_98_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_98_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_98_p2
+def HOLDOUT_98_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_98_p3
+def HOLDOUT_98_p5 : PRF 1 := PRF.comp HOLDOUT_98_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), (PRF.proj 1 ⟨0, by decide⟩)]
+def holdout_98 : PRF 1 := HOLDOUT_98_p5
 
 theorem holdout_98_diverges : ∀ x, evalPRF holdout_98 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 99
+-- Translating holdout_99
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,2)))),P(1,1),S))
-def holdout_99 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def HOLDOUT_99_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_99_p2 : PRF 4 := PRF.comp HOLDOUT_99_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_99_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_99_p2
+def HOLDOUT_99_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_99_p3
+def HOLDOUT_99_p5 : PRF 1 := PRF.comp HOLDOUT_99_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ]
+def holdout_99 : PRF 1 := HOLDOUT_99_p5
 
 theorem holdout_99_diverges : ∀ x, evalPRF holdout_99 (fun _ => x) > 0 := by
   sorry
 
--- Translating holdout 100
+-- Translating holdout_100
 -- M(C(R(S,R(P(2,2),C(R(S,P(3,1)),P(4,3),P(4,2)))),S,S))
-def holdout_100 : PRF 1 :=
-  PRF.comp (PRF.primRec (PRF.succ) (PRF.primRec ((PRF.proj 2 ⟨1, by decide⟩)) (PRF.comp (PRF.primRec (PRF.succ) ((PRF.proj 3 ⟨0, by decide⟩))) prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]))) prf_list![PRF.succ, PRF.succ]
+def HOLDOUT_100_p1 : PRF 2 := PRF.primRec PRF.succ (PRF.proj 3 ⟨0, by decide⟩)
+def HOLDOUT_100_p2 : PRF 4 := PRF.comp HOLDOUT_100_p1 prf_list![(PRF.proj 4 ⟨2, by decide⟩), (PRF.proj 4 ⟨1, by decide⟩)]
+def HOLDOUT_100_p3 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨1, by decide⟩) HOLDOUT_100_p2
+def HOLDOUT_100_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_100_p3
+def HOLDOUT_100_p5 : PRF 1 := PRF.comp HOLDOUT_100_p4 prf_list![PRF.succ, PRF.succ]
+def holdout_100 : PRF 1 := HOLDOUT_100_p5
 
 theorem holdout_100_diverges : ∀ x, evalPRF holdout_100 (fun _ => x) > 0 := by
   sorry

@@ -1487,6 +1487,129 @@ pub fn closed_form_of_rec_internal(
         }
     }
 
+    // Case DFA: h is Piecewise branching on acc (arg 2 in h, which is branch_index 1)
+    if let ClosedForm::Piecewise(pw_h) = sem_h {
+        if pw_h.branch_index == 1 {
+            // Check if branches are independent of acc
+            if closed_form_ignores_arg(&pw_h.pos_branch, 2) {
+                if let Some(h_pos) = drop_arg(&pw_h.pos_branch, 2) {
+                    let h_zero = pw_h.zero_branch.clone();
+
+                    #[derive(Clone, Copy, PartialEq, Eq)]
+                    enum Cat {
+                        Z,
+                        P,
+                        Unknown,
+                    }
+
+                    let get_cat = |cf: &ClosedForm| -> Cat {
+                        if cf.is_always_zero() {
+                            Cat::Z
+                        } else if cf.is_always_pos() {
+                            Cat::P
+                        } else {
+                            Cat::Unknown
+                        }
+                    };
+
+                    let cat_g = get_cat(sem_g);
+                    let cat_z = get_cat(&*h_zero);
+                    let cat_p = get_cat(&h_pos);
+
+                    if cat_g != Cat::Unknown && cat_z != Cat::Unknown && cat_p != Cat::Unknown {
+                        let mut states = Vec::new();
+                        states.push(cat_g);
+
+                        let mut cycle_found = None;
+                        for step in 1..=20 {
+                            let prev = states[step - 1];
+                            let next = if prev == Cat::Z { cat_z } else { cat_p };
+
+                            for j in 0..step {
+                                if states[j] == next {
+                                    cycle_found = Some((j, step));
+                                    break;
+                                }
+                            }
+                            if cycle_found.is_some() {
+                                states.push(next);
+                                break;
+                            }
+                            states.push(next);
+                        }
+
+                        if let Some((l, m_end)) = cycle_found {
+                            let p = m_end - l;
+                            let l_eff = std::cmp::max(1, l);
+                            let k_rest = k_outer - 1;
+
+                            let mut per_branches = Vec::with_capacity(p);
+                            for i in 0..p {
+                                let st = states[l_eff + i - 1];
+                                let branch_cf = if st == Cat::Z { &*h_zero } else { &h_pos };
+
+                                let mut shift_inners = Vec::with_capacity(k_outer);
+                                let mut af = AffineFn::proj(k_outer, 1);
+                                af.coeffs[0] = (l_eff - 1) as u64;
+                                shift_inners.push(ClosedForm::Affine(af));
+
+                                for m in 1..=k_rest {
+                                    shift_inners.push(ClosedForm::Affine(AffineFn::proj(
+                                        k_outer,
+                                        m + 1,
+                                    )));
+                                }
+
+                                if let Some(shifted_branch) =
+                                    compose(branch_cf, &shift_inners, k_outer)
+                                {
+                                    per_branches.push(Box::new(shifted_branch));
+                                }
+                            }
+
+                            if per_branches.len() == p {
+                                let mut res = ClosedForm::Periodic(PeriodicFn {
+                                    arity: k_outer,
+                                    branch_index: 0,
+                                    branches: per_branches,
+                                });
+
+                                for n in (0..l_eff).rev() {
+                                    let step_res = if n == 0 {
+                                        sem_g.clone()
+                                    } else {
+                                        let st = states[n - 1];
+                                        let branch_cf =
+                                            if st == Cat::Z { &*h_zero } else { &h_pos };
+
+                                        let mut exact_inners = Vec::with_capacity(k_outer);
+                                        let mut af = AffineFn::proj(k_rest, 1);
+                                        af.coeffs[0] = (n - 1) as u64;
+                                        if af.coeffs.len() > 1 {
+                                            af.coeffs[1] = 0;
+                                        }
+                                        exact_inners.push(ClosedForm::Affine(af));
+
+                                        for m in 1..=k_rest {
+                                            exact_inners.push(ClosedForm::Affine(AffineFn::proj(
+                                                k_rest,
+                                                m,
+                                            )));
+                                        }
+                                        compose(branch_cf, &exact_inners, k_rest).unwrap()
+                                    };
+                                    res = make_piecewise(k_outer, 0, step_res, res);
+                                }
+
+                                return Some(res);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Case C: h is Piecewise on counter (arg 1)  →  peel one Piecewise layer off h
     if let ClosedForm::Piecewise(pw_h) = sem_h {
         if pw_h.branch_index == 0 {
@@ -4003,6 +4126,12 @@ mod tests {
         // This GRF computes saturating subtraction (monus): d(x, y) = y + 1 ∸ x.
         // It relies on Case C parsing of recursive steps into NegMod(af1, n, acc).
         check_vs_sim("R(S, R(P(2,2), R(R(P(2,1), P(4,1)), P(5,2))))", 10);
+    }
+    #[test]
+    fn test_rec_piecewise_accumulator_dfa() {
+        // b(n, y) = R(S, C(a, P(3,2), P(3,1))) where a(acc, n) = (acc == 0) ? n+1 : 0
+        // Tests the Piecewise accumulator DFA state tracking algorithm.
+        check_vs_sim("R(S, C(R(S, Z3), P(3,2), P(3,1)))", 10);
     }
     #[test]
     fn test_exponential_fn() {

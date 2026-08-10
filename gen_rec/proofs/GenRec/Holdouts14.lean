@@ -11,7 +11,22 @@ def mk_args3 (a b c : Nat) : Fin 3 → Nat := fun i => if i.val = 0 then a else 
 def mk_args4 (a b c d : Nat) : Fin 4 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else if i.val = 2 then c else d
 def mk_args5 (a b c d e : Nat) : Fin 5 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else if i.val = 2 then c else if i.val = 3 then d else e
 
+def h66_a (x y : Nat) : Nat :=
+  match x with
+  | 0 => y + 1
+  | x' + 1 => x'
 
+def h66_b (x y z : Nat) : Nat :=
+  match x with
+  | 0 => z
+  | x' + 1 => y
+
+def h66_c (x y z : Nat) : Nat :=
+  match x, y, z with
+  | 0, _, 0 => 1
+  | 0, _, z'+1 => z'
+  | x'+1, 0, _ => x' + 2
+  | x'+1, y'+1, _ => y'
 
 -- Translating holdout 0
 -- M(C(R(P(1,1),C(R(P(1,1),P(3,1)),P(3,2),P(3,1))),R(Z0,P(2,1)),S))
@@ -722,8 +737,76 @@ def HOLDOUT_16_p4 : PRF 2 := PRF.primRec (PRF.zero 1) HOLDOUT_16_p3
 def HOLDOUT_16_p5 : PRF 1 := PRF.comp HOLDOUT_16_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
 def holdout_16 : PRF 1 := HOLDOUT_16_p5
 
+def h16_d (x y : Nat) : Nat :=
+  match x with
+  | 0 => 0
+  | x' + 1 => h66_c x' (h16_d x' y) y
+
+lemma H16_p4_val (x y : Nat) : evalPRF HOLDOUT_16_p4 (mk_args2 x y) = h16_d x y := by
+  induction x with
+  | zero => rfl
+  | succ x' ih =>
+    change evalPRF HOLDOUT_16_p3 (mk_args3 x' (evalPRF HOLDOUT_16_p4 (mk_args2 x' y)) y) = _
+    have H16_p3_val : ∀ (x y z : Nat), evalPRF HOLDOUT_16_p3 (mk_args3 x y z) = h66_c x y z := by
+      intro a b c
+      change evalPRF HOLDOUT_16_p1 (mk_args2 (evalPRF HOLDOUT_16_p2 (mk_args3 a b c)) a) = h66_c a b c
+      have h1 : ∀ a b, evalPRF HOLDOUT_16_p1 (mk_args2 a b) = h66_a a b := by
+        intro m n; cases m <;> rfl
+      have h2 : ∀ a b c, evalPRF HOLDOUT_16_p2 (mk_args3 a b c) = h66_b a b c := by
+        intro m n k; cases m <;> rfl
+      rw [h2, h1]
+      unfold h66_a h66_b h66_c
+      cases a
+      · cases c <;> rfl
+      · cases b <;> rfl
+    rw [ih, H16_p3_val]
+    rfl
+
+lemma h16_d_lt (y x : Nat) : (x > 0) → (x ≤ y) → h16_d x y = y - x := by
+  intro hx hle
+  induction x with
+  | zero => contradiction
+  | succ x' ih =>
+    unfold h16_d
+    cases x' with
+    | zero =>
+      dsimp [h66_c]
+      have hy : y > 0 := by omega
+      cases y
+      · contradiction
+      · rfl
+    | succ x'' =>
+      have ih' := ih (by omega) (by omega)
+      rw [ih']
+      have hy : y - (x'' + 1) > 0 := by omega
+      cases h_y : (y - (x'' + 1)) with
+      | zero =>
+        rw [h_y] at hy
+        contradiction
+      | succ n =>
+        change h66_c (x''+1) (n + 1) y = y - (x'' + 2)
+        dsimp [h66_c]
+        omega
+
+lemma h16_d_diag (x : Nat) : h16_d (x + 1) x = x + 1 := by
+  cases x with
+  | zero => rfl
+  | succ x' =>
+    unfold h16_d
+    have hd := h16_d_lt (x' + 1) (x' + 1) (by omega) (by omega)
+    rw [hd]
+    have h_zero : x' + 1 - (x' + 1) = 0 := by omega
+    rw [h_zero]
+    change h66_c (x' + 1) 0 (x' + 1) = x' + 2
+    rfl
+
 theorem holdout_16_diverges : ∀ x, evalPRF holdout_16 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  unfold holdout_16 HOLDOUT_16_p5
+  change evalPRF HOLDOUT_16_p4 (mk_args2 (x + 1) x) > 0
+  rw [H16_p4_val]
+  rw [h16_d_diag]
+  omega
 
 -- Translating holdout_17
 -- M(C(R(Z1,R(P(2,2),C(R(P(1,1),P(3,1)),P(4,2),P(4,1)))),S,S))
@@ -1518,8 +1601,76 @@ def HOLDOUT_31_p4 : PRF 2 := PRF.primRec (PRF.proj 1 ⟨0, by decide⟩) HOLDOUT
 def HOLDOUT_31_p5 : PRF 1 := PRF.comp HOLDOUT_31_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
 def holdout_31 : PRF 1 := HOLDOUT_31_p5
 
+def h31_d (x y : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => h66_c x' (h31_d x' y) y
+
+lemma H31_p4_val (x y : Nat) : evalPRF HOLDOUT_31_p4 (mk_args2 x y) = h31_d x y := by
+  induction x with
+  | zero => rfl
+  | succ x' ih =>
+    change evalPRF HOLDOUT_31_p3 (mk_args3 x' (evalPRF HOLDOUT_31_p4 (mk_args2 x' y)) y) = _
+    have H31_p3_val : ∀ (x y z : Nat), evalPRF HOLDOUT_31_p3 (mk_args3 x y z) = h66_c x y z := by
+      intro a b c
+      change evalPRF HOLDOUT_31_p1 (mk_args2 (evalPRF HOLDOUT_31_p2 (mk_args3 a b c)) a) = h66_c a b c
+      have h1 : ∀ a b, evalPRF HOLDOUT_31_p1 (mk_args2 a b) = h66_a a b := by
+        intro m n; cases m <;> rfl
+      have h2 : ∀ a b c, evalPRF HOLDOUT_31_p2 (mk_args3 a b c) = h66_b a b c := by
+        intro m n k; cases m <;> rfl
+      rw [h2, h1]
+      unfold h66_a h66_b h66_c
+      cases a
+      · cases c <;> rfl
+      · cases b <;> rfl
+    rw [ih, H31_p3_val]
+    rfl
+
+lemma h31_d_lt (y x : Nat) : (x > 0) → (x ≤ y) → h31_d x y = y - x := by
+  intro hx hle
+  induction x with
+  | zero => contradiction
+  | succ x' ih =>
+    unfold h31_d
+    cases x' with
+    | zero =>
+      dsimp [h66_c]
+      have hy : y > 0 := by omega
+      cases y
+      · contradiction
+      · rfl
+    | succ x'' =>
+      have ih' := ih (by omega) (by omega)
+      rw [ih']
+      have hy : y - (x'' + 1) > 0 := by omega
+      cases h_y : (y - (x'' + 1)) with
+      | zero =>
+        rw [h_y] at hy
+        contradiction
+      | succ n =>
+        change h66_c (x''+1) (n + 1) y = y - (x'' + 2)
+        dsimp [h66_c]
+        omega
+
+lemma h31_d_diag (x : Nat) : h31_d (x + 1) x = x + 1 := by
+  cases x with
+  | zero => rfl
+  | succ x' =>
+    unfold h31_d
+    have hd := h31_d_lt (x' + 1) (x' + 1) (by omega) (by omega)
+    rw [hd]
+    have h_zero : x' + 1 - (x' + 1) = 0 := by omega
+    rw [h_zero]
+    change h66_c (x' + 1) 0 (x' + 1) = x' + 2
+    rfl
+
 theorem holdout_31_diverges : ∀ x, evalPRF holdout_31 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  unfold holdout_31 HOLDOUT_31_p5
+  change evalPRF HOLDOUT_31_p4 (mk_args2 (x + 1) x) > 0
+  rw [H31_p4_val]
+  rw [h31_d_diag]
+  omega
 
 -- Translating holdout_32
 -- M(C(R(P(1,1),C(R(S,R(P(2,1),P(4,1))),P(3,2),Z3)),S,Z1))
@@ -2993,32 +3144,15 @@ def HOLDOUT_66_p4 : PRF 2 := PRF.primRec PRF.succ HOLDOUT_66_p3
 def HOLDOUT_66_p5 : PRF 1 := PRF.comp HOLDOUT_66_p4 prf_list![PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
 def holdout_66 : PRF 1 := HOLDOUT_66_p5
 
-def h66_a (x y : Nat) : Nat :=
-  match x with
-  | 0 => y + 1
-  | x' + 1 => x'
-
 lemma H66_p1_val (x y : Nat) : evalPRF HOLDOUT_66_p1 (mk_args2 x y) = h66_a x y := by
   cases x
   · rfl
   · rfl
 
-def h66_b (x y z : Nat) : Nat :=
-  match x with
-  | 0 => z
-  | x' + 1 => y
-
 lemma H66_p2_val (x y z : Nat) : evalPRF HOLDOUT_66_p2 (mk_args3 x y z) = h66_b x y z := by
   cases x
   · rfl
   · rfl
-
-def h66_c (x y z : Nat) : Nat :=
-  match x, y, z with
-  | 0, _, 0 => 1
-  | 0, _, z'+1 => z'
-  | x'+1, 0, _ => x' + 2
-  | x'+1, y'+1, _ => y'
 
 lemma H66_p3_val (x y z : Nat) : evalPRF HOLDOUT_66_p3 (mk_args3 x y z) = h66_c x y z := by
   change evalPRF HOLDOUT_66_p1 (mk_args2 (evalPRF HOLDOUT_66_p2 (mk_args3 x y z)) x) = h66_c x y z

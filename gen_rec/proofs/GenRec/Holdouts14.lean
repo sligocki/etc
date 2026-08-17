@@ -1,4 +1,14 @@
 import GenRec.Semantics
+import GenRec.StdLib
+import GenRec.Deciders
+
+open GenRec
+open PRF
+open GenRec.StdLib
+open GenRec.Deciders
+
+set_option maxHeartbeats 2000000
+
 set_option maxHeartbeats 4000000
 
 
@@ -10,6 +20,8 @@ def mk_args2 (a b : Nat) : Fin 2 → Nat := fun i => if i.val = 0 then a else b
 def mk_args3 (a b c : Nat) : Fin 3 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else c
 def mk_args4 (a b c d : Nat) : Fin 4 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else if i.val = 2 then c else d
 def mk_args5 (a b c d e : Nat) : Fin 5 → Nat := fun i => if i.val = 0 then a else if i.val = 1 then b else if i.val = 2 then c else if i.val = 3 then d else e
+def mk_args6 (a b c d e f : Nat) : Fin 6 → Nat := fun i =>
+  if i.val = 0 then a else if i.val = 1 then b else if i.val = 2 then c else if i.val = 3 then d else if i.val = 4 then e else f
 def mk_args1 (a : Nat) : Fin 1 → Nat := fun _ => a
 
 
@@ -513,8 +525,73 @@ def HOLDOUT_6_p4 : PRF 3 := PRF.primRec (PRF.proj 2 ⟨0, by decide⟩) HOLDOUT_
 def HOLDOUT_6_p5 : PRF 1 := PRF.comp HOLDOUT_6_p4 prf_list![(PRF.proj 1 ⟨0, by decide⟩), PRF.succ, (PRF.proj 1 ⟨0, by decide⟩)]
 def holdout_6 : PRF 1 := HOLDOUT_6_p5
 
+def H6_a (x y z w : Nat) : Nat := if x = 0 then w else x - 1
+
+lemma H6_p1_eval (x y z w : Nat) : evalPRF HOLDOUT_6_p1 (mk_args4 x y z w) = H6_a x y z w := by
+  induction x with
+  | zero => rfl
+  | succ x' ih =>
+    have h_step : evalPRF HOLDOUT_6_p1 (mk_args4 (x' + 1) y z w) = evalPRF (PRF.proj 5 ⟨0, by decide⟩) (mk_args5 x' (evalPRF HOLDOUT_6_p1 (mk_args4 x' y z w)) y z w) := rfl
+    rw [h_step]
+    rfl
+
+def H6_b (x a y z w : Nat) : Nat := H6_a a y z w
+
+lemma H6_p2_eval (x a y z w : Nat) : evalPRF HOLDOUT_6_p2 (mk_args5 x a y z w) = H6_b x a y z w := by
+  induction x with
+  | zero => exact H6_p1_eval a y z w
+  | succ x' ih =>
+    have h_step : evalPRF HOLDOUT_6_p2 (mk_args5 (x' + 1) a y z w) = evalPRF (PRF.proj 6 ⟨1, by decide⟩) (mk_args6 x' (evalPRF HOLDOUT_6_p2 (mk_args5 x' a y z w)) a y z w) := rfl
+    rw [h_step]
+    change mk_args6 x' (evalPRF HOLDOUT_6_p2 (mk_args5 x' a y z w)) a y z w ⟨1, by decide⟩ = H6_b (x' + 1) a y z w
+    unfold mk_args6
+    dsimp
+    unfold H6_b
+    rw [ih]
+    unfold H6_b
+    rfl
+
+def H6_c (x y z w : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => H6_b x' (H6_c x' y z w) y z w
+
+lemma H6_p3_eval (x y z w : Nat) : evalPRF HOLDOUT_6_p3 (mk_args4 x y z w) = H6_c x y z w := by
+  induction x with
+  | zero => rfl
+  | succ x' ih =>
+    have h_step : evalPRF HOLDOUT_6_p3 (mk_args4 (x' + 1) y z w) = evalPRF HOLDOUT_6_p2 (mk_args5 x' (evalPRF HOLDOUT_6_p3 (mk_args4 x' y z w)) y z w) := rfl
+    rw [h_step, ih, H6_p2_eval]
+    rfl
+
+def H6_d (x y z : Nat) : Nat :=
+  match x with
+  | 0 => y
+  | x' + 1 => H6_c x' (H6_d x' y z) y z
+
+lemma H6_p4_eval (x y z : Nat) : evalPRF HOLDOUT_6_p4 (mk_args3 x y z) = H6_d x y z := by
+  induction x with
+  | zero => rfl
+  | succ x' ih =>
+    have h_step : evalPRF HOLDOUT_6_p4 (mk_args3 (x' + 1) y z) = evalPRF HOLDOUT_6_p3 (mk_args4 x' (evalPRF HOLDOUT_6_p4 (mk_args3 x' y z)) y z) := rfl
+    rw [h_step, ih, H6_p3_eval]
+    rfl
+
+lemma H6_comp (x : Nat) : evalPRF holdout_6 (fun _ => x) = H6_d x (x+1) x := by
+  have h1 : evalPRF holdout_6 (fun _ => x) = evalPRF HOLDOUT_6_p4 (fun i => evalPRFList prf_list![PRF.proj 1 ⟨0, by decide⟩, PRF.succ, PRF.proj 1 ⟨0, by decide⟩] i (fun _ => x)) := rfl
+  rw [h1]
+  have h_args : (fun (i : Fin 3) => evalPRFList prf_list![PRF.proj 1 ⟨0, by decide⟩, PRF.succ, PRF.proj 1 ⟨0, by decide⟩] i (fun _ => x)) = mk_args3 x (x+1) x := by
+    funext i
+    fin_cases i <;> rfl
+  rw [h_args]
+  exact H6_p4_eval x (x+1) x
+
+lemma H6_d_pos (x : Nat) : H6_d x (x+1) x > 0 := sorry
+
 theorem holdout_6_diverges : ∀ x, evalPRF holdout_6 (fun _ => x) > 0 := by
-  sorry
+  intro x
+  rw [H6_comp x]
+  exact H6_d_pos x
 
 -- Translating holdout_7
 -- M(C(R(P(2,1),R(R(P(2,1),R(P(3,3),P(5,1))),P(5,2))),S,S,S))

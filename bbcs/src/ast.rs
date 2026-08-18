@@ -46,11 +46,34 @@ impl Instr {
     }
 }
 
+pub struct CanonCtx {
+    pub in_degree: Vec<usize>,
+    pub edges: Vec<Vec<usize>>,
+    pub result: Vec<Instr>,
+    pub used: Vec<bool>,
+}
+
+impl CanonCtx {
+    pub fn new() -> Self {
+        Self {
+            in_degree: Vec::new(),
+            edges: Vec::new(),
+            result: Vec::new(),
+            used: Vec::new(),
+        }
+    }
+}
+
 #[inline(never)]
 pub fn canonicalize_block(block: &mut [Instr]) {
+    let mut ctx = CanonCtx::new();
+    canonicalize_block_with_ctx(block, &mut ctx);
+}
+
+pub fn canonicalize_block_with_ctx(block: &mut [Instr], ctx: &mut CanonCtx) {
     for instr in block.iter_mut() {
         if let Instr::While(_, body) = instr {
-            canonicalize_block(body);
+            canonicalize_block_with_ctx(body, ctx);
         }
     }
     
@@ -59,27 +82,30 @@ pub fn canonicalize_block(block: &mut [Instr]) {
         return;
     }
     
-    let mut in_degree = vec![0; n];
-    let mut edges = vec![Vec::new(); n];
+    ctx.in_degree.clear();
+    ctx.in_degree.resize(n, 0);
+    ctx.edges.clear();
+    ctx.edges.resize(n, Vec::new());
     
     for i in 0..n {
         let rw_i = block[i].get_rw();
         for j in i+1..n {
             let rw_j = block[j].get_rw();
             if (rw_i & rw_j) != 0 {
-                edges[i].push(j);
-                in_degree[j] += 1;
+                ctx.edges[i].push(j);
+                ctx.in_degree[j] += 1;
             }
         }
     }
     
-    let mut result = Vec::with_capacity(n);
-    let mut used = vec![false; n];
+    ctx.result.clear();
+    ctx.used.clear();
+    ctx.used.resize(n, false);
     
     for _ in 0..n {
         let mut best_idx = None;
         for i in 0..n {
-            if !used[i] && in_degree[i] == 0 {
+            if !ctx.used[i] && ctx.in_degree[i] == 0 {
                 if let Some(best) = best_idx {
                     if block[i] < block[best] {
                         best_idx = Some(i);
@@ -91,15 +117,15 @@ pub fn canonicalize_block(block: &mut [Instr]) {
         }
         
         if let Some(chosen) = best_idx {
-            used[chosen] = true;
-            result.push(block[chosen].clone());
-            for &next in &edges[chosen] {
-                in_degree[next] -= 1;
+            ctx.used[chosen] = true;
+            ctx.result.push(block[chosen].clone());
+            for next in &ctx.edges[chosen] {
+                ctx.in_degree[*next] -= 1;
             }
         }
     }
     
-    block.clone_from_slice(&result);
+    block.clone_from_slice(&ctx.result);
 }
 
 #[inline(never)]

@@ -306,6 +306,23 @@ fn is_valid_primitive(last_instr: Option<&FlatInstr>, current_var: usize, is_inc
 }
 
 
+fn map_in_place(ast: &mut [crate::ast::Instr], p: &[usize]) {
+    for instr in ast {
+        match instr {
+            crate::ast::Instr::Inc(v) => *v = p[*v],
+            crate::ast::Instr::Dec(v) => *v = p[*v],
+            crate::ast::Instr::While(v, body) => {
+                *v = p[*v];
+                map_in_place(body, p);
+            }
+        }
+    }
+}
+
+thread_local! {
+    static CANON_CTX: std::cell::RefCell<crate::ast::CanonCtx> = std::cell::RefCell::new(crate::ast::CanonCtx::new());
+}
+
 #[inline(never)]
 fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
     if max_var == 0 {
@@ -313,24 +330,66 @@ fn is_canonical(prefix: &[FlatInstr], max_var: usize) -> bool {
     }
 
     let mut orig_ast = parse_flat(prefix);
-    crate::ast::canonicalize_block(&mut orig_ast);
+    CANON_CTX.with(|ctx| {
+        crate::ast::canonicalize_block_with_ctx(&mut orig_ast, &mut *ctx.borrow_mut());
+    });
+
+    if orig_ast.is_empty() {
+        return true;
+    }
+
+    let n = orig_ast.len();
+    let mut in_degree = vec![0; n];
+    for i in 0..n {
+        let rw_i = orig_ast[i].get_rw();
+        for j in i+1..n {
+            let rw_j = orig_ast[j].get_rw();
+            if (rw_i & rw_j) != 0 {
+                in_degree[j] += 1;
+            }
+        }
+    }
+    
+    let mut orig_roots = Vec::new();
+    for i in 0..n {
+        if in_degree[i] == 0 {
+            orig_roots.push(orig_ast[i].clone());
+        }
+    }
+    
+    let orig_first = orig_ast[0].clone();
+    let mut mapped_roots = orig_roots.clone();
 
     let mut perm: Vec<usize> = (0..=max_var).collect();
     let mut c = vec![0; max_var + 1];
     let mut i = 1;
 
-    let check_perm = |p: &[usize]| -> bool {
-        let mut mapped = prefix.to_vec();
-        for instr in mapped.iter_mut() {
-            match instr {
-                FlatInstr::Inc(v) => *v = p[*v],
-                FlatInstr::Dec(v) => *v = p[*v],
-                FlatInstr::WhileStart(v) => *v = p[*v],
-                FlatInstr::WhileEnd => {}
+    let mut mapped_ast = orig_ast.clone();
+    
+    let mut check_perm = |p: &[usize]| -> bool {
+        let mut min_idx: Option<usize> = None;
+        for (idx, r) in orig_roots.iter().enumerate() {
+            mapped_roots[idx].clone_from(r);
+            map_in_place(std::slice::from_mut(&mut mapped_roots[idx]), p);
+            if min_idx.is_none() || mapped_roots[idx] < mapped_roots[min_idx.unwrap()] {
+                min_idx = Some(idx);
             }
         }
-        let mut mapped_ast = parse_flat(&mapped);
-        crate::ast::canonicalize_block(&mut mapped_ast);
+        
+        if let Some(idx) = min_idx {
+            if mapped_roots[idx] > orig_first {
+                return true;
+            }
+            if mapped_roots[idx] < orig_first {
+                return false;
+            }
+        }
+
+        mapped_ast.clone_from(&orig_ast);
+        map_in_place(&mut mapped_ast, p);
+        CANON_CTX.with(|ctx| {
+            crate::ast::canonicalize_block_with_ctx(&mut mapped_ast, &mut *ctx.borrow_mut());
+        });
         mapped_ast >= orig_ast
     };
 

@@ -57,6 +57,47 @@ pub fn parse_program(input: &str) -> Result<Vec<Instr>, String> {
             }
             ast_stack.push(Vec::new());
             var_stack.push(v);
+        } else if token == "loop" {
+            i += 1;
+            if i >= tokens.len() {
+                return Err("Expected variable after loop".to_string());
+            }
+            let var_str = &tokens[i];
+            let v = var_str.chars().next().unwrap() as usize - 'A' as usize;
+            i += 1;
+            if i >= tokens.len() || tokens[i] != "{" {
+                return Err("Expected { after loop".to_string());
+            }
+            ast_stack.push(vec![Instr::Dec(v)]);
+            var_stack.push(v);
+        } else if token.len() >= 3 && &token[1..3] == "+=" {
+            let v = token.chars().next().unwrap() as usize - 'A' as usize;
+            if let Ok(n) = token[3..].parse::<usize>() {
+                for _ in 0..n {
+                    ast_stack.last_mut().unwrap().push(Instr::Inc(v));
+                }
+                if i + 1 < tokens.len() && tokens[i + 1] == ";" {
+                    i += 1;
+                }
+            } else {
+                return Err(format!("Invalid number in macro: {}", token));
+            }
+        } else if token.len() >= 6 && &token[1..3] == ">>" && &token[4..5] == "*" {
+            let a = token.chars().next().unwrap() as usize - 'A' as usize;
+            let b = token.chars().nth(3).unwrap() as usize - 'A' as usize;
+            if let Ok(n) = token[5..].parse::<usize>() {
+                let mut body = Vec::new();
+                body.push(Instr::Dec(a));
+                for _ in 0..n {
+                    body.push(Instr::Inc(b));
+                }
+                ast_stack.last_mut().unwrap().push(Instr::While(a, body));
+                if i + 1 < tokens.len() && tokens[i + 1] == ";" {
+                    i += 1;
+                }
+            } else {
+                return Err(format!("Invalid number in macro: {}", token));
+            }
         } else if token.ends_with("++") {
             let v = token.chars().next().unwrap() as usize - 'A' as usize;
             ast_stack.last_mut().unwrap().push(Instr::Inc(v));

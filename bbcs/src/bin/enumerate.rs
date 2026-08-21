@@ -13,13 +13,17 @@ struct Args {
     #[arg(short, long)]
     max_steps: usize,
 
-    /// Output file to save simulation results
-    #[arg(short, long)]
-    output: Option<String>,
+    /// Output directory to save top 1k halting programs and all holdouts
+    #[arg(short = 'o', long)]
+    out_dir: Option<String>,
 
     /// How often to print progress in seconds
     #[arg(short, long, default_value_t = 10)]
     progress: u64,
+
+    /// Skip writing holdouts to disk
+    #[arg(long, default_value_t = false)]
+    no_holdouts: bool,
 }
 
 fn main() {
@@ -30,13 +34,19 @@ fn main() {
     );
     let start_time = Instant::now();
 
-    let results = search_programs(args.length, args.max_steps, args.output, args.progress);
+    let results = search_programs(
+        args.length,
+        args.max_steps,
+        args.out_dir,
+        args.progress,
+        !args.no_holdouts,
+    );
 
     println!("Completed in {:?}", start_time.elapsed());
     println!("--- Results ---");
     println!("Total Programs: {}", results.total);
     println!("Halted:         {}", results.halted);
-    println!("Timeouts:       {}", results.timeouts);
+    println!("Holdouts:       {}", results.holdouts);
     println!("Inf (Stat):     {}", results.infinites_stationary);
     println!("Inf (Trans):    {}", results.infinites_translated);
     println!("Inf (Symbolic): {}", results.infinites_symbolic);
@@ -51,8 +61,8 @@ fn main() {
 
 #[test]
 fn test_sim_prog1_prog2() {
-    use crate::simulator::*;
-    use crate::ast::*;
+    use bbcs::simulator::*;
+    use bbcs::ast::*;
     
     // Prog 1: A++; A++; while A { A--; while B { A--; A++; B--; } B++; C++; }
     let prog1 = vec![

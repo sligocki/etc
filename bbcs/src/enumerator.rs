@@ -31,10 +31,32 @@ struct PrefixState {
     pub last_dec_was_gt_0: bool,
 }
 
+#[derive(Eq, PartialEq, Clone)]
+pub struct TopProgram {
+    pub score: usize,
+    pub steps: usize,
+    pub code: String,
+}
+
+impl std::cmp::Ord for TopProgram {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.score.cmp(&self.score)
+            .then_with(|| self.steps.cmp(&other.steps))
+            .then_with(|| self.code.cmp(&other.code))
+    }
+}
+impl std::cmp::PartialOrd for TopProgram {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Clone)]
 pub struct SearchResult {
+    pub top_halted: std::collections::BinaryHeap<TopProgram>,
     pub total: usize,
     pub halted: usize,
-    pub timeouts: usize,
+    pub holdouts: usize,
     pub infinites_stationary: usize,
     pub infinites_translated: usize,
     pub infinites_symbolic: usize,
@@ -49,7 +71,7 @@ impl SearchResult {
         Self {
             total: 0,
             halted: 0,
-            timeouts: 0,
+            holdouts: 0,
             infinites_stationary: 0,
             infinites_translated: 0,
             infinites_symbolic: 0,
@@ -57,13 +79,14 @@ impl SearchResult {
             max_score: 0,
             max_halting_steps: 0,
             champion_code: String::new(),
+            top_halted: std::collections::BinaryHeap::new(),
         }
     }
 
     fn merge(&mut self, other: &Self) {
         self.total += other.total;
         self.halted += other.halted;
-        self.timeouts += other.timeouts;
+        self.holdouts += other.holdouts;
         self.infinites_stationary += other.infinites_stationary;
         self.infinites_translated += other.infinites_translated;
         self.infinites_symbolic += other.infinites_symbolic;
@@ -71,6 +94,10 @@ impl SearchResult {
         if other.max_score > self.max_score {
             self.max_score = other.max_score;
             self.champion_code = other.champion_code.clone();
+        }
+        for p in other.top_halted.iter() {
+            self.top_halted.push(p.clone());
+            if self.top_halted.len() > 1000 { self.top_halted.pop(); }
         }
         if other.max_halting_steps > self.max_halting_steps {
             self.max_halting_steps = other.max_halting_steps;
@@ -81,13 +108,14 @@ impl SearchResult {
 pub struct SharedProgress {
     pub total: AtomicUsize,
     pub halted: AtomicUsize,
-    pub timeouts: AtomicUsize,
+    pub holdouts: AtomicUsize,
     pub infinites_stationary: AtomicUsize,
     pub infinites_translated: AtomicUsize,
     pub infinites_symbolic: AtomicUsize,
     pub max_score: Mutex<usize>,
     pub max_halting_steps: AtomicUsize,
     pub champion_code: Mutex<String>,
+    pub top_halted: Mutex<std::collections::BinaryHeap<TopProgram>>,
     pub done_mutex: Mutex<bool>,
     pub done_cvar: Condvar,
 }
@@ -97,13 +125,14 @@ impl SharedProgress {
         Arc::new(Self {
             total: AtomicUsize::new(0),
             halted: AtomicUsize::new(0),
-            timeouts: AtomicUsize::new(0),
+            holdouts: AtomicUsize::new(0),
             infinites_stationary: AtomicUsize::new(0),
             infinites_translated: AtomicUsize::new(0),
             infinites_symbolic: AtomicUsize::new(0),
             max_score: Mutex::new(0),
             max_halting_steps: AtomicUsize::new(0),
             champion_code: Mutex::new(String::new()),
+            top_halted: Mutex::new(std::collections::BinaryHeap::new()),
             done_mutex: Mutex::new(false),
             done_cvar: Condvar::new(),
         })
@@ -113,8 +142,9 @@ impl SharedProgress {
 pub fn search_programs(
     length: usize,
     max_steps: usize,
-    output_file: Option<String>,
+    out_dir: Option<String>,
     progress_secs: u64,
+    write_holdouts: bool,
 ) -> SearchResult {
     rayon::ThreadPoolBuilder::new()
         .stack_size(50_000)
@@ -146,7 +176,77 @@ pub fn search_programs(
         false,
     );
 
+
+    let mut completed_indices = std::collections::HashSet::new();
+    let mut initial_result = SearchResult::new();
+
+    if let Some(dir_path) = &out_dir {
+        let checkpoint_path = format!("{}/checkpoint.txt", dir_path);
+        if std::path::Path::new(&checkpoint_path).exists() {
+            println!("Loading checkpoint from {}...", checkpoint_path);
+            let file = std::fs::File::open(&checkpoint_path).unwrap();
+            let reader = std::io::BufReader::new(file);
+            use std::io::BufRead;
+            
+            let mut lines = reader.lines();
+            while let Some(Ok(line)) = lines.next() {
+                if line.starts_with("PREFIX ") {
+                    let parts: Vec<&str> = line.splitn(12, ' ').collect();
+                    if parts.len() == 12 {
+                        let idx: usize = parts[1].parse().unwrap();
+                        let mut res = SearchResult::new();
+                        res.total = parts[2].parse().unwrap();
+                        res.halted = parts[3].parse().unwrap();
+                        res.holdouts = parts[4].parse().unwrap();
+                        res.infinites_stationary = parts[5].parse().unwrap();
+                        res.infinites_translated = parts[6].parse().unwrap();
+                        res.infinites_symbolic = parts[7].parse().unwrap();
+                        res.infinites_sum = parts[8].parse().unwrap();
+                        res.max_score = parts[9].parse().unwrap();
+                        res.max_halting_steps = parts[10].parse().unwrap();
+                        let champ = parts[11];
+                        if champ != "-" {
+                            res.champion_code = champ.to_string();
+                        }
+                        
+                        while let Some(Ok(inner_line)) = lines.next() {
+                            if inner_line == "END_PREFIX" {
+                                break;
+                            }
+                            if inner_line.starts_with("TOP ") {
+                                let top_parts: Vec<&str> = inner_line.splitn(4, ' ').collect();
+                                if top_parts.len() == 4 {
+                                    res.top_halted.push(TopProgram {
+                                        score: top_parts[1].parse().unwrap(),
+                                        steps: top_parts[2].parse().unwrap(),
+                                        code: top_parts[3].to_string(),
+                                    });
+                                }
+                            }
+                        }
+                        
+                        completed_indices.insert(idx);
+                        initial_result.merge(&res);
+                    }
+                }
+            }
+            println!("Loaded {} completed prefixes.", completed_indices.len());
+        }
+    }
+
     let progress = SharedProgress::new();
+    progress.total.store(initial_result.total, Ordering::Relaxed);
+    progress.halted.store(initial_result.halted, Ordering::Relaxed);
+    progress.holdouts.store(initial_result.holdouts, Ordering::Relaxed);
+    progress.infinites_stationary.store(initial_result.infinites_stationary, Ordering::Relaxed);
+    progress.infinites_translated.store(initial_result.infinites_translated, Ordering::Relaxed);
+    progress.infinites_symbolic.store(initial_result.infinites_symbolic, Ordering::Relaxed);
+    *progress.max_score.lock().unwrap() = initial_result.max_score;
+    *progress.champion_code.lock().unwrap() = initial_result.champion_code.clone();
+    progress.max_halting_steps.store(initial_result.max_halting_steps, Ordering::Relaxed);
+    for p in initial_result.top_halted.iter() {
+        progress.top_halted.lock().unwrap().push(p.clone());
+    }
     let prog_clone = progress.clone();
 
     let progress_thread = std::thread::spawn(move || {
@@ -163,7 +263,7 @@ pub fn search_programs(
 
             if timeout_res.timed_out() {
                 let total = prog_clone.total.load(Ordering::Relaxed);
-                let unknown = prog_clone.timeouts.load(Ordering::Relaxed);
+                let unknown = prog_clone.holdouts.load(Ordering::Relaxed);
                 let score = *prog_clone.max_score.lock().unwrap();
                 let max_steps = prog_clone.max_halting_steps.load(Ordering::Relaxed);
                 let champ = prog_clone.champion_code.lock().unwrap().clone();
@@ -188,23 +288,55 @@ pub fn search_programs(
 
     let mut tx_opt = None;
     let mut writer_thread = None;
-    if let Some(file_path) = output_file {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(1000);
-        tx_opt = Some(tx);
-        writer_thread = Some(std::thread::spawn(move || {
-            let file = File::create(file_path).expect("Failed to create output file");
-            let mut writer = BufWriter::new(file);
-            while let Ok(batch) = rx.recv() {
-                for line in batch {
-                    writeln!(writer, "{}", line).unwrap();
+    let mut checkpoint_tx_opt = None;
+    let mut checkpoint_writer_thread = None;
+
+    if let Some(dir_path) = &out_dir {
+        std::fs::create_dir_all(dir_path).unwrap();
+        
+        if write_holdouts {
+            let holdouts_path = format!("{}/holdouts.txt", dir_path);
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(1000);
+            tx_opt = Some(tx);
+            writer_thread = Some(std::thread::spawn(move || {
+                let file = std::fs::OpenOptions::new().create(true).append(true).open(holdouts_path).expect("Failed to open holdouts file");
+                let mut writer = BufWriter::new(file);
+                while let Ok(batch) = rx.recv() {
+                    for line in batch {
+                        writeln!(writer, "{}", line).unwrap();
+                    }
                 }
+            }));
+        }
+
+        let checkpoint_path = format!("{}/checkpoint.txt", dir_path);
+        let (ctx, crx) = std::sync::mpsc::sync_channel::<(usize, SearchResult)>(1000);
+        checkpoint_tx_opt = Some(ctx);
+        checkpoint_writer_thread = Some(std::thread::spawn(move || {
+            let file = std::fs::OpenOptions::new().create(true).append(true).open(checkpoint_path).expect("Failed to open checkpoint file");
+            let mut writer = BufWriter::new(file);
+            while let Ok((idx, res)) = crx.recv() {
+                writeln!(writer, "PREFIX {} {} {} {} {} {} {} {} {} {} {}", 
+                    idx, res.total, res.halted, res.holdouts, 
+                    res.infinites_stationary, res.infinites_translated, 
+                    res.infinites_symbolic, res.infinites_sum, 
+                    res.max_score, res.max_halting_steps, 
+                    if res.champion_code.is_empty() { "-" } else { &res.champion_code }
+                ).unwrap();
+                for p in &res.top_halted {
+                    writeln!(writer, "TOP {} {} {}", p.score, p.steps, p.code).unwrap();
+                }
+                writeln!(writer, "END_PREFIX").unwrap();
+                writer.flush().unwrap();
             }
         }));
     }
-
-    let result = prefixes
+    let reduced_result = prefixes
         .into_par_iter()
-        .map_with(tx_opt, |tx, prefix| {
+        .enumerate()
+        .filter(|(idx, _)| !completed_indices.contains(idx))
+        .map_with((tx_opt, checkpoint_tx_opt), |(tx_opt, ctx_opt), (idx, prefix)| {
+            let mut tx = tx_opt.as_ref().cloned();
             let mut local_res = SearchResult::new();
             let mut sim = Simulator::new();
             let mut current_flat = prefix.flat.clone();
@@ -219,7 +351,7 @@ pub fn search_programs(
                 &mut local_res,
                 &mut sim,
                 max_steps,
-                tx,
+                &mut tx,
                 &mut local_buffer,
                 prefix.inc_mask,
                 prefix.unresolved_mask,
@@ -236,13 +368,22 @@ pub fn search_programs(
                 }
             }
 
-            progress.total.fetch_add(local_res.total, Ordering::Relaxed);
+            if !local_res.top_halted.is_empty() {
+                let mut global_heap = progress.top_halted.lock().unwrap();
+                for prog in local_res.top_halted.iter() {
+                    global_heap.push(prog.clone());
+                    if global_heap.len() > 1000 {
+                        global_heap.pop();
+                    }
+                }
+            }
+progress.total.fetch_add(local_res.total, Ordering::Relaxed);
             progress
                 .halted
                 .fetch_add(local_res.halted, Ordering::Relaxed);
             progress
-                .timeouts
-                .fetch_add(local_res.timeouts, Ordering::Relaxed);
+                .holdouts
+                .fetch_add(local_res.holdouts, Ordering::Relaxed);
             progress
                 .infinites_stationary
                 .fetch_add(local_res.infinites_stationary, Ordering::Relaxed);
@@ -263,6 +404,10 @@ pub fn search_programs(
             drop(champ_lock);
             progress.max_halting_steps.fetch_max(local_res.max_halting_steps, Ordering::Relaxed);
 
+            if let Some(ctx_sender) = ctx_opt {
+                let _ = ctx_sender.send((idx, local_res.clone()));
+            }
+
             local_res
         })
         .reduce(
@@ -279,6 +424,22 @@ pub fn search_programs(
 
     if let Some(wt) = writer_thread {
         let _ = wt.join();
+    }
+    
+    if let Some(cwt) = checkpoint_writer_thread {
+        let _ = cwt.join();
+    }
+
+    let mut result = initial_result;
+    result.merge(&reduced_result);
+
+    if let Some(dir_path) = out_dir {
+        let halt_path = format!("{}/halt.top.txt", dir_path);
+        let mut file = File::create(halt_path).expect("Failed to create halt.top.txt");
+        let sorted = result.top_halted.clone().into_sorted_vec();
+        for p in sorted {
+            writeln!(file, "{} Halt {} {}", p.code, p.score, p.steps).unwrap();
+        }
     }
 
     result
@@ -745,8 +906,9 @@ fn generate_and_sim(
                 if steps > local_res.max_halting_steps {
                     local_res.max_halting_steps = steps;
                 }
-                if tx.is_some() {
-                    local_buffer.push(format!("{} Halt {}", format_program(&ast), score));
+                local_res.top_halted.push(TopProgram { score, steps, code: format_program(&ast) });
+                if local_res.top_halted.len() > 1000 {
+                    local_res.top_halted.pop();
                 }
             }
             RunResult::Infinite(reason) => {
@@ -761,9 +923,9 @@ fn generate_and_sim(
                 }
             }
             RunResult::Unknown => {
-                local_res.timeouts += 1;
+                local_res.holdouts += 1;
                 if tx.is_some() {
-                    local_buffer.push(format!("{} Timeout", format_program(&ast)));
+                    local_buffer.push(format!("{} Holdout", format_program(&ast)));
                 }
             }
         }

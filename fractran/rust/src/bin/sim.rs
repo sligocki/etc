@@ -44,5 +44,10 @@ fn main() {
         );
     }
 
-    println!("Halted at step: {}", num_steps);
+    let steps_str = num_steps.to_string();
+    if steps_str.len() > 100 {
+        println!("Halted at step: {}.{}e{}", &steps_str[0..1], &steps_str[1..5], steps_str.len() - 1);
+    } else {
+        println!("Halted at step: {}", steps_str);
+    }
 }

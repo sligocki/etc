@@ -74,11 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. Summarize results
     let halted_count = results.iter().filter(|r| r.sim.halted).count();
     let frac_halted = halted_count as f64 / num_programs as f64;
-    let max_halt_steps = results
+    let champion = results
         .iter()
-        .map(|r| if r.sim.halted { r.sim.total_steps } else { 0 })
-        .max()
-        .unwrap();
+        .filter(|r| r.sim.halted)
+        .rev()
+        .max_by_key(|r| r.sim.total_steps);
     let total_steps_simulated: usize = results.iter().map(|r| r.sim.total_steps).sum();
 
     let wallclock_rate = total_steps_simulated as f64 / wallclock_time_sec;
@@ -103,7 +103,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         num_programs,
         frac_halted * 100.0
     );
-    println!("  Max Halt Steps: {}", max_halt_steps);
+    if let Some(champ) = champion {
+        println!("  Champion Program: {}", champ.program_str);
+        let steps_str = champ.sim.total_steps.to_string();
+        if steps_str.len() > 100 {
+            println!("  Max Halt Steps: {}.{}e{}", &steps_str[0..1], &steps_str[1..5], steps_str.len() - 1);
+        } else {
+            println!("  Max Halt Steps: {}", steps_str);
+        }
+    } else {
+        println!("  Max Halt Steps: 0");
+    }
     println!("  Total steps: {}", total_steps_simulated);
     println!("Wallclock Time:");
     println!("  {:.2} seconds", wallclock_time_sec);

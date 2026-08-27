@@ -122,12 +122,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let frac_halted = halted_count as f64 / num_programs as f64;
     let frac_inf = inf_count as f64 / num_programs as f64;
 
-    let max_halt_steps = results
+    let champion = results
         .iter()
         .filter(|r| r.sim_status == SimStatus::Halted)
-        .map(|r| r.base_steps.clone())
-        .max()
-        .unwrap_or(0.into());
+        .rev()
+        .max_by_key(|r| &r.base_steps);
+
     let total_sim_steps: usize = results.iter().map(|r| r.sim_steps).sum();
 
     let total_base_steps: BigInt = results.iter().map(|r| &r.base_steps).sum();
@@ -162,12 +162,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         num_programs,
         frac_inf * 100.0
     );
-    println!("  Max Halt Steps: {}", max_halt_steps);
+    if let Some(champ) = champion {
+        println!("  Champion Program: {}", champ.program_str);
+        let steps_str = champ.base_steps.to_string();
+        if steps_str.len() > 100 {
+            println!("  Max Halt Steps: 10^{}", bigint_log10(champ.base_steps.clone()));
+        } else {
+            println!("  Max Halt Steps: {}", steps_str);
+        }
+    } else {
+        println!("  Max Halt Steps: 0");
+    }
     println!("  Total sim steps: {}", total_sim_steps);
     println!("Base steps:");
     println!("  Total base steps: 10^{}", bigint_log10(total_base_steps));
     println!("  Min base steps: 10^{}", bigint_log10(min_base_steps));
-    println!("  Max base steps: 10^{}", bigint_log10(max_base_steps));
+    println!("  Max base steps: 10^{} (includes non-halting programs)", bigint_log10(max_base_steps));
     println!("Wallclock Time:");
     println!("  {:.2} seconds", wallclock_time_sec);
     println!("  {:.2} Million sim steps/s", wallclock_rate / 1_000_000.0);

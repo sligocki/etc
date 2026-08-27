@@ -64,5 +64,12 @@ fn main() {
     println!("Status: {:?}", sim.status);
     println!("Sim Steps: {}", sim.sim_steps);
     println!("Num Rule Steps: {}", sim.num_shift_steps);
-    println!("Base Steps: {}", sim.base_steps);
+    let steps_str = sim.base_steps.to_string();
+    if steps_str.len() > 100 {
+        use rug::Float;
+        let log10 = Float::with_val(24, &sim.base_steps).log10();
+        println!("Base Steps: 10^{}", log10);
+    } else {
+        println!("Base Steps: {}", steps_str);
+    }
 }

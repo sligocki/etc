@@ -918,9 +918,6 @@ fn generate_and_sim(
                     InfiniteReason::SymbolicMonotonic => local_res.infinites_symbolic += 1,
                     InfiniteReason::SumMonotonic => local_res.infinites_sum += 1,
                 }
-                if tx.is_some() {
-                    local_buffer.push(format!("{} Infinite({:?})", format_program(&ast), reason));
-                }
             }
             RunResult::Unknown => {
                 local_res.holdouts += 1;

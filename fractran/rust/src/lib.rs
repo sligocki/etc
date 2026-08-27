@@ -9,3 +9,4 @@ pub mod state_diff;
 pub mod tandem_repeat;
 pub mod transcript;
 pub mod vec_set;
+pub mod bouncer;

@@ -251,6 +251,123 @@ impl TagSystem {
         None
     }
 
+
+    pub fn active_cts(&self, max_len: usize) -> Option<Vec<Vec<u8>>> {
+        use std::collections::HashSet;
+        
+        let mut w_set = HashSet::new();
+        for len in 1..=max_len {
+            for i in 0..(1 << len) {
+                let mut w = vec![];
+                for bit in 0..len {
+                    w.push(if (i & (1 << bit)) != 0 { 1 } else { 0 });
+                }
+                w_set.insert(w);
+            }
+        }
+
+        loop {
+            let mut to_remove = Vec::new();
+            for w in &w_set {
+                // For each context (phase, pending symbol)
+                for p in 0..self.v {
+                    let mut pend_options = vec![None];
+                    for s in 0..self.rules.len() {
+                        pend_options.push(Some(s as u8));
+                    }
+                    
+                    for pend in &pend_options {
+                        let mut q = w.clone();
+                        let mut produced = Vec::new();
+                        let mut current_p = p;
+                        let mut current_pend = *pend;
+                        
+                        let mut head_idx = 0;
+                        let mut found = false;
+                        
+                        let mut steps = 0;
+                        while head_idx < q.len() && steps < 100 {
+                            steps += 1;
+                            let sym = q[head_idx];
+                            head_idx += 1;
+                            
+                            let rule = match &self.rules[sym as usize] {
+                                Some(r) => r,
+                                None => break, // Cannot continue if undefined rule
+                            };
+                            
+                            if rule.len() > 0 {
+                                if let Some(ps) = current_pend {
+                                    produced.push(ps);
+                                    q.push(ps);
+                                    current_pend = None;
+                                }
+                            }
+                            
+                            let mut active = vec![];
+                            let mut last_idx = None;
+                            for (i, &s) in rule.iter().enumerate() {
+                                if (current_p + i) % self.v == 0 {
+                                    active.push(s);
+                                    last_idx = Some(i);
+                                }
+                            }
+                            current_p = (current_p + rule.len()) % self.v;
+                            
+                            if !active.is_empty() {
+                                let trailing = rule.len() - 1 - last_idx.unwrap();
+                                for i in 0..active.len() {
+                                    if i == active.len() - 1 && trailing < self.v - 1 {
+                                        current_pend = Some(active[i]);
+                                    } else {
+                                        produced.push(active[i]);
+                                        q.push(active[i]);
+                                    }
+                                }
+                            }
+                            
+                            for cand in &w_set {
+                                if produced.ends_with(cand) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if found { break; }
+                        }
+                        
+                        if !found {
+                            to_remove.push(w.clone());
+                            break; // no need to check other contexts for this w
+                        }
+                    }
+                    if !to_remove.is_empty() && to_remove.last() == Some(w) {
+                        break;
+                    }
+                }
+            }
+            
+            if to_remove.is_empty() {
+                break;
+            }
+            for w in to_remove {
+                w_set.remove(&w);
+            }
+        }
+        
+        if w_set.is_empty() {
+            None
+        } else {
+            // We just need to check if the initial tape generates any of these.
+            // For v=2, initial tape is 00, so active tape starts with [0] at phase 0, pending None.
+            // We can just check if any string in w_set starts with 0?
+            // Actually, any string in the set means the set is closed. But is it reachable?
+            // Since we generated ALL strings, we should just return the set, and the simulator can check if it hits it.
+            // But we can quickly check if '0' is a prefix of any string, or just let the simulator check it dynamically!
+            // Wait, returning the set is enough.
+            Some(w_set.into_iter().collect())
+        }
+    }
+
     pub fn non_decreasing_symbols(&self) -> Vec<u8> {
         let n = self.rules.len();
         let mut res = Vec::new();

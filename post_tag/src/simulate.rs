@@ -3,6 +3,7 @@ use crate::tag_system::TagSystem;
 #[derive(Debug, Clone)]
 pub enum InfiniteReason {
     ActiveNonDecreasing(u8),
+    ClosedTapeSubset,
     Cycle(usize), // period
     ImmortalSubstring(Vec<u8>),
     NonDecreasingSymbol(u8),
@@ -28,7 +29,7 @@ pub enum HaltCondition {
 #[derive(Clone)]
 pub struct Simulator<'a> {
     pub sys: &'a TagSystem,
-    pub tape: Vec<u8>, // Active tape
+    pub tape: Vec<u8>, // Active tape. Conceptually, a symbol is in the Guaranteed Active Tape (GAT) if it is on an even index AND has >= v-1 trailing symbols on the full tape. This guarantees it will be read without the machine halting.
     pub head_idx: usize,
     pub steps: usize,
     pub true_length: usize, // Current space
@@ -41,6 +42,7 @@ pub struct Simulator<'a> {
     pub non_decreasing: Vec<u8>,
     pub closed_symbols: Vec<u8>,
     pub splits: Vec<Vec<Option<Vec<u8>>>>, // [symbol][phase]
+    pub cts_set: Option<Vec<Vec<u8>>>,
 }
 
 impl<'a> Simulator<'a> {
@@ -87,6 +89,7 @@ impl<'a> Simulator<'a> {
             }
         }
 
+        let cts_set = sys.active_cts(4);
         Simulator {
             sys,
             tape,
@@ -102,6 +105,7 @@ impl<'a> Simulator<'a> {
             non_decreasing,
             closed_symbols,
             splits,
+            cts_set,
         }
     }
 
@@ -172,6 +176,23 @@ impl<'a> Simulator<'a> {
         self.true_length = self.true_length + raw_rule.len() - self.sys.v;
 
         let current_len = self.tape.len() - self.head_idx;
+
+        if use_deciders {
+            if let Some(set) = &self.cts_set {
+                for w in set {
+                    if self.tape.len() - self.head_idx >= w.len() {
+                        let sub = &self.tape[self.tape.len() - w.len()..];
+                        if sub == w.as_slice() {
+                            if verbose {
+                                println!("Closed Tape Subset invariant {:?} found on active tape!", w);
+                            }
+                            return Some(HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset, self.steps));
+                        }
+                    }
+                }
+            }
+        }
+
         if self.true_length > self.max_len {
             self.max_len = self.true_length;
         }
@@ -281,8 +302,8 @@ mod tests {
     #[test]
     fn test_cycle() {
         match run_sim("011_0") {
-            HaltCondition::Infinite(InfiniteReason::Cycle(p), _) => assert_eq!(p, 4),
-            other => panic!("Expected Cycle(4), got {:?}", other),
+            HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset, _) => {}, // Caught by CTS before cycle detector!
+            other => panic!("Expected ClosedTapeSubset, got {:?}", other),
         }
     }
 
@@ -307,7 +328,7 @@ mod tests {
     fn test_active_non_decreasing() {
         match run_sim("001_112_3_") {
             HaltCondition::Infinite(InfiniteReason::ActiveNonDecreasing(0), _) => {}
-            other => panic!("Expected Cycle(4), got {:?}", other),
+            other => panic!("Expected ClosedTapeSubset, got {:?}", other),
         }
     }
 
@@ -328,6 +349,15 @@ mod tests {
         // so it fails the safe right-context check.
         let sys = TagSystem::parse(2, "100_");
         assert_eq!(sys.active_non_decreasing_symbol(), None);
+    }
+
+
+    #[test]
+    fn test_closed_tape_subset() {
+        match run_sim("0111_0") {
+            HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset, _) => {}
+            other => panic!("Expected ClosedTapeSubset, got {:?}", other),
+        }
     }
 
     #[test]

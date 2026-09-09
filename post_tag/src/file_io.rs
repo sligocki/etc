@@ -61,6 +61,7 @@ pub fn write_result<W: Write>(
                 }
                 InfiniteReason::Phase0Closed => format!("Phase0Closed"),
                 InfiniteReason::ActiveNonDecreasing(c) => format!("ActiveNonDecreasing({})", c),
+                InfiniteReason::ClosedTapeSubset => format!("ClosedTapeSubset"),
             };
             writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str)
         }

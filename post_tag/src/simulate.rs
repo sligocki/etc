@@ -2,6 +2,7 @@ use crate::tag_system::TagSystem;
 
 #[derive(Debug, Clone)]
 pub enum InfiniteReason {
+    ActiveNonDecreasing(u8),
     Cycle(usize), // period
     ImmortalSubstring(Vec<u8>),
     NonDecreasingSymbol(u8),
@@ -107,6 +108,13 @@ impl<'a> Simulator<'a> {
     pub fn step(&mut self, verbose: bool, use_deciders: bool) -> Option<HaltCondition> {
         if use_deciders {
             if self.steps == 0 {
+                if let Some(c) = self.sys.active_non_decreasing_symbol() {
+                    if verbose {
+                        println!("Symbol {} is active non-decreasing and has safe right context!", c);
+                    }
+                    return Some(HaltCondition::Infinite(InfiniteReason::ActiveNonDecreasing(c), 0));
+                }
+
                 if self.closed_symbols.contains(&0) {
                     if verbose {
                         println!("Symbol 0 is closed and initial tape only has 0!");
@@ -272,9 +280,9 @@ mod tests {
 
     #[test]
     fn test_cycle() {
-        match run_sim("001_") {
-            HaltCondition::Infinite(InfiniteReason::Cycle(p), _) => assert_eq!(p, 3),
-            other => panic!("Expected Cycle(3), got {:?}", other),
+        match run_sim("011_0") {
+            HaltCondition::Infinite(InfiniteReason::Cycle(p), _) => assert_eq!(p, 4),
+            other => panic!("Expected Cycle(4), got {:?}", other),
         }
     }
 
@@ -292,6 +300,34 @@ mod tests {
             HaltCondition::Infinite(InfiniteReason::ClosedSymbol(0), _) => {}
             other => panic!("Expected ClosedSymbol(0), got {:?}", other),
         }
+    }
+
+
+    #[test]
+    fn test_active_non_decreasing() {
+        match run_sim("001_112_3_") {
+            HaltCondition::Infinite(InfiniteReason::ActiveNonDecreasing(0), _) => {}
+            other => panic!("Expected Cycle(4), got {:?}", other),
+        }
+    }
+
+
+    #[test]
+    fn test_active_non_decreasing_reachable() {
+        // Here, 0 is not immortal, but it produces 1 which IS immortal.
+        match run_sim("012_112_0_0") {
+            HaltCondition::Infinite(InfiniteReason::ActiveNonDecreasing(1), _) => {}
+            other => panic!("Expected ActiveNonDecreasing(1), got {:?}", other),
+        }
+    }
+
+
+    #[test]
+    fn test_active_non_decreasing_corner_case_100() {
+        // 100_ has active non-decreasing 0, but it is the last character in rule 0,
+        // so it fails the safe right-context check.
+        let sys = TagSystem::parse(2, "100_");
+        assert_eq!(sys.active_non_decreasing_symbol(), None);
     }
 
     #[test]

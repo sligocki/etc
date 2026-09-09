@@ -171,6 +171,86 @@ impl TagSystem {
         None
     }
 
+
+    pub fn active_non_decreasing_symbol(&self) -> Option<u8> {
+        let n = self.rules.len();
+        
+        let mut splits = vec![vec![None; self.v]; n];
+        for c in 0..n {
+            if let Some(rule) = &self.rules[c] {
+                for phase in 0..self.v {
+                    let mut split = Vec::new();
+                    for (i, &sym) in rule.iter().enumerate() {
+                        if (phase + i) % self.v == 0 {
+                            split.push(sym);
+                        }
+                    }
+                    splits[c][phase] = Some(split);
+                }
+            }
+        }
+
+        for c in 0..n {
+            let mut is_non_decreasing = true;
+            for phase in 0..self.v {
+                if let Some(split) = &splits[c][phase] {
+                    let count = split.iter().filter(|&&x| x == c as u8).count();
+                    if count < 1 {
+                        is_non_decreasing = false;
+                        break;
+                    }
+                } else {
+                    is_non_decreasing = false;
+                    break;
+                }
+            }
+
+            if !is_non_decreasing {
+                continue;
+            }
+
+            let mut safe_context = true;
+            for h in 0..n {
+                if let Some(rule) = &self.rules[h] {
+                    for (i, &sym) in rule.iter().enumerate() {
+                        if sym == c as u8 {
+                            let chars_after = rule.len() - 1 - i;
+                            if chars_after < self.v - 1 {
+                                safe_context = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !safe_context {
+                    break;
+                }
+            }
+            
+
+            let mut reachable = vec![false; n];
+            reachable[0] = true;
+            let mut queue = vec![0];
+            while let Some(curr) = queue.pop() {
+                for phase in 0..self.v {
+                    if let Some(split) = &splits[curr][phase] {
+                        for &next in split {
+                            if !reachable[next as usize] {
+                                reachable[next as usize] = true;
+                                queue.push(next as usize);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if safe_context && reachable[c] {
+                return Some(c as u8);
+            }
+        }
+        None
+    }
+
     pub fn non_decreasing_symbols(&self) -> Vec<u8> {
         let n = self.rules.len();
         let mut res = Vec::new();

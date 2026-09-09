@@ -33,6 +33,7 @@ fn main() {
     println!("Analyzing for Translation Cycles: {}", sys.format_rules());
 
     let mut sim = Simulator::new(&sys);
+    sim.tape = vec![0; sys.v];
 
     // (step, tape, characters_consumed)
     let mut snapshots: Vec<(usize, Vec<u8>, usize)> = Vec::new();

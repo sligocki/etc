@@ -35,7 +35,7 @@ fn main() {
 
     println!("Simulating to record high-water marks: {}", sys.format_rules());
 
-    let mut sim = post_tag::simulate::Simulator::new(&sys);
+    let mut sim = post_tag::simulate::Simulator::new(&sys, true);
     
     let mut records: Vec<(usize, usize)> = Vec::new();
     let mut max_seen_len = 0;

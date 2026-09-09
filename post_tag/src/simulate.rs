@@ -3,7 +3,7 @@ use crate::tag_system::TagSystem;
 #[derive(Debug, Clone)]
 pub enum InfiniteReason {
     ActiveNonDecreasing(u8),
-    ClosedTapeSubset,
+    ClosedTapeSubset(Vec<Vec<u8>>),
     Cycle(usize), // period
     ImmortalSubstring(Vec<u8>),
     NonDecreasingSymbol(u8),
@@ -42,11 +42,11 @@ pub struct Simulator<'a> {
     pub non_decreasing: Vec<u8>,
     pub closed_symbols: Vec<u8>,
     pub splits: Vec<Vec<Option<Vec<u8>>>>, // [symbol][phase]
-    pub cts_set: Option<Vec<Vec<u8>>>,
+    pub pre_halt: Option<HaltCondition>,
 }
 
 impl<'a> Simulator<'a> {
-    pub fn new(sys: &'a TagSystem) -> Self {
+    pub fn new(sys: &'a TagSystem, use_deciders: bool) -> Self {
         let tape = vec![0u8];
         let mut saved_tape = Vec::with_capacity(64);
         saved_tape.extend_from_slice(&tape);
@@ -89,7 +89,42 @@ impl<'a> Simulator<'a> {
             }
         }
 
-        let cts_set = sys.active_cts(4);
+        
+
+        let mut pre_halt = None;
+        if use_deciders {
+            if let Some(w_set) = sys.closed_tape_subset(4) {
+                let mut tape = vec![0; sys.v];
+                let mut head = 0;
+                let mut reached = false;
+                for _ in 0..100 {
+                    if head + sys.v > tape.len() {
+                        break;
+                    }
+                    let current_tape = &tape[head..];
+                    for cand in &w_set {
+                        if current_tape.windows(cand.len()).any(|window| window == cand.as_slice()) {
+                            reached = true;
+                            break;
+                        }
+                    }
+                    if reached { break; }
+                    
+                    let sym = tape[head];
+                    if let Some(rule) = &sys.rules[sym as usize] {
+                        tape.extend(rule.iter().copied());
+                    } else {
+                        break;
+                    }
+                    head += sys.v;
+                }
+                if reached {
+                    pre_halt = Some(HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset(w_set.clone()), 0));
+                }
+            }
+        }
+
+
         Simulator {
             sys,
             tape,
@@ -105,7 +140,7 @@ impl<'a> Simulator<'a> {
             non_decreasing,
             closed_symbols,
             splits,
-            cts_set,
+            pre_halt,
         }
     }
 
@@ -178,18 +213,8 @@ impl<'a> Simulator<'a> {
         let current_len = self.tape.len() - self.head_idx;
 
         if use_deciders {
-            if let Some(set) = &self.cts_set {
-                for w in set {
-                    if self.tape.len() - self.head_idx >= w.len() {
-                        let sub = &self.tape[self.tape.len() - w.len()..];
-                        if sub == w.as_slice() {
-                            if verbose {
-                                println!("Closed Tape Subset invariant {:?} found on active tape!", w);
-                            }
-                            return Some(HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset, self.steps));
-                        }
-                    }
-                }
+            if let Some(cond) = self.pre_halt.clone() {
+                return Some(cond);
             }
         }
 
@@ -274,7 +299,7 @@ pub fn simulate(
     verbose: bool,
     use_deciders: bool,
 ) -> HaltCondition {
-    Simulator::new(sys).run(max_steps, max_space, verbose, use_deciders)
+    Simulator::new(sys, use_deciders).run(max_steps, max_space, verbose, use_deciders)
 }
 
 #[cfg(test)]
@@ -284,7 +309,7 @@ mod tests {
 
     fn run_sim(s: &str) -> HaltCondition {
         let sys = TagSystem::parse(2, s);
-        let mut sim = Simulator::new(&sys);
+        let mut sim = Simulator::new(&sys, true);
         sim.run(10_000, 1_000_000, false, true)
     }
 
@@ -302,7 +327,7 @@ mod tests {
     #[test]
     fn test_cycle() {
         match run_sim("011_0") {
-            HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset, _) => {}, // Caught by CTS before cycle detector!
+            HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset(_), _) => {}, // Caught by CTS before cycle detector!
             other => panic!("Expected ClosedTapeSubset, got {:?}", other),
         }
     }
@@ -355,7 +380,7 @@ mod tests {
     #[test]
     fn test_closed_tape_subset() {
         match run_sim("0111_0") {
-            HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset, _) => {}
+            HaltCondition::Infinite(InfiniteReason::ClosedTapeSubset(_), _) => {}
             other => panic!("Expected ClosedTapeSubset, got {:?}", other),
         }
     }

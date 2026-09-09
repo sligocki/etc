@@ -73,6 +73,7 @@ fn explore_adaptive(
     max_steps: usize,
     max_space: usize,
     max_seen: u8,
+    use_deciders: bool,
     callback: &mut impl FnMut(&TagSystem, HaltCondition),
 ) {
     if let Some(w) = sys.has_immortal_substring() {
@@ -83,7 +84,7 @@ fn explore_adaptive(
         return;
     }
 
-    match crate::translation_cycle::check_translation_cycle(sys, max_steps, max_space, false) {
+    match crate::translation_cycle::check_translation_cycle(sys, max_steps, max_space, false, use_deciders) {
         HaltCondition::UndefinedRule(c) => {
             let l = lens[c as usize];
             let mut string_buf = vec![0u8; l];
@@ -101,7 +102,7 @@ fn explore_adaptive(
 
                     sys.rules[c as usize] = Some(chars.to_vec());
                     if is_valid_reachability(sys) {
-                        explore_adaptive(sys, lens, max_steps, max_space, new_max_seen, callback);
+                        explore_adaptive(sys, lens, max_steps, max_space, new_max_seen, use_deciders, callback);
                     }
                     sys.rules[c as usize] = None; // Backtrack
                 },
@@ -118,6 +119,7 @@ pub fn enumerate_systems(
     s: usize,
     max_steps: usize,
     max_space: usize,
+    use_deciders: bool,
     callback: &mut impl FnMut(&TagSystem, HaltCondition),
 ) {
     for n in 1..=s {
@@ -128,7 +130,7 @@ pub fn enumerate_systems(
                 v,
                 rules: vec![None; n],
             };
-            explore_adaptive(&mut sys, lens, max_steps, max_space, 0, callback);
+            explore_adaptive(&mut sys, lens, max_steps, max_space, 0, use_deciders, callback);
         });
     }
 }

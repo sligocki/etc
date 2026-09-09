@@ -32,7 +32,7 @@ fn main() {
 
     println!("Analyzing for Translation Cycles: {}", sys.format_rules());
 
-    let mut sim = Simulator::new(&sys);
+    let mut sim = Simulator::new(&sys, true);
     sim.tape = vec![0; sys.v];
 
     // (step, tape, characters_consumed)

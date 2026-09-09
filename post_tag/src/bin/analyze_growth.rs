@@ -55,7 +55,7 @@ fn main() {
 
         let resolved_rules = post_tag::file_io::resolve_program_string(prog_str);
         let sys = TagSystem::parse(2, &resolved_rules);
-        let mut sim = post_tag::simulate::Simulator::new(&sys);
+        let mut sim = post_tag::simulate::Simulator::new(&sys, true);
 
         let mut shrink_steps = 0;
         let mut prev_len = 0;

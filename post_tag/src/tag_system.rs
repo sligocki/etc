@@ -252,15 +252,20 @@ impl TagSystem {
     }
 
 
-    pub fn active_cts(&self, max_len: usize) -> Option<Vec<Vec<u8>>> {
+
+    pub fn closed_tape_subset(&self, max_len: usize) -> Option<Vec<Vec<u8>>> {
         use std::collections::HashSet;
-        
         let mut w_set = HashSet::new();
+        let num_rules = self.rules.len();
+        
         for len in 1..=max_len {
-            for i in 0..(1 << len) {
+            let max_val = num_rules.pow(len as u32);
+            for i in 0..max_val {
                 let mut w = vec![];
-                for bit in 0..len {
-                    w.push(if (i & (1 << bit)) != 0 { 1 } else { 0 });
+                let mut val = i;
+                for _ in 0..len {
+                    w.push((val % num_rules) as u8);
+                    val /= num_rules;
                 }
                 w_set.insert(w);
             }
@@ -269,83 +274,70 @@ impl TagSystem {
         loop {
             let mut to_remove = Vec::new();
             for w in &w_set {
-                // For each context (phase, pending symbol)
-                for p in 0..self.v {
-                    let mut pend_options = vec![None];
-                    for s in 0..self.rules.len() {
-                        pend_options.push(Some(s as u8));
-                    }
-                    
-                    for pend in &pend_options {
-                        let mut q = w.clone();
-                        let mut produced = Vec::new();
-                        let mut current_p = p;
-                        let mut current_pend = *pend;
+                let mut valid_for_all_contexts = true;
+                
+                for ctx_len in 0..self.v {
+                    let max_ctx = num_rules.pow(ctx_len as u32);
+                    for ctx_i in 0..max_ctx {
+                        let mut ctx = vec![];
+                        let mut val = ctx_i;
+                        for _ in 0..ctx_len {
+                            ctx.push((val % num_rules) as u8);
+                            val /= num_rules;
+                        }
                         
-                        let mut head_idx = 0;
-                        let mut found = false;
+                        let mut tape = ctx.clone();
+                        tape.extend(w.iter().copied());
                         
+                        let initial_boundary = tape.len();
+                        let mut head = 0;
+                        let mut halted = false;
                         let mut steps = 0;
-                        while head_idx < q.len() && steps < 100 {
+                        
+                        while head < initial_boundary && steps < 100 {
                             steps += 1;
-                            let sym = q[head_idx];
-                            head_idx += 1;
-                            
-                            let rule = match &self.rules[sym as usize] {
-                                Some(r) => r,
-                                None => break, // Cannot continue if undefined rule
-                            };
-                            
-                            if rule.len() > 0 {
-                                if let Some(ps) = current_pend {
-                                    produced.push(ps);
-                                    q.push(ps);
-                                    current_pend = None;
-                                }
+                            if head + self.v > tape.len() {
+                                halted = true;
+                                break;
                             }
                             
-                            let mut active = vec![];
-                            let mut last_idx = None;
-                            for (i, &s) in rule.iter().enumerate() {
-                                if (current_p + i) % self.v == 0 {
-                                    active.push(s);
-                                    last_idx = Some(i);
-                                }
+                            let sym = tape[head];
+                            if let Some(rule) = &self.rules[sym as usize] {
+                                tape.extend(rule.iter().copied());
+                            } else {
+                                halted = true;
+                                break;
                             }
-                            current_p = (current_p + rule.len()) % self.v;
-                            
-                            if !active.is_empty() {
-                                let trailing = rule.len() - 1 - last_idx.unwrap();
-                                for i in 0..active.len() {
-                                    if i == active.len() - 1 && trailing < self.v - 1 {
-                                        current_pend = Some(active[i]);
-                                    } else {
-                                        produced.push(active[i]);
-                                        q.push(active[i]);
-                                    }
-                                }
+                            head += self.v;
+                        }
+                        
+                        if halted || steps >= 100 {
+                            valid_for_all_contexts = false;
+                            break;
+                        }
+                        
+                        let output = &tape[head..];
+                        let mut found = false;
+                        for cand in &w_set {
+                            if output.windows(cand.len()).any(|window| window == cand.as_slice()) {
+                                found = true;
+                                break;
                             }
-                            
-                            for cand in &w_set {
-                                if produced.ends_with(cand) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if found { break; }
                         }
                         
                         if !found {
-                            to_remove.push(w.clone());
-                            break; // no need to check other contexts for this w
+                            valid_for_all_contexts = false;
+                            break;
                         }
                     }
-                    if !to_remove.is_empty() && to_remove.last() == Some(w) {
+                    if !valid_for_all_contexts {
                         break;
                     }
                 }
+                if !valid_for_all_contexts {
+                    to_remove.push(w.clone());
+                }
             }
-            
             if to_remove.is_empty() {
                 break;
             }
@@ -353,21 +345,12 @@ impl TagSystem {
                 w_set.remove(&w);
             }
         }
-        
         if w_set.is_empty() {
             None
         } else {
-            // We just need to check if the initial tape generates any of these.
-            // For v=2, initial tape is 00, so active tape starts with [0] at phase 0, pending None.
-            // We can just check if any string in w_set starts with 0?
-            // Actually, any string in the set means the set is closed. But is it reachable?
-            // Since we generated ALL strings, we should just return the set, and the simulator can check if it hits it.
-            // But we can quickly check if '0' is a prefix of any string, or just let the simulator check it dynamically!
-            // Wait, returning the set is enough.
             Some(w_set.into_iter().collect())
         }
     }
-
     pub fn non_decreasing_symbols(&self) -> Vec<u8> {
         let n = self.rules.len();
         let mut res = Vec::new();

@@ -60,8 +60,20 @@ pub fn write_result<W: Write>(
                     format!("TranslationCycle period={}", period)
                 }
                 InfiniteReason::Phase0Closed => format!("Phase0Closed"),
-                InfiniteReason::ActiveNonDecreasing(c) => format!("ActiveNonDecreasing({})", c),
-                InfiniteReason::ClosedTapeSubset => format!("ClosedTapeSubset"),
+                InfiniteReason::ActiveNonDecreasing(c) => format!("ActiveNonDecreasing symbol={}", c),
+                InfiniteReason::ClosedTapeSubset(subset) => {
+                    let mut s = String::new();
+                    // Sort the subset for deterministic output
+                    let mut sorted_subset = subset.clone();
+                    sorted_subset.sort();
+                    for (i, w) in sorted_subset.iter().enumerate() {
+                        if i > 0 { s.push('|'); }
+                        for &b in w {
+                            s.push_str(&b.to_string());
+                        }
+                    }
+                    format!("ClosedTapeSubset subset=({})", s)
+                }
             };
             writeln!(w, "prog={} status=Infinite reason={}", dense, reason_str)
         }

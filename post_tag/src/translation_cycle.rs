@@ -6,8 +6,9 @@ pub fn check_translation_cycle(
     max_steps: usize,
     max_space: usize,
     verbose: bool,
+    use_deciders: bool,
 ) -> HaltCondition {
-    let mut sim = Simulator::new(sys);
+    let mut sim = Simulator::new(sys, use_deciders);
 
     // (step, tape, phase)
     let mut snapshots: Vec<(usize, Vec<u8>, usize)> = Vec::new();
@@ -93,7 +94,7 @@ pub fn check_translation_cycle(
         }
 
         // Take a standard step
-        if let Some(cond) = sim.step(verbose, true) {
+        if let Some(cond) = sim.step(verbose, use_deciders) {
             return cond;
         }
     }

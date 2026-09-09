@@ -32,7 +32,7 @@ fn main() {
 
     println!("Simulating: {}", sys.format_rules());
 
-    let mut sim = post_tag::simulate::Simulator::new(&sys);
+    let mut sim = post_tag::simulate::Simulator::new(&sys, true);
 
     while sim.true_length >= sys.v && sim.steps < args.max_steps {
         if sim.tape.len() - sim.head_idx > args.max_space {
@@ -65,7 +65,7 @@ fn main() {
             println!(" (phase {})", sim.true_length % sys.v);
         }
 
-        if let Some(cond) = sim.step(false, false) {
+        if let Some(cond) = sim.step(false, true) {
             println!("Halted at step {}: {:?}", sim.steps, cond);
             return;
         }

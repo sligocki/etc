@@ -14,8 +14,13 @@ struct Args {
     s: usize,
 
     /// Output file for system execution results
+
     #[arg(short, long)]
     out: Option<String>,
+
+    /// Disable deciders
+    #[arg(long)]
+    no_deciders: bool,
 
     /// Deletion number
     #[arg(long = "del", default_value_t = 2)]
@@ -55,6 +60,7 @@ fn main() {
         args.s,
         args.max_steps,
         args.max_space,
+        !args.no_deciders,
         &mut |sys, condition| {
             total += 1;
             match condition {

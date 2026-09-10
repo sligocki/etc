@@ -348,7 +348,24 @@ impl TagSystem {
         if w_set.is_empty() {
             None
         } else {
-            Some(w_set.into_iter().collect())
+            let mut final_set: Vec<Vec<u8>> = w_set.into_iter().collect();
+            // Sort by length, then lexicographically
+            final_set.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+
+            let mut minimal_set: Vec<Vec<u8>> = Vec::new();
+            for w in final_set {
+                let mut has_sub = false;
+                for m in &minimal_set {
+                    if w.windows(m.len()).any(|win| win == m.as_slice()) {
+                        has_sub = true;
+                        break;
+                    }
+                }
+                if !has_sub {
+                    minimal_set.push(w);
+                }
+            }
+            Some(minimal_set)
         }
     }
     pub fn non_decreasing_symbols(&self) -> Vec<u8> {

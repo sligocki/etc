@@ -66,7 +66,12 @@ fn main() {
         }
 
         if let Some(cond) = sim.step(false, true) {
-            println!("Halted at step {}: {:?}", sim.steps, cond);
+            match cond {
+                post_tag::simulate::HaltCondition::Halted(_, space) => println!("Halted normally at step {}. Space: {}", sim.steps, space),
+                post_tag::simulate::HaltCondition::Infinite(reason, _) => println!("Proved infinite at step {}: {:?}", sim.steps, reason),
+                post_tag::simulate::HaltCondition::Unknown(reason, _) => println!("Aborted at step {}: {:?}", sim.steps, reason),
+                post_tag::simulate::HaltCondition::UndefinedRule(sym) => println!("Halted due to undefined rule for symbol {} at step {}", sym, sim.steps),
+            }
             return;
         }
     }

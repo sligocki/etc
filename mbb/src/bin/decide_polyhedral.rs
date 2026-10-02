@@ -1,7 +1,7 @@
 use mbb::parse::parse_program;
 use mbb::program::{Instruction, Target};
 use mbb::macro_program::abstract_program;
-use mbb::deciders::affine::{verify_closed_set, ClosedSet, VerifyResult};
+use mbb::deciders::polyhedral::{verify_polyhedral_closed_set, PolyhedralClosedSet, VerifyResult};
 use mbb::deciders::symbolic::{AffineExpr, Condition, ConditionType};
 use std::env;
 
@@ -68,14 +68,14 @@ fn main() {
 
     let macros = abstract_program(&prog);
 
-    let closed_set = ClosedSet {
+    let closed_set = PolyhedralClosedSet {
         state: state_idx,
         conditions,
         num_registers: num_regs,
     };
 
-    println!("Verifying closed set at State {} with conditions {:?}", state_str, args[4..].to_vec());
-    match verify_closed_set(&macros, &closed_set, verbose) {
+    println!("Verifying Polyhedral Closed Set at State {} with conditions {:?}", state_str, args[4..].to_vec());
+    match verify_polyhedral_closed_set(&macros, &closed_set, verbose) {
         VerifyResult::Verified => {
             println!("✅ Successfully verified that the set is closed and does not halt!");
             

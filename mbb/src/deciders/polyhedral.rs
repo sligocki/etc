@@ -4,7 +4,7 @@ use crate::deciders::symbolic::{AffineExpr, Condition, ConditionType};
 use minilp::{Problem, OptimizationDirection, Variable, ComparisonOp};
 use std::collections::{HashMap, VecDeque};
 
-pub struct ClosedSet {
+pub struct PolyhedralClosedSet {
     pub state: usize,
     pub conditions: Vec<Condition>,
     pub num_registers: usize,
@@ -115,7 +115,7 @@ fn format_regs(regs: &[AffineExpr]) -> String {
     s
 }
 
-pub fn verify_closed_set(prog: &[MacroInst], closed_set: &ClosedSet, verbose: bool) -> VerifyResult {
+pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralClosedSet, verbose: bool) -> VerifyResult {
     if verbose {
         println!("Macro Abstracted Program:");
         for (i, m) in prog.iter().enumerate() {

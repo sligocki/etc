@@ -10,3 +10,5 @@ pub enum DeciderResult {
 pub trait Decider {
     fn decide(&self, prog: &Program) -> DeciderResult;
 }
+pub mod symbolic;
+pub mod affine;

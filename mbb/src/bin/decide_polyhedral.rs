@@ -223,6 +223,12 @@ fn main() {
             println!("   State: {}", (b'A' + set.state as u8) as char);
             let cond_strs: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
             println!("   Conditions: [{}]", cond_strs.join(", "));
+
+            if verbose {
+                println!("\nFinal Verification Trace:");
+                let macros = abstract_program(&prog);
+                verify_polyhedral_closed_set(&macros, &set, true);
+            }
         } else {
             println!("❌ Could not find a Polyhedral Closed Set.");
         }

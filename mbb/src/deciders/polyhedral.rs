@@ -192,16 +192,15 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
 
                     if !implies(&state.path_conditions, &substituted_cond_expr, &cond.cond_type) {
                         if verbose {
-                            println!("  FAILED to prove {} implies condition {} over updated registers.", 
-                                     Condition { expr: substituted_cond_expr.clone(), cond_type: cond.cond_type.clone() },
-                                     cond);
-                            // Also print what is_satisfiable would say?
+                            println!("  FAILED to prove condition {} is preserved (evaluates to {} which is not implied by path).", 
+                                     cond,
+                                     Condition { expr: substituted_cond_expr.clone(), cond_type: cond.cond_type.clone() });
                         }
                         path_failed_conds.push(cond.clone());
                     } else if verbose {
-                        println!("  Successfully proved {} implies condition {} over updated registers.", 
-                                 Condition { expr: substituted_cond_expr, cond_type: cond.cond_type.clone() },
-                                 cond);
+                        println!("  Successfully proved condition {} is preserved (evaluates to {} which is implied by path).", 
+                                 cond,
+                                 Condition { expr: substituted_cond_expr, cond_type: cond.cond_type.clone() });
                     }
                 }
                 

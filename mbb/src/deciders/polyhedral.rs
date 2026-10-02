@@ -147,6 +147,10 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
 
     while let Some(state) = queue.pop_front() {
         if state.depth > 1000 {
+            if verbose {
+                println!("  Depth limit exceeded! Trace:");
+                for (s, a) in &state.trace { println!("      {}   {}", s, a); }
+            }
             return VerifyResult::Failed("Depth limit exceeded (potential infinite loop)".to_string());
         }
 

@@ -38,7 +38,7 @@ pub enum SimResult {
     LimitReached,
 }
 
-pub fn simulate(prog: &Program, step_limit: Option<u64>) -> SimResult {
+pub fn simulate(prog: &Program, step_limit: Option<u64>, verbose: bool) -> SimResult {
     let mut state = State::new();
 
     loop {
@@ -53,6 +53,17 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>) -> SimResult {
         }
 
         let inst = &prog.instructions[state.pc];
+
+        if verbose {
+            let state_char = (b'A' + state.pc as u8) as char;
+            let max_reg = prog.num_regs();
+            let mut regs = Vec::new();
+            for i in 0..max_reg {
+                regs.push(state.get_reg(i));
+            }
+            println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, inst);
+        }
+
         state.steps += 1;
 
         match inst {

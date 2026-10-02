@@ -4,9 +4,12 @@ use std::env;
 use std::process;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+    let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
+    args.retain(|a| a != "-v" && a != "--verbose");
+
     if args.len() < 2 {
-        eprintln!("Usage: {} <program> [step_limit]", args[0]);
+        eprintln!("Usage: {} [-v] <program> [step_limit]", args[0]);
         process::exit(1);
     }
 
@@ -23,7 +26,7 @@ fn main() {
 
     println!("Simulating: {}", prog);
 
-    match simulate(&prog, limit) {
+    match simulate(&prog, limit, verbose) {
         SimResult::Halted(steps) => {
             println!("Halted after {} steps.", steps);
         }

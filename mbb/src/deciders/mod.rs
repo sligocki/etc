@@ -12,3 +12,4 @@ pub trait Decider {
 }
 pub mod symbolic;
 pub mod polyhedral;
+pub mod polyhedral_guesser;

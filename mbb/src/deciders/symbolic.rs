@@ -6,7 +6,7 @@ pub enum ConditionType {
     EqualZero,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AffineExpr {
     pub constant: i64,
     pub coeffs: HashMap<usize, i64>,
@@ -53,7 +53,7 @@ impl AffineExpr {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Condition {
     pub expr: AffineExpr,
     pub cond_type: ConditionType,

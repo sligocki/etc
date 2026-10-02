@@ -22,6 +22,7 @@ struct SymbolicState {
 #[derive(Debug)]
 pub enum VerifyResult {
     Verified,
+    ConditionFailed(Vec<Condition>),
     Failed(String),
 }
 
@@ -66,6 +67,11 @@ fn implies(conditions: &[Condition], target_expr: &AffineExpr, target_cond_type:
             let mut problem = Problem::new(OptimizationDirection::Minimize);
             let mut vars = HashMap::new();
 
+            // First create all variables used in target_expr so they get the correct objective coeff
+            for (&var_idx, &coeff) in &target_expr.coeffs {
+                vars.insert(var_idx, problem.add_var(coeff as f64, (0.0, f64::INFINITY)));
+            }
+
             for cond in conditions {
                 match cond.cond_type {
                     ConditionType::GreaterEqualZero => {
@@ -75,12 +81,6 @@ fn implies(conditions: &[Condition], target_expr: &AffineExpr, target_cond_type:
                         add_expr_to_problem(&mut problem, &mut vars, &cond.expr, ComparisonOp::Eq);
                     }
                 }
-            }
-
-            let mut term_vars = Vec::new();
-            for (&var_idx, &coeff) in &target_expr.coeffs {
-                let v = *vars.entry(var_idx).or_insert_with(|| problem.add_var(coeff as f64, (0.0, f64::INFINITY)));
-                term_vars.push((v, coeff as f64));
             }
 
             match problem.solve() {
@@ -143,6 +143,7 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
     });
 
     let mut path_count = 0;
+    let mut all_failed_conds = Vec::new();
 
     while let Some(state) = queue.pop_front() {
         if state.depth > 1000 {
@@ -180,6 +181,7 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                     println!("      {}:{}", (b'A' + pc_idx as u8) as char, format_regs(&state.regs));
                 }
 
+                let mut path_failed_conds = Vec::new();
                 for cond in &closed_set.conditions {
                     let mut substituted_cond_expr = AffineExpr::new(cond.expr.constant);
                     for (&var_idx, &coeff) in &cond.expr.coeffs {
@@ -189,14 +191,25 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                     }
 
                     if !implies(&state.path_conditions, &substituted_cond_expr, &cond.cond_type) {
-                        return VerifyResult::Failed(format!(
-                            "Failed to prove condition is maintained: {:?}", cond
-                        ));
-                    }
-                    if verbose {
+                        if verbose {
+                            println!("  FAILED to prove {} implies condition {} over updated registers.", 
+                                     Condition { expr: substituted_cond_expr.clone(), cond_type: cond.cond_type.clone() },
+                                     cond);
+                            // Also print what is_satisfiable would say?
+                        }
+                        path_failed_conds.push(cond.clone());
+                    } else if verbose {
                         println!("  Successfully proved {} implies condition {} over updated registers.", 
                                  Condition { expr: substituted_cond_expr, cond_type: cond.cond_type.clone() },
                                  cond);
+                    }
+                }
+                
+                if !path_failed_conds.is_empty() {
+                    for c in path_failed_conds {
+                        if !all_failed_conds.contains(&c) {
+                            all_failed_conds.push(c);
+                        }
                     }
                 }
                 if verbose { println!(); }
@@ -288,6 +301,10 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                 queue.push_back(nz_state);
             }
         }
+    }
+
+    if !all_failed_conds.is_empty() {
+        return VerifyResult::ConditionFailed(all_failed_conds);
     }
 
     VerifyResult::Verified

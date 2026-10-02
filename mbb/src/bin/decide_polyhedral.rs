@@ -2,6 +2,7 @@ use mbb::parse::parse_program;
 use mbb::program::{Instruction, Target};
 use mbb::macro_program::abstract_program;
 use mbb::deciders::polyhedral::{verify_polyhedral_closed_set, PolyhedralClosedSet, VerifyResult};
+use mbb::deciders::polyhedral_guesser::find_closed_set;
 use mbb::deciders::symbolic::{AffineExpr, Condition, ConditionType};
 use std::env;
 
@@ -44,105 +45,166 @@ fn parse_condition(s: &str) -> Condition {
     }
 }
 
+use std::fs::File;
+use std::io::{self, BufRead};
+
 fn main() {
     let mut args: Vec<String> = env::args().collect();
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     args.retain(|a| a != "-v" && a != "--verbose");
 
-    if args.len() < 4 {
-        eprintln!("Usage: {} [-v] <program> <state: A, B, ...> <condition1> [condition2] ...", args[0]);
+    if args.len() < 2 {
+        eprintln!("Usage: {} [-v] <program> [state: A, B, ...] [condition1] [condition2] ...", args[0]);
+        eprintln!("       {} [-v] --file <file_path>", args[0]);
         std::process::exit(1);
     }
 
-    let prog_str = &args[1];
-    let state_str = &args[2];
+    if args[1] == "--file" || args[1] == "-f" {
+        if args.len() < 3 {
+            eprintln!("Missing file path after {}", args[1]);
+            std::process::exit(1);
+        }
+        let file_path = &args[2];
+        let file = File::open(file_path).expect("Could not open file");
+        let reader = io::BufReader::new(file);
 
-    let prog = parse_program(prog_str).expect("Failed to parse program");
-    let state_idx = (state_str.chars().next().unwrap() as u8 - b'A') as usize;
-    let num_regs = prog.num_regs();
+        let mut success_count = 0;
+        let mut total_count = 0;
 
-    let mut conditions = Vec::new();
-    for i in 3..args.len() {
-        conditions.push(parse_condition(&args[i]));
-    }
-
-    let macros = abstract_program(&prog);
-
-    let closed_set = PolyhedralClosedSet {
-        state: state_idx,
-        conditions,
-        num_registers: num_regs,
-    };
-
-    println!("Verifying Polyhedral Closed Set at State {} with conditions {:?}", state_str, args[3..].to_vec());
-    match verify_polyhedral_closed_set(&macros, &closed_set, verbose) {
-        VerifyResult::Verified => {
-            println!("✅ Successfully verified that the set is closed and does not halt!");
-            
-            let mut state = mbb::simulate::State::new();
-            let mut found = false;
-            
-            while state.steps < 100000 {
-                if state.pc == state_idx {
-                    let mut is_satisfied = true;
-                    for cond in &closed_set.conditions {
-                        let mut val = cond.expr.constant;
-                        for (&v_idx, &coeff) in &cond.expr.coeffs {
-                            val += coeff * (state.get_reg(v_idx) as i64);
-                        }
-                        match cond.cond_type {
-                            ConditionType::GreaterEqualZero => {
-                                if val < 0 { is_satisfied = false; break; }
-                            }
-                            ConditionType::EqualZero => {
-                                if val != 0 { is_satisfied = false; break; }
-                            }
-                        }
-                    }
-                    if is_satisfied {
-                        println!("🎉 Program enters the closed set at step {} with regs: {:?}", state.steps, state.registers);
-                        found = true;
-                        break;
-                    }
-                }
-
-                if state.pc >= prog.instructions.len() { break; }
-                
-                let inst = &prog.instructions[state.pc];
-                state.steps += 1;
-                match inst {
-                    Instruction::Inc { reg, next } => {
-                        let val = state.get_reg(*reg);
-                        state.set_reg(*reg, val.wrapping_add(1));
-                        match next {
-                            Target::Halt => break,
-                            Target::Inst(i) => state.pc = *i,
-                        }
-                    }
-                    Instruction::Dec { reg, next_not_zero, next_zero } => {
-                        let val = state.get_reg(*reg);
-                        if val == 0 {
-                            match next_zero {
-                                Target::Halt => break,
-                                Target::Inst(i) => state.pc = *i,
-                            }
-                        } else {
-                            state.set_reg(*reg, val - 1);
-                            match next_not_zero {
-                                Target::Halt => break,
-                                Target::Inst(i) => state.pc = *i,
-                            }
-                        }
-                    }
-                }
+        for line in reader.lines() {
+            let line = line.expect("Could not read line");
+            let prog_str = line.trim();
+            if prog_str.is_empty() || prog_str.starts_with('#') {
+                continue;
             }
-
-            if !found {
-                println!("⚠️ Verified closure, but failed to find entry point within 100,000 steps.");
+            total_count += 1;
+            println!("Testing program: {}", prog_str);
+            let prog = parse_program(prog_str).expect("Failed to parse program");
+            if let Some(set) = find_closed_set(&prog, verbose) {
+                success_count += 1;
+                println!("  🎉 Found Polyhedral Closed Set at State {} with conditions {:?}", 
+                    (b'A' + set.state as u8) as char, 
+                    set.conditions.iter().map(|c| c.to_string()).collect::<Vec<_>>());
+            } else {
+                println!("  ❌ Could not find a Polyhedral Closed Set.");
             }
         }
-        VerifyResult::Failed(msg) => {
-            println!("❌ Verification failed: {}", msg);
+        println!("\nSummary: Decided {} out of {} programs ({}%)", success_count, total_count, 
+            if total_count > 0 { (success_count as f64 / total_count as f64 * 100.0) as usize } else { 0 });
+        return;
+    }
+
+    let prog_str = &args[1];
+    let prog = parse_program(prog_str).expect("Failed to parse program");
+
+    if args.len() >= 3 {
+        // Manual mode
+        let state_str = &args[2];
+        let state_idx = (state_str.chars().next().unwrap() as u8 - b'A') as usize;
+        let num_regs = prog.num_regs();
+
+        let mut conditions = Vec::new();
+        for i in 3..args.len() {
+            conditions.push(parse_condition(&args[i]));
+        }
+
+        let macros = abstract_program(&prog);
+
+        let closed_set = PolyhedralClosedSet {
+            state: state_idx,
+            conditions,
+            num_registers: num_regs,
+        };
+
+        println!("Verifying Polyhedral Closed Set at State {} with conditions {:?}", state_str, args[3..].to_vec());
+        match verify_polyhedral_closed_set(&macros, &closed_set, verbose) {
+            VerifyResult::Verified => {
+                println!("✅ Successfully verified that the set is closed and does not halt!");
+                
+                // Extra: concretely simulate until entry
+                let mut state = mbb::simulate::State::new();
+                
+                loop {
+                    if state.pc == state_idx {
+                        // verify condition
+                        let mut all_match = true;
+                        for cond in &closed_set.conditions {
+                            let mut val = cond.expr.constant;
+                            for (&var_idx, &coeff) in &cond.expr.coeffs {
+                                val += coeff * state.get_reg(var_idx) as i64;
+                            }
+                            match cond.cond_type {
+                                ConditionType::GreaterEqualZero => {
+                                    if val < 0 { all_match = false; break; }
+                                }
+                                ConditionType::EqualZero => {
+                                    if val != 0 { all_match = false; break; }
+                                }
+                            }
+                        }
+                        if all_match {
+                            println!("🎉 Program enters the closed set at step {} with regs: {:?}", state.steps, state.registers);
+                            break;
+                        }
+                    }
+                    if state.pc >= prog.instructions.len() {
+                        println!("Failed to enter closed set");
+                        break;
+                    }
+                    if state.steps > 100_000 {
+                        println!("Failed to enter closed set after 100,000 steps");
+                        break;
+                    }
+
+                    let inst = &prog.instructions[state.pc];
+                    state.steps += 1;
+                    match inst {
+                        Instruction::Inc { reg, next } => {
+                            let val = state.get_reg(*reg);
+                            state.set_reg(*reg, val.wrapping_add(1));
+                            match next {
+                                Target::Halt => break,
+                                Target::Inst(i) => state.pc = *i,
+                            }
+                        }
+                        Instruction::Dec { reg, next_not_zero, next_zero } => {
+                            let val = state.get_reg(*reg);
+                            if val == 0 {
+                                match next_zero {
+                                    Target::Halt => break,
+                                    Target::Inst(i) => state.pc = *i,
+                                }
+                            } else {
+                                state.set_reg(*reg, val - 1);
+                                match next_not_zero {
+                                    Target::Halt => break,
+                                    Target::Inst(i) => state.pc = *i,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            VerifyResult::ConditionFailed(failed) => {
+                println!("❌ Verification failed! The following conditions could not be proven:");
+                for c in failed {
+                    println!("  {}", c);
+                }
+            }
+            VerifyResult::Failed(msg) => {
+                println!("❌ Verification failed! {}", msg);
+            }
+        }
+    } else {
+        // Auto-guess mode
+        println!("Running Polyhedral Guesser...");
+        if let Some(set) = find_closed_set(&prog, verbose) {
+            println!("🎉 Automatically found a valid Polyhedral Closed Set!");
+            println!("   State: {}", (b'A' + set.state as u8) as char);
+            let cond_strs: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
+            println!("   Conditions: [{}]", cond_strs.join(", "));
+        } else {
+            println!("❌ Could not find a Polyhedral Closed Set.");
         }
     }
 }

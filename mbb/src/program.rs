@@ -22,6 +22,15 @@ pub struct Program {
     pub instructions: Vec<Instruction>,
 }
 
+impl Program {
+    pub fn num_regs(&self) -> usize {
+        self.instructions.iter().map(|inst| match inst {
+            Instruction::Inc { reg, .. } => *reg,
+            Instruction::Dec { reg, .. } => *reg,
+        }).max().map_or(0, |max_reg| max_reg + 1)
+    }
+}
+
 impl Target {
     pub fn to_char(self) -> char {
         match self {

@@ -49,20 +49,20 @@ fn main() {
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     args.retain(|a| a != "-v" && a != "--verbose");
 
-    if args.len() < 5 {
-        eprintln!("Usage: {} [-v] <program> <state: A, B, ...> <num_regs> <condition1> [condition2] ...", args[0]);
+    if args.len() < 4 {
+        eprintln!("Usage: {} [-v] <program> <state: A, B, ...> <condition1> [condition2] ...", args[0]);
         std::process::exit(1);
     }
 
     let prog_str = &args[1];
     let state_str = &args[2];
-    let num_regs: usize = args[3].parse().expect("Invalid num_regs");
 
     let prog = parse_program(prog_str).expect("Failed to parse program");
     let state_idx = (state_str.chars().next().unwrap() as u8 - b'A') as usize;
+    let num_regs = prog.num_regs();
 
     let mut conditions = Vec::new();
-    for i in 4..args.len() {
+    for i in 3..args.len() {
         conditions.push(parse_condition(&args[i]));
     }
 
@@ -74,7 +74,7 @@ fn main() {
         num_registers: num_regs,
     };
 
-    println!("Verifying Polyhedral Closed Set at State {} with conditions {:?}", state_str, args[4..].to_vec());
+    println!("Verifying Polyhedral Closed Set at State {} with conditions {:?}", state_str, args[3..].to_vec());
     match verify_polyhedral_closed_set(&macros, &closed_set, verbose) {
         VerifyResult::Verified => {
             println!("✅ Successfully verified that the set is closed and does not halt!");

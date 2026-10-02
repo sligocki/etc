@@ -5,6 +5,9 @@ use mbb::deciders::polyhedral::{verify_polyhedral_closed_set, PolyhedralClosedSe
 use mbb::deciders::polyhedral_guesser::find_closed_set;
 use mbb::deciders::symbolic::{AffineExpr, Condition, ConditionType};
 use std::env;
+use std::fs::File;
+use std::io::{self, BufRead, Write};
+use std::time::Instant;
 
 fn parse_affine_side(s: &str) -> AffineExpr {
     let mut expr = AffineExpr::new(0);
@@ -45,52 +48,69 @@ fn parse_condition(s: &str) -> Condition {
     }
 }
 
-use std::fs::File;
-use std::io::{self, BufRead};
-
 fn main() {
     let mut args: Vec<String> = env::args().collect();
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     args.retain(|a| a != "-v" && a != "--verbose");
 
     if args.len() < 2 {
-        eprintln!("Usage: {} [-v] <program> [state: A, B, ...] [condition1] [condition2] ...", args[0]);
-        eprintln!("       {} [-v] --file <file_path>", args[0]);
+        eprintln!("Usage: {} [-v] decide <in.txt> <out.txt>", args[0]);
+        eprintln!("       {} [-v] <program> [state: A, B, ...] [condition1] [condition2] ...", args[0]);
         std::process::exit(1);
     }
 
-    if args[1] == "--file" || args[1] == "-f" {
-        if args.len() < 3 {
-            eprintln!("Missing file path after {}", args[1]);
+    if args[1] == "decide" {
+        if args.len() < 4 {
+            eprintln!("Usage: {} decide <in.txt> <out.txt>", args[0]);
             std::process::exit(1);
         }
-        let file_path = &args[2];
-        let file = File::open(file_path).expect("Could not open file");
+        let in_file = &args[2];
+        let out_file = &args[3];
+
+        let file = File::open(in_file).expect("Could not open input file");
         let reader = io::BufReader::new(file);
+        
+        let mut out = File::create(out_file).expect("Could not create output file");
 
-        let mut success_count = 0;
-        let mut total_count = 0;
-
+        let mut lines = Vec::new();
         for line in reader.lines() {
             let line = line.expect("Could not read line");
-            let prog_str = line.trim();
+            let prog_str = line.trim().to_string();
             if prog_str.is_empty() || prog_str.starts_with('#') {
                 continue;
             }
-            total_count += 1;
-            println!("Testing program: {}", prog_str);
+            lines.push(prog_str);
+        }
+
+        let total_count = lines.len();
+        let mut success_count = 0;
+        let start_time = Instant::now();
+
+        for (i, prog_str) in lines.iter().enumerate() {
+            if !verbose {
+                eprint!("\rProgress: {}/{} ({:.1}%)", i, total_count, (i as f64 / total_count as f64) * 100.0);
+                let _ = io::stderr().flush();
+            }
+
             let prog = parse_program(prog_str).expect("Failed to parse program");
             if let Some(set) = find_closed_set(&prog, verbose) {
                 success_count += 1;
-                println!("  🎉 Found Polyhedral Closed Set at State {} with conditions {:?}", 
-                    (b'A' + set.state as u8) as char, 
-                    set.conditions.iter().map(|c| c.to_string()).collect::<Vec<_>>());
+                let state_char = (b'A' + set.state as u8) as char;
+                let conds: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
+                writeln!(out, "{}\tInfinite\tState: {}, Conditions: [{}]", prog_str, state_char, conds.join(", ")).unwrap();
             } else {
-                println!("  ❌ Could not find a Polyhedral Closed Set.");
+                writeln!(out, "{}\tUnknown\t", prog_str).unwrap();
             }
         }
-        println!("\nSummary: Decided {} out of {} programs ({}%)", success_count, total_count, 
-            if total_count > 0 { (success_count as f64 / total_count as f64 * 100.0) as usize } else { 0 });
+        if !verbose {
+            eprintln!("\rProgress: {}/{} (100.0%)", total_count, total_count);
+        }
+
+        let duration = start_time.elapsed();
+        println!("\nSummary:");
+        println!("  Proven Infinite: {}", success_count);
+        println!("  Undecided:       {}", total_count - success_count);
+        println!("  Runtime:         {:.2?}", duration);
         return;
     }
 

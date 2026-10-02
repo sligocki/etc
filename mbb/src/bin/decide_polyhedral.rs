@@ -12,16 +12,29 @@ use std::time::Instant;
 fn parse_affine_side(s: &str) -> AffineExpr {
     let mut expr = AffineExpr::new(0);
     if s.is_empty() { return expr; }
-    let parts = s.split('+');
+    
+    let s_replaced = s.replace("-", "+-");
+    let parts = s_replaced.split('+');
     for p in parts {
         let p = p.trim();
-        if let Ok(c) = p.parse::<i64>() {
-            expr.add_const(c);
-        } else if p.len() == 1 {
-            let c = p.chars().next().unwrap();
+        if p.is_empty() { continue; }
+        
+        let is_negative = p.starts_with('-');
+        let term = if is_negative { &p[1..] } else { p };
+        let term = term.trim();
+        let sign = if is_negative { -1 } else { 1 };
+
+        if let Ok(c) = term.parse::<i64>() {
+            expr.add_const(c * sign);
+        } else if term.len() == 1 {
+            let c = term.chars().next().unwrap();
             if c >= 'a' && c <= 'z' {
-                expr.coeffs.insert((c as u8 - b'a') as usize, 1);
+                expr.coeffs.insert((c as u8 - b'a') as usize, sign);
+            } else {
+                panic!("Invalid variable '{}' in condition '{}'", c, s);
             }
+        } else {
+            panic!("Invalid term '{}' in condition '{}'", p, s);
         }
     }
     expr

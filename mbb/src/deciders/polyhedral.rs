@@ -116,13 +116,6 @@ fn format_regs(regs: &[AffineExpr]) -> String {
 }
 
 pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralClosedSet, verbose: bool) -> VerifyResult {
-    if verbose {
-        println!("Macro Abstracted Program:");
-        for (i, m) in prog.iter().enumerate() {
-            println!("  {}", m.to_string_with_state(i, closed_set.num_registers));
-        }
-        println!();
-    }
 
     let mut initial_regs = Vec::new();
     let mut initial_conds = closed_set.conditions.clone();

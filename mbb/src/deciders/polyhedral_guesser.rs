@@ -100,18 +100,12 @@ pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition>
             }
         }
         
-        if min_val == max_val {
-            let mut eq_expr = expr.clone();
-            eq_expr.add_const(-min_val);
-            conditions.push(Condition::eq_zero(eq_expr));
-        } else {
-            let mut geq_expr = expr.clone();
-            geq_expr.add_const(-min_val);
-            conditions.push(Condition::geq_zero(geq_expr));
+        let mut geq_expr = expr.clone();
+        geq_expr.add_const(-min_val);
+        conditions.push(Condition::geq_zero(geq_expr));
 
-            if min_val > 0 {
-                conditions.push(Condition::geq_zero(expr.clone()));
-            }
+        if min_val > 0 {
+            conditions.push(Condition::geq_zero(expr.clone()));
         }
     }
 

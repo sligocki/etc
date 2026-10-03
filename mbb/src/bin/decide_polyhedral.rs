@@ -129,6 +129,15 @@ fn main() {
 
     let prog_str = &args[1];
     let prog = parse_program(prog_str).expect("Failed to parse program");
+    let macros = abstract_program(&prog);
+
+    if verbose {
+        println!("Macro Abstracted Program:");
+        for (i, m) in macros.iter().enumerate() {
+            println!("  {}: {}", (b'A' + i as u8) as char, m.to_string_with_state(i, prog.num_regs()));
+        }
+        println!();
+    }
 
     if args.len() >= 3 {
         // Manual mode
@@ -141,7 +150,7 @@ fn main() {
             conditions.push(parse_condition(&args[i]));
         }
 
-        let macros = abstract_program(&prog);
+
 
         let closed_set = PolyhedralClosedSet {
             state: state_idx,
@@ -239,7 +248,7 @@ fn main() {
 
             if verbose {
                 println!("\nFinal Verification Trace:");
-                let macros = abstract_program(&prog);
+
                 verify_polyhedral_closed_set(&macros, &set, true);
             }
         } else {

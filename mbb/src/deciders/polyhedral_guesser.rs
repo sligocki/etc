@@ -61,68 +61,56 @@ pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition>
     let mut conditions = Vec::new();
     if history.is_empty() { return conditions; }
 
-    let mut min_val = vec![u64::MAX; num_regs];
-    let mut max_val = vec![0u64; num_regs];
-    let mut min_diff = vec![vec![i64::MAX; num_regs]; num_regs];
-    let mut max_diff = vec![vec![i64::MIN; num_regs]; num_regs];
+    let num_combinations = 3_usize.pow(num_regs as u32);
 
-    for regs in history {
+    for combo in 1..num_combinations {
+        let mut coeffs = vec![0i64; num_regs];
+        let mut temp = combo;
+        let mut has_non_zero = false;
         for i in 0..num_regs {
-            min_val[i] = min_val[i].min(regs[i]);
-            max_val[i] = max_val[i].max(regs[i]);
-            for j in 0..num_regs {
-                if i == j { continue; }
-                let diff = regs[i] as i64 - regs[j] as i64;
-                min_diff[i][j] = min_diff[i][j].min(diff);
-                max_diff[i][j] = max_diff[i][j].max(diff);
+            let digit = temp % 3;
+            coeffs[i] = match digit {
+                0 => 0,
+                1 => 1,
+                2 => -1,
+                _ => unreachable!(),
+            };
+            if coeffs[i] != 0 { has_non_zero = true; }
+            temp /= 3;
+        }
+
+        if !has_non_zero { continue; }
+
+        let mut min_val = i64::MAX;
+        let mut max_val = i64::MIN;
+
+        for regs in history {
+            let mut val = 0i64;
+            for i in 0..num_regs {
+                val += coeffs[i] * (regs[i] as i64);
+            }
+            min_val = min_val.min(val);
+            max_val = max_val.max(val);
+        }
+
+        let mut expr = AffineExpr::new(0);
+        for i in 0..num_regs {
+            if coeffs[i] != 0 {
+                expr.coeffs.insert(i, coeffs[i]);
             }
         }
-    }
-
-    for i in 0..num_regs {
-        if min_val[i] == max_val[i] {
-            let mut expr = AffineExpr::var(i);
-            expr.add_const(-(min_val[i] as i64));
-            conditions.push(Condition::eq_zero(expr));
+        
+        if min_val == max_val {
+            let mut eq_expr = expr.clone();
+            eq_expr.add_const(-min_val);
+            conditions.push(Condition::eq_zero(eq_expr));
         } else {
-            let mut expr = AffineExpr::var(i);
-            expr.add_const(-(min_val[i] as i64));
-            conditions.push(Condition::geq_zero(expr));
+            let mut geq_expr = expr.clone();
+            geq_expr.add_const(-min_val);
+            conditions.push(Condition::geq_zero(geq_expr));
 
-            // Also guess the generic >= 0 if it holds
-            if min_val[i] > 0 {
-                conditions.push(Condition::geq_zero(AffineExpr::var(i)));
-            }
-
-            let mut expr2 = AffineExpr::new(max_val[i] as i64);
-            expr2.coeffs.insert(i, -1);
-            conditions.push(Condition::geq_zero(expr2));
-        }
-
-        for j in 0..num_regs {
-            if i == j { continue; }
-            if min_diff[i][j] == max_diff[i][j] {
-                let mut expr = AffineExpr::var(i);
-                expr.coeffs.insert(j, -1);
-                expr.add_const(-min_diff[i][j]);
-                conditions.push(Condition::eq_zero(expr));
-            } else {
-                let mut expr1 = AffineExpr::var(i);
-                expr1.coeffs.insert(j, -1);
-                expr1.add_const(-min_diff[i][j]);
-                conditions.push(Condition::geq_zero(expr1));
-
-                // Also guess the generic >= 0 if it holds
-                if min_diff[i][j] > 0 {
-                    let mut expr_zero = AffineExpr::var(i);
-                    expr_zero.coeffs.insert(j, -1);
-                    conditions.push(Condition::geq_zero(expr_zero));
-                }
-
-                let mut expr2 = AffineExpr::var(j);
-                expr2.coeffs.insert(i, -1);
-                expr2.add_const(max_diff[i][j]);
-                conditions.push(Condition::geq_zero(expr2));
+            if min_val > 0 {
+                conditions.push(Condition::geq_zero(expr.clone()));
             }
         }
     }
@@ -133,6 +121,16 @@ pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition>
             unique_conds.push(c);
         }
     }
+    
+    // Always include explicit r_i >= 0 just in case
+    for i in 0..num_regs {
+        let expr = AffineExpr::var(i);
+        let c = Condition::geq_zero(expr);
+        if !unique_conds.contains(&c) {
+            unique_conds.push(c);
+        }
+    }
+
     unique_conds
 }
 

@@ -134,7 +134,7 @@ fn main() {
     if verbose {
         println!("Macro Abstracted Program:");
         for (i, m) in macros.iter().enumerate() {
-            println!("  {}: {}", (b'A' + i as u8) as char, m.to_string_with_state(i, prog.num_regs()));
+            println!("  {}", m.to_string_with_state(i, prog.num_regs()));
         }
         println!();
     }

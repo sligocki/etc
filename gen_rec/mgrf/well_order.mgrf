@@ -1,6 +1,6 @@
 # Well-ordering functions
 
-use base::{Mod2}
+use base::{Mod2, Pred}
 use bool_zero::{Greater, GreaterEq, Less, LessEq}
 
 # Order type Omega (naive ordering of nat)

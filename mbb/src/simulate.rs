@@ -111,13 +111,88 @@ pub fn step(state: &mut State, prog: &Program) -> SimResult {
     SimResult::LimitReached // placeholder for "successfully stepped"
 }
 
-pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, exact_start_by: bool, verbose: bool) -> SimResult {
+pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst]) -> SimResult {
+    if state.pc >= macros.len() {
+        return SimResult::OutOfBounds;
+    }
+
+    let current_pc = state.pc;
+    let inst = &macros[state.pc];
+
+    match inst {
+        crate::macro_program::MacroInst::Undef => {
+            return SimResult::HitUndefInst(current_pc);
+        }
+        crate::macro_program::MacroInst::Inc { reg, next } => {
+            state.steps += 1;
+            let val = state.get_reg(*reg);
+            state.set_reg(*reg, val.wrapping_add(1));
+            match next {
+                Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
+                Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
+                Target::Inst(i) => state.pc = *i,
+            }
+        }
+        crate::macro_program::MacroInst::Dec { reg, next_not_zero, next_zero } => {
+            state.steps += 1;
+            let val = state.get_reg(*reg);
+            if val == 0 {
+                state.set_last_decr_zero(*reg, state.steps);
+                match next_zero {
+                    Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
+                    Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
+                    Target::Inst(i) => state.pc = *i,
+                }
+            } else {
+                state.set_reg(*reg, val - 1);
+                match next_not_zero {
+                    Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextNotZero },
+                    Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
+                    Target::Inst(i) => state.pc = *i,
+                }
+            }
+        }
+        crate::macro_program::MacroInst::Transfer { reg, incs, next } => {
+            let val = state.get_reg(*reg);
+            let k: u32 = incs.values().sum();
+            state.steps += val * (1 + k as u64) + 1;
+            for (r, inc) in incs {
+                let old = state.get_reg(*r);
+                state.set_reg(*r, old + (*inc as u64) * val);
+            }
+            state.set_last_decr_zero(*reg, state.steps);
+            state.set_reg(*reg, 0);
+            match next {
+                Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
+                Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
+                Target::Inst(i) => state.pc = *i,
+            }
+        }
+    }
+    SimResult::LimitReached
+}
+
+pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, exact_start_by: bool, use_transfer: bool, verbose: bool) -> SimResult {
+    let macros = if use_transfer {
+        Some(crate::macro_program::abstract_program(prog))
+    } else {
+        None
+    };
+
     let mut state = State::new();
     let mut power = 1;
     let mut lam = 1;
     let mut tortoise_pc = state.pc;
     let mut tortoise_registers = state.registers.clone();
     let mut tortoise_step = state.steps;
+
+    let step_fn = |st: &mut State| -> SimResult {
+        if let Some(m) = &macros {
+            step_macro(st, m)
+        } else {
+            step(st, prog)
+        }
+    };
 
     loop {
         if let Some(limit) = step_limit {
@@ -153,20 +228,19 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, ex
                 }
 
                 if is_ge && (!strict_increase || valid_tc) {
-                    let period = lam;
+                    let actual_period = state.steps - tortoise_step;
                     if !exact_start_by {
                         let start_by = tortoise_step;
                         if strict_increase {
-                            return SimResult::TranslatedCyclerDetected { start_by, period, is_min_start: false };
+                            return SimResult::TranslatedCyclerDetected { start_by, period: actual_period, is_min_start: false };
                         } else {
-                            return SimResult::CycleDetected { start_by, period, is_min_start: false };
+                            return SimResult::CycleDetected { start_by, period: actual_period, is_min_start: false };
                         }
                     }
 
-                    let mut start_by = 0;
                     let mut hare = State::new();
-                    for _ in 0..period {
-                        let _ = step(&mut hare, prog);
+                    for _ in 0..lam {
+                        let _ = step_fn(&mut hare);
                     }
                     let mut tortoise = State::new();
                     loop {
@@ -191,6 +265,8 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, ex
                                 }
                             }
                             if is_ge && (!strict_increase || valid_tc) {
+                                let start_by = tortoise.steps;
+                                let period = hare.steps - tortoise.steps;
                                 if strict_increase {
                                     return SimResult::TranslatedCyclerDetected { start_by, period, is_min_start: true };
                                 } else {
@@ -199,9 +275,8 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, ex
                             }
                         }
 
-                        let _ = step(&mut hare, prog);
-                        let _ = step(&mut tortoise, prog);
-                        start_by += 1;
+                        let _ = step_fn(&mut hare);
+                        let _ = step_fn(&mut tortoise);
                     }
                 }
             }
@@ -226,7 +301,7 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, ex
             println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, inst);
         }
 
-        let res = step(&mut state, prog);
+        let res = step_fn(&mut state);
         if !matches!(res, SimResult::LimitReached) {
             return res;
         }

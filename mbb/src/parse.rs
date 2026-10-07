@@ -11,6 +11,7 @@ pub fn parse_target(c: char) -> Option<Target> {
 }
 
 pub fn parse_program(s: &str) -> Option<Program> {
+    let s = s.split_whitespace().next().unwrap_or("");
     let mut instructions = Vec::new();
     let parts = s.split('_');
     for part in parts {

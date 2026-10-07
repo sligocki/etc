@@ -6,9 +6,12 @@ use std::io::{self, BufRead};
 use std::process;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+    let use_transfer = !args.iter().any(|a| a == "--no-transfer");
+    args.retain(|a| a != "--no-transfer");
+
     if args.len() < 2 {
-        eprintln!("Usage: {} <file> [step_limit]", args[0]);
+        eprintln!("Usage: {} [--no-transfer] <file> [step_limit]", args[0]);
         process::exit(1);
     }
 
@@ -39,7 +42,7 @@ fn main() {
         total_programs += 1;
 
         if let Some(prog) = parse_program(line) {
-            match simulate(&prog, limit, false, false, false) {
+            match simulate(&prog, limit, false, false, use_transfer, false) {
                 SimResult::Halted { steps, .. } => {
                     halted_count += 1;
                     if steps > max_halt_steps {

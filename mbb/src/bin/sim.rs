@@ -14,8 +14,11 @@ fn main() {
     let exact_start_by = args.iter().any(|a| a == "-e" || a == "--exact-start");
     args.retain(|a| a != "-e" && a != "--exact-start");
 
+    let use_transfer = !args.iter().any(|a| a == "--no-transfer");
+    args.retain(|a| a != "--no-transfer");
+
     if args.len() < 2 {
-        eprintln!("Usage: {} [-v] [-c] [-e] <program> [step_limit]", args[0]);
+        eprintln!("Usage: {} [-v] [-c] [-e] [--no-transfer] <program> [step_limit]", args[0]);
         process::exit(1);
     }
 
@@ -32,7 +35,7 @@ fn main() {
 
     println!("Simulating: {}", prog);
 
-    match simulate(&prog, limit, detect_cycles, exact_start_by, verbose) {
+    match simulate(&prog, limit, detect_cycles, exact_start_by, use_transfer, verbose) {
         SimResult::Halted { steps, .. } => {
             println!("Halted after {} steps.", steps);
         }

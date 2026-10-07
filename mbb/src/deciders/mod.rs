@@ -37,20 +37,19 @@ pub fn decide(
     exact_start: bool,
 ) -> DeciderResult {
     let sim_res = crate::simulate::simulate_direct(prog, Some(step_limit), detect_cycles, exact_start, false);
-    
-    if matches!(sim_res, DeciderResult::Unknown) {
-        let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
-        if let DeciderResult::Infinite(_) = bouncers_res {
-            return bouncers_res;
-        }
-        
-        let poly_res = polyhedral_guesser::decide_polyhedral(prog);
-        if let DeciderResult::Infinite(_) = poly_res {
-            return poly_res;
-        }
-        
+    if sim_res != DeciderResult::Unknown {
         return sim_res;
     }
-    
-    sim_res
+
+    let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
+    if bouncers_res != DeciderResult::Unknown {
+        return bouncers_res;
+    }
+
+    let poly_res = polyhedral_guesser::decide_polyhedral(prog);
+    if poly_res != DeciderResult::Unknown {
+        return poly_res;
+    }
+
+    DeciderResult::Unknown
 }

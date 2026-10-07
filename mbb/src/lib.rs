@@ -3,3 +3,5 @@ pub mod parse;
 pub mod simulate;
 pub mod deciders;
 pub mod macro_program;
+pub mod enumerate;
+pub mod io;

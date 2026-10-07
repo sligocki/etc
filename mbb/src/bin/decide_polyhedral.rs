@@ -110,9 +110,12 @@ fn main() {
                 success_count += 1;
                 let state_char = (b'A' + set.state as u8) as char;
                 let conds: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
-                writeln!(out, "{}\tInfinite\tState: {}, Conditions: [{}]", prog_str, state_char, conds.join(", ")).unwrap();
+                mbb::io::write_result(&mut out, prog_str, mbb::io::ProgramResult::Polyhedral {
+                    state: state_char,
+                    conditions: &conds.join(", "),
+                }).unwrap();
             } else {
-                writeln!(out, "{}\tUnknown\t", prog_str).unwrap();
+                mbb::io::write_result(&mut out, prog_str, mbb::io::ProgramResult::Unknown).unwrap();
             }
         }
         if !verbose {

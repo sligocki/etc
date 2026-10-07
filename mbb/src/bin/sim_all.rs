@@ -39,8 +39,8 @@ fn main() {
         total_programs += 1;
 
         if let Some(prog) = parse_program(line) {
-            match simulate(&prog, limit, false) {
-                SimResult::Halted(steps) => {
+            match simulate(&prog, limit, false, false) {
+                SimResult::Halted { steps, .. } => {
                     halted_count += 1;
                     if steps > max_halt_steps {
                         max_halt_steps = steps;
@@ -51,6 +51,7 @@ fn main() {
                     halted_count += 1; // It halted technically
                 }
                 SimResult::LimitReached => {}
+                _ => {}
             }
         } else {
             eprintln!("Warning: Failed to parse program on line: {}", line);

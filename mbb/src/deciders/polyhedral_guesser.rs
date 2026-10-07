@@ -28,15 +28,15 @@ pub fn record_history(prog: &Program, target_state: usize, step_limit: u64) -> V
         state.steps += 1;
 
         match inst {
-            Instruction::Undef => {
-                break;
-            }
+            Instruction::Undef => break,
+            Instruction::NoOp { .. } => unreachable!("NoOp not supported in decider"),
             Instruction::Inc { reg, next } => {
                 let val = state.get_reg(*reg);
                 state.set_reg(*reg, val.wrapping_add(1));
                 match next {
                     Target::Halt => break,
                     Target::Inst(i) => state.pc = *i,
+                    Target::Undef => break,
                 }
             }
             Instruction::Dec { reg, next_not_zero, next_zero } => {
@@ -45,12 +45,14 @@ pub fn record_history(prog: &Program, target_state: usize, step_limit: u64) -> V
                     match next_zero {
                         Target::Halt => break,
                         Target::Inst(i) => state.pc = *i,
+                        Target::Undef => break,
                     }
                 } else {
                     state.set_reg(*reg, val - 1);
                     match next_not_zero {
                         Target::Halt => break,
                         Target::Inst(i) => state.pc = *i,
+                        Target::Undef => break,
                     }
                 }
             }

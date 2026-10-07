@@ -17,6 +17,9 @@ pub fn abstract_program(prog: &Program) -> Vec<MacroInst> {
             Instruction::Undef => {
                 macros.push(MacroInst::Undef);
             }
+            Instruction::NoOp { .. } => {
+                macros.push(MacroInst::Undef); // or panic, this isn't expected. let's just make it Undef
+            }
             Instruction::Inc { reg, next } => {
                 macros.push(MacroInst::Inc {
                     reg: *reg,
@@ -57,6 +60,7 @@ fn detect_transfer_loop(
     loop {
         match current_target {
             Target::Halt => return None,
+            Target::Undef => return None,
             Target::Inst(idx) => {
                 if idx == start_idx {
                     // Loop completed successfully
@@ -71,6 +75,7 @@ fn detect_transfer_loop(
 
                 match &prog.instructions[idx] {
                     Instruction::Undef => return None,
+                    Instruction::NoOp { .. } => return None,
                     Instruction::Inc { reg, next } => {
                         if *reg == dec_reg {
                             // Modifying the decrement register breaks the simple transfer property

@@ -32,14 +32,28 @@ impl State {
     }
 }
 
-pub enum SimResult {
-    Halted(u64), // steps
-    OutOfBounds,
-    LimitReached,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Branch {
+    Next,
+    NextNotZero,
+    NextZero,
 }
 
-pub fn simulate(prog: &Program, step_limit: Option<u64>, verbose: bool) -> SimResult {
+pub enum SimResult {
+    Halted { steps: u64, registers: Vec<u64> },
+    OutOfBounds,
+    LimitReached,
+    CycleDetected { steps: u64 },
+    HitUndefInst(usize),
+    HitUndefTarget { pc: usize, branch: Branch },
+}
+
+pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, verbose: bool) -> SimResult {
     let mut state = State::new();
+    let mut power = 1;
+    let mut lam = 1;
+    let mut tortoise_pc = state.pc;
+    let mut tortoise_registers = state.registers.clone();
 
     loop {
         if let Some(limit) = step_limit {
@@ -50,6 +64,19 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, verbose: bool) -> SimRe
 
         if state.pc >= prog.instructions.len() {
             return SimResult::OutOfBounds; // Reached an instruction index not in program
+        }
+
+        if detect_cycles && state.steps > 0 {
+            if state.pc == tortoise_pc && state.registers == tortoise_registers {
+                return SimResult::CycleDetected { steps: state.steps };
+            }
+            if power == lam {
+                tortoise_pc = state.pc;
+                tortoise_registers = state.registers.clone();
+                power *= 2;
+                lam = 0;
+            }
+            lam += 1;
         }
 
         let inst = &prog.instructions[state.pc];
@@ -64,33 +91,46 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, verbose: bool) -> SimRe
             println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, inst);
         }
 
-        state.steps += 1;
+        let current_pc = state.pc;
 
         match inst {
             Instruction::Undef => {
-                return SimResult::Halted(state.steps);
+                return SimResult::HitUndefInst(current_pc);
             }
             Instruction::Inc { reg, next } => {
+                state.steps += 1;
                 let val = state.get_reg(*reg);
                 state.set_reg(*reg, val.wrapping_add(1));
                 match next {
-                    Target::Halt => return SimResult::Halted(state.steps),
+                    Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
+                    Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers },
                     Target::Inst(i) => state.pc = *i,
                 }
             }
             Instruction::Dec { reg, next_not_zero, next_zero } => {
+                state.steps += 1;
                 let val = state.get_reg(*reg);
                 if val == 0 {
                     match next_zero {
-                        Target::Halt => return SimResult::Halted(state.steps),
+                        Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
+                        Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers },
                         Target::Inst(i) => state.pc = *i,
                     }
                 } else {
                     state.set_reg(*reg, val - 1);
                     match next_not_zero {
-                        Target::Halt => return SimResult::Halted(state.steps),
+                        Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextNotZero },
+                        Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers },
                         Target::Inst(i) => state.pc = *i,
                     }
+                }
+            }
+            Instruction::NoOp { next } => {
+                state.steps += 1;
+                match next {
+                    Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
+                    Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers },
+                    Target::Inst(i) => state.pc = *i,
                 }
             }
         }

@@ -1,6 +1,5 @@
 use mbb::parse::parse_program;
 use mbb::simulate::simulate_direct;
-use mbb::deciders::DeciderResult;
 use std::env;
 use std::process;
 
@@ -46,10 +45,10 @@ fn main() {
         mbb::deciders::DeciderResult::Infinite(mbb::deciders::InfiniteReason::TranslatedCycler { start_by, period, is_min_start }) => {
             println!("Translated Cycler detected! Starts at step {} (is_min: {}) with period {}.", start_by, is_min_start, period);
         }
-        mbb::deciders::DeciderResult::Unknown(mbb::deciders::UnknownReason::OutOfBounds) => {
+        mbb::deciders::DeciderResult::Error(_) => {
             println!("Halted (out of bounds)");
         }
-        mbb::deciders::DeciderResult::Unknown(_) => {
+        mbb::deciders::DeciderResult::Unknown => {
             println!("Reached step limit.");
         }
         _ => {

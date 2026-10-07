@@ -15,20 +15,11 @@ pub enum HitUndef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum UnknownReason {
-    /// Simulation exceeded the maximum allowed step limit without halting or definitively proving infinite behavior.
-    StepLimitReached,
-    /// Simulation execution jumped to an instruction index outside the program's defined bounds.
-    OutOfBounds,
-    /// A heuristic decider (like Polyhedral or Bouncers) could not definitively prove the program's behavior.
-    Undecided,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeciderResult {
     Halt { steps: u64, registers: Vec<u64>, hit_undef: Option<HitUndef> },
     Infinite(InfiniteReason),
-    Unknown(UnknownReason),
+    Unknown,
+    Error(String),
 }
 
 pub trait Decider {
@@ -47,7 +38,7 @@ pub fn decide(
 ) -> DeciderResult {
     let sim_res = crate::simulate::simulate_direct(prog, Some(step_limit), detect_cycles, exact_start, false);
     
-    if let DeciderResult::Unknown(UnknownReason::StepLimitReached) = sim_res {
+    if matches!(sim_res, DeciderResult::Unknown) {
         let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
         if let DeciderResult::Infinite(_) = bouncers_res {
             return bouncers_res;

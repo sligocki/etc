@@ -15,13 +15,11 @@ pub fn write_result<W: Write>(
                 Ok(())
             }
         }
-        DeciderResult::Unknown(reason) => {
-            match reason {
-                crate::deciders::UnknownReason::StepLimitReached => {
-                    writeln!(writer, "{}\tUnknown\t", prog_str)
-                }
-                _ => Ok(())
-            }
+        DeciderResult::Unknown => {
+            writeln!(writer, "{}\tUnknown\t", prog_str)
+        }
+        DeciderResult::Error(msg) => {
+            writeln!(writer, "{}\tError\t{}", prog_str, msg)
         }
         DeciderResult::Infinite(reason) => match reason {
             InfiniteReason::Cycle { start_by, period, is_min_start } => {

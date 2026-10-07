@@ -53,7 +53,7 @@ pub enum Branch {
 
 pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult {
     if state.pc >= prog.instructions.len() {
-        return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::OutOfBounds);
+        return crate::deciders::DeciderResult::Error(format!("PC out of bounds"));
     }
 
     let current_pc = state.pc;
@@ -101,12 +101,12 @@ pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult
             }
         }
     }
-    crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached) // placeholder for "successfully stepped"
+    crate::deciders::DeciderResult::Unknown // placeholder for "successfully stepped"
 }
 
 pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst]) -> crate::deciders::DeciderResult {
     if state.pc >= macros.len() {
-        return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::OutOfBounds);
+        return crate::deciders::DeciderResult::Error(format!("PC out of bounds"));
     }
 
     let current_pc = state.pc;
@@ -162,7 +162,7 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
             }
         }
     }
-    crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached)
+    crate::deciders::DeciderResult::Unknown
 }
 
 pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, exact_start_by: bool, verbose: bool) -> crate::deciders::DeciderResult {
@@ -180,12 +180,12 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
     loop {
         if let Some(limit) = step_limit {
             if state.steps >= limit {
-                return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached);
+                return crate::deciders::DeciderResult::Unknown;
             }
         }
 
         if state.pc >= prog.instructions.len() {
-            return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::OutOfBounds); // Reached an instruction index not in program
+            return crate::deciders::DeciderResult::Error(format!("PC out of bounds")); // Reached an instruction index not in program
         }
 
         if detect_cycles && state.steps > 0 {
@@ -284,7 +284,7 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
         }
 
         let res = step_fn(&mut state);
-        if !matches!(res, crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached)) {
+        if !matches!(res, crate::deciders::DeciderResult::Unknown) {
             return res;
         }
     }
@@ -311,12 +311,12 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
     loop {
         if let Some(limit) = step_limit {
             if state.steps >= limit {
-                return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached);
+                return crate::deciders::DeciderResult::Unknown;
             }
         }
 
         if state.pc >= prog.instructions.len() {
-            return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::OutOfBounds);
+            return crate::deciders::DeciderResult::Error(format!("PC out of bounds"));
         }
 
         if detect_cycles && state.macro_steps > 0 {
@@ -415,7 +415,7 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
         }
 
         let res = step_macro(&mut state, &macros);
-        if !matches!(res, crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached)) {
+        if !matches!(res, crate::deciders::DeciderResult::Unknown) {
             return res;
         }
     }

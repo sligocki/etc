@@ -1,6 +1,5 @@
 use mbb::parse::parse_program;
 use mbb::simulate::simulate_direct;
-use mbb::deciders::DeciderResult;
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead};
@@ -50,11 +49,11 @@ fn main() {
                         max_halt_steps = steps;
                     }
                 }
-                mbb::deciders::DeciderResult::Unknown(mbb::deciders::UnknownReason::OutOfBounds) => {
+                mbb::deciders::DeciderResult::Error(_) => {
                     eprintln!("Warning: Program halted (out of bounds): {}", line);
                     halted_count += 1; // It halted technically
                 }
-                mbb::deciders::DeciderResult::Unknown(_) => {}
+                mbb::deciders::DeciderResult::Unknown => {}
                 _ => {}
             }
         } else {

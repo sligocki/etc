@@ -208,18 +208,16 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     &decider_res
                 ).unwrap();
             }
-            DeciderResult::Unknown(ref reason) => {
-                match reason {
-                    crate::deciders::UnknownReason::StepLimitReached => {
-                        num_unknown += 1;
-                        crate::io::write_result(
-                            &mut writer,
-                            &state.prog.to_string_format(state.max_reg_referenced),
-                            &decider_res
-                        ).unwrap();
-                    }
-                    crate::deciders::UnknownReason::OutOfBounds | crate::deciders::UnknownReason::Undecided => {}
-                }
+            DeciderResult::Unknown => {
+                num_unknown += 1;
+                crate::io::write_result(
+                    &mut writer,
+                    &state.prog.to_string_format(state.max_reg_referenced),
+                    &decider_res
+                ).unwrap();
+            }
+            DeciderResult::Error(msg) => {
+                panic!("Simulation error: {}", msg);
             }
         }
     }

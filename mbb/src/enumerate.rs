@@ -19,6 +19,9 @@ pub enum PartialInstruction {
         next_not_zero: PartialTarget,
         next_zero: PartialTarget,
     },
+    NoOp {
+        next: PartialTarget,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,19 +75,60 @@ impl std::fmt::Display for PartialInstruction {
             PartialInstruction::Dec { reg, next_not_zero, next_zero } => {
                 write!(f, "{}-{}{}", reg, next_not_zero, next_zero)
             }
+            PartialInstruction::NoOp { next } => {
+                write!(f, "NoOp({})", next) // Internal representation, shouldn't be parsed
+            }
         }
     }
 }
 
-impl std::fmt::Display for PartialProgram {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl PartialProgram {
+    pub fn to_string_format(&self) -> String {
+        let dummy_reg = (self.max_reg_referenced.max(-1) + 1) as usize;
+        let mut s = String::new();
         for (i, inst) in self.instructions.iter().enumerate() {
             if i > 0 {
-                write!(f, "_")?;
+                s.push('_');
             }
-            write!(f, "{}", inst)?;
+            match inst {
+                PartialInstruction::Undef => s.push('?'),
+                PartialInstruction::Inc { reg, next } => {
+                    s.push_str(&format!("{}+{}", reg, next));
+                }
+                PartialInstruction::Dec { reg, next_not_zero, next_zero } => {
+                    s.push_str(&format!("{}-{}{}", reg, next_not_zero, next_zero));
+                }
+                PartialInstruction::NoOp { next } => {
+                    s.push_str(&format!("{}+{}", dummy_reg, next));
+                }
+            }
         }
-        Ok(())
+        s
+    }
+
+    pub fn get_missing_requirements(&self) -> (usize, Vec<bool>, Vec<bool>) {
+        let mut undef_count = 0;
+        let mut has_inc = vec![false; (self.max_reg_referenced.max(-1) + 1) as usize];
+        let mut has_dec = vec![false; (self.max_reg_referenced.max(-1) + 1) as usize];
+
+        for inst in &self.instructions {
+            match inst {
+                PartialInstruction::Undef => undef_count += 1,
+                PartialInstruction::Inc { reg, .. } => {
+                    if *reg < has_inc.len() {
+                        has_inc[*reg] = true;
+                    }
+                }
+                PartialInstruction::Dec { reg, .. } => {
+                    if *reg < has_dec.len() {
+                        has_dec[*reg] = true;
+                    }
+                }
+                PartialInstruction::NoOp { .. } => {}
+            }
+        }
+
+        (undef_count, has_inc, has_dec)
     }
 }
 
@@ -147,11 +191,19 @@ pub fn simulate(prog: &PartialProgram, step_limit: u64) -> PartialSimResult {
                     }
                 }
             }
+            PartialInstruction::NoOp { next } => {
+                steps += 1;
+                match next {
+                    PartialTarget::Undef => return PartialSimResult::HitUndefTarget { pc, branch: Branch::Next },
+                    PartialTarget::Halt => return PartialSimResult::Halted { steps, registers },
+                    PartialTarget::Inst(i) => pc = *i,
+                }
+            }
         }
     }
 }
 
-pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, out_file: &str) {
+pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, out_file: &str) {
     use std::fs::File;
     use std::io::BufWriter;
 
@@ -194,11 +246,11 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, ou
                 num_halted += 1;
                 if steps > max_steps {
                     max_steps = steps;
-                    max_program = prog.to_string();
+                    max_program = prog.to_string_format();
                 }
                 crate::io::write_result(
                     &mut writer,
-                    &prog.to_string(),
+                    &prog.to_string_format(),
                     crate::io::ProgramResult::Halt { steps, registers: &registers }
                 ).unwrap();
             }
@@ -206,21 +258,50 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, ou
                 num_unknown += 1;
                 crate::io::write_result(
                     &mut writer,
-                    &prog.to_string(),
+                    &prog.to_string_format(),
                     crate::io::ProgramResult::Unknown
                 ).unwrap();
             }
             PartialSimResult::HitUndefInst(pc) => {
+                let (undef_count, has_inc, has_dec) = prog.get_missing_requirements();
+                let mut total_missing = 0;
+                if prog.max_reg_referenced >= 0 {
+                    for i in 0..=(prog.max_reg_referenced as usize) {
+                        if !has_inc[i] { total_missing += 1; }
+                        if !has_dec[i] { total_missing += 1; }
+                    }
+                }
+
+                if total_missing > undef_count {
+                    continue; // Prune branch: impossible to satisfy all registers
+                }
+
+                let strict_mode = total_missing == undef_count;
+
                 let mut max_r = prog.max_reg_referenced;
-                if max_r + 1 < max_regs as i32 {
+                // Only allow introducing a new register if we have enough undefined states left
+                // to fulfill both the new Inc and Dec requirements.
+                if !strict_mode && total_missing + 2 <= undef_count && max_r + 1 < max_regs as i32 {
                     max_r += 1;
+                }
+
+                // Generate NoOp
+                if allow_no_ops && !strict_mode {
+                    let mut child = prog.clone();
+                    child.instructions[pc] = PartialInstruction::NoOp { next: PartialTarget::Undef };
+                    stack.push(child);
                 }
                 
                 // Inc instructions
                 for r in 0..=max_r {
+                    let r_usize = r as usize;
+                    if strict_mode && r_usize < has_inc.len() && has_inc[r_usize] {
+                        continue; // Must fulfill a missing requirement in strict mode
+                    }
+
                     let mut child = prog.clone();
                     child.instructions[pc] = PartialInstruction::Inc {
-                        reg: r as usize,
+                        reg: r_usize,
                         next: PartialTarget::Undef,
                     };
                     if r > child.max_reg_referenced {
@@ -233,9 +314,14 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, ou
                 // The user requested: "Maybe the first instruction should not be a Decr"
                 if pc != 0 {
                     for r in 0..=max_r {
+                        let r_usize = r as usize;
+                        if strict_mode && r_usize < has_dec.len() && has_dec[r_usize] {
+                            continue; // Must fulfill a missing requirement in strict mode
+                        }
+
                         let mut child = prog.clone();
                         child.instructions[pc] = PartialInstruction::Dec {
-                            reg: r as usize,
+                            reg: r_usize,
                             next_not_zero: PartialTarget::Undef,
                             next_zero: PartialTarget::Undef,
                         };
@@ -277,6 +363,11 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, ou
                                 *next_not_zero = target;
                             } else if branch == Branch::NextZero {
                                 *next_zero = target;
+                            }
+                        }
+                        PartialInstruction::NoOp { next } => {
+                            if branch == Branch::Next {
+                                *next = target;
                             }
                         }
                         _ => {}

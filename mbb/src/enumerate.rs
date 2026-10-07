@@ -20,7 +20,7 @@ impl EnumState {
     }
 }
 
-pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, use_transfer: bool, out_file: &str) {
+pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, out_file: &str) {
     use std::fs::File;
     use std::io::BufWriter;
 
@@ -58,7 +58,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
         }
 
-        match crate::deciders::decide(&state.prog, step_limit, true, exact_start, use_transfer) {
+        match crate::deciders::decide(&state.prog, step_limit, true, exact_start) {
             crate::deciders::DecideResult::Sim(SimResult::Halted { steps, registers }) => {
                 num_halted += 1;
                 if steps > max_steps {

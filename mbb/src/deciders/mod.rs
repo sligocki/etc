@@ -24,9 +24,8 @@ pub fn decide(
     step_limit: u64,
     detect_cycles: bool,
     exact_start: bool,
-    use_transfer: bool,
 ) -> DecideResult {
-    let sim_res = crate::simulate::simulate(prog, Some(step_limit), detect_cycles, exact_start, use_transfer, false);
+    let sim_res = crate::simulate::simulate(prog, Some(step_limit), detect_cycles, exact_start, false, false);
     
     if matches!(sim_res, crate::simulate::SimResult::LimitReached) {
         if let Some(set) = polyhedral_guesser::find_closed_set(prog, false) {

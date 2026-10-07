@@ -24,10 +24,6 @@ struct Args {
     /// Compute exact start_by step for cycles and TCs
     #[arg(short = 'e', long)]
     exact_start: bool,
-
-    /// Disable transfer rules
-    #[arg(long)]
-    no_transfer: bool,
 }
 
 fn main() {
@@ -41,5 +37,5 @@ fn main() {
         println!("Max registers default: {}", args.num_states / 2 + 1);
     }
 
-    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, !args.no_transfer, &args.out_file);
+    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, &args.out_file);
 }

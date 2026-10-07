@@ -21,7 +21,7 @@ impl EnumState {
     }
 }
 
-pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, limit: Option<usize>, out_file: &str) {
+pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, limit: Option<usize>, use_polyhedral: bool, out_file: &str) {
     use std::fs::File;
     use std::io::BufWriter;
 
@@ -68,7 +68,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
         }
 
-        let decider_res = crate::deciders::decide_with_stats(&state.prog, step_limit, true, exact_start, &mut total_stats);
+        let decider_res = crate::deciders::decide_with_stats(&state.prog, step_limit, true, exact_start, use_polyhedral, &mut total_stats);
         
         match decider_res {
             DeciderResult::Halt { steps, registers: _, ref hit_undef } => {

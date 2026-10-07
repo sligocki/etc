@@ -42,6 +42,7 @@ pub fn decide_with_stats(
     step_limit: u64,
     detect_cycles: bool,
     exact_start: bool,
+    use_polyhedral: bool,
     stats: &mut DeciderStats,
 ) -> DeciderResult {
     let t0 = std::time::Instant::now();
@@ -58,13 +59,14 @@ pub fn decide_with_stats(
         return bouncers_res;
     }
 
-    // Polyhedral decider is too slow. Don't run it by default during enumeration.
-    // let t0 = std::time::Instant::now();
-    // let poly_res = polyhedral_guesser::decide_polyhedral(prog, step_limit);
-    // stats.time_polyhedral += t0.elapsed();
-    // if poly_res != DeciderResult::Unknown {
-    //     return poly_res;
-    // }
+    if use_polyhedral {
+        let t0 = std::time::Instant::now();
+        let poly_res = polyhedral_guesser::decide_polyhedral(prog, step_limit);
+        stats.time_polyhedral += t0.elapsed();
+        if poly_res != DeciderResult::Unknown {
+            return poly_res;
+        }
+    }
 
     DeciderResult::Unknown
 }
@@ -74,7 +76,8 @@ pub fn decide(
     step_limit: u64,
     detect_cycles: bool,
     exact_start: bool,
+    use_polyhedral: bool,
 ) -> DeciderResult {
     let mut stats = DeciderStats::default();
-    decide_with_stats(prog, step_limit, detect_cycles, exact_start, &mut stats)
+    decide_with_stats(prog, step_limit, detect_cycles, exact_start, use_polyhedral, &mut stats)
 }

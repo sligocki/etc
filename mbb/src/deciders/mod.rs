@@ -13,6 +13,9 @@ pub enum DeciderResult {
     Halt { steps: u64, registers: Vec<u64> },
     Infinite(InfiniteReason),
     Unknown,
+    HitUndefInst(usize),
+    HitUndefTarget { pc: usize, branch: crate::simulate::Branch },
+    OutOfBounds,
 }
 
 pub trait Decider {
@@ -23,47 +26,6 @@ pub mod polyhedral;
 pub mod polyhedral_guesser;
 pub mod bouncers;
 
-pub fn decide_with_sim_result(
-    prog: &Program,
-    sim_res: crate::simulate::SimResult,
-    step_limit: u64,
-) -> DeciderResult {
-    match sim_res {
-        crate::simulate::SimResult::Halted { steps, registers } => {
-            return DeciderResult::Halt { steps, registers };
-        }
-        crate::simulate::SimResult::CycleDetected { start_by, period, is_min_start } => {
-            return DeciderResult::Infinite(InfiniteReason::Cycle { start_by, period, is_min_start });
-        }
-        crate::simulate::SimResult::TranslatedCyclerDetected { start_by, period, is_min_start } => {
-            return DeciderResult::Infinite(InfiniteReason::TranslatedCycler { start_by, period, is_min_start });
-        }
-        crate::simulate::SimResult::LimitReached => {
-            // Fallback to Bouncers decider
-            let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
-            if let DeciderResult::Infinite(_) = bouncers_res {
-                return bouncers_res;
-            }
-        }
-        _ => {
-            return DeciderResult::Unknown;
-        }
-    }
-    
-    // Polyhedral Guesser is slower, run it after Bouncers
-    if let Some(set) = polyhedral_guesser::find_closed_set(prog, false) {
-        let cond_strs: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
-        let conditions_str = cond_strs.join(", ");
-        let state_char = (b'A' + set.state as u8) as char;
-        return DeciderResult::Infinite(InfiniteReason::Polyhedral {
-            state: state_char,
-            conditions: conditions_str,
-        });
-    }
-    
-    DeciderResult::Unknown
-}
-
 pub fn decide(
     prog: &Program,
     step_limit: u64,
@@ -71,5 +33,19 @@ pub fn decide(
     exact_start: bool,
 ) -> DeciderResult {
     let sim_res = crate::simulate::simulate_direct(prog, Some(step_limit), detect_cycles, exact_start, false);
-    decide_with_sim_result(prog, sim_res, step_limit)
+    if !matches!(sim_res, DeciderResult::Unknown) {
+        return sim_res;
+    }
+    
+    let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
+    if !matches!(bouncers_res, DeciderResult::Unknown) {
+        return bouncers_res;
+    }
+    
+    let poly_res = polyhedral_guesser::decide_polyhedral(prog);
+    if !matches!(poly_res, DeciderResult::Unknown) {
+        return poly_res;
+    }
+    
+    DeciderResult::Unknown
 }

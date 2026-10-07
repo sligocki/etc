@@ -1,5 +1,6 @@
 use mbb::parse::parse_program;
-use mbb::simulate::{simulate_direct, SimResult};
+use mbb::simulate::simulate_direct;
+use mbb::deciders::DeciderResult;
 use std::env;
 use std::process;
 
@@ -36,19 +37,19 @@ fn main() {
     println!("Simulating: {}", prog);
 
     match simulate_direct(&prog, limit, detect_cycles, exact_start_by, verbose) {
-        SimResult::Halted { steps, .. } => {
+        mbb::deciders::DeciderResult::Halt { steps, .. } => {
             println!("Halted after {} steps.", steps);
         }
-        SimResult::CycleDetected { start_by, period, is_min_start } => {
+        mbb::deciders::DeciderResult::Infinite(mbb::deciders::InfiniteReason::Cycle { start_by, period, is_min_start }) => {
             println!("Cycle detected! Starts at step {} (is_min: {}) with period {}.", start_by, is_min_start, period);
         }
-        SimResult::TranslatedCyclerDetected { start_by, period, is_min_start } => {
+        mbb::deciders::DeciderResult::Infinite(mbb::deciders::InfiniteReason::TranslatedCycler { start_by, period, is_min_start }) => {
             println!("Translated Cycler detected! Starts at step {} (is_min: {}) with period {}.", start_by, is_min_start, period);
         }
-        SimResult::OutOfBounds => {
+        mbb::deciders::DeciderResult::OutOfBounds => {
             println!("Halted (out of bounds)");
         }
-        SimResult::LimitReached => {
+        mbb::deciders::DeciderResult::Unknown => {
             println!("Reached step limit.");
         }
         _ => {

@@ -240,3 +240,17 @@ pub fn find_closed_set(prog: &Program, verbose: bool) -> Option<PolyhedralClosed
 
     None
 }
+
+pub fn decide_polyhedral(prog: &crate::program::Program) -> crate::deciders::DeciderResult {
+    if let Some(set) = find_closed_set(prog, false) {
+        let cond_strs: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
+        let conditions_str = cond_strs.join(", ");
+        let state_char = (b'A' + set.state as u8) as char;
+        crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Polyhedral {
+            state: state_char,
+            conditions: conditions_str,
+        })
+    } else {
+        crate::deciders::DeciderResult::Unknown
+    }
+}

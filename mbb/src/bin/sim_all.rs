@@ -1,5 +1,6 @@
 use mbb::parse::parse_program;
-use mbb::simulate::{simulate_direct, SimResult};
+use mbb::simulate::simulate_direct;
+use mbb::deciders::DeciderResult;
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead};
@@ -43,17 +44,17 @@ fn main() {
 
         if let Some(prog) = parse_program(line) {
             match simulate_direct(&prog, limit, false, false, false) {
-                SimResult::Halted { steps, .. } => {
+                mbb::deciders::DeciderResult::Halt { steps, .. } => {
                     halted_count += 1;
                     if steps > max_halt_steps {
                         max_halt_steps = steps;
                     }
                 }
-                SimResult::OutOfBounds => {
+                mbb::deciders::DeciderResult::OutOfBounds => {
                     eprintln!("Warning: Program halted (out of bounds): {}", line);
                     halted_count += 1; // It halted technically
                 }
-                SimResult::LimitReached => {}
+                mbb::deciders::DeciderResult::Unknown => {}
                 _ => {}
             }
         } else {

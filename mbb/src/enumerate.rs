@@ -1,5 +1,6 @@
 use crate::program::{Instruction, Program, Target};
-use crate::simulate::{SimResult, Branch};
+use crate::simulate::Branch;
+use crate::deciders::DeciderResult;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnumState {
@@ -59,10 +60,10 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
         }
 
-        let sim_res = crate::simulate::simulate_direct(&state.prog, Some(step_limit), true, exact_start, false);
+        let decider_res = crate::deciders::decide(&state.prog, step_limit, true, exact_start);
         
-        match sim_res {
-            SimResult::HitUndefInst(pc) => {
+        match decider_res {
+            crate::deciders::DeciderResult::HitUndefInst(pc) => {
                 let (undef_count, has_inc, has_dec) = state.prog.get_missing_requirements(state.max_reg_referenced);
                 let mut total_missing = 0;
                 if state.max_reg_referenced >= 0 {
@@ -126,7 +127,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     }
                 }
             }
-            SimResult::HitUndefTarget { pc, branch } => {
+            crate::deciders::DeciderResult::HitUndefTarget { pc, branch } => {
                 let (explicit_undef, undef_insts, halt_targets) = state.prog.get_target_counts();
                 let force_halt = halt_targets == 0 && explicit_undef == 1 && undef_insts == 0;
 
@@ -176,47 +177,42 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     stack.push(child);
                 }
             }
-            SimResult::OutOfBounds => {
+            crate::deciders::DeciderResult::OutOfBounds => {
                 // Should not happen during enumeration
             }
-            _ => {
-                let decider_res = crate::deciders::decide_with_sim_result(&state.prog, sim_res, step_limit);
-                match &decider_res {
-                    crate::deciders::DeciderResult::Halt { steps, registers: _ } => {
-                        num_halted += 1;
-                        if *steps > max_steps {
-                            max_steps = *steps;
-                            max_program = state.prog.to_string_format(state.max_reg_referenced);
-                        }
-                        crate::io::write_result(
-                            &mut writer,
-                            &state.prog.to_string_format(state.max_reg_referenced),
-                            &decider_res
-                        ).unwrap();
-                    }
-                    crate::deciders::DeciderResult::Infinite(reason) => {
-                        num_infinite += 1;
-                        match reason {
-                            crate::deciders::InfiniteReason::Cycle { .. } => num_infinite_cycle += 1,
-                            crate::deciders::InfiniteReason::TranslatedCycler { .. } => num_infinite_tc += 1,
-                            crate::deciders::InfiniteReason::Bouncer { .. } => num_infinite_bouncer += 1,
-                            crate::deciders::InfiniteReason::Polyhedral { .. } => num_infinite_poly += 1,
-                        }
-                        crate::io::write_result(
-                            &mut writer,
-                            &state.prog.to_string_format(state.max_reg_referenced),
-                            &decider_res
-                        ).unwrap();
-                    }
-                    crate::deciders::DeciderResult::Unknown => {
-                        num_unknown += 1;
-                        crate::io::write_result(
-                            &mut writer,
-                            &state.prog.to_string_format(state.max_reg_referenced),
-                            &decider_res
-                        ).unwrap();
-                    }
+            DeciderResult::Halt { steps, registers: _ } => {
+                num_halted += 1;
+                if steps > max_steps {
+                    max_steps = steps;
+                    max_program = state.prog.to_string_format(state.max_reg_referenced);
                 }
+                crate::io::write_result(
+                    &mut writer,
+                    &state.prog.to_string_format(state.max_reg_referenced),
+                    &decider_res
+                ).unwrap();
+            }
+            DeciderResult::Infinite(ref reason) => {
+                num_infinite += 1;
+                match reason {
+                    crate::deciders::InfiniteReason::Cycle { .. } => num_infinite_cycle += 1,
+                    crate::deciders::InfiniteReason::TranslatedCycler { .. } => num_infinite_tc += 1,
+                    crate::deciders::InfiniteReason::Bouncer { .. } => num_infinite_bouncer += 1,
+                    crate::deciders::InfiniteReason::Polyhedral { .. } => num_infinite_poly += 1,
+                }
+                crate::io::write_result(
+                    &mut writer,
+                    &state.prog.to_string_format(state.max_reg_referenced),
+                    &decider_res
+                ).unwrap();
+            }
+            DeciderResult::Unknown => {
+                num_unknown += 1;
+                crate::io::write_result(
+                    &mut writer,
+                    &state.prog.to_string_format(state.max_reg_referenced),
+                    &decider_res
+                ).unwrap();
             }
         }
     }

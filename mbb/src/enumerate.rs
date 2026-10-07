@@ -35,6 +35,9 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     let mut num_halted = 0u64;
     let mut num_unknown = 0u64;
     let mut num_infinite = 0u64;
+    let mut num_infinite_cycle = 0u64;
+    let mut num_infinite_tc = 0u64;
+    let mut num_infinite_poly = 0u64;
     let mut max_steps = 0u64;
     let mut max_program = String::new();
     let mut last_print_time = std::time::Instant::now();
@@ -78,6 +81,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
             crate::deciders::DecideResult::Sim(SimResult::CycleDetected { start_by, period, is_min_start }) => {
                 num_infinite += 1;
+                num_infinite_cycle += 1;
                 crate::io::write_result(
                     &mut writer,
                     &state.prog.to_string_format(state.max_reg_referenced),
@@ -86,6 +90,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
             crate::deciders::DecideResult::Sim(SimResult::TranslatedCyclerDetected { start_by, period, is_min_start }) => {
                 num_infinite += 1;
+                num_infinite_tc += 1;
                 crate::io::write_result(
                     &mut writer,
                     &state.prog.to_string_format(state.max_reg_referenced),
@@ -94,6 +99,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
             crate::deciders::DecideResult::Polyhedral { state: poly_state, conditions_str } => {
                 num_infinite += 1;
+                num_infinite_poly += 1;
                 let state_char = (b'A' + poly_state as u8) as char;
                 crate::io::write_result(
                     &mut writer,
@@ -230,6 +236,14 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     println!("Total programs found: {}", total_leaves);
     println!("  Halted: {} ({:.2}%)", num_halted, halt_pct);
     println!("  Infinite: {} ({:.2}%)", num_infinite, inf_pct);
+    if num_infinite > 0 {
+        let cycle_pct = (num_infinite_cycle as f64 / num_infinite as f64) * 100.0;
+        let tc_pct = (num_infinite_tc as f64 / num_infinite as f64) * 100.0;
+        let poly_pct = (num_infinite_poly as f64 / num_infinite as f64) * 100.0;
+        println!("    Cycle: {} ({:.2}%)", num_infinite_cycle, cycle_pct);
+        println!("    Translated Cycler: {} ({:.2}%)", num_infinite_tc, tc_pct);
+        println!("    Polyhedral: {} ({:.2}%)", num_infinite_poly, poly_pct);
+    }
     println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
     println!("Max Halting Program: {} ({} steps)", max_program, max_steps);
 }

@@ -133,7 +133,7 @@ pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition>
     unique_conds
 }
 
-pub fn find_closed_set(prog: &Program, verbose: bool) -> Option<PolyhedralClosedSet> {
+pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option<PolyhedralClosedSet> {
     let macros = abstract_program(prog);
     let num_regs = prog.num_regs();
 
@@ -142,7 +142,7 @@ pub fn find_closed_set(prog: &Program, verbose: bool) -> Option<PolyhedralClosed
             continue;
         }
 
-        let history = record_history(prog, state_idx, 100_000);
+        let history = record_history(prog, state_idx, step_limit);
         if history.len() < 10 {
             continue;
         }
@@ -241,8 +241,8 @@ pub fn find_closed_set(prog: &Program, verbose: bool) -> Option<PolyhedralClosed
     None
 }
 
-pub fn decide_polyhedral(prog: &crate::program::Program) -> crate::deciders::DeciderResult {
-    if let Some(set) = find_closed_set(prog, false) {
+pub fn decide_polyhedral(prog: &crate::program::Program, step_limit: u64) -> crate::deciders::DeciderResult {
+    if let Some(set) = find_closed_set(prog, false, step_limit) {
         let cond_strs: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
         let conditions_str = cond_strs.join(", ");
         let state_char = (b'A' + set.state as u8) as char;

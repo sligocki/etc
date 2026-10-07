@@ -106,7 +106,7 @@ fn main() {
             }
 
             let prog = parse_program(prog_str).expect("Failed to parse program");
-            if let Some(set) = find_closed_set(&prog, verbose) {
+            if let Some(set) = find_closed_set(&prog, verbose, 100_000) {
                 success_count += 1;
                 let state_char = (b'A' + set.state as u8) as char;
                 let conds: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
@@ -250,7 +250,7 @@ fn main() {
     } else {
         // Auto-guess mode
         println!("Running Polyhedral Guesser...");
-        if let Some(set) = find_closed_set(&prog, verbose) {
+        if let Some(set) = find_closed_set(&prog, verbose, 100_000) {
             println!("🎉 Automatically found a valid Polyhedral Closed Set!");
             println!("   State: {}", (b'A' + set.state as u8) as char);
             let cond_strs: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();

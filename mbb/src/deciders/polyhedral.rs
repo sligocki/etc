@@ -137,9 +137,16 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
 
     let mut path_count = 0;
     let mut all_failed_conds = Vec::new();
+    let mut nodes_explored = 0;
 
     while let Some(state) = queue.pop_front() {
-        if state.depth > 1000 {
+        nodes_explored += 1;
+        if nodes_explored > 500 {
+            if verbose { println!("  Node limit exceeded ({} nodes)!", nodes_explored); }
+            return VerifyResult::Failed("Node limit exceeded".to_string());
+        }
+
+        if state.depth > 100 {
             if verbose {
                 println!("  Depth limit exceeded! Trace:");
                 for (s, a) in &state.trace { println!("      {}   {}", s, a); }

@@ -36,7 +36,7 @@ fn main() {
     let start = Instant::now();
     let mut poly_solved = 0;
     for p in &progs {
-        if mbb::deciders::polyhedral_guesser::find_closed_set(p, false).is_some() {
+        if mbb::deciders::polyhedral_guesser::find_closed_set(p, false, 100_000).is_some() {
             poly_solved += 1;
         }
     }

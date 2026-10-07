@@ -59,7 +59,7 @@ pub fn decide_with_stats(
     }
 
     let t0 = std::time::Instant::now();
-    let poly_res = polyhedral_guesser::decide_polyhedral(prog);
+    let poly_res = polyhedral_guesser::decide_polyhedral(prog, step_limit);
     stats.time_polyhedral += t0.elapsed();
     if poly_res != DeciderResult::Unknown {
         return poly_res;

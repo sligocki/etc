@@ -1,5 +1,5 @@
 use crate::program::{Instruction, Program, Target};
-use crate::simulate::{simulate, Branch, SimResult};
+use crate::simulate::{SimResult, Branch};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnumState {
@@ -55,8 +55,8 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
         }
 
-        match simulate(&state.prog, Some(step_limit), true, exact_start, use_transfer, false) {
-            SimResult::Halted { steps, registers } => {
+        match crate::deciders::decide(&state.prog, step_limit, true, exact_start, use_transfer) {
+            crate::deciders::DecideResult::Sim(SimResult::Halted { steps, registers }) => {
                 num_halted += 1;
                 if steps > max_steps {
                     max_steps = steps;
@@ -68,7 +68,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     crate::io::ProgramResult::Halt { steps, registers: &registers }
                 ).unwrap();
             }
-            SimResult::LimitReached => {
+            crate::deciders::DecideResult::Sim(SimResult::LimitReached) => {
                 num_unknown += 1;
                 crate::io::write_result(
                     &mut writer,
@@ -76,7 +76,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     crate::io::ProgramResult::Unknown
                 ).unwrap();
             }
-            SimResult::CycleDetected { start_by, period, is_min_start } => {
+            crate::deciders::DecideResult::Sim(SimResult::CycleDetected { start_by, period, is_min_start }) => {
                 num_infinite += 1;
                 crate::io::write_result(
                     &mut writer,
@@ -84,7 +84,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     crate::io::ProgramResult::Infinite(crate::io::InfiniteReason::Cycle { start_by, period, is_min_start })
                 ).unwrap();
             }
-            SimResult::TranslatedCyclerDetected { start_by, period, is_min_start } => {
+            crate::deciders::DecideResult::Sim(SimResult::TranslatedCyclerDetected { start_by, period, is_min_start }) => {
                 num_infinite += 1;
                 crate::io::write_result(
                     &mut writer,
@@ -92,10 +92,19 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     crate::io::ProgramResult::Infinite(crate::io::InfiniteReason::TranslatedCycler { start_by, period, is_min_start })
                 ).unwrap();
             }
-            SimResult::OutOfBounds => {
+            crate::deciders::DecideResult::Polyhedral { state: poly_state, conditions_str } => {
+                num_infinite += 1;
+                let state_char = (b'A' + poly_state as u8) as char;
+                crate::io::write_result(
+                    &mut writer,
+                    &state.prog.to_string_format(state.max_reg_referenced),
+                    crate::io::ProgramResult::Infinite(crate::io::InfiniteReason::Polyhedral { state: state_char, conditions: &conditions_str })
+                ).unwrap();
+            }
+            crate::deciders::DecideResult::Sim(SimResult::OutOfBounds) => {
                 // Should not happen during enumeration
             }
-            SimResult::HitUndefInst(pc) => {
+            crate::deciders::DecideResult::Sim(SimResult::HitUndefInst(pc)) => {
                 let (undef_count, has_inc, has_dec) = state.prog.get_missing_requirements(state.max_reg_referenced);
                 let mut total_missing = 0;
                 if state.max_reg_referenced >= 0 {
@@ -159,7 +168,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     }
                 }
             }
-            SimResult::HitUndefTarget { pc, branch } => {
+            crate::deciders::DecideResult::Sim(SimResult::HitUndefTarget { pc, branch }) => {
                 let (explicit_undef, undef_insts, halt_targets) = state.prog.get_target_counts();
                 let force_halt = halt_targets == 0 && explicit_undef == 1 && undef_insts == 0;
 

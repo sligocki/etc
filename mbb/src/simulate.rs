@@ -5,6 +5,7 @@ pub struct State {
     pub pc: usize,
     pub registers: Vec<u64>,
     pub steps: u64,
+    pub macro_steps: u64,
     pub last_decr_zero: Vec<u64>,
 }
 
@@ -14,6 +15,7 @@ impl State {
             pc: 0,
             registers: Vec::new(),
             steps: 0,
+            macro_steps: 0,
             last_decr_zero: Vec::new(),
         }
     }
@@ -118,6 +120,7 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
 
     let current_pc = state.pc;
     let inst = &macros[state.pc];
+    state.macro_steps += 1;
 
     match inst {
         crate::macro_program::MacroInst::Undef => {
@@ -137,7 +140,7 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
             state.steps += 1;
             let val = state.get_reg(*reg);
             if val == 0 {
-                state.set_last_decr_zero(*reg, state.steps);
+                state.set_last_decr_zero(*reg, state.macro_steps);
                 match next_zero {
                     Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
                     Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
@@ -160,7 +163,6 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
                 let old = state.get_reg(*r);
                 state.set_reg(*r, old + (*inc as u64) * val);
             }
-            state.set_last_decr_zero(*reg, state.steps);
             state.set_reg(*reg, 0);
             match next {
                 Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
@@ -291,6 +293,137 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
         }
 
         let res = step_fn(&mut state);
+        if !matches!(res, SimResult::LimitReached) {
+            return res;
+        }
+    }
+}
+
+pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, exact_start_by: bool, verbose: bool) -> SimResult {
+    let macros = crate::macro_program::abstract_program(prog);
+    if verbose {
+        println!("Macro Program:");
+        for (i, inst) in macros.iter().enumerate() {
+            let state_char = (b'A' + i as u8) as char;
+            println!("  {}: {}", state_char, inst);
+        }
+        println!("---");
+    }
+
+    let mut state = State::new();
+    let mut power = 1;
+    let mut lam = 1;
+    let mut tortoise_pc = state.pc;
+    let mut tortoise_registers = state.registers.clone();
+    let mut tortoise_step = state.macro_steps; // track MACRO steps for Brent's algorithm
+
+    loop {
+        if let Some(limit) = step_limit {
+            if state.steps >= limit {
+                return SimResult::LimitReached;
+            }
+        }
+
+        if state.pc >= prog.instructions.len() {
+            return SimResult::OutOfBounds;
+        }
+
+        if detect_cycles && state.macro_steps > 0 {
+            if state.pc == tortoise_pc {
+                let mut is_ge = true;
+                let mut strict_increase = false;
+                let mut valid_tc = true;
+
+                let max_len = std::cmp::max(state.registers.len(), tortoise_registers.len());
+                for i in 0..max_len {
+                    let hare_val = if i < state.registers.len() { state.registers[i] } else { 0 };
+                    let tort_val = if i < tortoise_registers.len() { tortoise_registers[i] } else { 0 };
+                    if hare_val < tort_val {
+                        is_ge = false;
+                        break;
+                    } else if hare_val > tort_val {
+                        strict_increase = true;
+                        let ldz = if i < state.last_decr_zero.len() { state.last_decr_zero[i] } else { 0 };
+                        if ldz > tortoise_step {
+                            valid_tc = false;
+                        }
+                    }
+                }
+
+                if is_ge && (!strict_increase || valid_tc) {
+                    let actual_period = state.macro_steps - tortoise_step;
+                    if !exact_start_by {
+                        let start_by = tortoise_step;
+                        if strict_increase {
+                            return SimResult::TranslatedCyclerDetected { start_by, period: actual_period, is_min_start: false };
+                        } else {
+                            return SimResult::CycleDetected { start_by, period: actual_period, is_min_start: false };
+                        }
+                    }
+
+                    let mut hare = State::new();
+                    for _ in 0..lam {
+                        let _ = step_macro(&mut hare, &macros);
+                    }
+                    let mut tortoise = State::new();
+                    loop {
+                        let mut is_ge = true;
+                        let mut strict_increase = false;
+                        let mut valid_tc = true;
+
+                        if hare.pc == tortoise.pc {
+                            let max_len = std::cmp::max(hare.registers.len(), tortoise.registers.len());
+                            for i in 0..max_len {
+                                let hare_val = if i < hare.registers.len() { hare.registers[i] } else { 0 };
+                                let tort_val = if i < tortoise.registers.len() { tortoise.registers[i] } else { 0 };
+                                if hare_val < tort_val {
+                                    is_ge = false;
+                                    break;
+                                } else if hare_val > tort_val {
+                                    strict_increase = true;
+                                    let ldz = if i < hare.last_decr_zero.len() { hare.last_decr_zero[i] } else { 0 };
+                                    if ldz > tortoise.macro_steps {
+                                        valid_tc = false;
+                                    }
+                                }
+                            }
+                            if is_ge && (!strict_increase || valid_tc) {
+                                let start_by = tortoise.macro_steps;
+                                let period = hare.macro_steps - tortoise.macro_steps;
+                                if strict_increase {
+                                    return SimResult::TranslatedCyclerDetected { start_by, period, is_min_start: true };
+                                } else {
+                                    return SimResult::CycleDetected { start_by, period, is_min_start: true };
+                                }
+                            }
+                        }
+
+                        let _ = step_macro(&mut hare, &macros);
+                        let _ = step_macro(&mut tortoise, &macros);
+                    }
+                }
+            }
+            if power == lam {
+                tortoise_pc = state.pc;
+                tortoise_registers = state.registers.clone();
+                tortoise_step = state.macro_steps;
+                power *= 2;
+                lam = 0;
+            }
+            lam += 1;
+        }
+
+        if verbose {
+            let state_char = (b'A' + state.pc as u8) as char;
+            let max_reg = prog.num_regs();
+            let mut regs = Vec::new();
+            for i in 0..max_reg {
+                regs.push(state.get_reg(i));
+            }
+            println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, macros[state.pc]);
+        }
+
+        let res = step_macro(&mut state, &macros);
         if !matches!(res, SimResult::LimitReached) {
             return res;
         }

@@ -21,6 +21,7 @@ pub trait Decider {
 pub mod symbolic;
 pub mod polyhedral;
 pub mod polyhedral_guesser;
+pub mod bouncers;
 
 pub fn decide(
     prog: &Program,
@@ -41,13 +42,18 @@ pub fn decide(
             return DeciderResult::Infinite(InfiniteReason::TranslatedCycler { start_by, period, is_min_start });
         }
         crate::simulate::SimResult::LimitReached => {
-            // Check other deciders
+            // Fallback to Bouncers decider
+            let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
+            if let DeciderResult::Infinite(_) = bouncers_res {
+                return bouncers_res;
+            }
         }
         _ => {
             return DeciderResult::Unknown;
         }
     }
     
+    // Polyhedral Guesser is slower, run it after Bouncers
     if let Some(set) = polyhedral_guesser::find_closed_set(prog, false) {
         let cond_strs: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
         let conditions_str = cond_strs.join(", ");

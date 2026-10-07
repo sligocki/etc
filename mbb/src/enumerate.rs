@@ -37,6 +37,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     let mut num_infinite = 0u64;
     let mut num_infinite_cycle = 0u64;
     let mut num_infinite_tc = 0u64;
+    let mut num_infinite_bouncer = 0u64;
     let mut num_infinite_poly = 0u64;
     let mut max_steps = 0u64;
     let mut max_program = String::new();
@@ -64,12 +65,35 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
         let mut poly_state = 0;
         let mut poly_conditions = String::new();
         
+        let mut decided_bouncer = false;
+        let mut bouncer_start_by = 0;
+        let mut bouncer_period = 0;
+        let mut bouncer_is_min_start = false;
+
         if matches!(sim_res, SimResult::LimitReached) {
-            if let Some(set) = crate::deciders::polyhedral_guesser::find_closed_set(&state.prog, false) {
+            use crate::deciders::Decider;
+            let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(&state.prog);
+            if let crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Bouncer { start_by, period, is_min_start }) = bouncers_res {
+                decided_bouncer = true;
+                bouncer_start_by = start_by;
+                bouncer_period = period;
+                bouncer_is_min_start = is_min_start;
+            } else if let Some(set) = crate::deciders::polyhedral_guesser::find_closed_set(&state.prog, false) {
                 decided_polyhedral = true;
                 poly_state = set.state;
                 poly_conditions = set.conditions.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(", ");
             }
+        }
+
+        if decided_bouncer {
+            num_infinite += 1;
+            num_infinite_bouncer += 1;
+            crate::io::write_result(
+                &mut writer,
+                &state.prog.to_string_format(state.max_reg_referenced),
+                &crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Bouncer { start_by: bouncer_start_by, period: bouncer_period, is_min_start: bouncer_is_min_start })
+            ).unwrap();
+            continue;
         }
 
         if decided_polyhedral {
@@ -255,9 +279,11 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     if num_infinite > 0 {
         let cycle_pct = (num_infinite_cycle as f64 / num_infinite as f64) * 100.0;
         let tc_pct = (num_infinite_tc as f64 / num_infinite as f64) * 100.0;
+        let bouncer_pct = (num_infinite_bouncer as f64 / num_infinite as f64) * 100.0;
         let poly_pct = (num_infinite_poly as f64 / num_infinite as f64) * 100.0;
         println!("    Cycle: {} ({:.2}%)", num_infinite_cycle, cycle_pct);
         println!("    Translated Cycler: {} ({:.2}%)", num_infinite_tc, tc_pct);
+        println!("    Bouncer: {} ({:.2}%)", num_infinite_bouncer, bouncer_pct);
         println!("    Polyhedral: {} ({:.2}%)", num_infinite_poly, poly_pct);
     }
     println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);

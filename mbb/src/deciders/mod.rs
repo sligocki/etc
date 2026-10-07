@@ -23,14 +23,11 @@ pub mod polyhedral;
 pub mod polyhedral_guesser;
 pub mod bouncers;
 
-pub fn decide(
+pub fn decide_with_sim_result(
     prog: &Program,
+    sim_res: crate::simulate::SimResult,
     step_limit: u64,
-    detect_cycles: bool,
-    exact_start: bool,
 ) -> DeciderResult {
-    let sim_res = crate::simulate::simulate_direct(prog, Some(step_limit), detect_cycles, exact_start, false);
-    
     match sim_res {
         crate::simulate::SimResult::Halted { steps, registers } => {
             return DeciderResult::Halt { steps, registers };
@@ -65,4 +62,14 @@ pub fn decide(
     }
     
     DeciderResult::Unknown
+}
+
+pub fn decide(
+    prog: &Program,
+    step_limit: u64,
+    detect_cycles: bool,
+    exact_start: bool,
+) -> DeciderResult {
+    let sim_res = crate::simulate::simulate_direct(prog, Some(step_limit), detect_cycles, exact_start, false);
+    decide_with_sim_result(prog, sim_res, step_limit)
 }

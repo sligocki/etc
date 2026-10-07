@@ -63,134 +63,136 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
         let decider_res = crate::deciders::decide(&state.prog, step_limit, true, exact_start);
         
         match decider_res {
-            crate::deciders::DeciderResult::HitUndefInst(pc) => {
-                let (undef_count, has_inc, has_dec) = state.prog.get_missing_requirements(state.max_reg_referenced);
-                let mut total_missing = 0;
-                if state.max_reg_referenced >= 0 {
-                    for i in 0..=(state.max_reg_referenced as usize) {
-                        if !has_inc[i] { total_missing += 1; }
-                        if !has_dec[i] { total_missing += 1; }
-                    }
-                }
+            DeciderResult::Halt { steps, registers: _, ref hit_undef } => {
+                if let Some(undef) = hit_undef {
+                    match undef {
+                        crate::deciders::HitUndef::Inst(pc) => {
+                            let (undef_count, has_inc, has_dec) = state.prog.get_missing_requirements(state.max_reg_referenced);
+                            let mut total_missing = 0;
+                            if state.max_reg_referenced >= 0 {
+                                for i in 0..=(state.max_reg_referenced as usize) {
+                                    if !has_inc[i] { total_missing += 1; }
+                                    if !has_dec[i] { total_missing += 1; }
+                                }
+                            }
 
-                if total_missing > undef_count {
-                    continue; // Prune branch: impossible to satisfy all registers
-                }
+                            if total_missing > undef_count {
+                                continue; // Prune branch: impossible to satisfy all registers
+                            }
 
-                let strict_mode = total_missing == undef_count;
+                            let strict_mode = total_missing == undef_count;
 
-                let mut max_r = state.max_reg_referenced;
-                if !strict_mode && total_missing + 2 <= undef_count && max_r + 1 < max_regs as i32 {
-                    max_r += 1;
-                }
+                            let mut max_r = state.max_reg_referenced;
+                            if !strict_mode && total_missing + 2 <= undef_count && max_r + 1 < max_regs as i32 {
+                                max_r += 1;
+                            }
 
-                if allow_no_ops && !strict_mode {
-                    let mut child = state.clone();
-                    child.prog.instructions[pc] = Instruction::NoOp { next: Target::Undef };
-                    stack.push(child);
-                }
-                
-                for r in 0..=max_r {
-                    let r_usize = r as usize;
-                    if strict_mode && r_usize < has_inc.len() && has_inc[r_usize] {
-                        continue;
-                    }
+                            if allow_no_ops && !strict_mode {
+                                let mut child = state.clone();
+                                child.prog.instructions[*pc] = Instruction::NoOp { next: Target::Undef };
+                                stack.push(child);
+                            }
+                            
+                            for r in 0..=max_r {
+                                let r_usize = r as usize;
+                                if strict_mode && r_usize < has_inc.len() && has_inc[r_usize] {
+                                    continue;
+                                }
 
-                    let mut child = state.clone();
-                    child.prog.instructions[pc] = Instruction::Inc {
-                        reg: r_usize,
-                        next: Target::Undef,
-                    };
-                    if r > child.max_reg_referenced {
-                        child.max_reg_referenced = r;
-                    }
-                    stack.push(child);
-                }
+                                let mut child = state.clone();
+                                child.prog.instructions[*pc] = Instruction::Inc {
+                                    reg: r_usize,
+                                    next: Target::Undef,
+                                };
+                                if r > child.max_reg_referenced {
+                                    child.max_reg_referenced = r;
+                                }
+                                stack.push(child);
+                            }
 
-                if pc != 0 {
-                    for r in 0..=max_r {
-                        let r_usize = r as usize;
-                        if strict_mode && r_usize < has_dec.len() && has_dec[r_usize] {
-                            continue;
-                        }
+                            if *pc != 0 {
+                                for r in 0..=max_r {
+                                    let r_usize = r as usize;
+                                    if strict_mode && r_usize < has_dec.len() && has_dec[r_usize] {
+                                        continue;
+                                    }
 
-                        let mut child = state.clone();
-                        child.prog.instructions[pc] = Instruction::Dec {
-                            reg: r_usize,
-                            next_not_zero: Target::Undef,
-                            next_zero: Target::Undef,
-                        };
-                        if r > child.max_reg_referenced {
-                            child.max_reg_referenced = r;
-                        }
-                        stack.push(child);
-                    }
-                }
-            }
-            crate::deciders::DeciderResult::HitUndefTarget { pc, branch } => {
-                let (explicit_undef, undef_insts, halt_targets) = state.prog.get_target_counts();
-                let force_halt = halt_targets == 0 && explicit_undef == 1 && undef_insts == 0;
-
-                let mut max_s = state.max_state_referenced;
-                if max_s + 1 < num_states as i32 {
-                    max_s += 1;
-                }
-
-                let mut targets = vec![Target::Halt];
-                
-                if !force_halt {
-                    for s in 0..=max_s {
-                        targets.push(Target::Inst(s as usize));
-                    }
-                }
-
-                for target in targets {
-                    let mut child = state.clone();
-                    
-                    if let Target::Inst(s) = target {
-                        if s as i32 > child.max_state_referenced {
-                            child.max_state_referenced = s as i32;
-                        }
-                    }
-
-                    match &mut child.prog.instructions[pc] {
-                        Instruction::Inc { next, .. } => {
-                            if branch == Branch::Next {
-                                *next = target;
+                                    let mut child = state.clone();
+                                    child.prog.instructions[*pc] = Instruction::Dec {
+                                        reg: r_usize,
+                                        next_not_zero: Target::Undef,
+                                        next_zero: Target::Undef,
+                                    };
+                                    if r > child.max_reg_referenced {
+                                        child.max_reg_referenced = r;
+                                    }
+                                    stack.push(child);
+                                }
                             }
                         }
-                        Instruction::Dec { next_not_zero, next_zero, .. } => {
-                            if branch == Branch::NextNotZero {
-                                *next_not_zero = target;
-                            } else if branch == Branch::NextZero {
-                                *next_zero = target;
+                        crate::deciders::HitUndef::Target { pc, branch } => {
+                            let (explicit_undef, undef_insts, halt_targets) = state.prog.get_target_counts();
+                            let force_halt = halt_targets == 0 && explicit_undef == 1 && undef_insts == 0;
+
+                            let mut max_s = state.max_state_referenced;
+                            if max_s + 1 < num_states as i32 {
+                                max_s += 1;
+                            }
+
+                            let mut targets = vec![Target::Halt];
+                            
+                            if !force_halt {
+                                for s in 0..=max_s {
+                                    targets.push(Target::Inst(s as usize));
+                                }
+                            }
+
+                            for target in targets {
+                                let mut child = state.clone();
+                                
+                                if let Target::Inst(s) = target {
+                                    if s as i32 > child.max_state_referenced {
+                                        child.max_state_referenced = s as i32;
+                                    }
+                                }
+
+                                match &mut child.prog.instructions[*pc] {
+                                    Instruction::Inc { next, .. } => {
+                                        if *branch == Branch::Next {
+                                            *next = target;
+                                        }
+                                    }
+                                    Instruction::Dec { next_not_zero, next_zero, .. } => {
+                                        if *branch == Branch::NextNotZero {
+                                            *next_not_zero = target;
+                                        } else if *branch == Branch::NextZero {
+                                            *next_zero = target;
+                                        }
+                                    }
+                                    Instruction::NoOp { next } => {
+                                        if *branch == Branch::Next {
+                                            *next = target;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                
+                                stack.push(child);
                             }
                         }
-                        Instruction::NoOp { next } => {
-                            if branch == Branch::Next {
-                                *next = target;
-                            }
-                        }
-                        _ => {}
                     }
-                    
-                    stack.push(child);
+                } else {
+                    num_halted += 1;
+                    if steps > max_steps {
+                        max_steps = steps;
+                        max_program = state.prog.to_string_format(state.max_reg_referenced);
+                    }
+                    crate::io::write_result(
+                        &mut writer,
+                        &state.prog.to_string_format(state.max_reg_referenced),
+                        &decider_res
+                    ).unwrap();
                 }
-            }
-            crate::deciders::DeciderResult::OutOfBounds => {
-                // Should not happen during enumeration
-            }
-            DeciderResult::Halt { steps, registers: _ } => {
-                num_halted += 1;
-                if steps > max_steps {
-                    max_steps = steps;
-                    max_program = state.prog.to_string_format(state.max_reg_referenced);
-                }
-                crate::io::write_result(
-                    &mut writer,
-                    &state.prog.to_string_format(state.max_reg_referenced),
-                    &decider_res
-                ).unwrap();
             }
             DeciderResult::Infinite(ref reason) => {
                 num_infinite += 1;
@@ -206,13 +208,18 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     &decider_res
                 ).unwrap();
             }
-            DeciderResult::Unknown => {
-                num_unknown += 1;
-                crate::io::write_result(
-                    &mut writer,
-                    &state.prog.to_string_format(state.max_reg_referenced),
-                    &decider_res
-                ).unwrap();
+            DeciderResult::Unknown(ref reason) => {
+                match reason {
+                    crate::deciders::UnknownReason::StepLimitReached => {
+                        num_unknown += 1;
+                        crate::io::write_result(
+                            &mut writer,
+                            &state.prog.to_string_format(state.max_reg_referenced),
+                            &decider_res
+                        ).unwrap();
+                    }
+                    crate::deciders::UnknownReason::OutOfBounds => {}
+                }
             }
         }
     }

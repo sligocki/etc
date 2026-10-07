@@ -46,10 +46,10 @@ fn main() {
         mbb::deciders::DeciderResult::Infinite(mbb::deciders::InfiniteReason::TranslatedCycler { start_by, period, is_min_start }) => {
             println!("Translated Cycler detected! Starts at step {} (is_min: {}) with period {}.", start_by, is_min_start, period);
         }
-        mbb::deciders::DeciderResult::OutOfBounds => {
+        mbb::deciders::DeciderResult::Unknown(mbb::deciders::UnknownReason::OutOfBounds) => {
             println!("Halted (out of bounds)");
         }
-        mbb::deciders::DeciderResult::Unknown => {
+        mbb::deciders::DeciderResult::Unknown(_) => {
             println!("Reached step limit.");
         }
         _ => {

@@ -53,7 +53,7 @@ pub enum Branch {
 
 pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult {
     if state.pc >= prog.instructions.len() {
-        return crate::deciders::DeciderResult::OutOfBounds;
+        return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::OutOfBounds);
     }
 
     let current_pc = state.pc;
@@ -61,15 +61,15 @@ pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult
 
     match inst {
         Instruction::Undef => {
-            return crate::deciders::DeciderResult::HitUndefInst(current_pc);
+            return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Inst(current_pc)) };
         }
         Instruction::Inc { reg, next } => {
             state.steps += 1;
             let val = state.get_reg(*reg);
             state.set_reg(*reg, val.wrapping_add(1));
             match next {
-                Target::Undef => return crate::deciders::DeciderResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
-                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone() },
+                Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::Next }) },
+                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
                 Target::Inst(i) => state.pc = *i,
             }
         }
@@ -79,15 +79,15 @@ pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult
             if val == 0 {
                 state.set_last_decr_zero(*reg, state.steps);
                 match next_zero {
-                    Target::Undef => return crate::deciders::DeciderResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
-                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone() },
+                    Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextZero }) },
+                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
                     Target::Inst(i) => state.pc = *i,
                 }
             } else {
                 state.set_reg(*reg, val - 1);
                 match next_not_zero {
-                    Target::Undef => return crate::deciders::DeciderResult::HitUndefTarget { pc: current_pc, branch: Branch::NextNotZero },
-                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone() },
+                    Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextNotZero }) },
+                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
                     Target::Inst(i) => state.pc = *i,
                 }
             }
@@ -95,18 +95,18 @@ pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult
         Instruction::NoOp { next } => {
             state.steps += 1;
             match next {
-                Target::Undef => return crate::deciders::DeciderResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
-                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone() },
+                Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::Next }) },
+                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
                 Target::Inst(i) => state.pc = *i,
             }
         }
     }
-    crate::deciders::DeciderResult::Unknown // placeholder for "successfully stepped"
+    crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached) // placeholder for "successfully stepped"
 }
 
 pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst]) -> crate::deciders::DeciderResult {
     if state.pc >= macros.len() {
-        return crate::deciders::DeciderResult::OutOfBounds;
+        return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::OutOfBounds);
     }
 
     let current_pc = state.pc;
@@ -115,15 +115,15 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
 
     match inst {
         crate::macro_program::MacroInst::Undef => {
-            return crate::deciders::DeciderResult::HitUndefInst(current_pc);
+            return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Inst(current_pc)) };
         }
         crate::macro_program::MacroInst::Inc { reg, next } => {
             state.steps += 1;
             let val = state.get_reg(*reg);
             state.set_reg(*reg, val.wrapping_add(1));
             match next {
-                Target::Undef => return crate::deciders::DeciderResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
-                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone() },
+                Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::Next }) },
+                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
                 Target::Inst(i) => state.pc = *i,
             }
         }
@@ -133,15 +133,15 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
             if val == 0 {
                 state.set_last_decr_zero(*reg, state.macro_steps);
                 match next_zero {
-                    Target::Undef => return crate::deciders::DeciderResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
-                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone() },
+                    Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextZero }) },
+                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
                     Target::Inst(i) => state.pc = *i,
                 }
             } else {
                 state.set_reg(*reg, val - 1);
                 match next_not_zero {
-                    Target::Undef => return crate::deciders::DeciderResult::HitUndefTarget { pc: current_pc, branch: Branch::NextNotZero },
-                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone() },
+                    Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextNotZero }) },
+                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
                     Target::Inst(i) => state.pc = *i,
                 }
             }
@@ -156,13 +156,13 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
             }
             state.set_reg(*reg, 0);
             match next {
-                Target::Undef => return crate::deciders::DeciderResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
-                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone() },
+                Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextZero }) },
+                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
                 Target::Inst(i) => state.pc = *i,
             }
         }
     }
-    crate::deciders::DeciderResult::Unknown
+    crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached)
 }
 
 pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, exact_start_by: bool, verbose: bool) -> crate::deciders::DeciderResult {
@@ -180,12 +180,12 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
     loop {
         if let Some(limit) = step_limit {
             if state.steps >= limit {
-                return crate::deciders::DeciderResult::Unknown;
+                return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached);
             }
         }
 
         if state.pc >= prog.instructions.len() {
-            return crate::deciders::DeciderResult::OutOfBounds; // Reached an instruction index not in program
+            return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::OutOfBounds); // Reached an instruction index not in program
         }
 
         if detect_cycles && state.steps > 0 {
@@ -284,7 +284,7 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
         }
 
         let res = step_fn(&mut state);
-        if !matches!(res, crate::deciders::DeciderResult::Unknown) {
+        if !matches!(res, crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached)) {
             return res;
         }
     }
@@ -311,12 +311,12 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
     loop {
         if let Some(limit) = step_limit {
             if state.steps >= limit {
-                return crate::deciders::DeciderResult::Unknown;
+                return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached);
             }
         }
 
         if state.pc >= prog.instructions.len() {
-            return crate::deciders::DeciderResult::OutOfBounds;
+            return crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::OutOfBounds);
         }
 
         if detect_cycles && state.macro_steps > 0 {
@@ -415,7 +415,7 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
         }
 
         let res = step_macro(&mut state, &macros);
-        if !matches!(res, crate::deciders::DeciderResult::Unknown) {
+        if !matches!(res, crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached)) {
             return res;
         }
     }

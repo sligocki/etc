@@ -7,12 +7,21 @@ pub fn write_result<W: Write>(
     result: &DeciderResult,
 ) -> std::io::Result<()> {
     match result {
-        DeciderResult::Halt { steps, registers } => {
-            let regs_str = registers.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(",");
-            writeln!(writer, "{}\tHalt\t{}\t[{}]", prog_str, steps, regs_str)
+        DeciderResult::Halt { steps, registers, hit_undef } => {
+            if hit_undef.is_none() {
+                let regs_str = registers.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(",");
+                writeln!(writer, "{}\tHalt\t{}\t[{}]", prog_str, steps, regs_str)
+            } else {
+                Ok(())
+            }
         }
-        DeciderResult::Unknown => {
-            writeln!(writer, "{}\tUnknown\t", prog_str)
+        DeciderResult::Unknown(reason) => {
+            match reason {
+                crate::deciders::UnknownReason::StepLimitReached => {
+                    writeln!(writer, "{}\tUnknown\t", prog_str)
+                }
+                _ => Ok(())
+            }
         }
         DeciderResult::Infinite(reason) => match reason {
             InfiniteReason::Cycle { start_by, period, is_min_start } => {
@@ -27,9 +36,6 @@ pub fn write_result<W: Write>(
             InfiniteReason::Bouncer { start_by, period, is_min_start } => {
                 writeln!(writer, "{}\tInfinite\tBouncer(start_by: {}, period: {}, is_min_start: {})", prog_str, start_by, period, is_min_start)
             }
-        },
-        DeciderResult::HitUndefInst(_) | DeciderResult::HitUndefTarget { .. } | DeciderResult::OutOfBounds => {
-            Ok(())
         }
     }
 }

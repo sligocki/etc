@@ -251,6 +251,6 @@ pub fn decide_polyhedral(prog: &crate::program::Program) -> crate::deciders::Dec
             conditions: conditions_str,
         })
     } else {
-        crate::deciders::DeciderResult::Unknown
+        crate::deciders::DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached)
     }
 }

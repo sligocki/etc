@@ -50,11 +50,11 @@ fn main() {
                         max_halt_steps = steps;
                     }
                 }
-                mbb::deciders::DeciderResult::OutOfBounds => {
+                mbb::deciders::DeciderResult::Unknown(mbb::deciders::UnknownReason::OutOfBounds) => {
                     eprintln!("Warning: Program halted (out of bounds): {}", line);
                     halted_count += 1; // It halted technically
                 }
-                mbb::deciders::DeciderResult::Unknown => {}
+                mbb::deciders::DeciderResult::Unknown(_) => {}
                 _ => {}
             }
         } else {

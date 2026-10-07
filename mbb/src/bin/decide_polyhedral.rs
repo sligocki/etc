@@ -117,7 +117,7 @@ fn main() {
                     }
                 )).unwrap();
             } else {
-                mbb::io::write_result(&mut out, prog_str, &mbb::deciders::DeciderResult::Unknown).unwrap();
+                mbb::io::write_result(&mut out, prog_str, &mbb::deciders::DeciderResult::Unknown(mbb::deciders::UnknownReason::StepLimitReached)).unwrap();
             }
         }
         if !verbose {

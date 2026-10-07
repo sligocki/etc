@@ -9,13 +9,22 @@ pub enum InfiniteReason {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DeciderResult {
-    Halt { steps: u64, registers: Vec<u64> },
-    Infinite(InfiniteReason),
-    Unknown,
-    HitUndefInst(usize),
-    HitUndefTarget { pc: usize, branch: crate::simulate::Branch },
+pub enum HitUndef {
+    Inst(usize),
+    Target { pc: usize, branch: crate::simulate::Branch },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnknownReason {
+    StepLimitReached,
     OutOfBounds,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeciderResult {
+    Halt { steps: u64, registers: Vec<u64>, hit_undef: Option<HitUndef> },
+    Infinite(InfiniteReason),
+    Unknown(UnknownReason),
 }
 
 pub trait Decider {
@@ -33,19 +42,20 @@ pub fn decide(
     exact_start: bool,
 ) -> DeciderResult {
     let sim_res = crate::simulate::simulate_direct(prog, Some(step_limit), detect_cycles, exact_start, false);
-    if !matches!(sim_res, DeciderResult::Unknown) {
+    
+    if let DeciderResult::Unknown(UnknownReason::StepLimitReached) = sim_res {
+        let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
+        if let DeciderResult::Infinite(_) = bouncers_res {
+            return bouncers_res;
+        }
+        
+        let poly_res = polyhedral_guesser::decide_polyhedral(prog);
+        if let DeciderResult::Infinite(_) = poly_res {
+            return poly_res;
+        }
+        
         return sim_res;
     }
     
-    let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
-    if !matches!(bouncers_res, DeciderResult::Unknown) {
-        return bouncers_res;
-    }
-    
-    let poly_res = polyhedral_guesser::decide_polyhedral(prog);
-    if !matches!(poly_res, DeciderResult::Unknown) {
-        return poly_res;
-    }
-    
-    DeciderResult::Unknown
+    sim_res
 }

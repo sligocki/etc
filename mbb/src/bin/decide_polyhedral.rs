@@ -88,7 +88,7 @@ fn main() {
         let mut lines = Vec::new();
         for line in reader.lines() {
             let line = line.expect("Could not read line");
-            let prog_str = line.trim().to_string();
+            let prog_str = line.split_whitespace().next().unwrap_or("").to_string();
             if prog_str.is_empty() || prog_str.starts_with('#') {
                 continue;
             }

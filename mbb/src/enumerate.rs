@@ -44,6 +44,8 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     let mut max_program = String::new();
     let mut last_print_time = std::time::Instant::now();
 
+    let mut total_stats = crate::deciders::DeciderStats::default();
+
     while let Some(state) = stack.pop() {
         total_explored += 1;
         if total_explored % 100_000 == 0 {
@@ -60,7 +62,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
         }
 
-        let decider_res = crate::deciders::decide(&state.prog, step_limit, true, exact_start);
+        let decider_res = crate::deciders::decide_with_stats(&state.prog, step_limit, true, exact_start, &mut total_stats);
         
         match decider_res {
             DeciderResult::Halt { steps, registers: _, ref hit_undef } => {
@@ -243,4 +245,8 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     }
     println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
     println!("Max Halting Program: {} ({} steps)", max_program, max_steps);
+    println!("Decider Runtime Breakdown:");
+    println!("  Simulate Direct: {:.2?}", total_stats.time_simulate_direct);
+    println!("  Bouncers:        {:.2?}", total_stats.time_bouncers);
+    println!("  Polyhedral:      {:.2?}", total_stats.time_polyhedral);
 }

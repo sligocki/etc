@@ -43,9 +43,61 @@ pub enum SimResult {
     Halted { steps: u64, registers: Vec<u64> },
     OutOfBounds,
     LimitReached,
-    CycleDetected { steps: u64 },
+    CycleDetected { start_by: u64, period: u64 },
     HitUndefInst(usize),
     HitUndefTarget { pc: usize, branch: Branch },
+}
+
+pub fn step(state: &mut State, prog: &Program) -> SimResult {
+    if state.pc >= prog.instructions.len() {
+        return SimResult::OutOfBounds;
+    }
+
+    let current_pc = state.pc;
+    let inst = &prog.instructions[state.pc];
+
+    match inst {
+        Instruction::Undef => {
+            return SimResult::HitUndefInst(current_pc);
+        }
+        Instruction::Inc { reg, next } => {
+            state.steps += 1;
+            let val = state.get_reg(*reg);
+            state.set_reg(*reg, val.wrapping_add(1));
+            match next {
+                Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
+                Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
+                Target::Inst(i) => state.pc = *i,
+            }
+        }
+        Instruction::Dec { reg, next_not_zero, next_zero } => {
+            state.steps += 1;
+            let val = state.get_reg(*reg);
+            if val == 0 {
+                match next_zero {
+                    Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
+                    Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
+                    Target::Inst(i) => state.pc = *i,
+                }
+            } else {
+                state.set_reg(*reg, val - 1);
+                match next_not_zero {
+                    Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextNotZero },
+                    Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
+                    Target::Inst(i) => state.pc = *i,
+                }
+            }
+        }
+        Instruction::NoOp { next } => {
+            state.steps += 1;
+            match next {
+                Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
+                Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers.clone() },
+                Target::Inst(i) => state.pc = *i,
+            }
+        }
+    }
+    SimResult::LimitReached // placeholder for "successfully stepped"
 }
 
 pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, verbose: bool) -> SimResult {
@@ -68,7 +120,19 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, ve
 
         if detect_cycles && state.steps > 0 {
             if state.pc == tortoise_pc && state.registers == tortoise_registers {
-                return SimResult::CycleDetected { steps: state.steps };
+                let period = lam;
+                let mut start_by = 0;
+                let mut hare = State::new();
+                for _ in 0..period {
+                    let _ = step(&mut hare, prog);
+                }
+                let mut tortoise = State::new();
+                while hare.pc != tortoise.pc || hare.registers != tortoise.registers {
+                    let _ = step(&mut hare, prog);
+                    let _ = step(&mut tortoise, prog);
+                    start_by += 1;
+                }
+                return SimResult::CycleDetected { start_by, period };
             }
             if power == lam {
                 tortoise_pc = state.pc;
@@ -79,8 +143,6 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, ve
             lam += 1;
         }
 
-        let inst = &prog.instructions[state.pc];
-
         if verbose {
             let state_char = (b'A' + state.pc as u8) as char;
             let max_reg = prog.num_regs();
@@ -88,51 +150,13 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, ve
             for i in 0..max_reg {
                 regs.push(state.get_reg(i));
             }
+            let inst = &prog.instructions[state.pc];
             println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, inst);
         }
 
-        let current_pc = state.pc;
-
-        match inst {
-            Instruction::Undef => {
-                return SimResult::HitUndefInst(current_pc);
-            }
-            Instruction::Inc { reg, next } => {
-                state.steps += 1;
-                let val = state.get_reg(*reg);
-                state.set_reg(*reg, val.wrapping_add(1));
-                match next {
-                    Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
-                    Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers },
-                    Target::Inst(i) => state.pc = *i,
-                }
-            }
-            Instruction::Dec { reg, next_not_zero, next_zero } => {
-                state.steps += 1;
-                let val = state.get_reg(*reg);
-                if val == 0 {
-                    match next_zero {
-                        Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextZero },
-                        Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers },
-                        Target::Inst(i) => state.pc = *i,
-                    }
-                } else {
-                    state.set_reg(*reg, val - 1);
-                    match next_not_zero {
-                        Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::NextNotZero },
-                        Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers },
-                        Target::Inst(i) => state.pc = *i,
-                    }
-                }
-            }
-            Instruction::NoOp { next } => {
-                state.steps += 1;
-                match next {
-                    Target::Undef => return SimResult::HitUndefTarget { pc: current_pc, branch: Branch::Next },
-                    Target::Halt => return SimResult::Halted { steps: state.steps, registers: state.registers },
-                    Target::Inst(i) => state.pc = *i,
-                }
-            }
+        let res = step(&mut state, prog);
+        if !matches!(res, SimResult::LimitReached) {
+            return res;
         }
     }
 }

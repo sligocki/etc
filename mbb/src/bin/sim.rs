@@ -33,8 +33,8 @@ fn main() {
         SimResult::Halted { steps, .. } => {
             println!("Halted after {} steps.", steps);
         }
-        SimResult::CycleDetected { steps } => {
-            println!("Cycle detected! Entered infinite loop after {} steps.", steps);
+        SimResult::CycleDetected { start_by, period } => {
+            println!("Cycle detected! Starts at step {} with period {}.", start_by, period);
         }
         SimResult::OutOfBounds => {
             println!("Halted (out of bounds)");

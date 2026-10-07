@@ -34,6 +34,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     let mut total_explored = 0u64;
     let mut num_halted = 0u64;
     let mut num_unknown = 0u64;
+    let mut num_infinite = 0u64;
     let mut max_steps = 0u64;
     let mut max_program = String::new();
     let mut last_print_time = std::time::Instant::now();
@@ -42,19 +43,19 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
         total_explored += 1;
         if total_explored % 100_000 == 0 {
             if last_print_time.elapsed().as_secs() >= 5 {
-                let total_leaves = num_halted + num_unknown;
-                let unknown_pct = if total_leaves > 0 {
-                    (num_unknown as f64 / total_leaves as f64) * 100.0
-                } else {
-                    0.0
-                };
-                println!("Progress: {} nodes explored | {} programs found ({} unknown, {:.2}%) | Max steps: {}", 
-                         total_explored, total_leaves, num_unknown, unknown_pct, max_steps);
+                let total_leaves = num_halted + num_unknown + num_infinite;
+                let halt_pct = if total_leaves > 0 { (num_halted as f64 / total_leaves as f64) * 100.0 } else { 0.0 };
+                let inf_pct = if total_leaves > 0 { (num_infinite as f64 / total_leaves as f64) * 100.0 } else { 0.0 };
+                let unknown_pct = if total_leaves > 0 { (num_unknown as f64 / total_leaves as f64) * 100.0 } else { 0.0 };
+                
+                println!("Progress: {} nodes explored | {} programs found", total_explored, total_leaves);
+                println!("  Halted: {} ({:.2}%) | Infinite: {} ({:.2}%) | Unknown: {} ({:.2}%) | Max steps: {}", 
+                         num_halted, halt_pct, num_infinite, inf_pct, num_unknown, unknown_pct, max_steps);
                 last_print_time = std::time::Instant::now();
             }
         }
 
-        match simulate(&state.prog, Some(step_limit), false, false) {
+        match simulate(&state.prog, Some(step_limit), true, false) {
             SimResult::Halted { steps, registers } => {
                 num_halted += 1;
                 if steps > max_steps {
@@ -75,10 +76,13 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     crate::io::ProgramResult::Unknown
                 ).unwrap();
             }
-            SimResult::CycleDetected { steps: _ } => {
-                num_unknown += 1;
-                // Treat it similarly to LimitReached or just a known infinite loop
-                // Though with detect_cycles=false it won't be returned anyway.
+            SimResult::CycleDetected { start_by, period } => {
+                num_infinite += 1;
+                crate::io::write_result(
+                    &mut writer,
+                    &state.prog.to_string_format(state.max_reg_referenced),
+                    crate::io::ProgramResult::Infinite(crate::io::InfiniteReason::Cycle { start_by, period })
+                ).unwrap();
             }
             SimResult::OutOfBounds => {
                 // Should not happen during enumeration
@@ -194,14 +198,15 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
         }
     }
     
-    let total_leaves = num_halted + num_unknown;
-    let unknown_pct = if total_leaves > 0 {
-        (num_unknown as f64 / total_leaves as f64) * 100.0
-    } else {
-        0.0
-    };
+    let total_leaves = num_halted + num_unknown + num_infinite;
+    let halt_pct = if total_leaves > 0 { (num_halted as f64 / total_leaves as f64) * 100.0 } else { 0.0 };
+    let inf_pct = if total_leaves > 0 { (num_infinite as f64 / total_leaves as f64) * 100.0 } else { 0.0 };
+    let unknown_pct = if total_leaves > 0 { (num_unknown as f64 / total_leaves as f64) * 100.0 } else { 0.0 };
+    
     println!("Enumeration complete! Explored {} total nodes.", total_explored);
     println!("Total programs found: {}", total_leaves);
-    println!("Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
+    println!("  Halted: {} ({:.2}%)", num_halted, halt_pct);
+    println!("  Infinite: {} ({:.2}%)", num_infinite, inf_pct);
+    println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
     println!("Max Halting Program: {} ({} steps)", max_program, max_steps);
 }

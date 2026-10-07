@@ -1,31 +1,38 @@
+use clap::Parser;
 use mbb::parse::parse_program;
-use mbb::simulate::simulate_direct;
-use std::env;
+use mbb::simulate::{simulate_direct, simulate_macro};
 use std::process;
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// The program string to simulate
+    program: String,
+
+    /// Optional step limit for simulation
+    step_limit: Option<u64>,
+
+    /// Enable verbose output
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Detect cycles and translated cyclers
+    #[arg(short = 'c', long)]
+    detect_cycles: bool,
+
+    /// Compute exact start_by step for cycles and TCs
+    #[arg(short = 'e', long)]
+    exact_start: bool,
+
+    /// Run macro simulation instead of direct simulation
+    #[arg(short = 'm', long = "macro")]
+    use_macro: bool,
+}
+
 fn main() {
-    let mut args: Vec<String> = env::args().collect();
-    let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
-    args.retain(|a| a != "-v" && a != "--verbose");
+    let args = Args::parse();
 
-    let detect_cycles = args.iter().any(|a| a == "-c" || a == "--detect-cycles");
-    args.retain(|a| a != "-c" && a != "--detect-cycles");
-
-    let exact_start_by = args.iter().any(|a| a == "-e" || a == "--exact-start");
-    args.retain(|a| a != "-e" && a != "--exact-start");
-
-    let _use_transfer = !args.iter().any(|a| a == "--no-transfer");
-    args.retain(|a| a != "--no-transfer");
-
-    if args.len() < 2 {
-        eprintln!("Usage: {} [-v] [-c] [-e] [--no-transfer] <program> [step_limit]", args[0]);
-        process::exit(1);
-    }
-
-    let program_str = &args[1];
-    let limit = args.get(2).and_then(|s| s.parse::<u64>().ok());
-
-    let prog = match parse_program(program_str) {
+    let prog = match parse_program(&args.program) {
         Some(p) => p,
         None => {
             eprintln!("Error: Failed to parse program.");
@@ -35,7 +42,13 @@ fn main() {
 
     println!("Simulating: {}", prog);
 
-    match simulate_direct(&prog, limit, detect_cycles, exact_start_by, verbose) {
+    let result = if args.use_macro {
+        simulate_macro(&prog, args.step_limit, args.detect_cycles, args.exact_start, args.verbose)
+    } else {
+        simulate_direct(&prog, args.step_limit, args.detect_cycles, args.exact_start, args.verbose)
+    };
+
+    match result {
         mbb::deciders::DeciderResult::Halt { steps, .. } => {
             println!("Halted after {} steps.", steps);
         }

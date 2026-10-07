@@ -24,6 +24,9 @@ struct Args {
     /// Compute exact start_by step for cycles and TCs
     #[arg(short = 'e', long)]
     exact_start: bool,
+    /// Optional limit on the number of programs to enumerate (for testing)
+    #[arg(short, long)]
+    limit: Option<usize>,
 }
 
 fn main() {
@@ -36,6 +39,9 @@ fn main() {
     } else {
         println!("Max registers default: {}", args.num_states / 2 + 1);
     }
+    if let Some(l) = args.limit {
+        println!("Enumeration limit: {}", l);
+    }
 
-    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, &args.out_file);
+    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, args.limit, &args.out_file);
 }

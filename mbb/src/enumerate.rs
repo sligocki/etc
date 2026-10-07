@@ -21,7 +21,7 @@ impl EnumState {
     }
 }
 
-pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, out_file: &str) {
+pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, limit: Option<usize>, out_file: &str) {
     use std::fs::File;
     use std::io::BufWriter;
 
@@ -59,6 +59,12 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                 println!("  Halted: {} ({:.2}%) | Infinite: {} ({:.2}%) | Unknown: {} ({:.2}%) | Max steps: {}", 
                          num_halted, halt_pct, num_infinite, inf_pct, num_unknown, unknown_pct, max_steps);
                 last_print_time = std::time::Instant::now();
+            }
+        }
+
+        if let Some(l) = limit {
+            if total_explored >= l as u64 {
+                break;
             }
         }
 

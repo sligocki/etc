@@ -20,17 +20,22 @@ struct Args {
     /// Allow NoOp instructions
     #[arg(short = 'n', long)]
     allow_no_ops: bool,
+
+    /// Compute exact start_by step for cycles and TCs
+    #[arg(short = 'e', long)]
+    exact_start: bool,
 }
 
 fn main() {
     let args = Args::parse();
 
-    println!("Starting enumeration for {} states, limit: {} steps. Allow NoOps: {}", args.num_states, args.step_limit, args.allow_no_ops);
+    println!("Starting enumeration for {} states, limit: {} steps. Allow NoOps: {}, Exact Start: {}", 
+             args.num_states, args.step_limit, args.allow_no_ops, args.exact_start);
     if let Some(r) = args.max_regs {
         println!("Max registers restricted to: {}", r);
     } else {
         println!("Max registers default: {}", args.num_states / 2 + 1);
     }
 
-    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, &args.out_file);
+    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, &args.out_file);
 }

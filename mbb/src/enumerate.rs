@@ -20,7 +20,7 @@ impl EnumState {
     }
 }
 
-pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, out_file: &str) {
+pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, out_file: &str) {
     use std::fs::File;
     use std::io::BufWriter;
 
@@ -55,7 +55,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
         }
 
-        match simulate(&state.prog, Some(step_limit), true, false) {
+        match simulate(&state.prog, Some(step_limit), true, exact_start, false) {
             SimResult::Halted { steps, registers } => {
                 num_halted += 1;
                 if steps > max_steps {
@@ -76,12 +76,20 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     crate::io::ProgramResult::Unknown
                 ).unwrap();
             }
-            SimResult::CycleDetected { start_by, period } => {
+            SimResult::CycleDetected { start_by, period, is_min_start } => {
                 num_infinite += 1;
                 crate::io::write_result(
                     &mut writer,
                     &state.prog.to_string_format(state.max_reg_referenced),
-                    crate::io::ProgramResult::Infinite(crate::io::InfiniteReason::Cycle { start_by, period })
+                    crate::io::ProgramResult::Infinite(crate::io::InfiniteReason::Cycle { start_by, period, is_min_start })
+                ).unwrap();
+            }
+            SimResult::TranslatedCyclerDetected { start_by, period, is_min_start } => {
+                num_infinite += 1;
+                crate::io::write_result(
+                    &mut writer,
+                    &state.prog.to_string_format(state.max_reg_referenced),
+                    crate::io::ProgramResult::Infinite(crate::io::InfiniteReason::TranslatedCycler { start_by, period, is_min_start })
                 ).unwrap();
             }
             SimResult::OutOfBounds => {

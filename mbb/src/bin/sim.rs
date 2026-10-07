@@ -11,8 +11,11 @@ fn main() {
     let detect_cycles = args.iter().any(|a| a == "-c" || a == "--detect-cycles");
     args.retain(|a| a != "-c" && a != "--detect-cycles");
 
+    let exact_start_by = args.iter().any(|a| a == "-e" || a == "--exact-start");
+    args.retain(|a| a != "-e" && a != "--exact-start");
+
     if args.len() < 2 {
-        eprintln!("Usage: {} [-v] [-c] <program> [step_limit]", args[0]);
+        eprintln!("Usage: {} [-v] [-c] [-e] <program> [step_limit]", args[0]);
         process::exit(1);
     }
 
@@ -29,12 +32,15 @@ fn main() {
 
     println!("Simulating: {}", prog);
 
-    match simulate(&prog, limit, detect_cycles, verbose) {
+    match simulate(&prog, limit, detect_cycles, exact_start_by, verbose) {
         SimResult::Halted { steps, .. } => {
             println!("Halted after {} steps.", steps);
         }
-        SimResult::CycleDetected { start_by, period } => {
-            println!("Cycle detected! Starts at step {} with period {}.", start_by, period);
+        SimResult::CycleDetected { start_by, period, is_min_start } => {
+            println!("Cycle detected! Starts at step {} (is_min: {}) with period {}.", start_by, is_min_start, period);
+        }
+        SimResult::TranslatedCyclerDetected { start_by, period, is_min_start } => {
+            println!("Translated Cycler detected! Starts at step {} (is_min: {}) with period {}.", start_by, is_min_start, period);
         }
         SimResult::OutOfBounds => {
             println!("Halted (out of bounds)");

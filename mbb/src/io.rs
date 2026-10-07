@@ -1,7 +1,8 @@
 use std::io::Write;
 
 pub enum InfiniteReason<'a> {
-    Cycle { start_by: u64, period: u64 },
+    Cycle { start_by: u64, period: u64, is_min_start: bool },
+    TranslatedCycler { start_by: u64, period: u64, is_min_start: bool },
     Polyhedral { state: char, conditions: &'a str },
 }
 
@@ -25,8 +26,11 @@ pub fn write_result<W: Write>(
             writeln!(writer, "{}\tUnknown\t", prog_str)
         }
         ProgramResult::Infinite(reason) => match reason {
-            InfiniteReason::Cycle { start_by, period } => {
-                writeln!(writer, "{}\tInfinite\tCycle(start_by: {}, period: {})", prog_str, start_by, period)
+            InfiniteReason::Cycle { start_by, period, is_min_start } => {
+                writeln!(writer, "{}\tInfinite\tCycle(start_by: {}, period: {}, is_min_start: {})", prog_str, start_by, period, is_min_start)
+            }
+            InfiniteReason::TranslatedCycler { start_by, period, is_min_start } => {
+                writeln!(writer, "{}\tInfinite\tTranslatedCycler(start_by: {}, period: {}, is_min_start: {})", prog_str, start_by, period, is_min_start)
             }
             InfiniteReason::Polyhedral { state, conditions } => {
                 writeln!(writer, "{}\tInfinite\tPolyhedral(State: {}, Conditions: [{}])", prog_str, state, conditions)

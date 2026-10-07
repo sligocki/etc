@@ -39,7 +39,7 @@ fn main() {
         total_programs += 1;
 
         if let Some(prog) = parse_program(line) {
-            match simulate(&prog, limit, false, false) {
+            match simulate(&prog, limit, false, false, false) {
                 SimResult::Halted { steps, .. } => {
                     halted_count += 1;
                     if steps > max_halt_steps {

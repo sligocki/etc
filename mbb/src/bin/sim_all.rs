@@ -1,5 +1,5 @@
 use mbb::parse::parse_program;
-use mbb::simulate::{simulate, SimResult};
+use mbb::simulate::{simulate_direct, SimResult};
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead};
@@ -7,7 +7,7 @@ use std::process;
 
 fn main() {
     let mut args: Vec<String> = env::args().collect();
-    let use_transfer = !args.iter().any(|a| a == "--no-transfer");
+    let _use_transfer = !args.iter().any(|a| a == "--no-transfer");
     args.retain(|a| a != "--no-transfer");
 
     if args.len() < 2 {
@@ -42,7 +42,7 @@ fn main() {
         total_programs += 1;
 
         if let Some(prog) = parse_program(line) {
-            match simulate(&prog, limit, false, false, use_transfer, false) {
+            match simulate_direct(&prog, limit, false, false, false) {
                 SimResult::Halted { steps, .. } => {
                     halted_count += 1;
                     if steps > max_halt_steps {

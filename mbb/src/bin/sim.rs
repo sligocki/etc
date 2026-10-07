@@ -1,5 +1,5 @@
 use mbb::parse::parse_program;
-use mbb::simulate::{simulate, SimResult};
+use mbb::simulate::{simulate_direct, SimResult};
 use std::env;
 use std::process;
 
@@ -14,7 +14,7 @@ fn main() {
     let exact_start_by = args.iter().any(|a| a == "-e" || a == "--exact-start");
     args.retain(|a| a != "-e" && a != "--exact-start");
 
-    let use_transfer = !args.iter().any(|a| a == "--no-transfer");
+    let _use_transfer = !args.iter().any(|a| a == "--no-transfer");
     args.retain(|a| a != "--no-transfer");
 
     if args.len() < 2 {
@@ -35,7 +35,7 @@ fn main() {
 
     println!("Simulating: {}", prog);
 
-    match simulate(&prog, limit, detect_cycles, exact_start_by, use_transfer, verbose) {
+    match simulate_direct(&prog, limit, detect_cycles, exact_start_by, verbose) {
         SimResult::Halted { steps, .. } => {
             println!("Halted after {} steps.", steps);
         }

@@ -110,14 +110,14 @@ fn main() {
                 success_count += 1;
                 let state_char = (b'A' + set.state as u8) as char;
                 let conds: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
-                mbb::io::write_result(&mut out, prog_str, mbb::io::ProgramResult::Infinite(
-                    mbb::io::InfiniteReason::Polyhedral {
+                mbb::io::write_result(&mut out, prog_str, &mbb::deciders::DeciderResult::Infinite(
+                    mbb::deciders::InfiniteReason::Polyhedral {
                         state: state_char,
-                        conditions: &conds.join(", "),
+                        conditions: conds.join(", "),
                     }
                 )).unwrap();
             } else {
-                mbb::io::write_result(&mut out, prog_str, mbb::io::ProgramResult::Unknown).unwrap();
+                mbb::io::write_result(&mut out, prog_str, &mbb::deciders::DeciderResult::Unknown).unwrap();
             }
         }
         if !verbose {

@@ -84,6 +84,40 @@ impl Program {
 
         (undef_count, has_inc, has_dec)
     }
+
+    pub fn get_target_counts(&self) -> (usize, usize, usize) {
+        let mut explicit_undef = 0;
+        let mut undef_insts = 0;
+        let mut halt_targets = 0;
+
+        for inst in &self.instructions {
+            match inst {
+                Instruction::Undef => {
+                    undef_insts += 1;
+                }
+                Instruction::Inc { next, .. } | Instruction::NoOp { next } => {
+                    match next {
+                        Target::Undef => explicit_undef += 1,
+                        Target::Halt => halt_targets += 1,
+                        _ => {}
+                    }
+                }
+                Instruction::Dec { next_not_zero, next_zero, .. } => {
+                    match next_not_zero {
+                        Target::Undef => explicit_undef += 1,
+                        Target::Halt => halt_targets += 1,
+                        _ => {}
+                    }
+                    match next_zero {
+                        Target::Undef => explicit_undef += 1,
+                        Target::Halt => halt_targets += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        (explicit_undef, undef_insts, halt_targets)
+    }
 }
 
 impl Target {

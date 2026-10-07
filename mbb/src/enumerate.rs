@@ -152,14 +152,20 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                 }
             }
             SimResult::HitUndefTarget { pc, branch } => {
+                let (explicit_undef, undef_insts, halt_targets) = state.prog.get_target_counts();
+                let force_halt = halt_targets == 0 && explicit_undef == 1 && undef_insts == 0;
+
                 let mut max_s = state.max_state_referenced;
                 if max_s + 1 < num_states as i32 {
                     max_s += 1;
                 }
 
                 let mut targets = vec![Target::Halt];
-                for s in 0..=max_s {
-                    targets.push(Target::Inst(s as usize));
+                
+                if !force_halt {
+                    for s in 0..=max_s {
+                        targets.push(Target::Inst(s as usize));
+                    }
                 }
 
                 for target in targets {

@@ -139,3 +139,27 @@ impl MacroInst {
         }
     }
 }
+
+impl std::fmt::Display for MacroInst {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MacroInst::Undef => write!(f, "?"),
+            MacroInst::Inc { reg, next } => {
+                write!(f, "{}+{}", reg, next.to_char())
+            }
+            MacroInst::Dec { reg, next_not_zero, next_zero } => {
+                write!(f, "{}-{}{}", reg, next_not_zero.to_char(), next_zero.to_char())
+            }
+            MacroInst::Transfer { reg, incs, next } => {
+                write!(f, "{}-[", reg)?;
+                let mut first = true;
+                for (r, inc) in incs {
+                    if !first { write!(f, ",")?; }
+                    write!(f, "{}+{}", r, inc)?;
+                    first = false;
+                }
+                write!(f, "]{}", next.to_char())
+            }
+        }
+    }
+}

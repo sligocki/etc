@@ -174,7 +174,16 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
 
 pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, exact_start_by: bool, use_transfer: bool, verbose: bool) -> SimResult {
     let macros = if use_transfer {
-        Some(crate::macro_program::abstract_program(prog))
+        let m = crate::macro_program::abstract_program(prog);
+        if verbose {
+            println!("Macro Program:");
+            for (i, inst) in m.iter().enumerate() {
+                let state_char = (b'A' + i as u8) as char;
+                println!("  {}: {}", state_char, inst);
+            }
+            println!("---");
+        }
+        Some(m)
     } else {
         None
     };
@@ -297,8 +306,11 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, ex
             for i in 0..max_reg {
                 regs.push(state.get_reg(i));
             }
-            let inst = &prog.instructions[state.pc];
-            println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, inst);
+            if let Some(m) = &macros {
+                println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, m[state.pc]);
+            } else {
+                println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, prog.instructions[state.pc]);
+            }
         }
 
         let res = step_fn(&mut state);

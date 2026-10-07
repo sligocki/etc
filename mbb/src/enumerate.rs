@@ -218,7 +218,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                             &decider_res
                         ).unwrap();
                     }
-                    crate::deciders::UnknownReason::OutOfBounds => {}
+                    crate::deciders::UnknownReason::OutOfBounds | crate::deciders::UnknownReason::Undecided => {}
                 }
             }
         }

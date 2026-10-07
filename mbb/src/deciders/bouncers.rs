@@ -17,7 +17,7 @@ impl Decider for BouncersDecider {
             crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Cycle { start_by, period, is_min_start }) => {
                 DeciderResult::Infinite(InfiniteReason::Bouncer { start_by, period, is_min_start })
             }
-            _ => DeciderResult::Unknown(crate::deciders::UnknownReason::StepLimitReached),
+            _ => DeciderResult::Unknown(crate::deciders::UnknownReason::Undecided),
         }
     }
 }

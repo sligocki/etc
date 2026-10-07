@@ -16,8 +16,12 @@ pub enum HitUndef {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UnknownReason {
+    /// Simulation exceeded the maximum allowed step limit without halting or definitively proving infinite behavior.
     StepLimitReached,
+    /// Simulation execution jumped to an instruction index outside the program's defined bounds.
     OutOfBounds,
+    /// A heuristic decider (like Polyhedral or Bouncers) could not definitively prove the program's behavior.
+    Undecided,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1,7 +1,7 @@
 use crate::program::{Instruction, Program, Target};
 
 pub fn parse_target(c: char) -> Option<Target> {
-    if c == '*' {
+    if c == '*' || c == '?' {
         Some(Target::Halt)
     } else if c >= 'A' && c <= 'Z' {
         Some(Target::Inst((c as u8 - b'A') as usize))
@@ -17,6 +17,10 @@ pub fn parse_program(s: &str) -> Option<Program> {
         let part = part.trim();
         if part.is_empty() {
             return None;
+        }
+        if part == "?" {
+            instructions.push(Instruction::Undef);
+            continue;
         }
         let plus_idx = part.find('+');
         let minus_idx = part.find('-');

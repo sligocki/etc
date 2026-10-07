@@ -15,6 +15,7 @@ pub enum Instruction {
         next_not_zero: Target,
         next_zero: Target,
     },
+    Undef,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +28,7 @@ impl Program {
         self.instructions.iter().map(|inst| match inst {
             Instruction::Inc { reg, .. } => *reg,
             Instruction::Dec { reg, .. } => *reg,
+            Instruction::Undef => 0,
         }).max().map_or(0, |max_reg| max_reg + 1)
     }
 }
@@ -48,6 +50,9 @@ impl std::fmt::Display for Instruction {
             }
             Instruction::Dec { reg, next_not_zero, next_zero } => {
                 write!(f, "{}-{}{}", reg, next_not_zero.to_char(), next_zero.to_char())
+            }
+            Instruction::Undef => {
+                write!(f, "?")
             }
         }
     }

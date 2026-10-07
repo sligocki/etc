@@ -219,6 +219,11 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
 
         let inst = &prog[pc_idx];
         match inst {
+            MacroInst::Undef => {
+                let mut next_state = state.clone();
+                next_state.pc = Target::Halt;
+                queue.push_back(next_state);
+            }
             MacroInst::Inc { reg, next } => {
                 let mut next_state = state.clone();
                 if *reg >= next_state.regs.len() {

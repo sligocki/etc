@@ -6,6 +6,7 @@ pub enum MacroInst {
     Inc { reg: usize, next: Target },
     Dec { reg: usize, next_not_zero: Target, next_zero: Target },
     Transfer { reg: usize, incs: HashMap<usize, u32>, next: Target },
+    Undef,
 }
 
 pub fn abstract_program(prog: &Program) -> Vec<MacroInst> {
@@ -13,6 +14,9 @@ pub fn abstract_program(prog: &Program) -> Vec<MacroInst> {
 
     for (i, inst) in prog.instructions.iter().enumerate() {
         match inst {
+            Instruction::Undef => {
+                macros.push(MacroInst::Undef);
+            }
             Instruction::Inc { reg, next } => {
                 macros.push(MacroInst::Inc {
                     reg: *reg,
@@ -66,6 +70,7 @@ fn detect_transfer_loop(
                 visited[idx] = true;
 
                 match &prog.instructions[idx] {
+                    Instruction::Undef => return None,
                     Instruction::Inc { reg, next } => {
                         if *reg == dec_reg {
                             // Modifying the decrement register breaks the simple transfer property
@@ -90,6 +95,9 @@ impl MacroInst {
         let state_char = (b'A' + state_idx as u8) as char;
         
         match self {
+            MacroInst::Undef => {
+                format!("{}: ?", state_char)
+            }
             MacroInst::Inc { reg, next } => {
                 format!("{}: {}+{}", state_char, reg, next.to_char())
             }

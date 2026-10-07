@@ -28,6 +28,9 @@ pub fn record_history(prog: &Program, target_state: usize, step_limit: u64) -> V
         state.steps += 1;
 
         match inst {
+            Instruction::Undef => {
+                break;
+            }
             Instruction::Inc { reg, next } => {
                 let val = state.get_reg(*reg);
                 state.set_reg(*reg, val.wrapping_add(1));

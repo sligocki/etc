@@ -204,6 +204,9 @@ fn main() {
                     let inst = &prog.instructions[state.pc];
                     state.steps += 1;
                     match inst {
+                        Instruction::Undef => {
+                            break;
+                        }
                         Instruction::Inc { reg, next } => {
                             let val = state.get_reg(*reg);
                             state.set_reg(*reg, val.wrapping_add(1));

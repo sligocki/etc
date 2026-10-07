@@ -67,6 +67,9 @@ pub fn simulate(prog: &Program, step_limit: Option<u64>, verbose: bool) -> SimRe
         state.steps += 1;
 
         match inst {
+            Instruction::Undef => {
+                return SimResult::Halted(state.steps);
+            }
             Instruction::Inc { reg, next } => {
                 let val = state.get_reg(*reg);
                 state.set_reg(*reg, val.wrapping_add(1));

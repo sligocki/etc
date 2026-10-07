@@ -155,6 +155,7 @@ pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option
             for c in &candidate_conditions { println!("    {}", c); }
         }
 
+        let mut drop_iterations = 0;
         loop {
             let closed_set = PolyhedralClosedSet {
                 state: state_idx,
@@ -220,6 +221,12 @@ pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option
                     });
                 }
                 VerifyResult::ConditionFailed(failed) => {
+                    drop_iterations += 1;
+                    if drop_iterations > 5 {
+                        if verbose { println!("  Too many drop iterations. Giving up."); }
+                        break;
+                    }
+
                     if verbose {
                         println!("  Dropping {} conditions that failed verification:", failed.len());
                         for c in &failed { println!("    {}", c); }

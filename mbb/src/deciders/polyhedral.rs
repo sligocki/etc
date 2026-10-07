@@ -141,7 +141,7 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
 
     while let Some(state) = queue.pop_front() {
         nodes_explored += 1;
-        if nodes_explored > 500 {
+        if nodes_explored > 150 {
             if verbose { println!("  Node limit exceeded ({} nodes)!", nodes_explored); }
             return VerifyResult::Failed("Node limit exceeded".to_string());
         }

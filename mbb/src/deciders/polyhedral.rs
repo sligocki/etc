@@ -147,16 +147,21 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
             return VerifyResult::Failed("Depth limit exceeded (potential infinite loop)".to_string());
         }
 
-        if state.pc == Target::Halt {
+        if state.pc == Target::Halt || state.pc == Target::Undef {
             if is_satisfiable(&state.path_conditions) {
                 if verbose {
-                    println!("Path failed (reaches Halt):");
+                    let target_name = if state.pc == Target::Halt { "Halt" } else { "Undef" };
+                    println!("Path failed (reaches {}):", target_name);
                     let mut max_len = 0;
                     for (s, _) in &state.trace { max_len = max_len.max(s.len()); }
                     for (s, a) in &state.trace { println!("      {:<width$}   {}", s, a, width = max_len); }
-                    println!("      Halt:{}", format_regs(&state.regs));
+                    println!("      {}:{}", target_name, format_regs(&state.regs));
                 }
-                return VerifyResult::Failed("Reachable Halt state found".to_string());
+                return VerifyResult::Failed(if state.pc == Target::Halt {
+                    "Reachable Halt state found".to_string()
+                } else {
+                    "Reachable Undef state found".to_string()
+                });
             }
             continue;
         }

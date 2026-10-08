@@ -66,6 +66,10 @@ pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult
         Instruction::Inc { reg, next } => {
             state.steps += 1;
             let val = state.get_reg(*reg);
+            // We use wrapping_add here for performance in the tightest simulation loop.
+            // A register can only increase by 1 per step, meaning it would take 2^64 steps 
+            // (~58 years at 10B steps/sec) to actually overflow. Thus, treating overflow 
+            // as impossible/wrapping is perfectly safe in practice and avoids branch overhead.
             state.set_reg(*reg, val.wrapping_add(1));
             match next {
                 Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::Next }) },

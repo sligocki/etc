@@ -38,6 +38,7 @@ pub struct DeciderStats {
     pub time_bouncers: std::time::Duration,
     pub time_polyhedral: std::time::Duration,
     pub time_backwards: std::time::Duration,
+    pub backwards_states_explored: u64,
 }
 
 pub fn decide_with_stats(
@@ -56,10 +57,11 @@ pub fn decide_with_stats(
     }
 
     let t0 = std::time::Instant::now();
-    let backwards_res = crate::deciders::backwards::BackwardsDecider.decide(prog);
+    let (is_unreachable, explored) = crate::deciders::backwards::start_unreachable(prog);
+    stats.backwards_states_explored += explored;
     stats.time_backwards += t0.elapsed();
-    if backwards_res != DeciderResult::Unknown {
-        return backwards_res;
+    if is_unreachable {
+        return DeciderResult::Infinite(InfiniteReason::BackwardsUnreachable);
     }
 
     let t0 = std::time::Instant::now();

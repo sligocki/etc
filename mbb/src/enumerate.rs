@@ -249,14 +249,15 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
         let backwards_pct = (num_infinite_backwards as f64 / num_infinite as f64) * 100.0;
         println!("    Cycle: {} ({:.2}%)", num_infinite_cycle, cycle_pct);
         println!("    Translated Cycler: {} ({:.2}%)", num_infinite_tc, tc_pct);
+        println!("    Backwards Unreachable: {} ({:.2}%)", num_infinite_backwards, backwards_pct);
         println!("    Bouncer: {} ({:.2}%)", num_infinite_bouncer, bouncer_pct);
         println!("    Polyhedral: {} ({:.2}%)", num_infinite_poly, poly_pct);
-        println!("    Backwards Unreachable: {} ({:.2}%)", num_infinite_backwards, backwards_pct);
     }
     println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
     println!("Max Halting Program: {} ({} steps)", max_program, max_steps);
     println!("Decider Runtime Breakdown:");
     println!("  Simulate Direct: {:.2?}", total_stats.time_simulate_direct);
+    println!("  Backwards:       {:.2?} ({} states explored)", total_stats.time_backwards, total_stats.backwards_states_explored);
     println!("  Bouncers:        {:.2?}", total_stats.time_bouncers);
     println!("  Polyhedral:      {:.2?}", total_stats.time_polyhedral);
 }

@@ -92,14 +92,14 @@ fn predecessors(program: &Program, state: &AbstractState) -> Vec<AbstractState> 
 
 /// Returns true when backwards abstract exploration proves that the all-zero
 /// initial state cannot reach a halt.
-pub fn start_unreachable(program: &Program) -> bool {
+pub fn start_unreachable(program: &Program) -> (bool, u64) {
     // An undefined initial instruction halts immediately. Keeping this case
     // explicit also makes the decider safe to use on partial programs.
     if matches!(
         program.instructions.first(),
         None | Some(Instruction::Undef)
     ) {
-        return false;
+        return (false, 0);
     }
 
     let halt = AbstractState {
@@ -108,15 +108,17 @@ pub fn start_unreachable(program: &Program) -> bool {
     };
     let mut queue = VecDeque::from([halt.clone()]);
     let mut seen = HashSet::from([halt]);
+    let mut explored = 0;
 
     while let Some(state) = queue.pop_front() {
+        explored += 1;
         if state.pc == Some(0)
             && state
                 .registers
                 .iter()
                 .all(|value| *value != RegisterValue::NonZero)
         {
-            return false;
+            return (false, explored);
         }
 
         for predecessor in predecessors(program, &state) {
@@ -126,14 +128,14 @@ pub fn start_unreachable(program: &Program) -> bool {
         }
     }
 
-    true
+    (true, explored)
 }
 
 pub struct BackwardsDecider;
 
 impl Decider for BackwardsDecider {
     fn decide(&self, program: &Program) -> DeciderResult {
-        if start_unreachable(program) {
+        if start_unreachable(program).0 {
             DeciderResult::Infinite(InfiniteReason::BackwardsUnreachable)
         } else {
             DeciderResult::Unknown

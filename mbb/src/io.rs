@@ -34,6 +34,9 @@ pub fn write_result<W: Write>(
             InfiniteReason::Bouncer { start_by, period, is_min_start } => {
                 writeln!(writer, "{}\tInfinite\tBouncer(start_by: {}, period: {}, is_min_start: {})", prog_str, start_by, period, is_min_start)
             }
+            InfiniteReason::BackwardsUnreachable => {
+                writeln!(writer, "{}\tInfinite\tBackwardsUnreachable()", prog_str)
+            }
         }
     }
 }

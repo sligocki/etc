@@ -21,6 +21,18 @@ fn main() {
 
     let bouncers = BouncersDecider { step_limit: 10000 };
 
+    // Benchmark Backwards
+    let backwards = mbb::deciders::backwards::BackwardsDecider;
+    let start = Instant::now();
+    let mut backwards_solved = 0;
+    for p in &progs {
+        if matches!(backwards.decide(p), DeciderResult::Infinite(_)) {
+            backwards_solved += 1;
+        }
+    }
+    let backwards_time = start.elapsed();
+    println!("Backwards: {} solved in {:?}", backwards_solved, backwards_time);
+
     // Benchmark Bouncers
     let start = Instant::now();
     let mut bouncer_solved = 0;

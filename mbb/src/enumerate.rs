@@ -40,6 +40,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     let mut num_infinite_tc = 0u64;
     let mut num_infinite_bouncer = 0u64;
     let mut num_infinite_poly = 0u64;
+    let mut num_infinite_backwards = 0u64;
     let mut max_steps = 0u64;
     let mut max_program = String::new();
     let mut last_print_time = std::time::Instant::now();
@@ -209,6 +210,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     crate::deciders::InfiniteReason::TranslatedCycler { .. } => num_infinite_tc += 1,
                     crate::deciders::InfiniteReason::Bouncer { .. } => num_infinite_bouncer += 1,
                     crate::deciders::InfiniteReason::Polyhedral { .. } => num_infinite_poly += 1,
+                    crate::deciders::InfiniteReason::BackwardsUnreachable => num_infinite_backwards += 1,
                 }
                 crate::io::write_result(
                     &mut writer,
@@ -244,10 +246,12 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
         let tc_pct = (num_infinite_tc as f64 / num_infinite as f64) * 100.0;
         let bouncer_pct = (num_infinite_bouncer as f64 / num_infinite as f64) * 100.0;
         let poly_pct = (num_infinite_poly as f64 / num_infinite as f64) * 100.0;
+        let backwards_pct = (num_infinite_backwards as f64 / num_infinite as f64) * 100.0;
         println!("    Cycle: {} ({:.2}%)", num_infinite_cycle, cycle_pct);
         println!("    Translated Cycler: {} ({:.2}%)", num_infinite_tc, tc_pct);
         println!("    Bouncer: {} ({:.2}%)", num_infinite_bouncer, bouncer_pct);
         println!("    Polyhedral: {} ({:.2}%)", num_infinite_poly, poly_pct);
+        println!("    Backwards Unreachable: {} ({:.2}%)", num_infinite_backwards, backwards_pct);
     }
     println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
     println!("Max Halting Program: {} ({} steps)", max_program, max_steps);

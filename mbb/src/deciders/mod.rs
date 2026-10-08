@@ -6,6 +6,7 @@ pub enum InfiniteReason {
     TranslatedCycler { start_by: u64, period: u64, is_min_start: bool },
     Polyhedral { state: char, conditions: String },
     Bouncer { start_by: u64, period: u64, is_min_start: bool },
+    BackwardsUnreachable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,12 +30,14 @@ pub mod symbolic;
 pub mod polyhedral;
 pub mod polyhedral_guesser;
 pub mod bouncers;
+pub mod backwards;
 
 #[derive(Default, Clone, Debug)]
 pub struct DeciderStats {
     pub time_simulate_direct: std::time::Duration,
     pub time_bouncers: std::time::Duration,
     pub time_polyhedral: std::time::Duration,
+    pub time_backwards: std::time::Duration,
 }
 
 pub fn decide_with_stats(
@@ -50,6 +53,13 @@ pub fn decide_with_stats(
     stats.time_simulate_direct += t0.elapsed();
     if sim_res != DeciderResult::Unknown {
         return sim_res;
+    }
+
+    let t0 = std::time::Instant::now();
+    let backwards_res = crate::deciders::backwards::BackwardsDecider.decide(prog);
+    stats.time_backwards += t0.elapsed();
+    if backwards_res != DeciderResult::Unknown {
+        return backwards_res;
     }
 
     let t0 = std::time::Instant::now();

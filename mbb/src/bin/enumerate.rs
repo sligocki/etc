@@ -35,13 +35,17 @@ struct Args {
     /// Enable semilinear1d decider
     #[arg(short = 's', long)]
     semilinear1d: bool,
+
+    /// Enable congruence decider
+    #[arg(short = 'c', long)]
+    congruence: bool,
 }
 
 fn main() {
     let args = Args::parse();
 
-    println!("Starting enumeration for {} states, limit: {} steps. Allow NoOps: {}, Exact Start: {}, Polyhedral: {}, Semilinear1D: {}", 
-             args.num_states, args.step_limit, args.allow_no_ops, args.exact_start, args.polyhedral, args.semilinear1d);
+    println!("Starting enumeration for {} states, limit: {} steps. Allow NoOps: {}, Exact Start: {}, Polyhedral: {}, Semilinear1D: {}, Congruence: {}", 
+             args.num_states, args.step_limit, args.allow_no_ops, args.exact_start, args.polyhedral, args.semilinear1d, args.congruence);
     if let Some(r) = args.max_regs {
         println!("Max registers restricted to: {}", r);
     } else {
@@ -51,5 +55,5 @@ fn main() {
         println!("Enumeration limit: {}", l);
     }
 
-    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, args.limit, args.polyhedral, args.semilinear1d, &args.out_file);
+    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, args.limit, args.polyhedral, args.semilinear1d, args.congruence, &args.out_file);
 }

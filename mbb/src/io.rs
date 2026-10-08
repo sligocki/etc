@@ -37,6 +37,9 @@ pub fn write_result<W: Write>(
             InfiniteReason::Semilinear1D { state, base, period } => {
                 writeln!(writer, "{}\tInfinite\tSemilinear1D(State: {}, Base: {:?}, Period: {:?})", prog_str, state, base, period)
             }
+            InfiniteReason::Congruence { state, moduli, seed } => {
+                writeln!(writer, "{}\tInfinite\tCongruence(State: {}, Moduli: {:?}, Seed: {:?})", prog_str, state, moduli, seed)
+            }
             InfiniteReason::BackwardsUnreachable => {
                 writeln!(writer, "{}\tInfinite\tBackwardsUnreachable()", prog_str)
             }

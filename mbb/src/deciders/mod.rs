@@ -6,6 +6,7 @@ pub enum InfiniteReason {
     TranslatedCycler { start_by: u64, period: u64, is_min_start: bool },
     Polyhedral { state: char, conditions: String },
     Semilinear1D { state: char, base: Vec<u32>, period: Vec<u32> },
+    Congruence { state: char, moduli: Vec<u32>, seed: Vec<crate::deciders::congruence::Val> },
     Bouncer { start_by: u64, period: u64, is_min_start: bool },
     BackwardsUnreachable,
 }
@@ -32,6 +33,8 @@ pub mod polyhedral;
 pub mod polyhedral_guesser;
 pub mod semilinear1d;
 pub mod semilinear1d_guesser;
+pub mod congruence;
+pub mod congruence_guesser;
 pub mod bouncers;
 pub mod backwards;
 
@@ -41,6 +44,7 @@ pub struct DeciderStats {
     pub time_bouncers: std::time::Duration,
     pub time_polyhedral: std::time::Duration,
     pub time_semilinear1d: std::time::Duration,
+    pub time_congruence: std::time::Duration,
     pub time_backwards: std::time::Duration,
     pub backwards_states_explored: u64,
 }
@@ -52,6 +56,7 @@ pub fn decide_with_stats(
     exact_start: bool,
     use_polyhedral: bool,
     use_semilinear1d: bool,
+    use_congruence: bool,
     stats: &mut DeciderStats,
 ) -> DeciderResult {
     let t0 = std::time::Instant::now();
@@ -74,6 +79,15 @@ pub fn decide_with_stats(
     stats.time_bouncers += t0.elapsed();
     if bouncers_res != DeciderResult::Unknown {
         return bouncers_res;
+    }
+    
+    if use_congruence {
+        let t0 = std::time::Instant::now();
+        let cong_res = congruence_guesser::decide_congruence(prog, step_limit, false);
+        stats.time_congruence += t0.elapsed();
+        if cong_res != DeciderResult::Unknown {
+            return cong_res;
+        }
     }
 
     if use_semilinear1d {
@@ -104,7 +118,8 @@ pub fn decide(
     exact_start: bool,
     use_polyhedral: bool,
     use_semilinear1d: bool,
+    use_congruence: bool,
 ) -> DeciderResult {
     let mut stats = DeciderStats::default();
-    decide_with_stats(prog, step_limit, detect_cycles, exact_start, use_polyhedral, use_semilinear1d, &mut stats)
+    decide_with_stats(prog, step_limit, detect_cycles, exact_start, use_polyhedral, use_semilinear1d, use_congruence, &mut stats)
 }

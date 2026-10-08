@@ -28,24 +28,17 @@ struct Args {
     #[arg(short, long)]
     limit: Option<usize>,
 
-    /// Enable polyhedral decider (slow)
-    #[arg(short = 'p', long)]
-    polyhedral: bool,
-
-    /// Enable semilinear1d decider
-    #[arg(short = 's', long)]
-    semilinear1d: bool,
-
-    /// Enable congruence decider
-    #[arg(short = 'c', long)]
-    congruence: bool,
+    /// Configure deciders (+name to enable, -name to disable). Defaults: congruence.
+    #[arg(short = 'd', long, default_value = "")]
+    deciders: String,
 }
 
 fn main() {
     let args = Args::parse();
+    let decider_config = mbb::deciders::DeciderConfig::parse(&args.deciders);
 
-    println!("Starting enumeration for {} states, limit: {} steps. Allow NoOps: {}, Exact Start: {}, Polyhedral: {}, Semilinear1D: {}, Congruence: {}", 
-             args.num_states, args.step_limit, args.allow_no_ops, args.exact_start, args.polyhedral, args.semilinear1d, args.congruence);
+    println!("Starting enumeration for {} states, limit: {} steps. Allow NoOps: {}, Exact Start: {}, Deciders: {:?}", 
+             args.num_states, args.step_limit, args.allow_no_ops, args.exact_start, decider_config);
     if let Some(r) = args.max_regs {
         println!("Max registers restricted to: {}", r);
     } else {
@@ -55,5 +48,5 @@ fn main() {
         println!("Enumeration limit: {}", l);
     }
 
-    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, args.limit, args.polyhedral, args.semilinear1d, args.congruence, &args.out_file);
+    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, args.limit, &decider_config, &args.out_file);
 }

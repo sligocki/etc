@@ -29,12 +29,16 @@ pub struct Program {
 
 impl Program {
     pub fn num_regs(&self) -> usize {
-        self.instructions.iter().map(|inst| match inst {
-            Instruction::Inc { reg, .. } => *reg,
-            Instruction::Dec { reg, .. } => *reg,
-            Instruction::Undef => 0,
-            Instruction::NoOp { .. } => 0,
-        }).max().map_or(0, |max_reg| max_reg + 1)
+        self.instructions
+            .iter()
+            .map(|inst| match inst {
+                Instruction::Inc { reg, .. } => *reg,
+                Instruction::Dec { reg, .. } => *reg,
+                Instruction::Undef => 0,
+                Instruction::NoOp { .. } => 0,
+            })
+            .max()
+            .map_or(0, |max_reg| max_reg + 1)
     }
 
     pub fn to_string_format(&self, max_reg_referenced: i32) -> String {
@@ -49,8 +53,17 @@ impl Program {
                 Instruction::Inc { reg, next } => {
                     s.push_str(&format!("{}+{}", reg, next.to_char()));
                 }
-                Instruction::Dec { reg, next_not_zero, next_zero } => {
-                    s.push_str(&format!("{}-{}{}", reg, next_not_zero.to_char(), next_zero.to_char()));
+                Instruction::Dec {
+                    reg,
+                    next_not_zero,
+                    next_zero,
+                } => {
+                    s.push_str(&format!(
+                        "{}-{}{}",
+                        reg,
+                        next_not_zero.to_char(),
+                        next_zero.to_char()
+                    ));
                 }
                 Instruction::NoOp { next } => {
                     s.push_str(&format!("{}+{}", dummy_reg, next.to_char()));
@@ -60,7 +73,10 @@ impl Program {
         s
     }
 
-    pub fn get_missing_requirements(&self, max_reg_referenced: i32) -> (usize, Vec<bool>, Vec<bool>) {
+    pub fn get_missing_requirements(
+        &self,
+        max_reg_referenced: i32,
+    ) -> (usize, Vec<bool>, Vec<bool>) {
         let mut undef_count = 0;
         let mut has_inc = vec![false; (max_reg_referenced.max(-1) + 1) as usize];
         let mut has_dec = vec![false; (max_reg_referenced.max(-1) + 1) as usize];
@@ -95,14 +111,16 @@ impl Program {
                 Instruction::Undef => {
                     undef_insts += 1;
                 }
-                Instruction::Inc { next, .. } | Instruction::NoOp { next } => {
-                    match next {
-                        Target::Undef => explicit_undef += 1,
-                        Target::Halt => halt_targets += 1,
-                        _ => {}
-                    }
-                }
-                Instruction::Dec { next_not_zero, next_zero, .. } => {
+                Instruction::Inc { next, .. } | Instruction::NoOp { next } => match next {
+                    Target::Undef => explicit_undef += 1,
+                    Target::Halt => halt_targets += 1,
+                    _ => {}
+                },
+                Instruction::Dec {
+                    next_not_zero,
+                    next_zero,
+                    ..
+                } => {
                     match next_not_zero {
                         Target::Undef => explicit_undef += 1,
                         Target::Halt => halt_targets += 1,
@@ -143,8 +161,18 @@ impl std::fmt::Display for Instruction {
             Instruction::Inc { reg, next } => {
                 write!(f, "{}+{}", reg, next.to_char())
             }
-            Instruction::Dec { reg, next_not_zero, next_zero } => {
-                write!(f, "{}-{}{}", reg, next_not_zero.to_char(), next_zero.to_char())
+            Instruction::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            } => {
+                write!(
+                    f,
+                    "{}-{}{}",
+                    reg,
+                    next_not_zero.to_char(),
+                    next_zero.to_char()
+                )
             }
             Instruction::NoOp { next } => {
                 write!(f, "NoOp({})", next.to_char()) // Internal representation

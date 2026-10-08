@@ -1,9 +1,13 @@
-use crate::program::{Program, Target};
-use crate::macro_program::abstract_program;
-use crate::deciders::semilinear1d::{Ray, verify_semilinear1d_set};
 use crate::deciders::polyhedral_guesser::record_history;
+use crate::deciders::semilinear1d::{verify_semilinear1d_set, Ray};
+use crate::macro_program::abstract_program;
+use crate::program::{Program, Target};
 
-pub fn decide_semilinear1d(prog: &Program, step_limit: u64, verbose: bool) -> crate::deciders::DeciderResult {
+pub fn decide_semilinear1d(
+    prog: &Program,
+    step_limit: u64,
+    verbose: bool,
+) -> crate::deciders::DeciderResult {
     let macros = abstract_program(prog);
     let num_regs = prog.num_regs();
 
@@ -21,10 +25,10 @@ pub fn decide_semilinear1d(prog: &Program, step_limit: u64, verbose: bool) -> cr
         // Try to find a period between recent history items (limit search to last 50 to avoid hanging)
         let n = history.len();
         let start_idx = n.saturating_sub(50);
-        for i in (start_idx..n-1).rev() {
+        for i in (start_idx..n - 1).rev() {
             let v_old = &history[i];
-            let v_new = &history[n-1];
-            
+            let v_new = &history[n - 1];
+
             // Check if v_new >= v_old
             let mut valid_period = true;
             let mut period = vec![0; num_regs];
@@ -46,16 +50,28 @@ pub fn decide_semilinear1d(prog: &Program, step_limit: u64, verbose: bool) -> cr
                 let seed_ray = Ray { base, period };
 
                 if verbose {
-                    println!("Semilinear1D: Trying State {} with Ray {:?}", (b'A' + state_idx as u8) as char, seed_ray);
+                    println!(
+                        "Semilinear1D: Trying State {} with Ray {:?}",
+                        (b'A' + state_idx as u8) as char,
+                        seed_ray
+                    );
                 }
 
-                if verify_semilinear1d_set(&macros, Target::Inst(state_idx), seed_ray.clone(), num_regs, verbose) {
+                if verify_semilinear1d_set(
+                    &macros,
+                    Target::Inst(state_idx),
+                    seed_ray.clone(),
+                    num_regs,
+                    verbose,
+                ) {
                     let state_char = (b'A' + state_idx as u8) as char;
-                    return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Semilinear1D {
-                        state: state_char,
-                        base: seed_ray.base,
-                        period: seed_ray.period,
-                    });
+                    return crate::deciders::DeciderResult::Infinite(
+                        crate::deciders::InfiniteReason::Semilinear1D {
+                            state: state_char,
+                            base: seed_ray.base,
+                            period: seed_ray.period,
+                        },
+                    );
                 }
             }
         }

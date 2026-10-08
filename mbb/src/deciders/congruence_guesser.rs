@@ -1,9 +1,13 @@
-use crate::program::{Program, Target};
-use crate::macro_program::abstract_program;
 use crate::deciders::congruence::{verify_congruence_set, Val, CAP};
 use crate::deciders::polyhedral_guesser::record_history;
+use crate::macro_program::abstract_program;
+use crate::program::{Program, Target};
 
-pub fn decide_congruence(prog: &Program, step_limit: u64, verbose: bool) -> crate::deciders::DeciderResult {
+pub fn decide_congruence(
+    prog: &Program,
+    step_limit: u64,
+    verbose: bool,
+) -> crate::deciders::DeciderResult {
     let macros = abstract_program(prog);
     let num_regs = prog.num_regs();
 
@@ -19,16 +23,18 @@ pub fn decide_congruence(prog: &Program, step_limit: u64, verbose: bool) -> crat
 
         let mut moduli = vec![0; num_regs];
         let start_idx = history.len().saturating_sub(50);
-        
+
         for r in 0..num_regs {
             let mut gcd_val = 0;
             for j in start_idx..history.len() - 1 {
-                let diff = history[j+1][r].abs_diff(history[j][r]) as u32;
+                let diff = history[j + 1][r].abs_diff(history[j][r]) as u32;
                 if diff > 0 {
                     gcd_val = gcd(gcd_val, diff);
                 }
             }
-            if gcd_val == 0 { gcd_val = 1; }
+            if gcd_val == 0 {
+                gcd_val = 1;
+            }
             moduli[r] = gcd_val;
         }
 
@@ -44,16 +50,29 @@ pub fn decide_congruence(prog: &Program, step_limit: u64, verbose: bool) -> crat
         }
 
         if verbose {
-            println!("Congruence: Trying State {} with Moduli {:?}, Seed {:?}", (b'A' + state_idx as u8) as char, moduli, seed_vals);
+            println!(
+                "Congruence: Trying State {} with Moduli {:?}, Seed {:?}",
+                (b'A' + state_idx as u8) as char,
+                moduli,
+                seed_vals
+            );
         }
 
-        if verify_congruence_set(&macros, Target::Inst(state_idx), seed_vals.clone(), &moduli, verbose) {
+        if verify_congruence_set(
+            &macros,
+            Target::Inst(state_idx),
+            seed_vals.clone(),
+            &moduli,
+            verbose,
+        ) {
             let state_char = (b'A' + state_idx as u8) as char;
-            return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Congruence {
-                state: state_char,
-                moduli,
-                seed: seed_vals,
-            });
+            return crate::deciders::DeciderResult::Infinite(
+                crate::deciders::InfiniteReason::Congruence {
+                    state: state_char,
+                    moduli,
+                    seed: seed_vals,
+                },
+            );
         }
     }
 

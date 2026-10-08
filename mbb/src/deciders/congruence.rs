@@ -1,4 +1,4 @@
-use crate::macro_program::{MacroInst};
+use crate::macro_program::MacroInst;
 use crate::program::Target;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -58,7 +58,11 @@ pub fn verify_congruence_set(
                 };
                 next_states_to_explore.push((*next, next_regs));
             }
-            MacroInst::Dec { reg, next_not_zero, next_zero } => {
+            MacroInst::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            } => {
                 let m = moduli[*reg];
                 match regs[*reg] {
                     Val::Exact(0) => {
@@ -96,7 +100,7 @@ pub fn verify_congruence_set(
                     Val::Exact(v) => {
                         let mut next_regs = regs.clone();
                         next_regs[*reg] = Val::Exact(0);
-                        
+
                         let valid = true;
                         for (&d, &inc) in incs {
                             let m_d = moduli[d];
@@ -109,9 +113,7 @@ pub fn verify_congruence_set(
                                         Val::Large((dv + amount_to_add) % m_d)
                                     }
                                 }
-                                Val::Large(dr) => {
-                                    Val::Large((dr + amount_to_add) % m_d)
-                                }
+                                Val::Large(dr) => Val::Large((dr + amount_to_add) % m_d),
                             };
                         }
                         if valid {
@@ -122,11 +124,11 @@ pub fn verify_congruence_set(
                         // The source register has an unknown value V = K * M_s + r (and V >= CAP).
                         // V - r is a multiple of M_s.
                         // For the remainder in the destination to be well-defined for ALL possible V,
-                        // `inc * M_s` must be a multiple of `M_d`. 
+                        // `inc * M_s` must be a multiple of `M_d`.
                         // If it's not, then different values of V (with the same r) will result in different remainders mod M_d.
                         let m_s = moduli[*reg];
                         let mut valid = true;
-                        
+
                         for (&d, &inc) in incs {
                             let m_d = moduli[d];
                             if (inc * m_s) % m_d != 0 {
@@ -140,7 +142,7 @@ pub fn verify_congruence_set(
                             // What happens to `reg`? It becomes 0.
                             let mut next_regs = regs.clone();
                             next_regs[*reg] = Val::Exact(0);
-                            
+
                             for (&d, &inc) in incs {
                                 let m_d = moduli[d];
                                 // We add V * inc. V = r mod m_s.
@@ -155,12 +157,10 @@ pub fn verify_congruence_set(
                                         // So the result is always Large!
                                         Val::Large((dv + amount_to_add) % m_d)
                                     }
-                                    Val::Large(dr) => {
-                                        Val::Large((dr + amount_to_add) % m_d)
-                                    }
+                                    Val::Large(dr) => Val::Large((dr + amount_to_add) % m_d),
                                 };
                             }
-                            
+
                             next_states_to_explore.push((*next, next_regs));
                         }
                     }

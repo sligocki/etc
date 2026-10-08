@@ -25,7 +25,7 @@ pub fn parse_program(s: &str) -> Option<Program> {
         }
         let plus_idx = part.find('+');
         let minus_idx = part.find('-');
-        
+
         if let Some(idx) = plus_idx {
             let reg_str = &part[..idx];
             let reg: usize = reg_str.parse().ok()?;
@@ -45,7 +45,11 @@ pub fn parse_program(s: &str) -> Option<Program> {
             if part.len() != idx + 3 {
                 return None;
             }
-            instructions.push(Instruction::Dec { reg, next_not_zero, next_zero });
+            instructions.push(Instruction::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            });
         } else {
             return None;
         }

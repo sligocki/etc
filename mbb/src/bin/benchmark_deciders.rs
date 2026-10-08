@@ -1,6 +1,6 @@
-use mbb::parse::parse_program;
-use mbb::deciders::{Decider, DeciderResult};
 use mbb::deciders::bouncers::BouncersDecider;
+use mbb::deciders::{Decider, DeciderResult};
+use mbb::parse::parse_program;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::Instant;
@@ -14,13 +14,15 @@ fn main() {
         for line in reader.lines() {
             let line = line.unwrap();
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             let prog_str = line.split_whitespace().next().unwrap_or("");
             if let Some(p) = parse_program(prog_str) {
                 progs.push(p);
             }
         }
-        
+
         let bouncers = BouncersDecider { step_limit: 10000 };
 
         // Benchmark Backwards
@@ -33,7 +35,10 @@ fn main() {
             }
         }
         let backwards_time = start.elapsed();
-        println!("Backwards: {} solved in {:?}", backwards_solved, backwards_time);
+        println!(
+            "Backwards: {} solved in {:?}",
+            backwards_solved, backwards_time
+        );
 
         // Benchmark Bouncers
         let start = Instant::now();
@@ -55,13 +60,19 @@ fn main() {
             }
         }
         let poly_time = start.elapsed();
-        println!("Polyhedral Guesser: {} solved in {:?}", poly_solved, poly_time);
+        println!(
+            "Polyhedral Guesser: {} solved in {:?}",
+            poly_solved, poly_time
+        );
 
         // Benchmark Semilinear1D
         let start = Instant::now();
         let mut semi_solved = 0;
         for p in &progs {
-            if matches!(mbb::deciders::semilinear1d_guesser::decide_semilinear1d(p, 100_000, false), DeciderResult::Infinite(_)) {
+            if matches!(
+                mbb::deciders::semilinear1d_guesser::decide_semilinear1d(p, 100_000, false),
+                DeciderResult::Infinite(_)
+            ) {
                 semi_solved += 1;
             }
         }
@@ -72,7 +83,10 @@ fn main() {
         let start = Instant::now();
         let mut cong_solved = 0;
         for p in &progs {
-            if matches!(mbb::deciders::congruence_guesser::decide_congruence(p, 100_000, false), DeciderResult::Infinite(_)) {
+            if matches!(
+                mbb::deciders::congruence_guesser::decide_congruence(p, 100_000, false),
+                DeciderResult::Infinite(_)
+            ) {
                 cong_solved += 1;
             }
         }

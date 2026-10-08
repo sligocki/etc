@@ -43,20 +43,48 @@ fn main() {
     println!("Simulating: {}", prog);
 
     let result = if args.use_macro {
-        simulate_macro(&prog, args.step_limit, args.detect_cycles, args.exact_start, args.verbose)
+        simulate_macro(
+            &prog,
+            args.step_limit,
+            args.detect_cycles,
+            args.exact_start,
+            args.verbose,
+        )
     } else {
-        simulate_direct(&prog, args.step_limit, args.detect_cycles, args.exact_start, args.verbose)
+        simulate_direct(
+            &prog,
+            args.step_limit,
+            args.detect_cycles,
+            args.exact_start,
+            args.verbose,
+        )
     };
 
     match result {
         mbb::deciders::DeciderResult::Halt { steps, .. } => {
             println!("Halted after {} steps.", steps);
         }
-        mbb::deciders::DeciderResult::Infinite(mbb::deciders::InfiniteReason::Cycle { start_by, period, is_min_start }) => {
-            println!("Cycle detected! Starts at step {} (is_min: {}) with period {}.", start_by, is_min_start, period);
+        mbb::deciders::DeciderResult::Infinite(mbb::deciders::InfiniteReason::Cycle {
+            start_by,
+            period,
+            is_min_start,
+        }) => {
+            println!(
+                "Cycle detected! Starts at step {} (is_min: {}) with period {}.",
+                start_by, is_min_start, period
+            );
         }
-        mbb::deciders::DeciderResult::Infinite(mbb::deciders::InfiniteReason::TranslatedCycler { start_by, period, is_min_start }) => {
-            println!("Translated Cycler detected! Starts at step {} (is_min: {}) with period {}.", start_by, is_min_start, period);
+        mbb::deciders::DeciderResult::Infinite(
+            mbb::deciders::InfiniteReason::TranslatedCycler {
+                start_by,
+                period,
+                is_min_start,
+            },
+        ) => {
+            println!(
+                "Translated Cycler detected! Starts at step {} (is_min: {}) with period {}.",
+                start_by, is_min_start, period
+            );
         }
         mbb::deciders::DeciderResult::Error(_) => {
             println!("Halted (out of bounds)");
@@ -69,4 +97,3 @@ fn main() {
         }
     }
 }
-

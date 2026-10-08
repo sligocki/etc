@@ -1,8 +1,10 @@
+use crate::deciders::polyhedral::{
+    verify_polyhedral_closed_set, PolyhedralClosedSet, VerifyResult,
+};
+use crate::deciders::symbolic::{AffineExpr, Condition};
+use crate::macro_program::{abstract_program, MacroInst};
 use crate::program::{Instruction, Program, Target};
 use crate::simulate::State;
-use crate::deciders::polyhedral::{PolyhedralClosedSet, verify_polyhedral_closed_set, VerifyResult};
-use crate::macro_program::{MacroInst, abstract_program};
-use crate::deciders::symbolic::{AffineExpr, Condition};
 
 pub fn record_history(prog: &Program, target_state: usize, step_limit: u64) -> Vec<Vec<u64>> {
     let mut history = Vec::new();
@@ -39,7 +41,11 @@ pub fn record_history(prog: &Program, target_state: usize, step_limit: u64) -> V
                     Target::Undef => break,
                 }
             }
-            Instruction::Dec { reg, next_not_zero, next_zero } => {
+            Instruction::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            } => {
                 let val = state.get_reg(*reg);
                 if val == 0 {
                     match next_zero {
@@ -64,7 +70,9 @@ pub fn record_history(prog: &Program, target_state: usize, step_limit: u64) -> V
 
 pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition> {
     let mut conditions = Vec::new();
-    if history.is_empty() { return conditions; }
+    if history.is_empty() {
+        return conditions;
+    }
 
     let num_combinations = 3_usize.pow(num_regs as u32);
 
@@ -80,11 +88,15 @@ pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition>
                 2 => -1,
                 _ => unreachable!(),
             };
-            if coeffs[i] != 0 { has_non_zero = true; }
+            if coeffs[i] != 0 {
+                has_non_zero = true;
+            }
             temp /= 3;
         }
 
-        if !has_non_zero { continue; }
+        if !has_non_zero {
+            continue;
+        }
 
         let mut min_val = i64::MAX;
         let mut max_val = i64::MIN;
@@ -104,7 +116,7 @@ pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition>
                 expr.coeffs.insert(i, coeffs[i]);
             }
         }
-        
+
         let mut geq_expr = expr.clone();
         geq_expr.add_const(-min_val);
         conditions.push(Condition::geq_zero(geq_expr));
@@ -120,7 +132,7 @@ pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition>
             unique_conds.push(c);
         }
     }
-    
+
     // Always include explicit r_i >= 0 just in case
     for i in 0..num_regs {
         let expr = AffineExpr::var(i);
@@ -133,7 +145,11 @@ pub fn guess_conditions(history: &[Vec<u64>], num_regs: usize) -> Vec<Condition>
     unique_conds
 }
 
-pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option<PolyhedralClosedSet> {
+pub fn find_closed_set(
+    prog: &Program,
+    verbose: bool,
+    step_limit: u64,
+) -> Option<PolyhedralClosedSet> {
     let macros = abstract_program(prog);
     let num_regs = prog.num_regs();
 
@@ -151,8 +167,14 @@ pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option
         let mut candidate_conditions = guess_conditions(steady_history, num_regs);
 
         if verbose {
-            println!("Testing State {} with {} initial guessed conditions...", (b'A' + state_idx as u8) as char, candidate_conditions.len());
-            for c in &candidate_conditions { println!("    {}", c); }
+            println!(
+                "Testing State {} with {} initial guessed conditions...",
+                (b'A' + state_idx as u8) as char,
+                candidate_conditions.len()
+            );
+            for c in &candidate_conditions {
+                println!("    {}", c);
+            }
         }
 
         let mut drop_iterations = 0;
@@ -166,27 +188,46 @@ pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option
             match verify_polyhedral_closed_set(&macros, &closed_set, false) {
                 VerifyResult::Verified => {
                     if verbose {
-                        println!("Verified with {} conditions. Minimizing...", candidate_conditions.len());
+                        println!(
+                            "Verified with {} conditions. Minimizing...",
+                            candidate_conditions.len()
+                        );
                     }
 
                     // Before minimizing the full set, try verifying with ONLY the simple conditions (constant == 0)
-                    let simple_conds: Vec<Condition> = candidate_conditions.iter()
+                    let simple_conds: Vec<Condition> = candidate_conditions
+                        .iter()
                         .filter(|c| c.expr.constant == 0)
                         .cloned()
                         .collect();
-                    
-                    let mut final_conds = if simple_conds.len() < candidate_conditions.len() && 
-                        matches!(verify_polyhedral_closed_set(&macros, &PolyhedralClosedSet { state: state_idx, conditions: simple_conds.clone(), num_registers: num_regs }, false), VerifyResult::Verified) {
-                        if verbose { println!("  (Simplified to just constant=0 conditions first)"); }
+
+                    let mut final_conds = if simple_conds.len() < candidate_conditions.len()
+                        && matches!(
+                            verify_polyhedral_closed_set(
+                                &macros,
+                                &PolyhedralClosedSet {
+                                    state: state_idx,
+                                    conditions: simple_conds.clone(),
+                                    num_registers: num_regs
+                                },
+                                false
+                            ),
+                            VerifyResult::Verified
+                        ) {
+                        if verbose {
+                            println!("  (Simplified to just constant=0 conditions first)");
+                        }
                         simple_conds
                     } else {
                         candidate_conditions.clone()
                     };
-                    
+
                     loop {
                         // Sort by complexity: larger absolute constant, then FEWER variables
-                        final_conds.sort_by_key(|c| (-(c.expr.constant.abs() as i64), c.expr.coeffs.len() as i64));
-                        
+                        final_conds.sort_by_key(|c| {
+                            (-(c.expr.constant.abs() as i64), c.expr.coeffs.len() as i64)
+                        });
+
                         let mut dropped_any = false;
                         let mut i = 0;
                         while i < final_conds.len() {
@@ -197,23 +238,41 @@ pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option
                                 conditions: test_conds.clone(),
                                 num_registers: num_regs,
                             };
-                            if matches!(verify_polyhedral_closed_set(&macros, &test_set, false), VerifyResult::Verified) {
-                                if verbose { println!("  Dropped unnecessary condition: {}", dropped); }
+                            if matches!(
+                                verify_polyhedral_closed_set(&macros, &test_set, false),
+                                VerifyResult::Verified
+                            ) {
+                                if verbose {
+                                    println!("  Dropped unnecessary condition: {}", dropped);
+                                }
                                 final_conds = test_conds;
                                 dropped_any = true;
                             } else {
-                                if verbose { println!("  Kept essential condition: {}", dropped); }
+                                if verbose {
+                                    println!("  Kept essential condition: {}", dropped);
+                                }
                                 i += 1;
                             }
                         }
-                        if !dropped_any { break; }
+                        if !dropped_any {
+                            break;
+                        }
                     }
 
                     if verbose {
-                        println!("✅ Found Polyhedral Closed Set at State {}!", (b'A' + state_idx as u8) as char);
-                        println!("   Final Conditions: {:?}", final_conds.iter().map(|c| c.to_string()).collect::<Vec<_>>());
+                        println!(
+                            "✅ Found Polyhedral Closed Set at State {}!",
+                            (b'A' + state_idx as u8) as char
+                        );
+                        println!(
+                            "   Final Conditions: {:?}",
+                            final_conds
+                                .iter()
+                                .map(|c| c.to_string())
+                                .collect::<Vec<_>>()
+                        );
                     }
-                    
+
                     return Some(PolyhedralClosedSet {
                         state: state_idx,
                         conditions: final_conds,
@@ -223,22 +282,33 @@ pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option
                 VerifyResult::ConditionFailed(failed) => {
                     drop_iterations += 1;
                     if drop_iterations > 5 {
-                        if verbose { println!("  Too many drop iterations. Giving up."); }
+                        if verbose {
+                            println!("  Too many drop iterations. Giving up.");
+                        }
                         break;
                     }
 
                     if verbose {
-                        println!("  Dropping {} conditions that failed verification:", failed.len());
-                        for c in &failed { println!("    {}", c); }
+                        println!(
+                            "  Dropping {} conditions that failed verification:",
+                            failed.len()
+                        );
+                        for c in &failed {
+                            println!("    {}", c);
+                        }
                     }
                     candidate_conditions.retain(|c| !failed.contains(c));
                     if candidate_conditions.is_empty() {
-                        if verbose { println!("  All conditions failed."); }
+                        if verbose {
+                            println!("  All conditions failed.");
+                        }
                         break;
                     }
                 }
                 VerifyResult::Failed(msg) => {
-                    if verbose { println!("  Verification failed: {}", msg); }
+                    if verbose {
+                        println!("  Verification failed: {}", msg);
+                    }
                     break;
                 }
             }
@@ -248,7 +318,10 @@ pub fn find_closed_set(prog: &Program, verbose: bool, step_limit: u64) -> Option
     None
 }
 
-pub fn decide_polyhedral(prog: &crate::program::Program, step_limit: u64) -> crate::deciders::DeciderResult {
+pub fn decide_polyhedral(
+    prog: &crate::program::Program,
+    step_limit: u64,
+) -> crate::deciders::DeciderResult {
     if let Some(set) = find_closed_set(prog, false, step_limit) {
         let cond_strs: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
         let conditions_str = cond_strs.join(", ");

@@ -50,7 +50,6 @@ pub enum Branch {
     NextZero,
 }
 
-
 pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult {
     if state.pc >= prog.instructions.len() {
         return crate::deciders::DeciderResult::Error(format!("PC out of bounds"));
@@ -61,37 +60,90 @@ pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult
 
     match inst {
         Instruction::Undef => {
-            return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Inst(current_pc)) };
+            return crate::deciders::DeciderResult::Halt {
+                steps: state.steps,
+                registers: state.registers.clone(),
+                hit_undef: Some(crate::deciders::HitUndef::Inst(current_pc)),
+            };
         }
         Instruction::Inc { reg, next } => {
             state.steps += 1;
             let val = state.get_reg(*reg);
             // We use wrapping_add here for performance in the tightest simulation loop.
-            // A register can only increase by 1 per step, meaning it would take 2^64 steps 
-            // (~58 years at 10B steps/sec) to actually overflow. Thus, treating overflow 
+            // A register can only increase by 1 per step, meaning it would take 2^64 steps
+            // (~58 years at 10B steps/sec) to actually overflow. Thus, treating overflow
             // as impossible/wrapping is perfectly safe in practice and avoids branch overhead.
             state.set_reg(*reg, val.wrapping_add(1));
             match next {
-                Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::Next }) },
-                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
+                Target::Undef => {
+                    return crate::deciders::DeciderResult::Halt {
+                        steps: state.steps,
+                        registers: state.registers.clone(),
+                        hit_undef: Some(crate::deciders::HitUndef::Target {
+                            pc: current_pc,
+                            branch: Branch::Next,
+                        }),
+                    }
+                }
+                Target::Halt => {
+                    return crate::deciders::DeciderResult::Halt {
+                        steps: state.steps,
+                        registers: state.registers.clone(),
+                        hit_undef: None,
+                    }
+                }
                 Target::Inst(i) => state.pc = *i,
             }
         }
-        Instruction::Dec { reg, next_not_zero, next_zero } => {
+        Instruction::Dec {
+            reg,
+            next_not_zero,
+            next_zero,
+        } => {
             state.steps += 1;
             let val = state.get_reg(*reg);
             if val == 0 {
                 state.set_last_decr_zero(*reg, state.steps);
                 match next_zero {
-                    Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextZero }) },
-                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
+                    Target::Undef => {
+                        return crate::deciders::DeciderResult::Halt {
+                            steps: state.steps,
+                            registers: state.registers.clone(),
+                            hit_undef: Some(crate::deciders::HitUndef::Target {
+                                pc: current_pc,
+                                branch: Branch::NextZero,
+                            }),
+                        }
+                    }
+                    Target::Halt => {
+                        return crate::deciders::DeciderResult::Halt {
+                            steps: state.steps,
+                            registers: state.registers.clone(),
+                            hit_undef: None,
+                        }
+                    }
                     Target::Inst(i) => state.pc = *i,
                 }
             } else {
                 state.set_reg(*reg, val - 1);
                 match next_not_zero {
-                    Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextNotZero }) },
-                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
+                    Target::Undef => {
+                        return crate::deciders::DeciderResult::Halt {
+                            steps: state.steps,
+                            registers: state.registers.clone(),
+                            hit_undef: Some(crate::deciders::HitUndef::Target {
+                                pc: current_pc,
+                                branch: Branch::NextNotZero,
+                            }),
+                        }
+                    }
+                    Target::Halt => {
+                        return crate::deciders::DeciderResult::Halt {
+                            steps: state.steps,
+                            registers: state.registers.clone(),
+                            hit_undef: None,
+                        }
+                    }
                     Target::Inst(i) => state.pc = *i,
                 }
             }
@@ -99,8 +151,23 @@ pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult
         Instruction::NoOp { next } => {
             state.steps += 1;
             match next {
-                Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::Next }) },
-                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
+                Target::Undef => {
+                    return crate::deciders::DeciderResult::Halt {
+                        steps: state.steps,
+                        registers: state.registers.clone(),
+                        hit_undef: Some(crate::deciders::HitUndef::Target {
+                            pc: current_pc,
+                            branch: Branch::Next,
+                        }),
+                    }
+                }
+                Target::Halt => {
+                    return crate::deciders::DeciderResult::Halt {
+                        steps: state.steps,
+                        registers: state.registers.clone(),
+                        hit_undef: None,
+                    }
+                }
                 Target::Inst(i) => state.pc = *i,
             }
         }
@@ -108,7 +175,10 @@ pub fn step(state: &mut State, prog: &Program) -> crate::deciders::DeciderResult
     crate::deciders::DeciderResult::Unknown // placeholder for "successfully stepped"
 }
 
-pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst]) -> crate::deciders::DeciderResult {
+pub fn step_macro(
+    state: &mut State,
+    macros: &[crate::macro_program::MacroInst],
+) -> crate::deciders::DeciderResult {
     if state.pc >= macros.len() {
         return crate::deciders::DeciderResult::Error(format!("PC out of bounds"));
     }
@@ -119,33 +189,86 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
 
     match inst {
         crate::macro_program::MacroInst::Undef => {
-            return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Inst(current_pc)) };
+            return crate::deciders::DeciderResult::Halt {
+                steps: state.steps,
+                registers: state.registers.clone(),
+                hit_undef: Some(crate::deciders::HitUndef::Inst(current_pc)),
+            };
         }
         crate::macro_program::MacroInst::Inc { reg, next } => {
             state.steps += 1;
             let val = state.get_reg(*reg);
             state.set_reg(*reg, val.wrapping_add(1));
             match next {
-                Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::Next }) },
-                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
+                Target::Undef => {
+                    return crate::deciders::DeciderResult::Halt {
+                        steps: state.steps,
+                        registers: state.registers.clone(),
+                        hit_undef: Some(crate::deciders::HitUndef::Target {
+                            pc: current_pc,
+                            branch: Branch::Next,
+                        }),
+                    }
+                }
+                Target::Halt => {
+                    return crate::deciders::DeciderResult::Halt {
+                        steps: state.steps,
+                        registers: state.registers.clone(),
+                        hit_undef: None,
+                    }
+                }
                 Target::Inst(i) => state.pc = *i,
             }
         }
-        crate::macro_program::MacroInst::Dec { reg, next_not_zero, next_zero } => {
+        crate::macro_program::MacroInst::Dec {
+            reg,
+            next_not_zero,
+            next_zero,
+        } => {
             state.steps += 1;
             let val = state.get_reg(*reg);
             if val == 0 {
                 state.set_last_decr_zero(*reg, state.macro_steps);
                 match next_zero {
-                    Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextZero }) },
-                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
+                    Target::Undef => {
+                        return crate::deciders::DeciderResult::Halt {
+                            steps: state.steps,
+                            registers: state.registers.clone(),
+                            hit_undef: Some(crate::deciders::HitUndef::Target {
+                                pc: current_pc,
+                                branch: Branch::NextZero,
+                            }),
+                        }
+                    }
+                    Target::Halt => {
+                        return crate::deciders::DeciderResult::Halt {
+                            steps: state.steps,
+                            registers: state.registers.clone(),
+                            hit_undef: None,
+                        }
+                    }
                     Target::Inst(i) => state.pc = *i,
                 }
             } else {
                 state.set_reg(*reg, val - 1);
                 match next_not_zero {
-                    Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextNotZero }) },
-                    Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
+                    Target::Undef => {
+                        return crate::deciders::DeciderResult::Halt {
+                            steps: state.steps,
+                            registers: state.registers.clone(),
+                            hit_undef: Some(crate::deciders::HitUndef::Target {
+                                pc: current_pc,
+                                branch: Branch::NextNotZero,
+                            }),
+                        }
+                    }
+                    Target::Halt => {
+                        return crate::deciders::DeciderResult::Halt {
+                            steps: state.steps,
+                            registers: state.registers.clone(),
+                            hit_undef: None,
+                        }
+                    }
                     Target::Inst(i) => state.pc = *i,
                 }
             }
@@ -160,8 +283,23 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
             }
             state.set_reg(*reg, 0);
             match next {
-                Target::Undef => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: Some(crate::deciders::HitUndef::Target { pc: current_pc, branch: Branch::NextZero }) },
-                Target::Halt => return crate::deciders::DeciderResult::Halt { steps: state.steps, registers: state.registers.clone(), hit_undef: None },
+                Target::Undef => {
+                    return crate::deciders::DeciderResult::Halt {
+                        steps: state.steps,
+                        registers: state.registers.clone(),
+                        hit_undef: Some(crate::deciders::HitUndef::Target {
+                            pc: current_pc,
+                            branch: Branch::NextZero,
+                        }),
+                    }
+                }
+                Target::Halt => {
+                    return crate::deciders::DeciderResult::Halt {
+                        steps: state.steps,
+                        registers: state.registers.clone(),
+                        hit_undef: None,
+                    }
+                }
                 Target::Inst(i) => state.pc = *i,
             }
         }
@@ -169,7 +307,13 @@ pub fn step_macro(state: &mut State, macros: &[crate::macro_program::MacroInst])
     crate::deciders::DeciderResult::Unknown
 }
 
-pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, exact_start_by: bool, verbose: bool) -> crate::deciders::DeciderResult {
+pub fn simulate_direct(
+    prog: &Program,
+    step_limit: Option<u64>,
+    detect_cycles: bool,
+    exact_start_by: bool,
+    verbose: bool,
+) -> crate::deciders::DeciderResult {
     let mut state = State::new();
     let mut power = 1;
     let mut lam = 1;
@@ -177,9 +321,7 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
     let mut tortoise_registers = state.registers.clone();
     let mut tortoise_step = state.steps;
 
-    let step_fn = |st: &mut State| -> crate::deciders::DeciderResult {
-        step(st, prog)
-    };
+    let step_fn = |st: &mut State| -> crate::deciders::DeciderResult { step(st, prog) };
 
     loop {
         if let Some(limit) = step_limit {
@@ -189,7 +331,8 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
         }
 
         if state.pc >= prog.instructions.len() {
-            return crate::deciders::DeciderResult::Error(format!("PC out of bounds")); // Reached an instruction index not in program
+            return crate::deciders::DeciderResult::Error(format!("PC out of bounds"));
+            // Reached an instruction index not in program
         }
 
         if detect_cycles && state.steps > 0 {
@@ -200,14 +343,26 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
 
                 let max_len = std::cmp::max(state.registers.len(), tortoise_registers.len());
                 for i in 0..max_len {
-                    let hare_val = if i < state.registers.len() { state.registers[i] } else { 0 };
-                    let tort_val = if i < tortoise_registers.len() { tortoise_registers[i] } else { 0 };
+                    let hare_val = if i < state.registers.len() {
+                        state.registers[i]
+                    } else {
+                        0
+                    };
+                    let tort_val = if i < tortoise_registers.len() {
+                        tortoise_registers[i]
+                    } else {
+                        0
+                    };
                     if hare_val < tort_val {
                         is_ge = false;
                         break;
                     } else if hare_val > tort_val {
                         strict_increase = true;
-                        let ldz = if i < state.last_decr_zero.len() { state.last_decr_zero[i] } else { 0 };
+                        let ldz = if i < state.last_decr_zero.len() {
+                            state.last_decr_zero[i]
+                        } else {
+                            0
+                        };
                         if ldz > tortoise_step {
                             valid_tc = false;
                         }
@@ -219,9 +374,21 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
                     if !exact_start_by {
                         let start_by = tortoise_step;
                         if strict_increase {
-                            return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::TranslatedCycler { start_by, period: actual_period, is_min_start: false });
+                            return crate::deciders::DeciderResult::Infinite(
+                                crate::deciders::InfiniteReason::TranslatedCycler {
+                                    start_by,
+                                    period: actual_period,
+                                    is_min_start: false,
+                                },
+                            );
                         } else {
-                            return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Cycle { start_by, period: actual_period, is_min_start: false });
+                            return crate::deciders::DeciderResult::Infinite(
+                                crate::deciders::InfiniteReason::Cycle {
+                                    start_by,
+                                    period: actual_period,
+                                    is_min_start: false,
+                                },
+                            );
                         }
                     }
 
@@ -236,16 +403,29 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
                         let mut valid_tc = true;
 
                         if hare.pc == tortoise.pc {
-                            let max_len = std::cmp::max(hare.registers.len(), tortoise.registers.len());
+                            let max_len =
+                                std::cmp::max(hare.registers.len(), tortoise.registers.len());
                             for i in 0..max_len {
-                                let hare_val = if i < hare.registers.len() { hare.registers[i] } else { 0 };
-                                let tort_val = if i < tortoise.registers.len() { tortoise.registers[i] } else { 0 };
+                                let hare_val = if i < hare.registers.len() {
+                                    hare.registers[i]
+                                } else {
+                                    0
+                                };
+                                let tort_val = if i < tortoise.registers.len() {
+                                    tortoise.registers[i]
+                                } else {
+                                    0
+                                };
                                 if hare_val < tort_val {
                                     is_ge = false;
                                     break;
                                 } else if hare_val > tort_val {
                                     strict_increase = true;
-                                    let ldz = if i < hare.last_decr_zero.len() { hare.last_decr_zero[i] } else { 0 };
+                                    let ldz = if i < hare.last_decr_zero.len() {
+                                        hare.last_decr_zero[i]
+                                    } else {
+                                        0
+                                    };
                                     if ldz > tortoise.steps {
                                         valid_tc = false;
                                     }
@@ -255,9 +435,21 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
                                 let start_by = tortoise.steps;
                                 let period = hare.steps - tortoise.steps;
                                 if strict_increase {
-                                    return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::TranslatedCycler { start_by, period, is_min_start: true });
+                                    return crate::deciders::DeciderResult::Infinite(
+                                        crate::deciders::InfiniteReason::TranslatedCycler {
+                                            start_by,
+                                            period,
+                                            is_min_start: true,
+                                        },
+                                    );
                                 } else {
-                                    return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Cycle { start_by, period, is_min_start: true });
+                                    return crate::deciders::DeciderResult::Infinite(
+                                        crate::deciders::InfiniteReason::Cycle {
+                                            start_by,
+                                            period,
+                                            is_min_start: true,
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -284,7 +476,10 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
             for i in 0..max_reg {
                 regs.push(state.get_reg(i));
             }
-            println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, prog.instructions[state.pc]);
+            println!(
+                "{:6} {}:{:?}    {}",
+                state.steps, state_char, regs, prog.instructions[state.pc]
+            );
         }
 
         let res = step_fn(&mut state);
@@ -294,7 +489,13 @@ pub fn simulate_direct(prog: &Program, step_limit: Option<u64>, detect_cycles: b
     }
 }
 
-pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bool, exact_start_by: bool, verbose: bool) -> crate::deciders::DeciderResult {
+pub fn simulate_macro(
+    prog: &Program,
+    step_limit: Option<u64>,
+    detect_cycles: bool,
+    exact_start_by: bool,
+    verbose: bool,
+) -> crate::deciders::DeciderResult {
     let macros = crate::macro_program::abstract_program(prog);
     if verbose {
         println!("Macro Program:");
@@ -331,14 +532,26 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
 
                 let max_len = std::cmp::max(state.registers.len(), tortoise_registers.len());
                 for i in 0..max_len {
-                    let hare_val = if i < state.registers.len() { state.registers[i] } else { 0 };
-                    let tort_val = if i < tortoise_registers.len() { tortoise_registers[i] } else { 0 };
+                    let hare_val = if i < state.registers.len() {
+                        state.registers[i]
+                    } else {
+                        0
+                    };
+                    let tort_val = if i < tortoise_registers.len() {
+                        tortoise_registers[i]
+                    } else {
+                        0
+                    };
                     if hare_val < tort_val {
                         is_ge = false;
                         break;
                     } else if hare_val > tort_val {
                         strict_increase = true;
-                        let ldz = if i < state.last_decr_zero.len() { state.last_decr_zero[i] } else { 0 };
+                        let ldz = if i < state.last_decr_zero.len() {
+                            state.last_decr_zero[i]
+                        } else {
+                            0
+                        };
                         if ldz > tortoise_step {
                             valid_tc = false;
                         }
@@ -350,9 +563,21 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
                     if !exact_start_by {
                         let start_by = tortoise_step;
                         if strict_increase {
-                            return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::TranslatedCycler { start_by, period: actual_period, is_min_start: false });
+                            return crate::deciders::DeciderResult::Infinite(
+                                crate::deciders::InfiniteReason::TranslatedCycler {
+                                    start_by,
+                                    period: actual_period,
+                                    is_min_start: false,
+                                },
+                            );
                         } else {
-                            return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Cycle { start_by, period: actual_period, is_min_start: false });
+                            return crate::deciders::DeciderResult::Infinite(
+                                crate::deciders::InfiniteReason::Cycle {
+                                    start_by,
+                                    period: actual_period,
+                                    is_min_start: false,
+                                },
+                            );
                         }
                     }
 
@@ -367,16 +592,29 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
                         let mut valid_tc = true;
 
                         if hare.pc == tortoise.pc {
-                            let max_len = std::cmp::max(hare.registers.len(), tortoise.registers.len());
+                            let max_len =
+                                std::cmp::max(hare.registers.len(), tortoise.registers.len());
                             for i in 0..max_len {
-                                let hare_val = if i < hare.registers.len() { hare.registers[i] } else { 0 };
-                                let tort_val = if i < tortoise.registers.len() { tortoise.registers[i] } else { 0 };
+                                let hare_val = if i < hare.registers.len() {
+                                    hare.registers[i]
+                                } else {
+                                    0
+                                };
+                                let tort_val = if i < tortoise.registers.len() {
+                                    tortoise.registers[i]
+                                } else {
+                                    0
+                                };
                                 if hare_val < tort_val {
                                     is_ge = false;
                                     break;
                                 } else if hare_val > tort_val {
                                     strict_increase = true;
-                                    let ldz = if i < hare.last_decr_zero.len() { hare.last_decr_zero[i] } else { 0 };
+                                    let ldz = if i < hare.last_decr_zero.len() {
+                                        hare.last_decr_zero[i]
+                                    } else {
+                                        0
+                                    };
                                     if ldz > tortoise.macro_steps {
                                         valid_tc = false;
                                     }
@@ -386,9 +624,21 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
                                 let start_by = tortoise.macro_steps;
                                 let period = hare.macro_steps - tortoise.macro_steps;
                                 if strict_increase {
-                                    return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::TranslatedCycler { start_by, period, is_min_start: true });
+                                    return crate::deciders::DeciderResult::Infinite(
+                                        crate::deciders::InfiniteReason::TranslatedCycler {
+                                            start_by,
+                                            period,
+                                            is_min_start: true,
+                                        },
+                                    );
                                 } else {
-                                    return crate::deciders::DeciderResult::Infinite(crate::deciders::InfiniteReason::Cycle { start_by, period, is_min_start: true });
+                                    return crate::deciders::DeciderResult::Infinite(
+                                        crate::deciders::InfiniteReason::Cycle {
+                                            start_by,
+                                            period,
+                                            is_min_start: true,
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -415,7 +665,10 @@ pub fn simulate_macro(prog: &Program, step_limit: Option<u64>, detect_cycles: bo
             for i in 0..max_reg {
                 regs.push(state.get_reg(i));
             }
-            println!("{:6} {}:{:?}    {}", state.steps, state_char, regs, macros[state.pc]);
+            println!(
+                "{:6} {}:{:?}    {}",
+                state.steps, state_char, regs, macros[state.pc]
+            );
         }
 
         let res = step_macro(&mut state, &macros);

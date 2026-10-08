@@ -1,9 +1,9 @@
-use mbb::parse::parse_program;
-use mbb::program::{Instruction, Target};
-use mbb::macro_program::abstract_program;
 use mbb::deciders::polyhedral::{verify_polyhedral_closed_set, PolyhedralClosedSet, VerifyResult};
 use mbb::deciders::polyhedral_guesser::find_closed_set;
 use mbb::deciders::symbolic::{AffineExpr, Condition, ConditionType};
+use mbb::macro_program::abstract_program;
+use mbb::parse::parse_program;
+use mbb::program::{Instruction, Target};
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, Write};
@@ -11,14 +11,18 @@ use std::time::Instant;
 
 fn parse_affine_side(s: &str) -> AffineExpr {
     let mut expr = AffineExpr::new(0);
-    if s.is_empty() { return expr; }
-    
+    if s.is_empty() {
+        return expr;
+    }
+
     let s_replaced = s.replace("-", "+-");
     let parts = s_replaced.split('+');
     for p in parts {
         let p = p.trim();
-        if p.is_empty() { continue; }
-        
+        if p.is_empty() {
+            continue;
+        }
+
         let is_negative = p.starts_with('-');
         let term = if is_negative { &p[1..] } else { p };
         let term = term.trim();
@@ -68,7 +72,10 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!("Usage: {} [-v] decide <in.txt> <out.txt>", args[0]);
-        eprintln!("       {} [-v] <program> [state: A, B, ...] [condition1] [condition2] ...", args[0]);
+        eprintln!(
+            "       {} [-v] <program> [state: A, B, ...] [condition1] [condition2] ...",
+            args[0]
+        );
         std::process::exit(1);
     }
 
@@ -82,7 +89,7 @@ fn main() {
 
         let file = File::open(in_file).expect("Could not open input file");
         let reader = io::BufReader::new(file);
-        
+
         let mut out = File::create(out_file).expect("Could not create output file");
 
         let mut lines = Vec::new();
@@ -101,7 +108,12 @@ fn main() {
 
         for (i, prog_str) in lines.iter().enumerate() {
             if !verbose {
-                eprint!("\rProgress: {}/{} ({:.1}%)", i, total_count, (i as f64 / total_count as f64) * 100.0);
+                eprint!(
+                    "\rProgress: {}/{} ({:.1}%)",
+                    i,
+                    total_count,
+                    (i as f64 / total_count as f64) * 100.0
+                );
                 let _ = io::stderr().flush();
             }
 
@@ -110,14 +122,20 @@ fn main() {
                 success_count += 1;
                 let state_char = (b'A' + set.state as u8) as char;
                 let conds: Vec<String> = set.conditions.iter().map(|c| c.to_string()).collect();
-                mbb::io::write_result(&mut out, prog_str, &mbb::deciders::DeciderResult::Infinite(
-                    mbb::deciders::InfiniteReason::Polyhedral {
-                        state: state_char,
-                        conditions: conds.join(", "),
-                    }
-                )).unwrap();
+                mbb::io::write_result(
+                    &mut out,
+                    prog_str,
+                    &mbb::deciders::DeciderResult::Infinite(
+                        mbb::deciders::InfiniteReason::Polyhedral {
+                            state: state_char,
+                            conditions: conds.join(", "),
+                        },
+                    ),
+                )
+                .unwrap();
             } else {
-                mbb::io::write_result(&mut out, prog_str, &mbb::deciders::DeciderResult::Unknown).unwrap();
+                mbb::io::write_result(&mut out, prog_str, &mbb::deciders::DeciderResult::Unknown)
+                    .unwrap();
             }
         }
         if !verbose {
@@ -155,22 +173,24 @@ fn main() {
             conditions.push(parse_condition(&args[i]));
         }
 
-
-
         let closed_set = PolyhedralClosedSet {
             state: state_idx,
             conditions,
             num_registers: num_regs,
         };
 
-        println!("Verifying Polyhedral Closed Set at State {} with conditions {:?}", state_str, args[3..].to_vec());
+        println!(
+            "Verifying Polyhedral Closed Set at State {} with conditions {:?}",
+            state_str,
+            args[3..].to_vec()
+        );
         match verify_polyhedral_closed_set(&macros, &closed_set, verbose) {
             VerifyResult::Verified => {
                 println!("✅ Successfully verified that the set is closed and does not halt!");
-                
+
                 // Extra: concretely simulate until entry
                 let mut state = mbb::simulate::State::new();
-                
+
                 loop {
                     if state.pc == state_idx {
                         // verify condition
@@ -182,15 +202,24 @@ fn main() {
                             }
                             match cond.cond_type {
                                 ConditionType::GreaterEqualZero => {
-                                    if val < 0 { all_match = false; break; }
+                                    if val < 0 {
+                                        all_match = false;
+                                        break;
+                                    }
                                 }
                                 ConditionType::EqualZero => {
-                                    if val != 0 { all_match = false; break; }
+                                    if val != 0 {
+                                        all_match = false;
+                                        break;
+                                    }
                                 }
                             }
                         }
                         if all_match {
-                            println!("🎉 Program enters the closed set at step {} with regs: {:?}", state.steps, state.registers);
+                            println!(
+                                "🎉 Program enters the closed set at step {} with regs: {:?}",
+                                state.steps, state.registers
+                            );
                             break;
                         }
                     }
@@ -217,7 +246,11 @@ fn main() {
                                 Target::Undef => break,
                             }
                         }
-                        Instruction::Dec { reg, next_not_zero, next_zero } => {
+                        Instruction::Dec {
+                            reg,
+                            next_not_zero,
+                            next_zero,
+                        } => {
                             let val = state.get_reg(*reg);
                             if val == 0 {
                                 match next_zero {

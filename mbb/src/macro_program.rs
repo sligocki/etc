@@ -1,11 +1,22 @@
-use std::collections::HashMap;
 use crate::program::{Instruction, Program, Target};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MacroInst {
-    Inc { reg: usize, next: Target },
-    Dec { reg: usize, next_not_zero: Target, next_zero: Target },
-    Transfer { reg: usize, incs: HashMap<usize, u32>, next: Target },
+    Inc {
+        reg: usize,
+        next: Target,
+    },
+    Dec {
+        reg: usize,
+        next_not_zero: Target,
+        next_zero: Target,
+    },
+    Transfer {
+        reg: usize,
+        incs: HashMap<usize, u32>,
+        next: Target,
+    },
     Undef,
 }
 
@@ -26,7 +37,11 @@ pub fn abstract_program(prog: &Program) -> Vec<MacroInst> {
                     next: *next,
                 });
             }
-            Instruction::Dec { reg, next_not_zero, next_zero } => {
+            Instruction::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            } => {
                 // Check if this forms a transfer loop
                 if let Some(incs) = detect_transfer_loop(prog, i, *reg, *next_not_zero) {
                     macros.push(MacroInst::Transfer {
@@ -98,7 +113,7 @@ use crate::deciders::symbolic::AffineExpr;
 impl MacroInst {
     pub fn to_string_with_state(&self, state_idx: usize, num_regs: usize) -> String {
         let state_char = (b'A' + state_idx as u8) as char;
-        
+
         match self {
             MacroInst::Undef => {
                 format!("{}: ?", state_char)
@@ -106,8 +121,18 @@ impl MacroInst {
             MacroInst::Inc { reg, next } => {
                 format!("{}: {}+{}", state_char, reg, next.to_char())
             }
-            MacroInst::Dec { reg, next_not_zero, next_zero } => {
-                format!("{}: {}-{}{}", state_char, reg, next_not_zero.to_char(), next_zero.to_char())
+            MacroInst::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            } => {
+                format!(
+                    "{}: {}-{}{}",
+                    state_char,
+                    reg,
+                    next_not_zero.to_char(),
+                    next_zero.to_char()
+                )
             }
             MacroInst::Transfer { reg, incs, next } => {
                 let mut in_regs = Vec::new();
@@ -122,19 +147,27 @@ impl MacroInst {
                     }
                     out_regs.push(out_expr);
                 }
-                
+
                 let format_regs = |regs: &[AffineExpr]| -> String {
                     let mut s = String::new();
                     s.push('[');
                     for (i, r) in regs.iter().enumerate() {
-                        if i > 0 { s.push_str(", "); }
+                        if i > 0 {
+                            s.push_str(", ");
+                        }
                         s.push_str(&r.to_string());
                     }
                     s.push(']');
                     s
                 };
 
-                format!("{}:{} -> {}:{}", state_char, format_regs(&in_regs), next.to_char(), format_regs(&out_regs))
+                format!(
+                    "{}:{} -> {}:{}",
+                    state_char,
+                    format_regs(&in_regs),
+                    next.to_char(),
+                    format_regs(&out_regs)
+                )
             }
         }
     }
@@ -147,14 +180,26 @@ impl std::fmt::Display for MacroInst {
             MacroInst::Inc { reg, next } => {
                 write!(f, "{}+{}", reg, next.to_char())
             }
-            MacroInst::Dec { reg, next_not_zero, next_zero } => {
-                write!(f, "{}-{}{}", reg, next_not_zero.to_char(), next_zero.to_char())
+            MacroInst::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            } => {
+                write!(
+                    f,
+                    "{}-{}{}",
+                    reg,
+                    next_not_zero.to_char(),
+                    next_zero.to_char()
+                )
             }
             MacroInst::Transfer { reg, incs, next } => {
                 write!(f, "{}-[", reg)?;
                 let mut first = true;
                 for (r, inc) in incs {
-                    if !first { write!(f, ",")?; }
+                    if !first {
+                        write!(f, ",")?;
+                    }
                     write!(f, "{}+{}", r, inc)?;
                     first = false;
                 }

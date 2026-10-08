@@ -2,12 +2,35 @@ use crate::program::Program;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InfiniteReason {
-    Cycle { start_by: u64, period: u64, is_min_start: bool },
-    TranslatedCycler { start_by: u64, period: u64, is_min_start: bool },
-    Polyhedral { state: char, conditions: String },
-    Semilinear1D { state: char, base: Vec<u32>, period: Vec<u32> },
-    Congruence { state: char, moduli: Vec<u32>, seed: Vec<crate::deciders::congruence::Val> },
-    Bouncer { start_by: u64, period: u64, is_min_start: bool },
+    Cycle {
+        start_by: u64,
+        period: u64,
+        is_min_start: bool,
+    },
+    TranslatedCycler {
+        start_by: u64,
+        period: u64,
+        is_min_start: bool,
+    },
+    Polyhedral {
+        state: char,
+        conditions: String,
+    },
+    Semilinear1D {
+        state: char,
+        base: Vec<u32>,
+        period: Vec<u32>,
+    },
+    Congruence {
+        state: char,
+        moduli: Vec<u32>,
+        seed: Vec<crate::deciders::congruence::Val>,
+    },
+    Bouncer {
+        start_by: u64,
+        period: u64,
+        is_min_start: bool,
+    },
     BackwardsUnreachable,
 }
 
@@ -28,12 +51,19 @@ impl InfiniteReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HitUndef {
     Inst(usize),
-    Target { pc: usize, branch: crate::simulate::Branch },
+    Target {
+        pc: usize,
+        branch: crate::simulate::Branch,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeciderResult {
-    Halt { steps: u64, registers: Vec<u64>, hit_undef: Option<HitUndef> },
+    Halt {
+        steps: u64,
+        registers: Vec<u64>,
+        hit_undef: Option<HitUndef>,
+    },
     Infinite(InfiniteReason),
     Unknown,
     Error(String),
@@ -42,15 +72,15 @@ pub enum DeciderResult {
 pub trait Decider {
     fn decide(&self, prog: &Program) -> DeciderResult;
 }
-pub mod symbolic;
+pub mod backwards;
+pub mod bouncers;
+pub mod congruence;
+pub mod congruence_guesser;
 pub mod polyhedral;
 pub mod polyhedral_guesser;
 pub mod semilinear1d;
 pub mod semilinear1d_guesser;
-pub mod congruence;
-pub mod congruence_guesser;
-pub mod bouncers;
-pub mod backwards;
+pub mod symbolic;
 
 #[derive(Default, Clone, Debug)]
 pub struct DeciderStats {
@@ -93,21 +123,28 @@ impl Default for DeciderConfig {
 impl DeciderConfig {
     pub fn parse(s: &str) -> Self {
         let mut config = Self::default();
-        if s.is_empty() { return config; }
+        if s.is_empty() {
+            return config;
+        }
         for part in s.split(',') {
             let part = part.trim();
-            if part.is_empty() { continue; }
+            if part.is_empty() {
+                continue;
+            }
             let add = if part.starts_with('+') {
                 true
             } else if part.starts_with('-') {
                 false
             } else {
                 if part != "all" && part != "none" {
-                    eprintln!("Warning: Decider config should start with + or -, assuming + for: {}", part);
+                    eprintln!(
+                        "Warning: Decider config should start with + or -, assuming + for: {}",
+                        part
+                    );
                 }
                 true
             };
-            
+
             let name = if part.starts_with('+') || part.starts_with('-') {
                 &part[1..]
             } else {
@@ -155,7 +192,13 @@ pub fn decide_with_stats(
 ) -> DeciderResult {
     if config.simulate_direct {
         let t0 = std::time::Instant::now();
-        let sim_res = crate::simulate::simulate_direct(prog, Some(step_limit), detect_cycles, exact_start, false);
+        let sim_res = crate::simulate::simulate_direct(
+            prog,
+            Some(step_limit),
+            detect_cycles,
+            exact_start,
+            false,
+        );
         stats.add_time("Simulate Direct", t0.elapsed());
         if sim_res != DeciderResult::Unknown {
             return sim_res;
@@ -179,7 +222,7 @@ pub fn decide_with_stats(
             return bouncers_res;
         }
     }
-    
+
     if config.congruence {
         let t0 = std::time::Instant::now();
         let cong_res = congruence_guesser::decide_congruence(prog, step_limit, false);
@@ -218,5 +261,12 @@ pub fn decide(
     config: &DeciderConfig,
 ) -> DeciderResult {
     let mut stats = DeciderStats::default();
-    decide_with_stats(prog, step_limit, detect_cycles, exact_start, config, &mut stats)
+    decide_with_stats(
+        prog,
+        step_limit,
+        detect_cycles,
+        exact_start,
+        config,
+        &mut stats,
+    )
 }

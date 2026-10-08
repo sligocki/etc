@@ -28,6 +28,10 @@ struct Args {
     #[arg(short, long)]
     limit: Option<usize>,
 
+    /// Only output unknown programs (holdouts)
+    #[arg(short = 'u', long)]
+    only_unknown: bool,
+
     /// Configure deciders (+name to enable, -name to disable). Defaults: congruence.
     #[arg(short = 'd', long, default_value = "")]
     deciders: String,
@@ -47,6 +51,19 @@ fn main() {
     if let Some(l) = args.limit {
         println!("Enumeration limit: {}", l);
     }
+    if args.only_unknown {
+        println!("Limiting IO output to only unknown programs.");
+    }
 
-    enumerate(args.num_states, args.step_limit, args.max_regs, args.allow_no_ops, args.exact_start, args.limit, &decider_config, &args.out_file);
+    enumerate(
+        args.num_states,
+        args.step_limit,
+        args.max_regs,
+        args.allow_no_ops,
+        args.exact_start,
+        args.limit,
+        &decider_config,
+        args.only_unknown,
+        &args.out_file,
+    );
 }

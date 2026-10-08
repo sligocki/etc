@@ -1,7 +1,7 @@
+use crate::deciders::symbolic::{AffineExpr, Condition, ConditionType};
 use crate::macro_program::MacroInst;
 use crate::program::Target;
-use crate::deciders::symbolic::{AffineExpr, Condition, ConditionType};
-use minilp::{Problem, OptimizationDirection, Variable, ComparisonOp};
+use minilp::{ComparisonOp, OptimizationDirection, Problem, Variable};
 use std::collections::{HashMap, VecDeque};
 
 pub struct PolyhedralClosedSet {
@@ -26,10 +26,17 @@ pub enum VerifyResult {
     Failed(String),
 }
 
-fn add_expr_to_problem(prob: &mut Problem, vars: &mut HashMap<usize, Variable>, expr: &AffineExpr, comp: ComparisonOp) {
+fn add_expr_to_problem(
+    prob: &mut Problem,
+    vars: &mut HashMap<usize, Variable>,
+    expr: &AffineExpr,
+    comp: ComparisonOp,
+) {
     let mut term_vars = Vec::new();
     for (&var_idx, &coeff) in &expr.coeffs {
-        let v = *vars.entry(var_idx).or_insert_with(|| prob.add_var(0.0, (0.0, f64::INFINITY)));
+        let v = *vars
+            .entry(var_idx)
+            .or_insert_with(|| prob.add_var(0.0, (0.0, f64::INFINITY)));
         term_vars.push((v, coeff as f64));
     }
     prob.add_constraint(&term_vars, comp, -expr.constant as f64);
@@ -57,7 +64,11 @@ fn is_satisfiable(conditions: &[Condition]) -> bool {
     }
 }
 
-fn implies(conditions: &[Condition], target_expr: &AffineExpr, target_cond_type: &ConditionType) -> bool {
+fn implies(
+    conditions: &[Condition],
+    target_expr: &AffineExpr,
+    target_cond_type: &ConditionType,
+) -> bool {
     if !is_satisfiable(conditions) {
         return true;
     }
@@ -98,8 +109,8 @@ fn implies(conditions: &[Condition], target_expr: &AffineExpr, target_cond_type:
             for v in neg_expr.coeffs.values_mut() {
                 *v = -*v;
             }
-            implies(conditions, target_expr, &ConditionType::GreaterEqualZero) &&
-            implies(conditions, &neg_expr, &ConditionType::GreaterEqualZero)
+            implies(conditions, target_expr, &ConditionType::GreaterEqualZero)
+                && implies(conditions, &neg_expr, &ConditionType::GreaterEqualZero)
         }
     }
 }
@@ -108,15 +119,20 @@ fn format_regs(regs: &[AffineExpr]) -> String {
     let mut s = String::new();
     s.push('[');
     for (i, r) in regs.iter().enumerate() {
-        if i > 0 { s.push_str(", "); }
+        if i > 0 {
+            s.push_str(", ");
+        }
         s.push_str(&r.to_string());
     }
     s.push(']');
     s
 }
 
-pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralClosedSet, verbose: bool) -> VerifyResult {
-
+pub fn verify_polyhedral_closed_set(
+    prog: &[MacroInst],
+    closed_set: &PolyhedralClosedSet,
+    verbose: bool,
+) -> VerifyResult {
     let mut initial_regs = Vec::new();
     let mut initial_conds = closed_set.conditions.clone();
 
@@ -142,26 +158,40 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
     while let Some(state) = queue.pop_front() {
         nodes_explored += 1;
         if nodes_explored > 150 {
-            if verbose { println!("  Node limit exceeded ({} nodes)!", nodes_explored); }
+            if verbose {
+                println!("  Node limit exceeded ({} nodes)!", nodes_explored);
+            }
             return VerifyResult::Failed("Node limit exceeded".to_string());
         }
 
         if state.depth > 100 {
             if verbose {
                 println!("  Depth limit exceeded! Trace:");
-                for (s, a) in &state.trace { println!("      {}   {}", s, a); }
+                for (s, a) in &state.trace {
+                    println!("      {}   {}", s, a);
+                }
             }
-            return VerifyResult::Failed("Depth limit exceeded (potential infinite loop)".to_string());
+            return VerifyResult::Failed(
+                "Depth limit exceeded (potential infinite loop)".to_string(),
+            );
         }
 
         if state.pc == Target::Halt || state.pc == Target::Undef {
             if is_satisfiable(&state.path_conditions) {
                 if verbose {
-                    let target_name = if state.pc == Target::Halt { "Halt" } else { "Undef" };
+                    let target_name = if state.pc == Target::Halt {
+                        "Halt"
+                    } else {
+                        "Undef"
+                    };
                     println!("Path failed (reaches {}):", target_name);
                     let mut max_len = 0;
-                    for (s, _) in &state.trace { max_len = max_len.max(s.len()); }
-                    for (s, a) in &state.trace { println!("      {:<width$}   {}", s, a, width = max_len); }
+                    for (s, _) in &state.trace {
+                        max_len = max_len.max(s.len());
+                    }
+                    for (s, a) in &state.trace {
+                        println!("      {:<width$}   {}", s, a, width = max_len);
+                    }
                     println!("      {}:{}", target_name, format_regs(&state.regs));
                 }
                 return VerifyResult::Failed(if state.pc == Target::Halt {
@@ -173,21 +203,37 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
             continue;
         }
 
-        let Target::Inst(pc_idx) = state.pc else { unreachable!() };
+        let Target::Inst(pc_idx) = state.pc else {
+            unreachable!()
+        };
 
         if state.depth > 0 && pc_idx == closed_set.state {
             if is_satisfiable(&state.path_conditions) {
                 if verbose {
                     path_count += 1;
-                    
-                    let new_conditions = &state.path_conditions[closed_set.conditions.len() + closed_set.num_registers..];
-                    let cond_strs: Vec<String> = new_conditions.iter().map(|c| c.to_string()).collect();
-                    println!("Path {} successfully closed (Branch conditions: [{}]):", path_count, cond_strs.join(", "));
-                    
+
+                    let new_conditions = &state.path_conditions
+                        [closed_set.conditions.len() + closed_set.num_registers..];
+                    let cond_strs: Vec<String> =
+                        new_conditions.iter().map(|c| c.to_string()).collect();
+                    println!(
+                        "Path {} successfully closed (Branch conditions: [{}]):",
+                        path_count,
+                        cond_strs.join(", ")
+                    );
+
                     let mut max_len = 0;
-                    for (s, _) in &state.trace { max_len = max_len.max(s.len()); }
-                    for (s, a) in &state.trace { println!("      {:<width$}   {}", s, a, width = max_len); }
-                    println!("      {}:{}", (b'A' + pc_idx as u8) as char, format_regs(&state.regs));
+                    for (s, _) in &state.trace {
+                        max_len = max_len.max(s.len());
+                    }
+                    for (s, a) in &state.trace {
+                        println!("      {:<width$}   {}", s, a, width = max_len);
+                    }
+                    println!(
+                        "      {}:{}",
+                        (b'A' + pc_idx as u8) as char,
+                        format_regs(&state.regs)
+                    );
                 }
 
                 let mut path_failed_conds = Vec::new();
@@ -199,7 +245,11 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                         }
                     }
 
-                    if !implies(&state.path_conditions, &substituted_cond_expr, &cond.cond_type) {
+                    if !implies(
+                        &state.path_conditions,
+                        &substituted_cond_expr,
+                        &cond.cond_type,
+                    ) {
                         if verbose {
                             println!("  FAILED to prove condition {} is preserved (evaluates to {} which is not implied by path).", 
                                      cond,
@@ -212,7 +262,7 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                                  Condition { expr: substituted_cond_expr, cond_type: cond.cond_type.clone() });
                     }
                 }
-                
+
                 if !path_failed_conds.is_empty() {
                     for c in path_failed_conds {
                         if !all_failed_conds.contains(&c) {
@@ -220,7 +270,9 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                         }
                     }
                 }
-                if verbose { println!(); }
+                if verbose {
+                    println!();
+                }
             }
             continue;
         }
@@ -245,7 +297,11 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                 next_state.pc = *next;
                 next_state.depth += 1;
                 if verbose {
-                    let st_str = format!("{}:{}", (b'A' + pc_idx as u8) as char, format_regs(&state.regs));
+                    let st_str = format!(
+                        "{}:{}",
+                        (b'A' + pc_idx as u8) as char,
+                        format_regs(&state.regs)
+                    );
                     let act_str = inst.to_string_with_state(pc_idx, closed_set.num_registers);
                     next_state.trace.push((st_str, act_str));
                 }
@@ -269,13 +325,21 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                 next_state.pc = *next;
                 next_state.depth += 1;
                 if verbose {
-                    let st_str = format!("{}:{}", (b'A' + pc_idx as u8) as char, format_regs(&state.regs));
+                    let st_str = format!(
+                        "{}:{}",
+                        (b'A' + pc_idx as u8) as char,
+                        format_regs(&state.regs)
+                    );
                     let act_str = inst.to_string_with_state(pc_idx, closed_set.num_registers);
                     next_state.trace.push((st_str, act_str));
                 }
                 queue.push_back(next_state);
             }
-            MacroInst::Dec { reg, next_not_zero, next_zero } => {
+            MacroInst::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            } => {
                 let r_expr = if *reg < state.regs.len() {
                     state.regs[*reg].clone()
                 } else {
@@ -284,12 +348,21 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
 
                 // Zero branch
                 let mut zero_state = state.clone();
-                zero_state.path_conditions.push(Condition::eq_zero(r_expr.clone()));
+                zero_state
+                    .path_conditions
+                    .push(Condition::eq_zero(r_expr.clone()));
                 zero_state.pc = *next_zero;
                 zero_state.depth += 1;
                 if verbose {
-                    let st_str = format!("{}:{}", (b'A' + pc_idx as u8) as char, format_regs(&state.regs));
-                    let act_str = format!("{} (branch: == 0)", inst.to_string_with_state(pc_idx, closed_set.num_registers));
+                    let st_str = format!(
+                        "{}:{}",
+                        (b'A' + pc_idx as u8) as char,
+                        format_regs(&state.regs)
+                    );
+                    let act_str = format!(
+                        "{} (branch: == 0)",
+                        inst.to_string_with_state(pc_idx, closed_set.num_registers)
+                    );
                     zero_state.trace.push((st_str, act_str));
                 }
                 queue.push_back(zero_state);
@@ -298,8 +371,10 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                 let mut nz_state = state.clone();
                 let mut r_minus_1 = r_expr.clone();
                 r_minus_1.add_const(-1);
-                nz_state.path_conditions.push(Condition::geq_zero(r_minus_1));
-                
+                nz_state
+                    .path_conditions
+                    .push(Condition::geq_zero(r_minus_1));
+
                 if *reg >= nz_state.regs.len() {
                     nz_state.regs.resize(*reg + 1, AffineExpr::new(0));
                 }
@@ -307,8 +382,15 @@ pub fn verify_polyhedral_closed_set(prog: &[MacroInst], closed_set: &PolyhedralC
                 nz_state.pc = *next_not_zero;
                 nz_state.depth += 1;
                 if verbose {
-                    let st_str = format!("{}:{}", (b'A' + pc_idx as u8) as char, format_regs(&state.regs));
-                    let act_str = format!("{} (branch: > 0)", inst.to_string_with_state(pc_idx, closed_set.num_registers));
+                    let st_str = format!(
+                        "{}:{}",
+                        (b'A' + pc_idx as u8) as char,
+                        format_regs(&state.regs)
+                    );
+                    let act_str = format!(
+                        "{} (branch: > 0)",
+                        inst.to_string_with_state(pc_idx, closed_set.num_registers)
+                    );
                     nz_state.trace.push((st_str, act_str));
                 }
                 queue.push_back(nz_state);

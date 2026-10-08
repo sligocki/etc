@@ -38,7 +38,9 @@ impl AffineExpr {
     }
 
     pub fn mul_add(&mut self, mult: i64, other: &AffineExpr) {
-        if mult == 0 { return; }
+        if mult == 0 {
+            return;
+        }
         self.constant += mult * other.constant;
         for (&k, &v) in &other.coeffs {
             *self.coeffs.entry(k).or_insert(0) += mult * v;
@@ -81,22 +83,32 @@ impl std::fmt::Display for AffineExpr {
         let mut sorted_coeffs: Vec<_> = self.coeffs.iter().collect();
         sorted_coeffs.sort_by_key(|&(k, _)| k);
         for (&k, &v) in sorted_coeffs {
-            if v == 0 { continue; }
+            if v == 0 {
+                continue;
+            }
             if !first {
-                if v > 0 { write!(f, " + ")?; }
-                else { write!(f, " - ")?; }
+                if v > 0 {
+                    write!(f, " + ")?;
+                } else {
+                    write!(f, " - ")?;
+                }
             } else if v < 0 {
                 write!(f, "-")?;
             }
             first = false;
             let abs_v = v.abs();
-            if abs_v != 1 { write!(f, "{}", abs_v)?; }
+            if abs_v != 1 {
+                write!(f, "{}", abs_v)?;
+            }
             write!(f, "{}", (b'a' + k as u8) as char)?;
         }
         if self.constant != 0 || first {
             if !first {
-                if self.constant > 0 { write!(f, " + ")?; }
-                else { write!(f, " - ")?; }
+                if self.constant > 0 {
+                    write!(f, " + ")?;
+                } else {
+                    write!(f, " - ")?;
+                }
                 write!(f, "{}", self.constant.abs())?;
             } else {
                 write!(f, "{}", self.constant)?;

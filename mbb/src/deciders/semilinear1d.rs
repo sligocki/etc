@@ -1,5 +1,5 @@
-use crate::program::Target;
 use crate::macro_program::MacroInst;
+use crate::program::Target;
 use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,12 +25,18 @@ impl Ray {
         let mut period_mult = None;
         for i in 0..self.period.len() {
             if other.period[i] == 0 {
-                if self.period[i] != 0 { return false; }
+                if self.period[i] != 0 {
+                    return false;
+                }
             } else {
-                if self.period[i] % other.period[i] != 0 { return false; }
+                if self.period[i] % other.period[i] != 0 {
+                    return false;
+                }
                 let c = self.period[i] / other.period[i];
                 if let Some(prev_c) = period_mult {
-                    if prev_c != c { return false; }
+                    if prev_c != c {
+                        return false;
+                    }
                 } else {
                     period_mult = Some(c);
                 }
@@ -41,14 +47,22 @@ impl Ray {
         let mut base_mult = None;
         for i in 0..self.base.len() {
             if other.period[i] == 0 {
-                if self.base[i] != other.base[i] { return false; }
+                if self.base[i] != other.base[i] {
+                    return false;
+                }
             } else {
-                if self.base[i] < other.base[i] { return false; }
+                if self.base[i] < other.base[i] {
+                    return false;
+                }
                 let diff = self.base[i] - other.base[i];
-                if diff % other.period[i] != 0 { return false; }
+                if diff % other.period[i] != 0 {
+                    return false;
+                }
                 let k = diff / other.period[i];
                 if let Some(prev_k) = base_mult {
-                    if prev_k != k { return false; }
+                    if prev_k != k {
+                        return false;
+                    }
                 } else {
                     base_mult = Some(k);
                 }
@@ -68,37 +82,50 @@ pub fn verify_semilinear1d_set(
 ) -> bool {
     let mut visited: HashMap<Target, Vec<Ray>> = HashMap::new();
     let mut queue = VecDeque::new();
-    
+
     queue.push_back((initial_state, seed_ray));
-    
+
     let mut explored_nodes = 0;
 
     while let Some((pc, mut ray)) = queue.pop_front() {
         explored_nodes += 1;
         if explored_nodes > 1000 {
-            if verbose { println!("Semilinear1D: Explored nodes limit reached (1000). Bailing out."); }
+            if verbose {
+                println!("Semilinear1D: Explored nodes limit reached (1000). Bailing out.");
+            }
             return false;
         }
 
         if pc == Target::Halt || pc == Target::Undef {
-            if verbose { println!("Semilinear1D: Path failed (reaches {:?}). Ray: {:?}", pc, ray); }
+            if verbose {
+                println!(
+                    "Semilinear1D: Path failed (reaches {:?}). Ray: {:?}",
+                    pc, ray
+                );
+            }
             return false;
         }
-        
+
         let state_visited = visited.entry(pc).or_default();
         if state_visited.iter().any(|v| ray.is_subset_of(v)) {
             continue;
         }
-        
+
         state_visited.retain(|v| !v.is_subset_of(&ray));
         state_visited.push(ray.clone());
-        
-        let Target::Inst(pc_idx) = pc else { unreachable!() };
+
+        let Target::Inst(pc_idx) = pc else {
+            unreachable!()
+        };
         let inst = &prog[pc_idx];
-        
+
         // Ensure ray fits num_regs
-        if ray.base.len() < num_regs { ray.base.resize(num_regs, 0); }
-        if ray.period.len() < num_regs { ray.period.resize(num_regs, 0); }
+        if ray.base.len() < num_regs {
+            ray.base.resize(num_regs, 0);
+        }
+        if ray.period.len() < num_regs {
+            ray.period.resize(num_regs, 0);
+        }
 
         match inst.clone() {
             MacroInst::Inc { reg, next } => {
@@ -129,7 +156,11 @@ pub fn verify_semilinear1d_set(
                 }
                 queue.push_back((next, ray));
             }
-            MacroInst::Dec { reg, next_not_zero, next_zero } => {
+            MacroInst::Dec {
+                reg,
+                next_not_zero,
+                next_zero,
+            } => {
                 if reg >= ray.base.len() {
                     ray.base.resize(reg + 1, 0);
                     ray.period.resize(reg + 1, 0);
@@ -171,6 +202,6 @@ pub fn verify_semilinear1d_set(
             }
         }
     }
-    
+
     true
 }

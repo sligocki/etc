@@ -36,13 +36,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     let mut num_halted = 0u64;
     let mut num_unknown = 0u64;
     let mut num_infinite = 0u64;
-    let mut num_infinite_cycle = 0u64;
-    let mut num_infinite_tc = 0u64;
-    let mut num_infinite_bouncer = 0u64;
-    let mut num_infinite_poly = 0u64;
-    let mut num_infinite_semilinear1d = 0u64;
-    let mut num_infinite_congruence = 0u64;
-    let mut num_infinite_backwards = 0u64;
+    let mut infinite_counts: std::collections::HashMap<&'static str, u64> = std::collections::HashMap::new();
     let mut max_steps = 0u64;
     let mut max_program = String::new();
     let mut last_print_time = std::time::Instant::now();
@@ -207,15 +201,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
             DeciderResult::Infinite(ref reason) => {
                 num_infinite += 1;
-                match reason {
-                    crate::deciders::InfiniteReason::Cycle { .. } => num_infinite_cycle += 1,
-                    crate::deciders::InfiniteReason::TranslatedCycler { .. } => num_infinite_tc += 1,
-                    crate::deciders::InfiniteReason::Bouncer { .. } => num_infinite_bouncer += 1,
-                    crate::deciders::InfiniteReason::Polyhedral { .. } => num_infinite_poly += 1,
-                    crate::deciders::InfiniteReason::Semilinear1D { .. } => num_infinite_semilinear1d += 1,
-                    crate::deciders::InfiniteReason::Congruence { .. } => num_infinite_congruence += 1,
-                    crate::deciders::InfiniteReason::BackwardsUnreachable => num_infinite_backwards += 1,
-                }
+                *infinite_counts.entry(reason.decider_name()).or_insert(0) += 1;
                 crate::io::write_result(
                     &mut writer,
                     &state.prog.to_string_format(state.max_reg_referenced),
@@ -246,28 +232,19 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     println!("  Halted: {} ({:.2}%)", num_halted, halt_pct);
     println!("  Infinite: {} ({:.2}%)", num_infinite, inf_pct);
     if num_infinite > 0 {
-        let cycle_pct = (num_infinite_cycle as f64 / num_infinite as f64) * 100.0;
-        let tc_pct = (num_infinite_tc as f64 / num_infinite as f64) * 100.0;
-        let bouncer_pct = (num_infinite_bouncer as f64 / num_infinite as f64) * 100.0;
-        let poly_pct = (num_infinite_poly as f64 / num_infinite as f64) * 100.0;
-        let semi_pct = (num_infinite_semilinear1d as f64 / num_infinite as f64) * 100.0;
-        let congruence_pct = (num_infinite_congruence as f64 / num_infinite as f64) * 100.0;
-        let backwards_pct = (num_infinite_backwards as f64 / num_infinite as f64) * 100.0;
-        println!("    Cycle: {} ({:.2}%)", num_infinite_cycle, cycle_pct);
-        println!("    Translated Cycler: {} ({:.2}%)", num_infinite_tc, tc_pct);
-        println!("    Backwards Unreachable: {} ({:.2}%)", num_infinite_backwards, backwards_pct);
-        println!("    Bouncer: {} ({:.2}%)", num_infinite_bouncer, bouncer_pct);
-        println!("    Congruence: {} ({:.2}%)", num_infinite_congruence, congruence_pct);
-        println!("    Semilinear1D: {} ({:.2}%)", num_infinite_semilinear1d, semi_pct);
-        println!("    Polyhedral: {} ({:.2}%)", num_infinite_poly, poly_pct);
+        let mut sorted_counts: Vec<_> = infinite_counts.iter().collect();
+        // Sort by name or count? Pre-defined order is better but sorting by count is robust
+        sorted_counts.sort_by_key(|&(_, &count)| std::cmp::Reverse(count));
+        
+        for (name, count) in sorted_counts {
+            let pct = (*count as f64 / num_infinite as f64) * 100.0;
+            println!("    {}: {} ({:.2}%)", name, count, pct);
+        }
     }
     println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
     println!("Max Halting Program: {} ({} steps)", max_program, max_steps);
     println!("Decider Runtime Breakdown:");
-    println!("  Simulate Direct: {:.2?}", total_stats.time_simulate_direct);
-    println!("  Backwards:       {:.2?} ({} states explored)", total_stats.time_backwards, total_stats.backwards_states_explored);
-    println!("  Bouncers:        {:.2?}", total_stats.time_bouncers);
-    println!("  Congruence:      {:.2?}", total_stats.time_congruence);
-    println!("  Semilinear1D:    {:.2?}", total_stats.time_semilinear1d);
-    println!("  Polyhedral:      {:.2?}", total_stats.time_polyhedral);
+    for (name, duration) in &total_stats.runtimes {
+        println!("  {}: {:.2?}", name, duration);
+    }
 }

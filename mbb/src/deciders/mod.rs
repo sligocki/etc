@@ -5,6 +5,7 @@ pub enum InfiniteReason {
     Cycle { start_by: u64, period: u64, is_min_start: bool },
     TranslatedCycler { start_by: u64, period: u64, is_min_start: bool },
     Polyhedral { state: char, conditions: String },
+    Semilinear1D { state: char, base: Vec<u32>, period: Vec<u32> },
     Bouncer { start_by: u64, period: u64, is_min_start: bool },
     BackwardsUnreachable,
 }
@@ -29,6 +30,8 @@ pub trait Decider {
 pub mod symbolic;
 pub mod polyhedral;
 pub mod polyhedral_guesser;
+pub mod semilinear1d;
+pub mod semilinear1d_guesser;
 pub mod bouncers;
 pub mod backwards;
 
@@ -37,6 +40,7 @@ pub struct DeciderStats {
     pub time_simulate_direct: std::time::Duration,
     pub time_bouncers: std::time::Duration,
     pub time_polyhedral: std::time::Duration,
+    pub time_semilinear1d: std::time::Duration,
     pub time_backwards: std::time::Duration,
     pub backwards_states_explored: u64,
 }
@@ -47,6 +51,7 @@ pub fn decide_with_stats(
     detect_cycles: bool,
     exact_start: bool,
     use_polyhedral: bool,
+    use_semilinear1d: bool,
     stats: &mut DeciderStats,
 ) -> DeciderResult {
     let t0 = std::time::Instant::now();
@@ -71,6 +76,15 @@ pub fn decide_with_stats(
         return bouncers_res;
     }
 
+    if use_semilinear1d {
+        let t0 = std::time::Instant::now();
+        let sl_res = semilinear1d_guesser::decide_semilinear1d(prog, step_limit, false);
+        stats.time_semilinear1d += t0.elapsed();
+        if sl_res != DeciderResult::Unknown {
+            return sl_res;
+        }
+    }
+
     if use_polyhedral {
         let t0 = std::time::Instant::now();
         let poly_res = polyhedral_guesser::decide_polyhedral(prog, step_limit);
@@ -89,7 +103,8 @@ pub fn decide(
     detect_cycles: bool,
     exact_start: bool,
     use_polyhedral: bool,
+    use_semilinear1d: bool,
 ) -> DeciderResult {
     let mut stats = DeciderStats::default();
-    decide_with_stats(prog, step_limit, detect_cycles, exact_start, use_polyhedral, &mut stats)
+    decide_with_stats(prog, step_limit, detect_cycles, exact_start, use_polyhedral, use_semilinear1d, &mut stats)
 }

@@ -34,6 +34,9 @@ pub fn write_result<W: Write>(
             InfiniteReason::Bouncer { start_by, period, is_min_start } => {
                 writeln!(writer, "{}\tInfinite\tBouncer(start_by: {}, period: {}, is_min_start: {})", prog_str, start_by, period, is_min_start)
             }
+            InfiniteReason::Semilinear1D { state, base, period } => {
+                writeln!(writer, "{}\tInfinite\tSemilinear1D(State: {}, Base: {:?}, Period: {:?})", prog_str, state, base, period)
+            }
             InfiniteReason::BackwardsUnreachable => {
                 writeln!(writer, "{}\tInfinite\tBackwardsUnreachable()", prog_str)
             }

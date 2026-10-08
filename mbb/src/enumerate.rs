@@ -21,7 +21,7 @@ impl EnumState {
     }
 }
 
-pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, limit: Option<usize>, use_polyhedral: bool, out_file: &str) {
+pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, allow_no_ops: bool, exact_start: bool, limit: Option<usize>, use_polyhedral: bool, use_semilinear1d: bool, out_file: &str) {
     use std::fs::File;
     use std::io::BufWriter;
 
@@ -40,6 +40,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     let mut num_infinite_tc = 0u64;
     let mut num_infinite_bouncer = 0u64;
     let mut num_infinite_poly = 0u64;
+    let mut num_infinite_semilinear1d = 0u64;
     let mut num_infinite_backwards = 0u64;
     let mut max_steps = 0u64;
     let mut max_program = String::new();
@@ -69,7 +70,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
             }
         }
 
-        let decider_res = crate::deciders::decide_with_stats(&state.prog, step_limit, true, exact_start, use_polyhedral, &mut total_stats);
+        let decider_res = crate::deciders::decide_with_stats(&state.prog, step_limit, true, exact_start, use_polyhedral, use_semilinear1d, &mut total_stats);
         
         match decider_res {
             DeciderResult::Halt { steps, registers: _, ref hit_undef } => {
@@ -210,6 +211,7 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
                     crate::deciders::InfiniteReason::TranslatedCycler { .. } => num_infinite_tc += 1,
                     crate::deciders::InfiniteReason::Bouncer { .. } => num_infinite_bouncer += 1,
                     crate::deciders::InfiniteReason::Polyhedral { .. } => num_infinite_poly += 1,
+                    crate::deciders::InfiniteReason::Semilinear1D { .. } => num_infinite_semilinear1d += 1,
                     crate::deciders::InfiniteReason::BackwardsUnreachable => num_infinite_backwards += 1,
                 }
                 crate::io::write_result(
@@ -246,11 +248,13 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
         let tc_pct = (num_infinite_tc as f64 / num_infinite as f64) * 100.0;
         let bouncer_pct = (num_infinite_bouncer as f64 / num_infinite as f64) * 100.0;
         let poly_pct = (num_infinite_poly as f64 / num_infinite as f64) * 100.0;
+        let semi_pct = (num_infinite_semilinear1d as f64 / num_infinite as f64) * 100.0;
         let backwards_pct = (num_infinite_backwards as f64 / num_infinite as f64) * 100.0;
         println!("    Cycle: {} ({:.2}%)", num_infinite_cycle, cycle_pct);
         println!("    Translated Cycler: {} ({:.2}%)", num_infinite_tc, tc_pct);
         println!("    Backwards Unreachable: {} ({:.2}%)", num_infinite_backwards, backwards_pct);
         println!("    Bouncer: {} ({:.2}%)", num_infinite_bouncer, bouncer_pct);
+        println!("    Semilinear1D: {} ({:.2}%)", num_infinite_semilinear1d, semi_pct);
         println!("    Polyhedral: {} ({:.2}%)", num_infinite_poly, poly_pct);
     }
     println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
@@ -259,5 +263,6 @@ pub fn enumerate(num_states: usize, step_limit: u64, max_regs: Option<usize>, al
     println!("  Simulate Direct: {:.2?}", total_stats.time_simulate_direct);
     println!("  Backwards:       {:.2?} ({} states explored)", total_stats.time_backwards, total_stats.backwards_states_explored);
     println!("  Bouncers:        {:.2?}", total_stats.time_bouncers);
+    println!("  Semilinear1D:    {:.2?}", total_stats.time_semilinear1d);
     println!("  Polyhedral:      {:.2?}", total_stats.time_polyhedral);
 }

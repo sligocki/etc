@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::time::Instant;
 
 fn main() {
-    let file = File::open("mbb_sz8_holdouts_6.txt").unwrap_or_else(|_| File::open("bench_6.txt").unwrap());
+    let file = File::open("bench_6.txt").unwrap();
     let reader = BufReader::new(file);
     let mut progs = Vec::new();
     for line in reader.lines() {
@@ -54,4 +54,15 @@ fn main() {
     }
     let poly_time = start.elapsed();
     println!("Polyhedral Guesser: {} solved in {:?}", poly_solved, poly_time);
+
+    // Benchmark Semilinear1D
+    let start = Instant::now();
+    let mut semi_solved = 0;
+    for p in &progs {
+        if matches!(mbb::deciders::semilinear1d_guesser::decide_semilinear1d(p, 100_000, false), DeciderResult::Infinite(_)) {
+            semi_solved += 1;
+        }
+    }
+    let semi_time = start.elapsed();
+    println!("Semilinear1D: {} solved in {:?}", semi_solved, semi_time);
 }

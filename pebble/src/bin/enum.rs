@@ -1,3 +1,4 @@
+use pebble::deciders::Decider;
 use pebble::enumeration::{EnumStats, TnfEnumerator};
 use pebble::io::{write_records_to_file, ProgramRecord};
 use std::env;
@@ -16,7 +17,8 @@ fn print_usage(bin: &str) {
     eprintln!("  -s, --steps <STEPS>      Maximum steps per program (overrides positional)");
     eprintln!("  -p, --progress <COUNT>   Print progress every <COUNT> enumerated programs");
     eprintln!("  -o, --output <FILE>      Write program results to <FILE>");
-    eprintln!("      --holdouts-only      When using -o, only write non-halting holdout programs");
+    eprintln!("      --holdouts-only      When using -o, only write undecided holdout programs");
+    eprintln!("      --no-deciders        Disable non-halting decider pipeline on holdouts");
     eprintln!("  -h, --help               Show this help message");
 }
 
@@ -30,6 +32,7 @@ fn main() {
     let mut progress_interval: Option<u64> = None;
     let mut output_path: Option<PathBuf> = None;
     let mut holdouts_only = false;
+    let mut use_deciders = true;
 
     let mut i = 1;
     while i < args.len() {
@@ -72,6 +75,9 @@ fn main() {
             "--holdouts-only" => {
                 holdouts_only = true;
             }
+            "--no-deciders" => {
+                use_deciders = false;
+            }
             arg if arg.starts_with('-') => {
                 eprintln!("Error: unknown option '{arg}'");
                 print_usage(bin);
@@ -111,6 +117,14 @@ fn main() {
     println!("=== Pebble Automaton Enumerator (TNF) ===");
     println!("Size (n):         {size}");
     println!("Max steps:        {max_steps}");
+    println!(
+        "Deciders:         {}",
+        if use_deciders {
+            "enabled (EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents)"
+        } else {
+            "disabled"
+        }
+    );
     println!();
 
     let mut stats = EnumStats::new(size, max_steps);
@@ -118,10 +132,10 @@ fn main() {
     let start = Instant::now();
     let mut last_report = Instant::now();
 
-    for entry in TnfEnumerator::new(size, max_steps) {
+    for entry in TnfEnumerator::with_deciders(size, max_steps, use_deciders) {
         stats.record(&entry);
 
-        if output_path.is_some() && (!holdouts_only || !entry.outcome.is_halted()) {
+        if output_path.is_some() && (!holdouts_only || entry.outcome.is_holdout()) {
             records_to_write.push(ProgramRecord::new(entry.program, Some(entry.outcome)));
         }
 
@@ -136,10 +150,12 @@ fn main() {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "[Progress] programs: {} | halted: {} ({:.2}%) | holdouts: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
+                "[Progress] programs: {} | halted: {} ({:.2}%) | decided: {} ({:.2}%) | holdouts: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
                 stats.total_programs,
                 stats.halted_programs,
                 stats.halted_percentage(),
+                stats.decided_programs,
+                stats.decided_percentage(),
                 stats.holdout_programs(),
                 stats.holdout_percentage(),
                 max_steps_str,
@@ -177,6 +193,22 @@ fn main() {
         stats.halted_programs,
         stats.halted_percentage()
     );
+    if use_deciders {
+        println!(
+            "Decided non-halting:    {} ({:.2}%)",
+            stats.decided_programs,
+            stats.decided_percentage()
+        );
+        for decider in Decider::ALL {
+            let count = stats.decided_count(decider);
+            let pct = if stats.total_programs > 0 {
+                (count as f64 / stats.total_programs as f64) * 100.0
+            } else {
+                0.0
+            };
+            println!("  - {:<20} {} ({:.2}%)", format!("{decider}:"), count, pct);
+        }
+    }
     println!(
         "Holdout programs:       {} ({:.2}%)",
         stats.holdout_programs(),

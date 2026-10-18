@@ -98,6 +98,27 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
             })?;
             SimOutcome::Halted { steps }
         }
+        "DECIDED" => {
+            let decider_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
+                line: line_num,
+                detail: "missing decider name after DECIDED".to_string(),
+            })?;
+            let decider = decider_str
+                .parse()
+                .map_err(|detail| IoError::ParseOutcome {
+                    line: line_num,
+                    detail,
+                })?;
+            let steps_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
+                line: line_num,
+                detail: "missing step count after DECIDED decider name".to_string(),
+            })?;
+            let steps: u64 = steps_str.parse().map_err(|_| IoError::ParseOutcome {
+                line: line_num,
+                detail: format!("invalid step count '{steps_str}'"),
+            })?;
+            SimOutcome::DecidedNonHalting { decider, steps }
+        }
         "MAX_STEPS" | "HOLD" | "HOLDOUT" | "TIMEOUT" => {
             let steps_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
                 line: line_num,
@@ -230,6 +251,7 @@ pub fn write_programs_to_file<P: AsRef<Path>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deciders::Decider;
     use std::io::Cursor;
 
     #[test]
@@ -238,6 +260,13 @@ mod tests {
             ProgramRecord::new(
                 "00_11_03_21_04".parse().unwrap(),
                 Some(SimOutcome::Halted { steps: 11 }),
+            ),
+            ProgramRecord::new(
+                "01_01".parse().unwrap(),
+                Some(SimOutcome::DecidedNonHalting {
+                    decider: Decider::EdgeGlider,
+                    steps: 50,
+                }),
             ),
             ProgramRecord::new(
                 "01_11_03_21_04".parse().unwrap(),

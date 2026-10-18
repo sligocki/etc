@@ -1,3 +1,4 @@
+use crate::deciders::{run_decider_pipeline, Decider};
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
 
@@ -17,6 +18,11 @@ pub struct EnumStats {
     pub total_programs: u64,
     /// Number of enumerated TNF programs that halted.
     pub halted_programs: u64,
+    /// Number of enumerated TNF programs proven non-halting by the decider pipeline.
+    pub decided_programs: u64,
+    /// Breakdown of decided non-halting programs by decider:
+    /// `[EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents]`.
+    pub decided_by_kind: [u64; 4],
     /// Maximum halting step count observed across all halted programs.
     pub max_halting_steps: Option<u64>,
     /// First champion program achieving `max_halting_steps`.
@@ -37,24 +43,50 @@ impl EnumStats {
     pub fn record(&mut self, entry: &EnumEntry) {
         self.total_programs += 1;
 
-        if let SimOutcome::Halted { steps } = entry.outcome {
-            self.halted_programs += 1;
+        match entry.outcome {
+            SimOutcome::Halted { steps } => {
+                self.halted_programs += 1;
 
-            let is_new_max = match self.max_halting_steps {
-                None => true,
-                Some(prev_max) => steps > prev_max,
-            };
-            if is_new_max {
-                self.max_halting_steps = Some(steps);
-                self.champion = Some(entry.program.clone());
+                let is_new_max = match self.max_halting_steps {
+                    None => true,
+                    Some(prev_max) => steps > prev_max,
+                };
+                if is_new_max {
+                    self.max_halting_steps = Some(steps);
+                    self.champion = Some(entry.program.clone());
+                }
             }
+            SimOutcome::DecidedNonHalting { decider, .. } => {
+                self.decided_programs += 1;
+                let idx = match decider {
+                    Decider::EdgeGlider => 0,
+                    Decider::Cycler => 1,
+                    Decider::TranslatedCycler => 2,
+                    Decider::SeparatedComponents => 3,
+                };
+                self.decided_by_kind[idx] += 1;
+            }
+            SimOutcome::MaxStepsReached { .. } | SimOutcome::MissingRule { .. } => {}
         }
     }
 
-    /// Number of non-halting holdout programs among the enumerated TNF programs.
+    /// Return the count of programs decided by a specific `Decider`.
+    pub fn decided_count(&self, decider: Decider) -> u64 {
+        let idx = match decider {
+            Decider::EdgeGlider => 0,
+            Decider::Cycler => 1,
+            Decider::TranslatedCycler => 2,
+            Decider::SeparatedComponents => 3,
+        };
+        self.decided_by_kind[idx]
+    }
+
+    /// Number of remaining undecided holdout programs (`total - halted - decided`).
     #[inline]
     pub fn holdout_programs(&self) -> u64 {
-        self.total_programs.saturating_sub(self.halted_programs)
+        self.total_programs
+            .saturating_sub(self.halted_programs)
+            .saturating_sub(self.decided_programs)
     }
 
     /// Percentage of enumerated TNF programs that halted (`0.0..=100.0`).
@@ -66,7 +98,16 @@ impl EnumStats {
         }
     }
 
-    /// Percentage of enumerated TNF programs that did not halt (`0.0..=100.0`).
+    /// Percentage of enumerated TNF programs proven non-halting by deciders (`0.0..=100.0`).
+    pub fn decided_percentage(&self) -> f64 {
+        if self.total_programs == 0 {
+            0.0
+        } else {
+            (self.decided_programs as f64 / self.total_programs as f64) * 100.0
+        }
+    }
+
+    /// Percentage of enumerated TNF programs that remain undecided holdouts (`0.0..=100.0`).
     pub fn holdout_percentage(&self) -> f64 {
         if self.total_programs == 0 {
             0.0
@@ -80,8 +121,11 @@ impl EnumStats {
 /// only when a cell with `k` pebbles is actually reached during simulation.
 ///
 /// Shares simulation prefixes across branches by snapshotting the `Simulator` at the branch point.
+/// When a leaf reaches `max_steps` without halting, optionally runs the decider pipeline
+/// (`EdgeGlider` -> `Cycler`/`TranslatedCycler` -> `SeparatedComponents`).
 pub struct TnfEnumerator {
     max_steps: u64,
+    use_deciders: bool,
     /// DFS stack of `(partial_program, simulator_at_branch_point)`.
     stack: Vec<(Program, Simulator)>,
     /// Precomputed valid rules for each pebble count `1..=size`.
@@ -89,11 +133,18 @@ pub struct TnfEnumerator {
 }
 
 impl TnfEnumerator {
-    /// Create a new TNF enumerator for programs of `size` running up to `max_steps`.
+    /// Create a new TNF enumerator for programs of `size` running up to `max_steps`,
+    /// with the non-halting decider pipeline enabled on holdouts.
     pub fn new(size: usize, max_steps: u64) -> Self {
+        Self::with_deciders(size, max_steps, true)
+    }
+
+    /// Create a new TNF enumerator with explicit control over whether the decider pipeline is run on holdouts.
+    pub fn with_deciders(size: usize, max_steps: u64, use_deciders: bool) -> Self {
         if size == 0 {
             return Self {
                 max_steps,
+                use_deciders,
                 stack: Vec::new(),
                 rule_table: Vec::new(),
             };
@@ -103,6 +154,7 @@ impl TnfEnumerator {
         let initial_sim = Simulator::new(size);
         Self {
             max_steps,
+            use_deciders,
             stack: vec![(initial_prog, initial_sim)],
             rule_table,
         }
@@ -127,7 +179,30 @@ impl Iterator for TnfEnumerator {
                         self.stack.push((child_prog, child_sim));
                     }
                 }
-                outcome @ (SimOutcome::Halted { .. } | SimOutcome::MaxStepsReached { .. }) => {
+                SimOutcome::Halted { steps } => {
+                    return Some(EnumEntry {
+                        program: prog,
+                        outcome: SimOutcome::Halted { steps },
+                    });
+                }
+                SimOutcome::MaxStepsReached { steps } => {
+                    let outcome = if self.use_deciders {
+                        if let Some(decider) =
+                            run_decider_pipeline(&prog, Some(sim.cells()), self.max_steps)
+                        {
+                            SimOutcome::DecidedNonHalting { decider, steps }
+                        } else {
+                            SimOutcome::MaxStepsReached { steps }
+                        }
+                    } else {
+                        SimOutcome::MaxStepsReached { steps }
+                    };
+                    return Some(EnumEntry {
+                        program: prog,
+                        outcome,
+                    });
+                }
+                outcome @ SimOutcome::DecidedNonHalting { .. } => {
                     return Some(EnumEntry {
                         program: prog,
                         outcome,
@@ -142,34 +217,31 @@ impl Iterator for TnfEnumerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulation::simulate;
 
     #[test]
-    fn test_tnf_enumerator_sizes_1_to_4() {
+    fn test_tnf_enumerator_with_deciders_sizes_1_to_4() {
         let expected = [
-            // (size, expected_tnf_programs, expected_tnf_halted, expected_max_steps)
-            (1, 3u64, 1u64, 0u64),
-            (2, 12, 4, 1),
-            (3, 114, 30, 3),
-            (4, 933, 223, 6),
+            // (size, expected_total, expected_halted, expected_decided, expected_holdouts, expected_max_steps)
+            (1, 3u64, 1u64, 2u64, 0u64, 0u64),
+            (2, 12, 4, 8, 0, 1),
+            (3, 114, 30, 84, 0, 3),
+            (4, 933, 223, 710, 0, 6),
         ];
 
-        for (size, exp_total, exp_halted, exp_max_steps) in expected {
+        for (size, exp_total, exp_halted, exp_decided, exp_holdouts, exp_max_steps) in expected {
             let max_steps = 25;
             let mut stats = EnumStats::new(size, max_steps);
 
             for entry in TnfEnumerator::new(size, max_steps) {
-                // Verify that simulating the TNF leaf program from t=0 yields the exact same outcome
-                let fresh_outcome = simulate(&entry.program, max_steps);
-                assert_eq!(entry.outcome, fresh_outcome);
                 stats.record(&entry);
             }
 
             assert_eq!(stats.total_programs, exp_total, "size {size} total");
             assert_eq!(stats.halted_programs, exp_halted, "size {size} halted");
+            assert_eq!(stats.decided_programs, exp_decided, "size {size} decided");
             assert_eq!(
                 stats.holdout_programs(),
-                exp_total - exp_halted,
+                exp_holdouts,
                 "size {size} holdouts"
             );
             assert_eq!(stats.max_halting_steps, Some(exp_max_steps));
@@ -177,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tnf_pebble_5_champion() {
+    fn test_tnf_pebble_5_champion_and_zero_holdouts() {
         let size = 5;
         let max_steps = 50;
         let mut stats = EnumStats::new(size, max_steps);
@@ -186,7 +258,8 @@ mod tests {
         }
         assert_eq!(stats.total_programs, 12_161);
         assert_eq!(stats.halted_programs, 2_517);
-        assert_eq!(stats.holdout_programs(), 9_644);
+        assert_eq!(stats.decided_programs, 9_644);
+        assert_eq!(stats.holdout_programs(), 0);
         assert_eq!(stats.max_halting_steps, Some(11));
     }
 }

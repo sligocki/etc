@@ -1,3 +1,4 @@
+use crate::deciders::Decider;
 use crate::program::{encode_pebble_digit, Program};
 use std::fmt;
 
@@ -17,7 +18,9 @@ pub enum StepResult {
 pub enum SimOutcome {
     /// The automaton stabilized after `steps` transitions.
     Halted { steps: u64 },
-    /// The automaton did not stabilize within `steps` transitions.
+    /// The automaton was proven non-halting by `decider` after simulating `steps` transitions.
+    DecidedNonHalting { decider: Decider, steps: u64 },
+    /// The automaton did not stabilize within `steps` transitions and was not decided.
     MaxStepsReached { steps: u64 },
     /// Simulation paused at `steps` because rule for `pebbles` is undefined.
     MissingRule { pebbles: u8, steps: u64 },
@@ -30,11 +33,24 @@ impl SimOutcome {
         matches!(self, SimOutcome::Halted { .. })
     }
 
+    /// Returns `true` if the outcome is `SimOutcome::DecidedNonHalting`.
+    #[inline]
+    pub fn is_decided_non_halting(&self) -> bool {
+        matches!(self, SimOutcome::DecidedNonHalting { .. })
+    }
+
+    /// Returns `true` if the outcome is an undecided holdout (`SimOutcome::MaxStepsReached`).
+    #[inline]
+    pub fn is_holdout(&self) -> bool {
+        matches!(self, SimOutcome::MaxStepsReached { .. })
+    }
+
     /// Returns the step count associated with this outcome.
     #[inline]
     pub fn steps(&self) -> u64 {
         match *self {
             SimOutcome::Halted { steps }
+            | SimOutcome::DecidedNonHalting { steps, .. }
             | SimOutcome::MaxStepsReached { steps }
             | SimOutcome::MissingRule { steps, .. } => steps,
         }
@@ -45,6 +61,9 @@ impl fmt::Display for SimOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SimOutcome::Halted { steps } => write!(f, "HALT\t{steps}"),
+            SimOutcome::DecidedNonHalting { decider, steps } => {
+                write!(f, "DECIDED\t{decider}\t{steps}")
+            }
             SimOutcome::MaxStepsReached { steps } => write!(f, "MAX_STEPS\t{steps}"),
             SimOutcome::MissingRule { pebbles, steps } => {
                 write!(f, "MISSING_RULE\t{pebbles}\t{steps}")

@@ -1,3 +1,4 @@
+use pebble::deciders::run_decider_pipeline;
 use pebble::program::Program;
 use pebble::simulation::{format_trace_bounds, simulate_with_trace, SimOutcome, Simulator};
 use std::env;
@@ -13,6 +14,7 @@ fn print_usage(bin: &str) {
     eprintln!("Options:");
     eprintln!("  -v, --verbose          Print the tape configuration at every step");
     eprintln!("  -s, --steps <STEPS>    Maximum number of steps to simulate (default: 1000)");
+    eprintln!("      --no-deciders      Disable non-halting deciders when MAX_STEPS is reached");
     eprintln!("  -h, --help             Show this help message");
 }
 
@@ -21,6 +23,7 @@ fn main() {
     let bin = args.first().map(String::as_str).unwrap_or("sim");
 
     let mut verbose = false;
+    let mut use_deciders = true;
     let mut max_steps: u64 = 1000;
     let mut program_arg: Option<String> = None;
 
@@ -33,6 +36,9 @@ fn main() {
             }
             "-v" | "--verbose" => {
                 verbose = true;
+            }
+            "--no-deciders" => {
+                use_deciders = false;
             }
             "-s" | "--steps" => {
                 i += 1;
@@ -88,7 +94,15 @@ fn main() {
     let start = Instant::now();
 
     if verbose {
-        let (outcome, trace) = simulate_with_trace(&program, max_steps);
+        let (mut outcome, trace) = simulate_with_trace(&program, max_steps);
+        if use_deciders {
+            if let SimOutcome::MaxStepsReached { steps } = outcome {
+                let final_cells = trace.last().map(|s| s.cells.as_slice());
+                if let Some(decider) = run_decider_pipeline(&program, final_cells, max_steps) {
+                    outcome = SimOutcome::DecidedNonHalting { decider, steps };
+                }
+            }
+        }
         let elapsed = start.elapsed();
 
         let (min_x, max_x) = format_trace_bounds(&trace);
@@ -111,7 +125,15 @@ fn main() {
         print_outcome(&outcome, elapsed);
     } else {
         let mut sim = Simulator::new(program.size());
-        let outcome = sim.run(&program, max_steps);
+        let mut outcome = sim.run(&program, max_steps);
+        if use_deciders {
+            if let SimOutcome::MaxStepsReached { steps } = outcome {
+                if let Some(decider) = run_decider_pipeline(&program, Some(sim.cells()), max_steps)
+                {
+                    outcome = SimOutcome::DecidedNonHalting { decider, steps };
+                }
+            }
+        }
         let elapsed = start.elapsed();
         let final_snap = sim.snapshot();
         println!(
@@ -129,8 +151,11 @@ fn print_outcome(outcome: &SimOutcome, elapsed: std::time::Duration) {
         SimOutcome::Halted { steps } => {
             println!("Status:  HALTED (stabilized) after {steps} steps");
         }
+        SimOutcome::DecidedNonHalting { decider, steps } => {
+            println!("Status:  NON-HALTING decided by {decider} (simulated {steps} steps)");
+        }
         SimOutcome::MaxStepsReached { steps } => {
-            println!("Status:  MAX_STEPS reached ({steps} steps) without halting");
+            println!("Status:  MAX_STEPS reached ({steps} steps) without halting (undecided)");
         }
         SimOutcome::MissingRule { pebbles, steps } => {
             println!("Status:  MISSING_RULE for {pebbles} pebbles at step {steps}");

@@ -17,14 +17,19 @@ pub enum Decider {
     /// Tape partitions into 2 causally isolated segments (separated by >= 2 zeros at all steps)
     /// whose shapes both repeat with non-shrinking separation (`dx_left <= dx_right`).
     SeparatedComponents,
+    /// A period-1 shuttle bounces back and forth between two stationary walls (`W_L` and `W_R`)
+    /// with strictly growing total gap (`g_2 > g_1`), while each wall remains causally isolated
+    /// during the opposite bounce.
+    Bouncer,
 }
 
 impl Decider {
-    pub const ALL: [Decider; 4] = [
+    pub const ALL: [Decider; 5] = [
         Decider::EdgeGlider,
         Decider::Cycler,
         Decider::TranslatedCycler,
         Decider::SeparatedComponents,
+        Decider::Bouncer,
     ];
 }
 
@@ -35,6 +40,7 @@ impl fmt::Display for Decider {
             Decider::Cycler => write!(f, "Cycler"),
             Decider::TranslatedCycler => write!(f, "TranslatedCycler"),
             Decider::SeparatedComponents => write!(f, "SeparatedComponents"),
+            Decider::Bouncer => write!(f, "Bouncer"),
         }
     }
 }
@@ -48,6 +54,7 @@ impl FromStr for Decider {
             "cycler" => Ok(Decider::Cycler),
             "translatedcycler" | "translated_cycler" => Ok(Decider::TranslatedCycler),
             "separatedcomponents" | "separated_components" => Ok(Decider::SeparatedComponents),
+            "bouncer" => Ok(Decider::Bouncer),
             other => Err(format!("unknown decider '{other}'")),
         }
     }
@@ -243,7 +250,273 @@ pub fn decide_separated_components(program: &Program, max_steps: u64) -> Option<
     None
 }
 
-/// Run the staged decider pipeline (`EdgeGlider` -> `Cycler`/`TranslatedCycler` -> `SeparatedComponents`)
+fn is_stationary_slice(program: &Program, slice: &[u8]) -> bool {
+    slice.iter().all(|&k| {
+        if k == 0 {
+            true
+        } else if let Some(r) = program.rule(k) {
+            r.left == 0 && r.stay == k && r.right == 0
+        } else {
+            false
+        }
+    })
+}
+
+fn is_right_glider_slice(program: &Program, slice: &[u8]) -> bool {
+    slice.iter().all(|&k| {
+        if k == 0 {
+            true
+        } else if let Some(r) = program.rule(k) {
+            r.left == 0 && r.stay == 0 && r.right == k
+        } else {
+            false
+        }
+    })
+}
+
+fn is_left_glider_slice(program: &Program, slice: &[u8]) -> bool {
+    slice.iter().all(|&k| {
+        if k == 0 {
+            true
+        } else if let Some(r) = program.rule(k) {
+            r.left == k && r.stay == 0 && r.right == 0
+        } else {
+            false
+        }
+    })
+}
+
+#[derive(Debug, Clone)]
+struct Transit {
+    w_l: Vec<u8>,
+    shuttle: Vec<u8>,
+    w_r: Vec<u8>,
+    x_l: isize,
+    x_r: isize,
+    total_gap: usize,
+}
+
+fn extract_transits(program: &Program, offset: isize, cells: &[u8]) -> (Vec<Transit>, Vec<Transit>) {
+    let mut islands: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < cells.len() {
+        if cells[i] > 0 {
+            let start = i;
+            while i + 1 < cells.len() && cells[i + 1] > 0 {
+                i += 1;
+            }
+            islands.push((start, i));
+        }
+        i += 1;
+    }
+
+    let mut right_transits = Vec::new();
+    let mut left_transits = Vec::new();
+    let m = islands.len();
+    if m < 3 {
+        return (right_transits, left_transits);
+    }
+
+    for left_split in 1..(m - 1) {
+        let w_l = &cells[islands[0].0..=islands[left_split - 1].1];
+        if !is_stationary_slice(program, w_l) {
+            continue;
+        }
+        for right_split in left_split..(m - 1) {
+            let w_r = &cells[islands[right_split + 1].0..=islands[m - 1].1];
+            if !is_stationary_slice(program, w_r) {
+                continue;
+            }
+            let shuttle = &cells[islands[left_split].0..=islands[right_split].1];
+            let is_right = is_right_glider_slice(program, shuttle);
+            let is_left = is_left_glider_slice(program, shuttle);
+            if !is_right && !is_left {
+                continue;
+            }
+
+            let gap_a = islands[left_split].0 - islands[left_split - 1].1 - 1;
+            let gap_b = islands[right_split + 1].0 - islands[right_split].1 - 1;
+            let tr = Transit {
+                w_l: w_l.to_vec(),
+                shuttle: shuttle.to_vec(),
+                w_r: w_r.to_vec(),
+                x_l: offset + islands[0].0 as isize,
+                x_r: offset + islands[right_split + 1].0 as isize,
+                total_gap: gap_a + gap_b,
+            };
+            if is_right {
+                right_transits.push(tr.clone());
+            }
+            if is_left {
+                left_transits.push(tr);
+            }
+        }
+    }
+
+    (right_transits, left_transits)
+}
+
+#[inline]
+fn left_wall_isolated(offset: isize, cells: &[u8], w_l: &[u8], x_l: isize) -> bool {
+    offset == x_l
+        && cells.len() > w_l.len()
+        && cells.starts_with(w_l)
+        && cells[w_l.len()] == 0
+}
+
+#[inline]
+fn right_wall_isolated(offset: isize, cells: &[u8], w_r: &[u8], x_r: isize) -> bool {
+    offset + (cells.len() as isize) == x_r + (w_r.len() as isize)
+        && cells.len() > w_r.len()
+        && cells.ends_with(w_r)
+        && cells[cells.len() - w_r.len() - 1] == 0
+}
+
+#[derive(Debug, Clone)]
+struct BounceCandidate {
+    started_right: bool,
+    w_l: Vec<u8>,
+    shuttle_1: Vec<u8>,
+    w_r: Vec<u8>,
+    fixed_wall_offset: isize,
+    g_1: usize,
+}
+
+/// Decider 4: Simulate `program` up to `max_steps` and detect a Level-1 `Bouncer`
+/// (a period-1 shuttle bouncing between two stationary walls `W_L` and `W_R` with a growing gap
+/// while each wall stays causally isolated during the opposite bounce).
+pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
+    let mut sim = Simulator::new(program.size());
+    let mut waiting_opposite: Vec<BounceCandidate> = Vec::new();
+    let mut waiting_return: Vec<BounceCandidate> = Vec::new();
+
+    for _ in 0..=max_steps {
+        let offset = sim.offset();
+        let cells = sim.cells();
+        if !cells.is_empty() {
+            let (right_transits, left_transits) = extract_transits(program, offset, cells);
+
+            // 1. Update candidates waiting for the return bounce (t_L -> t_2)
+            let mut next_return = Vec::with_capacity(waiting_return.len());
+            for cand in waiting_return {
+                let intact = if cand.started_right {
+                    right_wall_isolated(offset, cells, &cand.w_r, cand.fixed_wall_offset)
+                } else {
+                    left_wall_isolated(offset, cells, &cand.w_l, cand.fixed_wall_offset)
+                };
+                if !intact {
+                    continue;
+                }
+
+                let target_list = if cand.started_right {
+                    &right_transits
+                } else {
+                    &left_transits
+                };
+                for tr in target_list {
+                    let wall_matches = if cand.started_right {
+                        tr.x_r == cand.fixed_wall_offset
+                    } else {
+                        tr.x_l == cand.fixed_wall_offset
+                    };
+                    if wall_matches
+                        && tr.w_l == cand.w_l
+                        && tr.shuttle == cand.shuttle_1
+                        && tr.w_r == cand.w_r
+                        && tr.total_gap > cand.g_1
+                    {
+                        return Some(Decider::Bouncer);
+                    }
+                }
+                next_return.push(cand);
+            }
+
+            // 2. Update candidates waiting for the first (opposite) bounce (t_1 -> t_L)
+            let mut next_opposite = Vec::with_capacity(waiting_opposite.len());
+            for cand in waiting_opposite {
+                let intact = if cand.started_right {
+                    left_wall_isolated(offset, cells, &cand.w_l, cand.fixed_wall_offset)
+                } else {
+                    right_wall_isolated(offset, cells, &cand.w_r, cand.fixed_wall_offset)
+                };
+                if !intact {
+                    continue;
+                }
+
+                let opp_list = if cand.started_right {
+                    &left_transits
+                } else {
+                    &right_transits
+                };
+                for tr in opp_list {
+                    let wall_matches = if cand.started_right {
+                        tr.x_l == cand.fixed_wall_offset
+                    } else {
+                        tr.x_r == cand.fixed_wall_offset
+                    };
+                    if wall_matches && tr.w_l == cand.w_l && tr.w_r == cand.w_r {
+                        let new_fixed = if cand.started_right { tr.x_r } else { tr.x_l };
+                        let already_tracked = next_return.iter().any(|r| {
+                            r.started_right == cand.started_right
+                                && r.fixed_wall_offset == new_fixed
+                                && r.w_l == cand.w_l
+                                && r.shuttle_1 == cand.shuttle_1
+                                && r.w_r == cand.w_r
+                                && r.g_1 <= cand.g_1
+                        });
+                        if !already_tracked {
+                            next_return.push(BounceCandidate {
+                                started_right: cand.started_right,
+                                w_l: cand.w_l.clone(),
+                                shuttle_1: cand.shuttle_1.clone(),
+                                w_r: cand.w_r.clone(),
+                                fixed_wall_offset: new_fixed,
+                                g_1: cand.g_1,
+                            });
+                        }
+                    }
+                }
+                next_opposite.push(cand);
+            }
+
+            // 3. Register new initial transits at step t
+            for (started_right, list) in [(true, &right_transits), (false, &left_transits)] {
+                for tr in list {
+                    let fixed = if started_right { tr.x_l } else { tr.x_r };
+                    let already_tracked = next_opposite.iter().any(|c| {
+                        c.started_right == started_right
+                            && c.fixed_wall_offset == fixed
+                            && c.w_l == tr.w_l
+                            && c.shuttle_1 == tr.shuttle
+                            && c.w_r == tr.w_r
+                            && c.g_1 <= tr.total_gap
+                    });
+                    if !already_tracked {
+                        next_opposite.push(BounceCandidate {
+                            started_right,
+                            w_l: tr.w_l.clone(),
+                            shuttle_1: tr.shuttle.clone(),
+                            w_r: tr.w_r.clone(),
+                            fixed_wall_offset: fixed,
+                            g_1: tr.total_gap,
+                        });
+                    }
+                }
+            }
+
+            waiting_opposite = next_opposite;
+            waiting_return = next_return;
+        }
+
+        if sim.step(program) != StepResult::Stepped {
+            return None;
+        }
+    }
+    None
+}
+
+/// Run the staged decider pipeline
+/// (`EdgeGlider` -> `Cycler`/`TranslatedCycler` -> `SeparatedComponents` -> `Bouncer`)
 /// on a holdout program.
 ///
 /// If `final_cells` from the simulator is provided, `EdgeGlider` is checked in $O(1)$ time on `final_cells`
@@ -260,6 +533,7 @@ pub fn run_decider_pipeline(
     edge_res
         .or_else(|| decide_cycler(program, max_steps))
         .or_else(|| decide_separated_components(program, max_steps))
+        .or_else(|| decide_bouncer(program, max_steps))
 }
 
 #[cfg(test)]
@@ -305,6 +579,51 @@ mod tests {
             decide_separated_components(&sep2, 30),
             Some(Decider::SeparatedComponents)
         );
+    }
+
+    #[test]
+    fn test_bouncer_decider() {
+        let n6_bouncers = [
+            "00_02_01_40_12_01",
+            "00_20_10_04_21_05",
+            "00_20_10_04_21_10",
+            "00_20_10_04_11_11",
+            "00_20_10_04_21_11",
+            "00_02_01_40_11_11",
+            "00_02_01_40_12_11",
+            "00_02_01_40_11_13",
+            "00_02_01_40_12_13",
+            "00_20_10_04_11_15",
+            "00_20_10_04_21_15",
+            "00_20_10_04_11_31",
+            "00_20_10_04_21_31",
+            "00_02_01_40_12_50",
+            "00_02_01_40_11_51",
+            "00_02_01_40_12_51",
+        ];
+        for code in n6_bouncers {
+            let p: Program = code.parse().unwrap();
+            assert_eq!(
+                decide_bouncer(&p, 50),
+                Some(Decider::Bouncer),
+                "expected n=6 bouncer {code} to be decided"
+            );
+        }
+
+        // n=7 bouncer holdouts
+        let n7_bouncers = [
+            "00_02_03_01_50_13_01",
+            "00_20_30_10_05_31_42",
+            "00_02_03_01_50_13_61",
+        ];
+        for code in n7_bouncers {
+            let p: Program = code.parse().unwrap();
+            assert_eq!(
+                decide_bouncer(&p, 50),
+                Some(Decider::Bouncer),
+                "expected n=7 bouncer {code} to be decided"
+            );
+        }
     }
 
     #[test]

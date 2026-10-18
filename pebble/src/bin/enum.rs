@@ -120,7 +120,7 @@ fn main() {
     println!(
         "Deciders:         {}",
         if use_deciders {
-            "enabled (EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents)"
+            "enabled (EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents, Bouncer)"
         } else {
             "disabled"
         }

@@ -1,9 +1,11 @@
 use pebble::deciders::Decider;
-use pebble::enumeration::{EnumStats, TnfEnumerator};
+use pebble::enumeration::{enumerate_parallel, ProgressSnapshot};
 use pebble::io::{write_records_to_file, ProgramRecord};
 use std::env;
 use std::path::PathBuf;
 use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 fn print_usage(bin: &str) {
@@ -15,6 +17,7 @@ fn print_usage(bin: &str) {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  -s, --steps <STEPS>      Maximum steps per program (overrides positional)");
+    eprintln!("  -j, --threads <THREADS>  Number of Rayon worker threads (default: all cores)");
     eprintln!("  -p, --progress <COUNT>   Print progress every <COUNT> enumerated programs");
     eprintln!("  -o, --output <FILE>      Write program results to <FILE>");
     eprintln!("      --holdouts-only      When using -o, only write undecided holdout programs");
@@ -29,6 +32,7 @@ fn main() {
     let mut size_arg: Option<usize> = None;
     let mut max_steps: u64 = 100;
     let mut max_steps_set = false;
+    let mut num_threads: Option<usize> = None;
     let mut progress_interval: Option<u64> = None;
     let mut output_path: Option<PathBuf> = None;
     let mut holdouts_only = false;
@@ -52,6 +56,17 @@ fn main() {
                     process::exit(1);
                 });
                 max_steps_set = true;
+            }
+            "-j" | "--threads" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: missing value for --threads");
+                    process::exit(1);
+                }
+                num_threads = Some(args[i].parse().unwrap_or_else(|_| {
+                    eprintln!("Error: invalid thread count '{}'", args[i]);
+                    process::exit(1);
+                }));
             }
             "-p" | "--progress" => {
                 i += 1;
@@ -114,9 +129,20 @@ fn main() {
         process::exit(1);
     }
 
+    if let Some(threads) = num_threads {
+        if let Err(err) = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+        {
+            eprintln!("Error configuring Rayon thread pool: {err}");
+            process::exit(1);
+        }
+    }
+
     println!("=== Pebble Automaton Enumerator (TNF) ===");
     println!("Size (n):         {size}");
     println!("Max steps:        {max_steps}");
+    println!("Threads:          {}", rayon::current_num_threads());
     println!(
         "Deciders:         {}",
         if use_deciders {
@@ -127,43 +153,67 @@ fn main() {
     );
     println!();
 
-    let mut stats = EnumStats::new(size, max_steps);
-    let mut records_to_write: Vec<ProgramRecord> = Vec::new();
     let start = Instant::now();
-    let mut last_report = Instant::now();
+    let last_report = Mutex::new(Instant::now());
+    let next_count_milestone = AtomicU64::new(progress_interval.unwrap_or(0));
 
-    for entry in TnfEnumerator::with_deciders(size, max_steps, use_deciders) {
-        stats.record(&entry);
-
-        if output_path.is_some() && (!holdouts_only || entry.outcome.is_holdout()) {
-            records_to_write.push(ProgramRecord::new(entry.program, Some(entry.outcome)));
+    let should_report = |snap: &ProgressSnapshot| -> bool {
+        match progress_interval {
+            Some(interval) if interval > 0 => {
+                let target = next_count_milestone.load(Ordering::Relaxed);
+                snap.total_programs >= target
+            }
+            _ => last_report
+                .lock()
+                .map(|t| t.elapsed() >= Duration::from_millis(500))
+                .unwrap_or(false),
         }
+    };
 
-        let should_report = match progress_interval {
-            Some(interval) if interval > 0 => stats.total_programs % interval == 0,
-            _ => last_report.elapsed() >= Duration::from_millis(500),
-        };
-
-        if should_report {
-            let max_steps_str = stats
-                .max_halting_steps
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            println!(
-                "[Progress] programs: {} | halted: {} ({:.2}%) | decided: {} ({:.2}%) | holdouts: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
-                stats.total_programs,
-                stats.halted_programs,
-                stats.halted_percentage(),
-                stats.decided_programs,
-                stats.decided_percentage(),
-                stats.holdout_programs(),
-                stats.holdout_percentage(),
-                max_steps_str,
-                start.elapsed()
-            );
-            last_report = Instant::now();
+    let on_progress = |snap: &ProgressSnapshot| {
+        if let Some(interval) = progress_interval {
+            if interval > 0 {
+                let next = ((snap.total_programs / interval) + 1) * interval;
+                next_count_milestone.store(next, Ordering::Relaxed);
+            }
+        } else if let Ok(mut t) = last_report.lock() {
+            *t = Instant::now();
         }
-    }
+        let tot_f = snap.total_programs.max(1) as f64;
+        let halt_pct = (snap.halted_programs as f64 / tot_f) * 100.0;
+        let dec_pct = (snap.decided_programs as f64 / tot_f) * 100.0;
+        let hold_pct = (snap.holdout_programs as f64 / tot_f) * 100.0;
+        let max_steps_str = snap
+            .max_halting_steps
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "[Progress] programs: {} | halted: {} ({:.2}%) | decided: {} ({:.2}%) | holdouts: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
+            snap.total_programs,
+            snap.halted_programs,
+            halt_pct,
+            snap.decided_programs,
+            dec_pct,
+            snap.holdout_programs,
+            hold_pct,
+            max_steps_str,
+            start.elapsed()
+        );
+    };
+
+    let (stats, entries) = enumerate_parallel(
+        size,
+        max_steps,
+        use_deciders,
+        output_path.is_some(),
+        holdouts_only,
+        on_progress,
+        should_report,
+    );
+    let records_to_write: Vec<ProgramRecord> = entries
+        .into_iter()
+        .map(|e| ProgramRecord::new(e.program, Some(e.outcome)))
+        .collect();
 
     let elapsed = start.elapsed();
     let secs = elapsed.as_secs_f64();

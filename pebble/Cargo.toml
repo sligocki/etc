@@ -15,3 +15,6 @@ path = "src/bin/sim.rs"
 [[bin]]
 name = "enum"
 path = "src/bin/enum.rs"
+
+[dependencies]
+rayon = "1.12.0"

@@ -112,6 +112,10 @@ pub fn start_unreachable(program: &Program) -> (bool, u64) {
 
     while let Some(state) = queue.pop_front() {
         explored += 1;
+        if explored > 20000 {
+            return (false, explored);
+        }
+
         if state.pc == Some(0)
             && state
                 .registers

@@ -23,7 +23,17 @@ pub fn verify_congruence_set(
     queue.push_back((initial_state, seed_regs.clone()));
     visited.entry(initial_state).or_default().insert(seed_regs);
 
+    let mut explored_nodes = 0;
+
     while let Some((state, regs)) = queue.pop_front() {
+        explored_nodes += 1;
+        if explored_nodes > 5000 {
+            if verbose {
+                println!("Congruence: Explored nodes limit reached (5000). Bailing out.");
+            }
+            return false;
+        }
+
         if verbose {
             println!("State {:?}: {:?}", state, regs);
         }

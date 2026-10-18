@@ -1,6 +1,5 @@
-use pebble::enumeration::{CartesianEnumerator, EnumEntry, EnumStats, TnfEnumerator};
+use pebble::enumeration::{EnumStats, TnfEnumerator};
 use pebble::io::{write_records_to_file, ProgramRecord};
-use pebble::program::Program;
 use std::env;
 use std::path::PathBuf;
 use std::process;
@@ -15,10 +14,9 @@ fn print_usage(bin: &str) {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  -s, --steps <STEPS>      Maximum steps per program (overrides positional)");
-    eprintln!("  -p, --progress <COUNT>   Print progress every <COUNT> simulated programs");
+    eprintln!("  -p, --progress <COUNT>   Print progress every <COUNT> enumerated programs");
     eprintln!("  -o, --output <FILE>      Write program results to <FILE>");
     eprintln!("      --holdouts-only      When using -o, only write non-halting holdout programs");
-    eprintln!("      --cartesian          Enumerate all full Cartesian programs instead of TNF");
     eprintln!("  -h, --help               Show this help message");
 }
 
@@ -29,10 +27,9 @@ fn main() {
     let mut size_arg: Option<usize> = None;
     let mut max_steps: u64 = 100;
     let mut max_steps_set = false;
-    let mut progress_interval: Option<u128> = None;
+    let mut progress_interval: Option<u64> = None;
     let mut output_path: Option<PathBuf> = None;
     let mut holdouts_only = false;
-    let mut use_cartesian = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -75,9 +72,6 @@ fn main() {
             "--holdouts-only" => {
                 holdouts_only = true;
             }
-            "--cartesian" => {
-                use_cartesian = true;
-            }
             arg if arg.starts_with('-') => {
                 eprintln!("Error: unknown option '{arg}'");
                 print_usage(bin);
@@ -114,18 +108,9 @@ fn main() {
         process::exit(1);
     }
 
-    let total_cartesian = Program::total_cartesian_programs(size);
-    let mode_label = if use_cartesian {
-        "Cartesian (full)"
-    } else {
-        "Tree-Normal-Form (TNF)"
-    };
-
-    println!("=== Pebble Automaton Enumerator ===");
+    println!("=== Pebble Automaton Enumerator (TNF) ===");
     println!("Size (n):         {size}");
     println!("Max steps:        {max_steps}");
-    println!("Mode:             {mode_label}");
-    println!("Total space:      {total_cartesian} Cartesian programs");
     println!();
 
     let mut stats = EnumStats::new(size, max_steps);
@@ -133,13 +118,7 @@ fn main() {
     let start = Instant::now();
     let mut last_report = Instant::now();
 
-    let iter: Box<dyn Iterator<Item = EnumEntry>> = if use_cartesian {
-        Box::new(CartesianEnumerator::new(size).with_simulation(max_steps))
-    } else {
-        Box::new(TnfEnumerator::new(size, max_steps))
-    };
-
-    for entry in iter {
+    for entry in TnfEnumerator::new(size, max_steps) {
         stats.record(&entry);
 
         if output_path.is_some() && (!holdouts_only || !entry.outcome.is_halted()) {
@@ -147,26 +126,22 @@ fn main() {
         }
 
         let should_report = match progress_interval {
-            Some(interval) if interval > 0 => stats.leaves_simulated % interval == 0,
+            Some(interval) if interval > 0 => stats.total_programs % interval == 0,
             _ => last_report.elapsed() >= Duration::from_millis(500),
         };
 
         if should_report {
-            let pct_space = if total_cartesian > 0 {
-                (stats.total_programs as f64 / total_cartesian as f64) * 100.0
-            } else {
-                100.0
-            };
             let max_steps_str = stats
                 .max_halting_steps
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "[Progress {:>6.2}%] simulated: {} | halted: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
-                pct_space,
-                stats.leaves_simulated,
+                "[Progress] programs: {} | halted: {} ({:.2}%) | holdouts: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
+                stats.total_programs,
                 stats.halted_programs,
                 stats.halted_percentage(),
+                stats.holdout_programs(),
+                stats.holdout_percentage(),
                 max_steps_str,
                 start.elapsed()
             );
@@ -176,12 +151,7 @@ fn main() {
 
     let elapsed = start.elapsed();
     let secs = elapsed.as_secs_f64();
-    let leaves_per_sec = if secs > 0.0 {
-        stats.leaves_simulated as f64 / secs
-    } else {
-        stats.leaves_simulated as f64
-    };
-    let cartesian_per_sec = if secs > 0.0 {
+    let programs_per_sec = if secs > 0.0 {
         stats.total_programs as f64 / secs
     } else {
         stats.total_programs as f64
@@ -201,17 +171,7 @@ fn main() {
     }
 
     println!("=== Final Statistics (peBBle({size}), max_steps = {max_steps}) ===");
-    if !use_cartesian {
-        println!(
-            "TNF leaves simulated:   {} (halted: {} / {:.2}%, holdouts: {} / {:.2}%)",
-            stats.leaves_simulated,
-            stats.leaves_halted,
-            stats.leaves_halted_percentage(),
-            stats.holdout_leaves(),
-            100.0 - stats.leaves_halted_percentage()
-        );
-    }
-    println!("Total programs (n={size}):   {}", stats.total_programs);
+    println!("Total programs:         {}", stats.total_programs);
     println!(
         "Halted programs:        {} ({:.2}%)",
         stats.halted_programs,
@@ -220,11 +180,7 @@ fn main() {
     println!(
         "Holdout programs:       {} ({:.2}%)",
         stats.holdout_programs(),
-        if stats.total_programs > 0 {
-            100.0 - stats.halted_percentage()
-        } else {
-            0.0
-        }
+        stats.holdout_percentage()
     );
     match (&stats.max_halting_steps, &stats.champion) {
         (Some(max_s), Some(champ)) => {
@@ -236,8 +192,5 @@ fn main() {
         }
     }
     println!("Wallclock runtime:      {:.3?}", elapsed);
-    println!(
-        "Throughput:             {:.0} leaves/s ({:.0} Cartesian programs/s)",
-        leaves_per_sec, cartesian_per_sec
-    );
+    println!("Throughput:             {:.0} programs/s", programs_per_sec);
 }

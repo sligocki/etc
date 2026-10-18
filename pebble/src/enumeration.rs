@@ -1,30 +1,22 @@
 use crate::program::{Program, Rule};
-use crate::simulation::{simulate, SimOutcome, Simulator};
+use crate::simulation::{SimOutcome, Simulator};
 
-/// Result item produced when enumerating and simulating a program (or TNF subtree leaf).
+/// Result item produced when enumerating and simulating a TNF program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumEntry {
     pub program: Program,
     pub outcome: SimOutcome,
-    /// Number of complete Cartesian programs represented by this program.
-    /// For complete programs this is `1`; for TNF leaves with undefined rules,
-    /// this is the product of rule choices over all unreached pebble counts.
-    pub expansion_factor: u128,
 }
 
-/// Summary statistics accumulated across an enumeration run.
+/// Summary statistics accumulated across a TNF enumeration run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnumStats {
     pub size: usize,
     pub max_steps: u64,
-    /// Number of distinct programs (TNF leaves or Cartesian programs) simulated.
-    pub leaves_simulated: u128,
-    /// Number of simulated leaves that halted.
-    pub leaves_halted: u128,
-    /// Total number of complete Cartesian programs represented (`sum(expansion_factor)`).
-    pub total_programs: u128,
-    /// Total number of complete Cartesian programs that halted.
-    pub halted_programs: u128,
+    /// Number of TNF programs enumerated and simulated.
+    pub total_programs: u64,
+    /// Number of enumerated TNF programs that halted.
+    pub halted_programs: u64,
     /// Maximum halting step count observed across all halted programs.
     pub max_halting_steps: Option<u64>,
     /// First champion program achieving `max_halting_steps`.
@@ -43,12 +35,10 @@ impl EnumStats {
 
     /// Record a single `EnumEntry` into the running statistics.
     pub fn record(&mut self, entry: &EnumEntry) {
-        self.leaves_simulated += 1;
-        self.total_programs += entry.expansion_factor;
+        self.total_programs += 1;
 
         if let SimOutcome::Halted { steps } = entry.outcome {
-            self.leaves_halted += 1;
-            self.halted_programs += entry.expansion_factor;
+            self.halted_programs += 1;
 
             let is_new_max = match self.max_halting_steps {
                 None => true,
@@ -61,19 +51,13 @@ impl EnumStats {
         }
     }
 
-    /// Number of non-halting holdout programs in full Cartesian space.
+    /// Number of non-halting holdout programs among the enumerated TNF programs.
     #[inline]
-    pub fn holdout_programs(&self) -> u128 {
+    pub fn holdout_programs(&self) -> u64 {
         self.total_programs.saturating_sub(self.halted_programs)
     }
 
-    /// Number of non-halting holdout leaves simulated.
-    #[inline]
-    pub fn holdout_leaves(&self) -> u128 {
-        self.leaves_simulated.saturating_sub(self.leaves_halted)
-    }
-
-    /// Percentage of full Cartesian programs that halted (`0.0..=100.0`).
+    /// Percentage of enumerated TNF programs that halted (`0.0..=100.0`).
     pub fn halted_percentage(&self) -> f64 {
         if self.total_programs == 0 {
             0.0
@@ -82,12 +66,12 @@ impl EnumStats {
         }
     }
 
-    /// Percentage of simulated TNF leaves that halted (`0.0..=100.0`).
-    pub fn leaves_halted_percentage(&self) -> f64 {
-        if self.leaves_simulated == 0 {
+    /// Percentage of enumerated TNF programs that did not halt (`0.0..=100.0`).
+    pub fn holdout_percentage(&self) -> f64 {
+        if self.total_programs == 0 {
             0.0
         } else {
-            (self.leaves_halted as f64 / self.leaves_simulated as f64) * 100.0
+            (self.holdout_programs() as f64 / self.total_programs as f64) * 100.0
         }
     }
 }
@@ -144,11 +128,9 @@ impl Iterator for TnfEnumerator {
                     }
                 }
                 outcome @ (SimOutcome::Halted { .. } | SimOutcome::MaxStepsReached { .. }) => {
-                    let expansion_factor = prog.expansion_factor();
                     return Some(EnumEntry {
                         program: prog,
                         outcome,
-                        expansion_factor,
                     });
                 }
             }
@@ -157,127 +139,40 @@ impl Iterator for TnfEnumerator {
     }
 }
 
-/// Complete Cartesian enumerator yielding every fully specified `Program` of a given `size`
-/// in lexicographical order.
-pub struct CartesianEnumerator {
-    size: usize,
-    rule_table: Vec<Vec<Rule>>,
-    indices: Vec<usize>,
-    done: bool,
-}
-
-impl CartesianEnumerator {
-    /// Create a new Cartesian enumerator over all $\prod_{k=1}^{\text{size}} \frac{(k+1)(k+2)}{2}$ programs.
-    pub fn new(size: usize) -> Self {
-        if size == 0 {
-            return Self {
-                size: 0,
-                rule_table: Vec::new(),
-                indices: Vec::new(),
-                done: true,
-            };
-        }
-        let rule_table: Vec<Vec<Rule>> = (1..=size as u8).map(Rule::all_for_pebbles).collect();
-        Self {
-            size,
-            rule_table,
-            indices: vec![0; size],
-            done: false,
-        }
-    }
-
-    /// Convert this program iterator into an iterator of `EnumEntry` simulated up to `max_steps`.
-    pub fn with_simulation(self, max_steps: u64) -> impl Iterator<Item = EnumEntry> {
-        self.map(move |program| {
-            let outcome = simulate(&program, max_steps);
-            EnumEntry {
-                program,
-                outcome,
-                expansion_factor: 1,
-            }
-        })
-    }
-}
-
-impl Iterator for CartesianEnumerator {
-    type Item = Program;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-
-        let rules: Vec<Option<Rule>> = self
-            .indices
-            .iter()
-            .enumerate()
-            .map(|(k_idx, &choice_idx)| Some(self.rule_table[k_idx][choice_idx]))
-            .collect();
-        let prog = Program::new(rules).expect("valid rules");
-
-        // Advance odometer from right to left (k = size down to 1).
-        let mut carry = true;
-        for k_idx in (0..self.size).rev() {
-            if carry {
-                self.indices[k_idx] += 1;
-                if self.indices[k_idx] < self.rule_table[k_idx].len() {
-                    carry = false;
-                    break;
-                } else {
-                    self.indices[k_idx] = 0;
-                }
-            }
-        }
-        if carry {
-            self.done = true;
-        }
-
-        Some(prog)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulation::simulate;
 
     #[test]
-    fn test_cartesian_enumerator_counts() {
-        for size in 1..=4 {
-            let count = CartesianEnumerator::new(size).count() as u128;
-            assert_eq!(count, Program::total_cartesian_programs(size));
-        }
-    }
+    fn test_tnf_enumerator_sizes_1_to_4() {
+        let expected = [
+            // (size, expected_tnf_programs, expected_tnf_halted, expected_max_steps)
+            (1, 3u64, 1u64, 0u64),
+            (2, 12, 4, 1),
+            (3, 114, 30, 3),
+            (4, 933, 223, 6),
+        ];
 
-    #[test]
-    fn test_tnf_matches_cartesian_exactly_for_sizes_1_to_4() {
-        let expected_max_steps = [(1, 0u64), (2, 1), (3, 3), (4, 6)];
-
-        for (size, expected_bb) in expected_max_steps {
+        for (size, exp_total, exp_halted, exp_max_steps) in expected {
             let max_steps = 25;
+            let mut stats = EnumStats::new(size, max_steps);
 
-            let mut tnf_stats = EnumStats::new(size, max_steps);
             for entry in TnfEnumerator::new(size, max_steps) {
-                // Verify that running the TNF leaf program from scratch at t=0 yields the exact same outcome
+                // Verify that simulating the TNF leaf program from t=0 yields the exact same outcome
                 let fresh_outcome = simulate(&entry.program, max_steps);
                 assert_eq!(entry.outcome, fresh_outcome);
-                tnf_stats.record(&entry);
+                stats.record(&entry);
             }
 
-            let mut cart_stats = EnumStats::new(size, max_steps);
-            for entry in CartesianEnumerator::new(size).with_simulation(max_steps) {
-                cart_stats.record(&entry);
-            }
-
+            assert_eq!(stats.total_programs, exp_total, "size {size} total");
+            assert_eq!(stats.halted_programs, exp_halted, "size {size} halted");
             assert_eq!(
-                tnf_stats.total_programs,
-                Program::total_cartesian_programs(size)
+                stats.holdout_programs(),
+                exp_total - exp_halted,
+                "size {size} holdouts"
             );
-            assert_eq!(tnf_stats.total_programs, cart_stats.total_programs);
-            assert_eq!(tnf_stats.halted_programs, cart_stats.halted_programs);
-            assert_eq!(tnf_stats.holdout_programs(), cart_stats.holdout_programs());
-            assert_eq!(tnf_stats.max_halting_steps, Some(expected_bb));
-            assert_eq!(cart_stats.max_halting_steps, Some(expected_bb));
-            assert!(tnf_stats.leaves_simulated <= cart_stats.leaves_simulated);
+            assert_eq!(stats.max_halting_steps, Some(exp_max_steps));
         }
     }
 
@@ -289,7 +184,9 @@ mod tests {
         for entry in TnfEnumerator::new(size, max_steps) {
             stats.record(&entry);
         }
-        assert_eq!(stats.total_programs, 56_700);
+        assert_eq!(stats.total_programs, 12_161);
+        assert_eq!(stats.halted_programs, 2_517);
+        assert_eq!(stats.holdout_programs(), 9_644);
         assert_eq!(stats.max_halting_steps, Some(11));
     }
 }

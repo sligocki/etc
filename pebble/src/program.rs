@@ -248,26 +248,6 @@ impl Program {
         self.rules.iter().all(Option::is_some)
     }
 
-    /// Total number of complete Cartesian programs of a given `size`:
-    /// $\prod_{k=1}^{\text{size}} \frac{(k+1)(k+2)}{2}$.
-    pub fn total_cartesian_programs(size: usize) -> u128 {
-        if size == 0 {
-            return 0;
-        }
-        (1..=size as u8).map(Rule::num_choices).product()
-    }
-
-    /// Number of complete Cartesian programs represented by this (possibly partial TNF) program,
-    /// equal to the product of `Rule::num_choices(k)` over all undefined (`None`) rules `k`.
-    pub fn expansion_factor(&self) -> u128 {
-        self.rules
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.is_none())
-            .map(|(idx, _)| Rule::num_choices((idx + 1) as u8))
-            .product()
-    }
-
     /// Format the program in the wiki's multi-line long notation (`k --> L | S | R`).
     pub fn to_long_string(&self) -> String {
         let mut lines = Vec::with_capacity(self.rules.len());
@@ -424,7 +404,6 @@ mod tests {
         assert_eq!(prog.size(), 5);
         assert!(prog.is_complete());
         assert_eq!(prog.to_string(), champ5);
-        assert_eq!(prog.expansion_factor(), 1);
 
         let r4 = prog.rule(4).unwrap();
         assert_eq!(
@@ -438,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_tnf_program_and_expansion_factor() {
+    fn test_partial_tnf_program() {
         let tnf_str = "--_11_--_21_04";
         let prog: Program = tnf_str.parse().unwrap();
         assert_eq!(prog.size(), 5);
@@ -446,8 +425,6 @@ mod tests {
         assert_eq!(prog.rule(1), None);
         assert_eq!(prog.rule(3), None);
         assert_eq!(prog.to_string(), tnf_str);
-        // k=1 has 3 choices, k=3 has 10 choices -> expansion factor = 30
-        assert_eq!(prog.expansion_factor(), 3 * 10);
     }
 
     #[test]
@@ -481,15 +458,5 @@ mod tests {
         let long_str = prog.to_long_string();
         let parsed = Program::from_long_str(&long_str).unwrap();
         assert_eq!(prog, parsed);
-    }
-
-    #[test]
-    fn test_cartesian_program_counts() {
-        assert_eq!(Program::total_cartesian_programs(1), 3);
-        assert_eq!(Program::total_cartesian_programs(2), 18);
-        assert_eq!(Program::total_cartesian_programs(3), 180);
-        assert_eq!(Program::total_cartesian_programs(4), 2_700);
-        assert_eq!(Program::total_cartesian_programs(5), 56_700);
-        assert_eq!(Program::total_cartesian_programs(6), 1_587_600);
     }
 }

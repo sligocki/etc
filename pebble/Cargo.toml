@@ -1,0 +1,17 @@
+[package]
+name = "pebble"
+version = "0.1.0"
+edition = "2021"
+description = "Busy Beaver simulator and enumerator for 1D Pebble Automata"
+
+[lib]
+name = "pebble"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sim"
+path = "src/bin/sim.rs"
+
+[[bin]]
+name = "enum"
+path = "src/bin/enum.rs"

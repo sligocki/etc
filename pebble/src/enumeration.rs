@@ -21,8 +21,8 @@ pub struct EnumStats {
     /// Number of enumerated TNF programs proven non-halting by the decider pipeline.
     pub decided_programs: u64,
     /// Breakdown of decided non-halting programs by decider:
-    /// `[EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents, Bouncer]`.
-    pub decided_by_kind: [u64; 5],
+    /// `[EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents, Bouncer, Ctl]`.
+    pub decided_by_kind: [u64; 6],
     /// Maximum halting step count observed across all halted programs.
     pub max_halting_steps: Option<u64>,
     /// First champion program achieving `max_halting_steps`.
@@ -64,6 +64,7 @@ impl EnumStats {
                     Decider::TranslatedCycler => 2,
                     Decider::SeparatedComponents => 3,
                     Decider::Bouncer => 4,
+                    Decider::Ctl => 5,
                 };
                 self.decided_by_kind[idx] += 1;
             }
@@ -79,6 +80,7 @@ impl EnumStats {
             Decider::TranslatedCycler => 2,
             Decider::SeparatedComponents => 3,
             Decider::Bouncer => 4,
+            Decider::Ctl => 5,
         };
         self.decided_by_kind[idx]
     }

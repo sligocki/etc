@@ -4,7 +4,6 @@ use pebble::io::{write_records_to_file, ProgramRecord};
 use std::env;
 use std::path::PathBuf;
 use std::process;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -18,11 +17,33 @@ fn print_usage(bin: &str) {
     eprintln!("Options:");
     eprintln!("  -s, --steps <STEPS>      Maximum steps per program (overrides positional)");
     eprintln!("  -j, --threads <THREADS>  Number of Rayon worker threads (default: all cores)");
-    eprintln!("  -p, --progress <COUNT>   Print progress every <COUNT> enumerated programs");
+    eprintln!("  -p, --progress <SECS>    Progress update interval in seconds (default: 10s)");
     eprintln!("  -o, --output <FILE>      Write program results to <FILE>");
     eprintln!("      --holdouts-only      When using -o, only write undecided holdout programs");
     eprintln!("      --no-deciders        Disable non-halting decider pipeline on holdouts");
     eprintln!("  -h, --help               Show this help message");
+}
+
+fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
+    let s = raw.trim();
+    if let Some(ms_str) = s.strip_suffix("ms") {
+        let ms: f64 = ms_str
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid duration '{raw}'"))?;
+        if ms < 0.0 || !ms.is_finite() {
+            return Err(format!("invalid duration '{raw}'"));
+        }
+        return Ok(Duration::from_secs_f64(ms / 1000.0));
+    }
+    let secs_str = s.strip_suffix('s').unwrap_or(s).trim();
+    let secs: f64 = secs_str
+        .parse()
+        .map_err(|_| format!("invalid duration '{raw}'"))?;
+    if secs < 0.0 || !secs.is_finite() {
+        return Err(format!("invalid duration '{raw}'"));
+    }
+    Ok(Duration::from_secs_f64(secs))
 }
 
 fn main() {
@@ -33,7 +54,7 @@ fn main() {
     let mut max_steps: u64 = 100;
     let mut max_steps_set = false;
     let mut num_threads: Option<usize> = None;
-    let mut progress_interval: Option<u64> = None;
+    let mut progress_interval = Duration::from_secs(10);
     let mut output_path: Option<PathBuf> = None;
     let mut holdouts_only = false;
     let mut use_deciders = true;
@@ -74,10 +95,10 @@ fn main() {
                     eprintln!("Error: missing value for --progress");
                     process::exit(1);
                 }
-                progress_interval = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid progress interval '{}'", args[i]);
+                progress_interval = parse_duration_arg(&args[i]).unwrap_or_else(|err| {
+                    eprintln!("Error: {err}");
                     process::exit(1);
-                }));
+                });
             }
             "-o" | "--output" => {
                 i += 1;
@@ -127,7 +148,7 @@ fn main() {
     if size == 0 {
         eprintln!("Error: size must be at least 1");
         process::exit(1);
-    }
+    };
 
     if let Some(threads) = num_threads {
         if let Err(err) = rayon::ThreadPoolBuilder::new()
@@ -155,28 +176,19 @@ fn main() {
 
     let start = Instant::now();
     let last_report = Mutex::new(Instant::now());
-    let next_count_milestone = AtomicU64::new(progress_interval.unwrap_or(0));
 
-    let should_report = |snap: &ProgressSnapshot| -> bool {
-        match progress_interval {
-            Some(interval) if interval > 0 => {
-                let target = next_count_milestone.load(Ordering::Relaxed);
-                snap.total_programs >= target
-            }
-            _ => last_report
-                .lock()
-                .map(|t| t.elapsed() >= Duration::from_millis(500))
-                .unwrap_or(false),
+    let should_report = |_snap: &ProgressSnapshot| -> bool {
+        if progress_interval.is_zero() {
+            return false;
         }
+        last_report
+            .try_lock()
+            .map(|t| t.elapsed() >= progress_interval)
+            .unwrap_or(false)
     };
 
     let on_progress = |snap: &ProgressSnapshot| {
-        if let Some(interval) = progress_interval {
-            if interval > 0 {
-                let next = ((snap.total_programs / interval) + 1) * interval;
-                next_count_milestone.store(next, Ordering::Relaxed);
-            }
-        } else if let Ok(mut t) = last_report.lock() {
+        if let Ok(mut t) = last_report.lock() {
             *t = Instant::now();
         }
         let tot_f = snap.total_programs.max(1) as f64;

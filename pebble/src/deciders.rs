@@ -528,23 +528,19 @@ struct ZeroGap {
     modulus: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum CtlKind {
-    ThreeBlocks,
-    MergedRight { right_modulus: usize },
-    MergedLeft { left_modulus: usize },
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CtlState {
-    kind: CtlKind,
+    modulus: usize,
     blocks: Vec<Vec<u8>>,
     gaps: Vec<ZeroGap>,
 }
 
 impl CtlState {
     fn is_subset_of(&self, other: &CtlState) -> bool {
-        if self.kind != other.kind || self.blocks != other.blocks {
+        if self.modulus != other.modulus
+            || self.blocks != other.blocks
+            || self.gaps.len() != other.gaps.len()
+        {
             return false;
         }
         self.gaps.iter().zip(other.gaps.iter()).all(|(g1, g2)| {
@@ -562,31 +558,6 @@ fn widen_rem(rem: usize, floor: usize, modulus: usize) -> usize {
     }
 }
 
-fn find_zero_runs(slice: &[u8]) -> Vec<(usize, usize)> {
-    let mut runs = Vec::new();
-    let mut i = 0;
-    while i < slice.len() {
-        if slice[i] == 0 {
-            let start = i;
-            while i < slice.len() && slice[i] == 0 {
-                i += 1;
-            }
-            runs.push((start, i));
-        } else {
-            i += 1;
-        }
-    }
-    runs
-}
-
-fn max_internal_zero_run(slice: &[u8]) -> usize {
-    find_zero_runs(slice)
-        .into_iter()
-        .map(|(s, e)| e - s)
-        .max()
-        .unwrap_or(0)
-}
-
 fn merge_blocks_with_zeros(b1: &[u8], zeros: usize, b2: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(b1.len() + zeros + b2.len());
     out.extend_from_slice(b1);
@@ -595,77 +566,78 @@ fn merge_blocks_with_zeros(b1: &[u8], zeros: usize, b2: &[u8]) -> Vec<u8> {
     out
 }
 
+fn split_slice_by_threshold(slice: &[u8], split_threshold: usize) -> (Vec<Vec<u8>>, Vec<usize>) {
+    let mut blocks = Vec::new();
+    let mut gaps = Vec::new();
+    let mut last_idx = 0;
+    let mut i = 0;
+    while i < slice.len() {
+        if slice[i] == 0 {
+            let z_start = i;
+            while i < slice.len() && slice[i] == 0 {
+                i += 1;
+            }
+            let z_len = i - z_start;
+            if z_len >= split_threshold {
+                blocks.push(slice[last_idx..z_start].to_vec());
+                gaps.push(z_len);
+                last_idx = i;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    blocks.push(slice[last_idx..].to_vec());
+    (blocks, gaps)
+}
+
+const MAX_CTL_GAPS: usize = 4;
+
 fn unroll_ctl_state(state: &CtlState) -> Result<Vec<CtlState>, ()> {
-    match state.kind {
-        CtlKind::MergedRight { .. } | CtlKind::MergedLeft { .. } => {
-            if state.gaps[0].rem < 2 {
-                Err(())
-            } else {
-                Ok(vec![state.clone()])
-            }
+    if state.gaps.is_empty() {
+        return Err(());
+    }
+    if let Some(idx) = state.gaps.iter().position(|g| g.rem < 2) {
+        if state.gaps.len() <= 1 {
+            return Err(());
         }
-        CtlKind::ThreeBlocks => {
-            let g0 = state.gaps[0];
-            let g1 = state.gaps[1];
-            if g0.rem < 2 && g1.rem < 2 {
-                return Err(());
-            }
-            if g0.rem < 2 {
-                let mut branches = Vec::new();
-                let mut cur_rem = g0.rem;
-                while cur_rem < 2 {
-                    let b01 = merge_blocks_with_zeros(&state.blocks[0], cur_rem, &state.blocks[1]);
-                    branches.push(CtlState {
-                        kind: CtlKind::MergedLeft {
-                            left_modulus: g0.modulus,
-                        },
-                        blocks: vec![b01, state.blocks[2].clone()],
-                        gaps: vec![g1],
-                    });
-                    cur_rem += g0.modulus;
-                }
-                branches.push(CtlState {
-                    kind: CtlKind::ThreeBlocks,
-                    blocks: state.blocks.clone(),
-                    gaps: vec![
-                        ZeroGap {
-                            rem: cur_rem,
-                            modulus: g0.modulus,
-                        },
-                        g1,
-                    ],
-                });
-                Ok(branches)
-            } else if g1.rem < 2 {
-                let mut branches = Vec::new();
-                let mut cur_rem = g1.rem;
-                while cur_rem < 2 {
-                    let b12 = merge_blocks_with_zeros(&state.blocks[1], cur_rem, &state.blocks[2]);
-                    branches.push(CtlState {
-                        kind: CtlKind::MergedRight {
-                            right_modulus: g1.modulus,
-                        },
-                        blocks: vec![state.blocks[0].clone(), b12],
-                        gaps: vec![g0],
-                    });
-                    cur_rem += g1.modulus;
-                }
-                branches.push(CtlState {
-                    kind: CtlKind::ThreeBlocks,
-                    blocks: state.blocks.clone(),
-                    gaps: vec![
-                        g0,
-                        ZeroGap {
-                            rem: cur_rem,
-                            modulus: g1.modulus,
-                        },
-                    ],
-                });
-                Ok(branches)
-            } else {
-                Ok(vec![state.clone()])
-            }
+        let g = state.gaps[idx];
+        let mut branches = Vec::new();
+        let mut cur_rem = g.rem;
+        while cur_rem < 2 {
+            let merged_block =
+                merge_blocks_with_zeros(&state.blocks[idx], cur_rem, &state.blocks[idx + 1]);
+            let mut next_blocks = Vec::with_capacity(state.blocks.len() - 1);
+            next_blocks.extend_from_slice(&state.blocks[..idx]);
+            next_blocks.push(merged_block);
+            next_blocks.extend_from_slice(&state.blocks[(idx + 2)..]);
+
+            let mut next_gaps = Vec::with_capacity(state.gaps.len() - 1);
+            next_gaps.extend_from_slice(&state.gaps[..idx]);
+            next_gaps.extend_from_slice(&state.gaps[(idx + 1)..]);
+
+            let reduced = CtlState {
+                modulus: state.modulus,
+                blocks: next_blocks,
+                gaps: next_gaps,
+            };
+            branches.extend(unroll_ctl_state(&reduced)?);
+            cur_rem += g.modulus;
         }
+        let mut tail_gaps = state.gaps.clone();
+        tail_gaps[idx] = ZeroGap {
+            rem: cur_rem,
+            modulus: g.modulus,
+        };
+        let tail_state = CtlState {
+            modulus: state.modulus,
+            blocks: state.blocks.clone(),
+            gaps: tail_gaps,
+        };
+        branches.extend(unroll_ctl_state(&tail_state)?);
+        Ok(branches)
+    } else {
+        Ok(vec![state.clone()])
     }
 }
 
@@ -697,7 +669,7 @@ fn step_ctl_pre_state(
     split_threshold: usize,
     floor: usize,
 ) -> Result<CtlState, ()> {
-    let mut new_blocks = Vec::with_capacity(pre.blocks.len());
+    let mut stepped_blocks = Vec::with_capacity(pre.blocks.len());
     let mut delta_lefts = Vec::with_capacity(pre.blocks.len());
     let mut delta_rights = Vec::with_capacity(pre.blocks.len());
     let mut all_stationary = true;
@@ -707,7 +679,7 @@ fn step_ctl_pre_state(
         if dl != 0 || &nb != b {
             all_stationary = false;
         }
-        new_blocks.push(nb);
+        stepped_blocks.push(nb);
         delta_lefts.push(dl);
         delta_rights.push(dr);
     }
@@ -716,112 +688,55 @@ fn step_ctl_pre_state(
         return Err(());
     }
 
-    let mut new_gaps = Vec::with_capacity(pre.gaps.len());
+    let mut inter_gaps = Vec::with_capacity(pre.gaps.len());
     for (i, g) in pre.gaps.iter().enumerate() {
         let dg = delta_lefts[i + 1] - delta_rights[i];
         let next_rem = (g.rem as isize) + dg;
         if next_rem < 0 {
             return Err(());
         }
-        new_gaps.push(ZeroGap {
+        inter_gaps.push(ZeroGap {
             rem: next_rem as usize,
             modulus: g.modulus,
         });
     }
 
-    match pre.kind {
-        CtlKind::ThreeBlocks => {
-            for b in &new_blocks {
-                if max_internal_zero_run(b) >= split_threshold {
-                    return Err(());
-                }
-            }
-            for g in &mut new_gaps {
-                g.rem = widen_rem(g.rem, floor, g.modulus);
-            }
-            Ok(CtlState {
-                kind: CtlKind::ThreeBlocks,
-                blocks: new_blocks,
-                gaps: new_gaps,
-            })
-        }
-        CtlKind::MergedRight { right_modulus } => {
-            if max_internal_zero_run(&new_blocks[0]) >= split_threshold {
-                return Err(());
-            }
-            let b12 = &new_blocks[1];
-            let big_runs: Vec<(usize, usize)> = find_zero_runs(b12)
-                .into_iter()
-                .filter(|&(s, e)| e - s >= split_threshold)
-                .collect();
-            if big_runs.len() > 1 {
-                return Err(());
-            }
-            if let Some(&(z_start, z_end)) = big_runs.first() {
-                let b1 = b12[..z_start].to_vec();
-                let b2 = b12[z_end..].to_vec();
-                let z_len = z_end - z_start;
-                Ok(CtlState {
-                    kind: CtlKind::ThreeBlocks,
-                    blocks: vec![new_blocks[0].clone(), b1, b2],
-                    gaps: vec![
-                        ZeroGap {
-                            rem: widen_rem(new_gaps[0].rem, floor, new_gaps[0].modulus),
-                            modulus: new_gaps[0].modulus,
-                        },
-                        ZeroGap {
-                            rem: widen_rem(z_len, floor, right_modulus),
-                            modulus: right_modulus,
-                        },
-                    ],
-                })
-            } else {
-                Ok(CtlState {
-                    kind: CtlKind::MergedRight { right_modulus },
-                    blocks: new_blocks,
-                    gaps: new_gaps,
-                })
+    let mut new_blocks = Vec::with_capacity(stepped_blocks.len() + 1);
+    let mut new_gaps = Vec::with_capacity(inter_gaps.len() + 1);
+
+    for (i, nb) in stepped_blocks.into_iter().enumerate() {
+        let (sub_blocks, sub_gaps) = split_slice_by_threshold(&nb, split_threshold);
+        for (j, sb) in sub_blocks.into_iter().enumerate() {
+            new_blocks.push(sb);
+            if j < sub_gaps.len() {
+                new_gaps.push(ZeroGap {
+                    rem: sub_gaps[j],
+                    modulus: pre.modulus,
+                });
             }
         }
-        CtlKind::MergedLeft { left_modulus } => {
-            if max_internal_zero_run(&new_blocks[1]) >= split_threshold {
-                return Err(());
-            }
-            let b01 = &new_blocks[0];
-            let big_runs: Vec<(usize, usize)> = find_zero_runs(b01)
-                .into_iter()
-                .filter(|&(s, e)| e - s >= split_threshold)
-                .collect();
-            if big_runs.len() > 1 {
-                return Err(());
-            }
-            if let Some(&(z_start, z_end)) = big_runs.first() {
-                let b0 = b01[..z_start].to_vec();
-                let b1 = b01[z_end..].to_vec();
-                let z_len = z_end - z_start;
-                Ok(CtlState {
-                    kind: CtlKind::ThreeBlocks,
-                    blocks: vec![b0, b1, new_blocks[1].clone()],
-                    gaps: vec![
-                        ZeroGap {
-                            rem: widen_rem(z_len, floor, left_modulus),
-                            modulus: left_modulus,
-                        },
-                        ZeroGap {
-                            rem: widen_rem(new_gaps[0].rem, floor, new_gaps[0].modulus),
-                            modulus: new_gaps[0].modulus,
-                        },
-                    ],
-                })
-            } else {
-                Ok(CtlState {
-                    kind: CtlKind::MergedLeft { left_modulus },
-                    blocks: new_blocks,
-                    gaps: new_gaps,
-                })
-            }
+        if i < inter_gaps.len() {
+            new_gaps.push(inter_gaps[i]);
         }
     }
+
+    if new_gaps.is_empty() || new_gaps.len() > MAX_CTL_GAPS {
+        return Err(());
+    }
+
+    if new_gaps.len() >= 2 {
+        for g in &mut new_gaps {
+            g.rem = widen_rem(g.rem, floor, g.modulus);
+        }
+    } else if new_gaps[0].rem > 36 {
+        return Err(());
+    }
+
+    Ok(CtlState {
+        modulus: pre.modulus,
+        blocks: new_blocks,
+        gaps: new_gaps,
+    })
 }
 
 fn verify_ctl_closure(
@@ -856,49 +771,24 @@ fn verify_ctl_closure(
 }
 
 fn try_prove_ctl_from_tape(program: &Program, cells: &[u8]) -> bool {
-    let mut runs = find_zero_runs(cells);
-    if runs.len() < 2 {
-        return false;
-    }
-    // Sort zero runs by descending length to pick the 2 main transit gaps
-    runs.sort_by(|a, b| (b.1 - b.0).cmp(&(a.1 - a.0)));
-    let mut top_two = [runs[0], runs[1]];
-    if top_two[0].0 > top_two[1].0 {
-        top_two.swap(0, 1);
-    }
-    let (z1_start, z1_end) = top_two[0];
-    let (z2_start, z2_end) = top_two[1];
-    let g1 = z1_end - z1_start;
-    let g2 = z2_end - z2_start;
-
-    let b0 = &cells[..z1_start];
-    let b1 = &cells[z1_end..z2_start];
-    let b2 = &cells[z2_end..];
-
-    let max_internal = max_internal_zero_run(b0)
-        .max(max_internal_zero_run(b1))
-        .max(max_internal_zero_run(b2));
-
-    let min_split = (max_internal + 1).max(2);
-    for split_threshold in min_split..=6.max(min_split + 1) {
-        if g1 < split_threshold || g2 < split_threshold {
+    for split_threshold in 2..=6 {
+        let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
+        if raw_gaps.len() < 2 || raw_gaps.len() > MAX_CTL_GAPS {
             continue;
         }
         let floor = 2 * split_threshold + 2;
         for modulus in [1, 2, 3, 4, 6] {
+            let gaps = raw_gaps
+                .iter()
+                .map(|&g| ZeroGap {
+                    rem: widen_rem(g, floor, modulus),
+                    modulus,
+                })
+                .collect();
             let seed = CtlState {
-                kind: CtlKind::ThreeBlocks,
-                blocks: vec![b0.to_vec(), b1.to_vec(), b2.to_vec()],
-                gaps: vec![
-                    ZeroGap {
-                        rem: widen_rem(g1, floor, modulus),
-                        modulus,
-                    },
-                    ZeroGap {
-                        rem: widen_rem(g2, floor, modulus),
-                        modulus,
-                    },
-                ],
+                modulus,
+                blocks: blocks.clone(),
+                gaps,
             };
             if verify_ctl_closure(seed, program, split_threshold, floor, 256) {
                 return true;
@@ -1063,13 +953,17 @@ mod tests {
             ("00_20_02_04_22_24_61_11", 150),
             // Two-wave shuttle `2 00000 2` (5 internal zeros)
             ("00_20_02_04_23_50_61_35", 160),
+            // Multi-glider n=9 bouncer emitting both slow (`3|12`) and fast (`1`) gliders
+            ("01_00_02_40_20_21_22_17_34", 100),
+            // Escaping left glider + right bouncer (3 gaps)
+            ("00_20_10_04_11_33_03_01_01", 100),
         ];
         for (code, steps) in ctl_programs {
             let p: Program = code.parse().unwrap();
             assert_eq!(
                 decide_ctl(&p, steps),
                 Some(Decider::Ctl),
-                "expected n=8 program {code} to be decided by CTL"
+                "expected program {code} to be decided by CTL"
             );
         }
     }

@@ -27,8 +27,31 @@ fn print_usage(bin: &str) {
     eprintln!("      --holdouts-only      When writing output file, only write undecided holdouts");
     eprintln!("  -s, --steps <STEPS>      Maximum number of steps to simulate (default: 1000)");
     eprintln!("  -j, --threads <THREADS>  Number of Rayon worker threads for file mode");
+    eprintln!("  -p, --progress <SECS>    Progress update interval in seconds (default: 10s)");
     eprintln!("  -v, --verbose            Print the tape configuration at every step (single program)");
     eprintln!("  -h, --help               Show this help message");
+}
+
+fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
+    let s = raw.trim();
+    if let Some(ms_str) = s.strip_suffix("ms") {
+        let ms: f64 = ms_str
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid duration '{raw}'"))?;
+        if ms < 0.0 || !ms.is_finite() {
+            return Err(format!("invalid duration '{raw}'"));
+        }
+        return Ok(Duration::from_secs_f64(ms / 1000.0));
+    }
+    let secs_str = s.strip_suffix('s').unwrap_or(s).trim();
+    let secs: f64 = secs_str
+        .parse()
+        .map_err(|_| format!("invalid duration '{raw}'"))?;
+    if secs < 0.0 || !secs.is_finite() {
+        return Err(format!("invalid duration '{raw}'"));
+    }
+    Ok(Duration::from_secs_f64(secs))
 }
 
 fn simulate_tnf_subtree(
@@ -54,7 +77,13 @@ fn simulate_tnf_subtree(
     }
 }
 
-fn run_file_mode(infile: &Path, outfile: Option<&Path>, max_steps: u64, holdouts_only: bool) {
+fn run_file_mode(
+    infile: &Path,
+    outfile: Option<&Path>,
+    max_steps: u64,
+    holdouts_only: bool,
+    progress_interval: Duration,
+) {
     let input_records = read_records_from_file(infile).unwrap_or_else(|err| {
         eprintln!("Error reading input file '{}': {err}", infile.display());
         process::exit(1);
@@ -103,9 +132,9 @@ fn run_file_mode(infile: &Path, outfile: Option<&Path>, max_steps: u64, holdouts
                 live_halted.load(Ordering::Relaxed)
             };
 
-            if in_done % 256 == 0 {
+            if !progress_interval.is_zero() && (in_done % 16 == 0 || local_out > 1) {
                 if let Ok(mut last) = last_report.try_lock() {
-                    if last.elapsed() >= Duration::from_millis(500) {
+                    if last.elapsed() >= progress_interval {
                         let hold = tot_out.saturating_sub(halt);
                         let tot_f = tot_out.max(1) as f64;
                         println!(
@@ -188,6 +217,7 @@ fn main() {
     let mut max_steps: u64 = 1000;
     let mut max_steps_set = false;
     let mut num_threads: Option<usize> = None;
+    let mut progress_interval = Duration::from_secs(10);
     let mut input_path: Option<PathBuf> = None;
     let mut output_path: Option<PathBuf> = None;
     let mut positionals: Vec<String> = Vec::new();
@@ -245,6 +275,17 @@ fn main() {
                     process::exit(1);
                 }));
             }
+            "-p" | "--progress" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: missing value for --progress");
+                    process::exit(1);
+                }
+                progress_interval = parse_duration_arg(&args[i]).unwrap_or_else(|err| {
+                    eprintln!("Error: {err}");
+                    process::exit(1);
+                });
+            }
             arg if arg.starts_with('-') => {
                 eprintln!("Error: unknown option '{arg}'");
                 print_usage(bin);
@@ -296,7 +337,13 @@ fn main() {
     }
 
     if let Some(ref infile) = input_path {
-        run_file_mode(infile, output_path.as_deref(), max_steps, holdouts_only);
+        run_file_mode(
+            infile,
+            output_path.as_deref(),
+            max_steps,
+            holdouts_only,
+            progress_interval,
+        );
         return;
     }
 

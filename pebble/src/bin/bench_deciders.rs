@@ -5,7 +5,7 @@ use pebble::deciders::{
 use pebble::enumeration::TnfEnumerator;
 use pebble::io::read_records_from_file;
 use pebble::program::Program;
-use pebble::simulation::Simulator;
+use pebble::simulation::{simulate_with_edge_glider, Simulator};
 use rayon::prelude::*;
 use std::env;
 use std::fs::File;
@@ -36,6 +36,11 @@ fn print_usage(bin: &str) {
 fn run_simulation(p: &Program, steps: u64) -> bool {
     let mut sim = Simulator::new(p.size());
     sim.run(p, steps).is_halted()
+}
+
+fn run_sim_with_edge_glider(p: &Program, steps: u64) -> bool {
+    let outcome = simulate_with_edge_glider(p, steps);
+    outcome.is_halted() || outcome.is_decided_non_halting()
 }
 
 fn run_static_backtrack(p: &Program, _steps: u64) -> bool {
@@ -281,6 +286,11 @@ fn main() {
             func: run_static_backtrack,
         },
         DeciderDef {
+            name: format!("SimWithEdgeGlider({max_steps})"),
+            steps: max_steps,
+            func: run_sim_with_edge_glider,
+        },
+        DeciderDef {
             name: format!("Simulation({max_steps})"),
             steps: max_steps,
             func: run_simulation,
@@ -314,6 +324,11 @@ fn main() {
 
     if extended {
         let ext_steps = max_steps.max(200);
+        candidate_defs.push(DeciderDef {
+            name: format!("SimWithEdgeGlider({ext_steps})"),
+            steps: ext_steps,
+            func: run_sim_with_edge_glider,
+        });
         candidate_defs.push(DeciderDef {
             name: format!("Simulation({ext_steps})"),
             steps: ext_steps,

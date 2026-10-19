@@ -268,6 +268,47 @@ impl Simulator {
         }
     }
 
+    /// Run the simulator from its current state up to `max_steps`, checking at each step
+    /// whether an edge particle satisfies the light-cone escaping `EdgeGlider` invariant.
+    ///
+    /// Exits early with `SimOutcome::DecidedNonHalting { decider: Decider::EdgeGlider, steps }`
+    /// as soon as an edge glider is detected, or `SimOutcome::Halted` if the tape stabilizes.
+    pub fn run_with_edge_glider(&mut self, program: &Program, max_steps: u64) -> SimOutcome {
+        loop {
+            if let Some(decider) = crate::deciders::check_edge_glider_tape(program, self.cells()) {
+                return SimOutcome::DecidedNonHalting {
+                    decider,
+                    steps: self.steps,
+                };
+            }
+            if self.steps >= max_steps {
+                for &k in &self.cells {
+                    if k > 0 && program.rule(k).is_none() {
+                        return SimOutcome::MissingRule {
+                            pebbles: k,
+                            steps: self.steps,
+                        };
+                    }
+                }
+                if self.is_current_state_stable(program) {
+                    return SimOutcome::Halted { steps: self.steps };
+                }
+                return SimOutcome::MaxStepsReached { steps: self.steps };
+            }
+
+            match self.step(program) {
+                StepResult::Stepped => continue,
+                StepResult::Halted => return SimOutcome::Halted { steps: self.steps },
+                StepResult::MissingRule(k) => {
+                    return SimOutcome::MissingRule {
+                        pebbles: k,
+                        steps: self.steps,
+                    }
+                }
+            }
+        }
+    }
+
     /// Check if the current state `state(t)` satisfies `state(t+1) == state(t)` without mutating `cells` or `steps`.
     fn is_current_state_stable(&mut self, program: &Program) -> bool {
         if self.cells.is_empty() {
@@ -304,6 +345,13 @@ impl Simulator {
 pub fn simulate(program: &Program, max_steps: u64) -> SimOutcome {
     let mut sim = Simulator::new(program.size());
     sim.run(program, max_steps)
+}
+
+/// Simulate a `program` from `t = 0` up to `max_steps`, early-exiting immediately
+/// if an edge particle satisfies the escaping `EdgeGlider` invariant or if the tape halts.
+pub fn simulate_with_edge_glider(program: &Program, max_steps: u64) -> SimOutcome {
+    let mut sim = Simulator::new(program.size());
+    sim.run_with_edge_glider(program, max_steps)
 }
 
 /// Simulate a `program` from `t = 0` for up to `max_steps` and record the tape at each generation.

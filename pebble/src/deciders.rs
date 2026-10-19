@@ -982,9 +982,10 @@ pub fn decide_static_backtrack(program: &Program) -> Option<Decider> {
 }
 
 /// Run the staged decider pipeline
-/// (`EdgeGlider` -> `Cycler`/`TranslatedCycler` -> `SeparatedComponents` -> `Bouncer` -> `Ctl` -> `StaticBacktrack`)
+/// (`StaticBacktrack` -> `EdgeGlider` -> `Cycler`/`TranslatedCycler` -> `SeparatedComponents` -> `Bouncer` -> `Ctl`)
 /// on a holdout program.
 ///
+/// `StaticBacktrack` runs first in pure $O(n)$ time with zero simulation steps.
 /// If `final_cells` from the simulator is provided, `EdgeGlider` is checked in $O(1)$ time on `final_cells`
 /// without re-simulating; otherwise `decide_edge_glider` is run.
 pub fn run_decider_pipeline(
@@ -992,12 +993,14 @@ pub fn run_decider_pipeline(
     final_cells: Option<&[u8]>,
     max_steps: u64,
 ) -> Option<Decider> {
+    if let Some(d) = decide_static_backtrack(program) {
+        return Some(d);
+    }
     let edge_res = match final_cells {
         Some(cells) => check_edge_glider_tape(program, cells),
         None => decide_edge_glider(program, max_steps),
     };
     let res = edge_res
-        .or_else(|| decide_static_backtrack(program))
         .or_else(|| decide_cycler(program, max_steps))
         .or_else(|| decide_separated_components(program, max_steps))
         .or_else(|| decide_bouncer(program, max_steps))

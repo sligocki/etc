@@ -99,11 +99,35 @@ pub fn check_edge_glider_tape(program: &Program, cells: &[u8]) -> Option<Decider
     None
 }
 
+/// Fast $O(1)$ check on active sparse tape entries for an escaping light-cone edge glider.
+#[inline]
+pub fn check_edge_glider_sparse(program: &Program, entries: &[(isize, u8)]) -> Option<Decider> {
+    if let Some(&(_, first)) = entries.first() {
+        if first > 0 {
+            if let Some(r) = program.rule(first) {
+                if r.left == first {
+                    return Some(Decider::EdgeGlider);
+                }
+            }
+        }
+    }
+    if let Some(&(_, last)) = entries.last() {
+        if last > 0 {
+            if let Some(r) = program.rule(last) {
+                if r.right == last {
+                    return Some(Decider::EdgeGlider);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Decider 1: Simulate `program` up to `max_steps` and check for an escaping `EdgeGlider`.
 pub fn decide_edge_glider(program: &Program, max_steps: u64) -> Option<Decider> {
     let mut sim = Simulator::new(program.size());
     for _ in 0..=max_steps {
-        if let Some(d) = check_edge_glider_tape(program, sim.cells()) {
+        if let Some(d) = check_edge_glider_sparse(program, sim.sparse_entries()) {
             return Some(d);
         }
         if sim.step(program) != StepResult::Stepped {
@@ -117,23 +141,27 @@ pub fn decide_edge_glider(program: &Program, max_steps: u64) -> Option<Decider> 
 /// or `TranslatedCycler` (`dx != 0`).
 pub fn decide_cycler(program: &Program, max_steps: u64) -> Option<Decider> {
     let mut sim = Simulator::new(program.size());
-    let mut seen_shapes: HashMap<Vec<u8>, isize> = HashMap::new();
+    let mut seen_shapes: HashMap<Vec<(isize, u8)>, isize> = HashMap::new();
 
     for _ in 0..=max_steps {
-        let cells = sim.cells();
-        if let Some(&prev_offset) = seen_shapes.get(cells) {
-            // Confirm the state is not a stationary fixed point (halted) before reporting a cycle.
-            let prev_off = sim.offset();
-            if sim.step(program) != StepResult::Stepped {
-                return None;
+        let entries = sim.sparse_entries();
+        if !entries.is_empty() {
+            let x0 = entries[0].0;
+            let shape: Vec<(isize, u8)> = entries.iter().map(|&(x, k)| (x - x0, k)).collect();
+            if let Some(&prev_offset) = seen_shapes.get(&shape) {
+                // Confirm the state is not a stationary fixed point (halted) before reporting a cycle.
+                let prev_off = sim.offset();
+                if sim.step(program) != StepResult::Stepped {
+                    return None;
+                }
+                if prev_off == prev_offset {
+                    return Some(Decider::Cycler);
+                } else {
+                    return Some(Decider::TranslatedCycler);
+                }
             }
-            if prev_off == prev_offset {
-                return Some(Decider::Cycler);
-            } else {
-                return Some(Decider::TranslatedCycler);
-            }
+            seen_shapes.insert(shape, sim.offset());
         }
-        seen_shapes.insert(cells.to_vec(), sim.offset());
 
         if sim.step(program) != StepResult::Stepped {
             return None;
@@ -242,7 +270,7 @@ pub fn decide_separated_components(program: &Program, max_steps: u64) -> Option<
                 }
             }
 
-            for pair in extract_bipartitions(sim.offset(), cells) {
+            for pair in extract_bipartitions(sim.offset(), &cells) {
                 if !next_cuts.iter().any(|c| c.segments == pair) {
                     let mut seen = HashMap::new();
                     seen.insert(
@@ -409,15 +437,15 @@ pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
         let offset = sim.offset();
         let cells = sim.cells();
         if !cells.is_empty() {
-            let (right_transits, left_transits) = extract_transits(program, offset, cells);
+            let (right_transits, left_transits) = extract_transits(program, offset, &cells);
 
             // 1. Update candidates waiting for the return bounce (t_L -> t_2)
             let mut next_return = Vec::with_capacity(waiting_return.len());
             for cand in waiting_return {
                 let intact = if cand.started_right {
-                    right_wall_isolated(offset, cells, &cand.w_r, cand.fixed_wall_offset)
+                    right_wall_isolated(offset, &cells, &cand.w_r, cand.fixed_wall_offset)
                 } else {
-                    left_wall_isolated(offset, cells, &cand.w_l, cand.fixed_wall_offset)
+                    left_wall_isolated(offset, &cells, &cand.w_l, cand.fixed_wall_offset)
                 };
                 if !intact {
                     continue;
@@ -450,9 +478,9 @@ pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
             let mut next_opposite = Vec::with_capacity(waiting_opposite.len());
             for cand in waiting_opposite {
                 let intact = if cand.started_right {
-                    left_wall_isolated(offset, cells, &cand.w_l, cand.fixed_wall_offset)
+                    left_wall_isolated(offset, &cells, &cand.w_l, cand.fixed_wall_offset)
                 } else {
-                    right_wall_isolated(offset, cells, &cand.w_r, cand.fixed_wall_offset)
+                    right_wall_isolated(offset, &cells, &cand.w_r, cand.fixed_wall_offset)
                 };
                 if !intact {
                     continue;
@@ -842,7 +870,7 @@ pub fn decide_ctl(program: &Program, max_steps: u64) -> Option<Decider> {
 
     for step in 0..=max_steps {
         if step >= sample_start && (max_steps - step) % 4 == 0 {
-            if try_prove_ctl_from_tape(program, sim.cells()) {
+            if try_prove_ctl_from_tape(program, &sim.cells()) {
                 return Some(Decider::Ctl);
             }
         }
@@ -998,6 +1026,36 @@ pub fn run_decider_pipeline(
     }
     let edge_res = match final_cells {
         Some(cells) => check_edge_glider_tape(program, cells),
+        None => decide_edge_glider(program, max_steps),
+    };
+    let res = edge_res
+        .or_else(|| decide_cycler(program, max_steps))
+        .or_else(|| decide_separated_components(program, max_steps))
+        .or_else(|| decide_bouncer(program, max_steps))
+        .or_else(|| decide_ctl(program, max_steps));
+
+    if res.is_none() && (50..200).contains(&max_steps) {
+        let ext_steps = 200;
+        return decide_edge_glider(program, ext_steps)
+            .or_else(|| decide_cycler(program, ext_steps))
+            .or_else(|| decide_separated_components(program, ext_steps))
+            .or_else(|| decide_bouncer(program, ext_steps))
+            .or_else(|| decide_ctl(program, ext_steps));
+    }
+    res
+}
+
+/// Run the staged decider pipeline using active sparse tape entries.
+pub fn run_decider_pipeline_sparse(
+    program: &Program,
+    final_entries: Option<&[(isize, u8)]>,
+    max_steps: u64,
+) -> Option<Decider> {
+    if let Some(d) = decide_static_backtrack(program) {
+        return Some(d);
+    }
+    let edge_res = match final_entries {
+        Some(entries) => check_edge_glider_sparse(program, entries),
         None => decide_edge_glider(program, max_steps),
     };
     let res = edge_res

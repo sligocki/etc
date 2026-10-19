@@ -123,25 +123,205 @@ impl TapeSnapshot {
     }
 }
 
-/// Stateful simulator for a 1D Pebble Automaton.
-#[derive(Debug, Clone)]
+/// Maximum number of non-zero piles supported inline without heap allocation.
+///
+/// Because total pebble count $N$ is strictly conserved ($L + S + R = k$),
+/// the number of non-zero piles can never exceed $N$. This capacity covers all
+/// programs up to $N = 32$.
+pub const MAX_SPARSE_PEBBLES: usize = 32;
+
+/// Maximum scratch buffer capacity for emitted fragments ($3 \times \text{MAX\_SPARSE\_PEBBLES}$).
+pub const MAX_SCRATCH_ENTRIES: usize = MAX_SPARSE_PEBBLES * 3;
+
+/// Compact stack-allocated sparse representation of the active tape.
+///
+/// Stores non-zero entries `(x, pebbles)` sorted strictly by coordinate `x`.
+/// All other cells on the tape are implicitly `0`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SparseTape {
+    len: u8,
+    entries: [(isize, u8); MAX_SPARSE_PEBBLES],
+}
+
+impl SparseTape {
+    /// Create a new sparse tape with `p` pebbles at `x = 0`.
+    pub fn new(p: u8) -> Self {
+        let mut entries = [(0, 0); MAX_SPARSE_PEBBLES];
+        if p > 0 {
+            entries[0] = (0, p);
+            Self { len: 1, entries }
+        } else {
+            Self { len: 0, entries }
+        }
+    }
+
+    /// Number of active non-zero piles currently on the tape.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Returns `true` if there are no non-zero pebbles on the tape.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Slice of active `(coordinate, pebbles)` pairs sorted strictly by coordinate.
+    #[inline]
+    pub fn entries(&self) -> &[(isize, u8)] {
+        &self.entries[..self.len as usize]
+    }
+
+    /// Minimum x-coordinate with non-zero pebbles, or `None` if empty.
+    #[inline]
+    pub fn min_x(&self) -> Option<isize> {
+        if self.len > 0 {
+            Some(self.entries[0].0)
+        } else {
+            None
+        }
+    }
+
+    /// Maximum x-coordinate with non-zero pebbles, or `None` if empty.
+    #[inline]
+    pub fn max_x(&self) -> Option<isize> {
+        if self.len > 0 {
+            Some(self.entries[self.len as usize - 1].0)
+        } else {
+            None
+        }
+    }
+
+    /// Total number of pebbles on the tape.
+    #[inline]
+    pub fn total_pebbles(&self) -> usize {
+        self.entries().iter().map(|&(_, k)| k as usize).sum()
+    }
+
+    /// Read the pebble count at coordinate `x`.
+    #[inline]
+    pub fn get(&self, x: isize) -> u8 {
+        self.entries()
+            .binary_search_by_key(&x, |&(pos, _)| pos)
+            .map(|idx| self.entries[idx].1)
+            .unwrap_or(0)
+    }
+
+    /// Reconstruct the dense `(offset, cells)` slice representation from sparse entries.
+    pub fn to_dense(&self) -> (isize, Vec<u8>) {
+        if self.len == 0 {
+            return (0, Vec::new());
+        }
+        let min_x = self.entries[0].0;
+        let max_x = self.entries[self.len as usize - 1].0;
+        let width = (max_x - min_x + 1) as usize;
+        let mut cells = vec![0u8; width];
+        for &(x, k) in self.entries() {
+            cells[(x - min_x) as usize] = k;
+        }
+        (min_x, cells)
+    }
+
+    /// Advance the sparse tape by 1 generation according to `program`.
+    pub fn step(
+        &mut self,
+        program: &Program,
+        scratch: &mut [(isize, u8); MAX_SCRATCH_ENTRIES],
+        scratch_len: &mut usize,
+    ) -> StepResult {
+        if self.len == 0 {
+            return StepResult::Halted;
+        }
+
+        // Verify all non-zero cells have defined rules
+        for i in 0..self.len as usize {
+            let k = self.entries[i].1;
+            if program.rule(k).is_none() {
+                return StepResult::MissingRule(k);
+            }
+        }
+
+        *scratch_len = 0;
+        for i in 0..self.len as usize {
+            let (x, k) = self.entries[i];
+            let rule = program.rule(k).unwrap();
+            if rule.left > 0 {
+                scratch[*scratch_len] = (x - 1, rule.left);
+                *scratch_len += 1;
+            }
+            if rule.stay > 0 {
+                scratch[*scratch_len] = (x, rule.stay);
+                *scratch_len += 1;
+            }
+            if rule.right > 0 {
+                scratch[*scratch_len] = (x + 1, rule.right);
+                *scratch_len += 1;
+            }
+        }
+
+        if *scratch_len == 0 {
+            self.len = 0;
+            return StepResult::Stepped;
+        }
+
+        let slice = &mut scratch[..*scratch_len];
+        slice.sort_unstable_by_key(|&(x, _)| x);
+
+        let mut next_entries = [(0isize, 0u8); MAX_SPARSE_PEBBLES];
+        let mut next_len = 0usize;
+        let mut cur_x = slice[0].0;
+        let mut cur_k = slice[0].1;
+
+        for i in 1..slice.len() {
+            let (x, k) = slice[i];
+            if x == cur_x {
+                cur_k += k;
+            } else {
+                if next_len < MAX_SPARSE_PEBBLES {
+                    next_entries[next_len] = (cur_x, cur_k);
+                    next_len += 1;
+                }
+                cur_x = x;
+                cur_k = k;
+            }
+        }
+        if next_len < MAX_SPARSE_PEBBLES {
+            next_entries[next_len] = (cur_x, cur_k);
+            next_len += 1;
+        }
+
+        if next_len == self.len as usize
+            && next_entries[..next_len] == self.entries[..self.len as usize]
+        {
+            return StepResult::Halted;
+        }
+
+        self.entries = next_entries;
+        self.len = next_len as u8;
+        StepResult::Stepped
+    }
+}
+
+/// Stateful simulator for a 1D Pebble Automaton using sparse stack-allocated storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Simulator {
-    offset: isize,
-    cells: Vec<u8>,
+    tape: SparseTape,
     steps: u64,
-    scratch: Vec<u8>,
 }
 
 impl Simulator {
     /// Create a new simulator initialized with `initial_pebbles` at `x = 0`, `t = 0`.
     pub fn new(initial_pebbles: usize) -> Self {
-        let p = initial_pebbles as u8;
-        let cells = if p > 0 { vec![p] } else { Vec::new() };
+        assert!(
+            initial_pebbles <= MAX_SPARSE_PEBBLES,
+            "pebble count {} exceeds MAX_SPARSE_PEBBLES {}",
+            initial_pebbles,
+            MAX_SPARSE_PEBBLES
+        );
         Self {
-            offset: 0,
-            cells,
+            tape: SparseTape::new(initial_pebbles as u8),
             steps: 0,
-            scratch: Vec::with_capacity(initial_pebbles + 4),
         }
     }
 
@@ -151,97 +331,75 @@ impl Simulator {
         self.steps
     }
 
-    /// Current x-coordinate of `cells()[0]`.
+    /// Access the underlying sparse tape.
     #[inline]
-    pub fn offset(&self) -> isize {
-        self.offset
+    pub fn tape(&self) -> &SparseTape {
+        &self.tape
     }
 
-    /// Slice of active cells spanning `[offset .. offset + cells.len() - 1]`.
+    /// Active sparse entries as `&[(coordinate, pebbles)]`.
     #[inline]
-    pub fn cells(&self) -> &[u8] {
-        &self.cells
+    pub fn sparse_entries(&self) -> &[(isize, u8)] {
+        self.tape.entries()
+    }
+
+    /// Current x-coordinate of the leftmost non-zero cell, or `0` if empty.
+    #[inline]
+    pub fn offset(&self) -> isize {
+        self.tape.min_x().unwrap_or(0)
+    }
+
+    /// Minimum x-coordinate with non-zero pebbles.
+    #[inline]
+    pub fn min_x(&self) -> isize {
+        self.tape.min_x().unwrap_or(0)
+    }
+
+    /// Maximum x-coordinate with non-zero pebbles.
+    #[inline]
+    pub fn max_x(&self) -> isize {
+        self.tape.max_x().unwrap_or(0)
+    }
+
+    /// Convert current active tape to a dense `cells` vector.
+    pub fn cells(&self) -> Vec<u8> {
+        self.tape.to_dense().1
     }
 
     /// Total number of pebbles currently on the tape.
+    #[inline]
     pub fn total_pebbles(&self) -> usize {
-        self.cells.iter().map(|&c| c as usize).sum()
+        self.tape.total_pebbles()
     }
 
     /// Capture a snapshot of the current tape state.
     pub fn snapshot(&self) -> TapeSnapshot {
+        let (offset, cells) = self.tape.to_dense();
         TapeSnapshot {
             step: self.steps,
-            offset: self.offset,
-            cells: self.cells.clone(),
+            offset,
+            cells,
         }
     }
 
     /// Attempt to advance the simulation by 1 step.
-    ///
-    /// - If any non-zero cell `k` on the tape has `program.rule(k) == None`, returns
-    ///   `StepResult::MissingRule(k)` without mutating the state.
-    /// - If the next state equals the current state at the exact same coordinates, returns
-    ///   `StepResult::Halted` without incrementing `steps`.
-    /// - Otherwise, updates the tape, increments `steps` by 1, and returns `StepResult::Stepped`.
     pub fn step(&mut self, program: &Program) -> StepResult {
-        if self.cells.is_empty() {
-            return StepResult::Halted;
-        }
-
-        // Check that all pebble counts present in the current configuration have defined rules.
-        for &k in &self.cells {
-            if k > 0 && program.rule(k).is_none() {
-                return StepResult::MissingRule(k);
-            }
-        }
-
-        let next_len = self.cells.len() + 2;
-        self.scratch.clear();
-        self.scratch.resize(next_len, 0);
-
-        for (i, &k) in self.cells.iter().enumerate() {
-            if k == 0 {
-                continue;
-            }
-            // Safe to unwrap because we verified all non-zero `k` have `Some(rule)` above.
-            let rule = program.rule(k).unwrap();
-            self.scratch[i] += rule.left;
-            self.scratch[i + 1] += rule.stay;
-            self.scratch[i + 2] += rule.right;
-        }
-
-        // Find non-zero bounding box in `scratch`.
-        let Some(first_nz) = self.scratch.iter().position(|&v| v > 0) else {
-            self.cells.clear();
-            self.offset = 0;
+        let mut scratch = [(0isize, 0u8); MAX_SCRATCH_ENTRIES];
+        let mut scratch_len = 0usize;
+        let res = self.tape.step(program, &mut scratch, &mut scratch_len);
+        if res == StepResult::Stepped {
             self.steps += 1;
-            return StepResult::Stepped;
-        };
-        let last_nz = self.scratch.iter().rposition(|&v| v > 0).unwrap();
-
-        let next_offset = self.offset - 1 + first_nz as isize;
-        let next_slice = &self.scratch[first_nz..=last_nz];
-
-        if next_offset == self.offset && next_slice == self.cells.as_slice() {
-            return StepResult::Halted;
         }
-
-        self.offset = next_offset;
-        self.cells.clear();
-        self.cells.extend_from_slice(next_slice);
-        self.steps += 1;
-        StepResult::Stepped
+        res
     }
 
     /// Run the simulator from its current state up to `max_steps` total transitions.
     pub fn run(&mut self, program: &Program, max_steps: u64) -> SimOutcome {
+        let mut scratch = [(0isize, 0u8); MAX_SCRATCH_ENTRIES];
+        let mut scratch_len = 0usize;
         loop {
-            // Before taking a transition past `max_steps`, check if the current state is already stable
-            // or missing a rule, and only advance if `self.steps < max_steps`.
             if self.steps >= max_steps {
-                // Check if the state at `self.steps` has stabilized or is missing a rule without advancing.
-                for &k in &self.cells {
+                for &(_, k) in self.tape.entries() {
                     if k > 0 && program.rule(k).is_none() {
                         return SimOutcome::MissingRule {
                             pebbles: k,
@@ -255,14 +413,17 @@ impl Simulator {
                 return SimOutcome::MaxStepsReached { steps: self.steps };
             }
 
-            match self.step(program) {
-                StepResult::Stepped => continue,
+            match self.tape.step(program, &mut scratch, &mut scratch_len) {
+                StepResult::Stepped => {
+                    self.steps += 1;
+                    continue;
+                }
                 StepResult::Halted => return SimOutcome::Halted { steps: self.steps },
                 StepResult::MissingRule(k) => {
                     return SimOutcome::MissingRule {
                         pebbles: k,
                         steps: self.steps,
-                    }
+                    };
                 }
             }
         }
@@ -270,19 +431,20 @@ impl Simulator {
 
     /// Run the simulator from its current state up to `max_steps`, checking at each step
     /// whether an edge particle satisfies the light-cone escaping `EdgeGlider` invariant.
-    ///
-    /// Exits early with `SimOutcome::DecidedNonHalting { decider: Decider::EdgeGlider, steps }`
-    /// as soon as an edge glider is detected, or `SimOutcome::Halted` if the tape stabilizes.
     pub fn run_with_edge_glider(&mut self, program: &Program, max_steps: u64) -> SimOutcome {
+        let mut scratch = [(0isize, 0u8); MAX_SCRATCH_ENTRIES];
+        let mut scratch_len = 0usize;
         loop {
-            if let Some(decider) = crate::deciders::check_edge_glider_tape(program, self.cells()) {
+            if let Some(decider) =
+                crate::deciders::check_edge_glider_sparse(program, self.tape.entries())
+            {
                 return SimOutcome::DecidedNonHalting {
                     decider,
                     steps: self.steps,
                 };
             }
             if self.steps >= max_steps {
-                for &k in &self.cells {
+                for &(_, k) in self.tape.entries() {
                     if k > 0 && program.rule(k).is_none() {
                         return SimOutcome::MissingRule {
                             pebbles: k,
@@ -296,48 +458,28 @@ impl Simulator {
                 return SimOutcome::MaxStepsReached { steps: self.steps };
             }
 
-            match self.step(program) {
-                StepResult::Stepped => continue,
+            match self.tape.step(program, &mut scratch, &mut scratch_len) {
+                StepResult::Stepped => {
+                    self.steps += 1;
+                    continue;
+                }
                 StepResult::Halted => return SimOutcome::Halted { steps: self.steps },
                 StepResult::MissingRule(k) => {
                     return SimOutcome::MissingRule {
                         pebbles: k,
                         steps: self.steps,
-                    }
+                    };
                 }
             }
         }
     }
 
-    /// Check if the current state `state(t)` satisfies `state(t+1) == state(t)` without mutating `cells` or `steps`.
-    fn is_current_state_stable(&mut self, program: &Program) -> bool {
-        if self.cells.is_empty() {
-            return true;
-        }
-        let next_len = self.cells.len() + 2;
-        self.scratch.clear();
-        self.scratch.resize(next_len, 0);
-
-        for (i, &k) in self.cells.iter().enumerate() {
-            if k == 0 {
-                continue;
-            }
-            let Some(rule) = program.rule(k) else {
-                return false;
-            };
-            self.scratch[i] += rule.left;
-            self.scratch[i + 1] += rule.stay;
-            self.scratch[i + 2] += rule.right;
-        }
-
-        let Some(first_nz) = self.scratch.iter().position(|&v| v > 0) else {
-            return false;
-        };
-        let last_nz = self.scratch.iter().rposition(|&v| v > 0).unwrap();
-        let next_offset = self.offset - 1 + first_nz as isize;
-        let next_slice = &self.scratch[first_nz..=last_nz];
-
-        next_offset == self.offset && next_slice == self.cells.as_slice()
+    /// Check if the current state `state(t)` satisfies `state(t+1) == state(t)`.
+    pub fn is_current_state_stable(&mut self, program: &Program) -> bool {
+        let mut scratch = [(0isize, 0u8); MAX_SCRATCH_ENTRIES];
+        let mut scratch_len = 0usize;
+        let mut clone = self.tape;
+        clone.step(program, &mut scratch, &mut scratch_len) == StepResult::Halted
     }
 }
 
@@ -475,7 +617,7 @@ mod tests {
         let outcome = sim.run(&prog, 25);
         assert_eq!(outcome, SimOutcome::MaxStepsReached { steps: 25 });
         assert_eq!(sim.offset(), 25);
-        assert_eq!(sim.cells(), &[1]);
+        assert_eq!(sim.cells(), vec![1]);
         assert_eq!(sim.total_pebbles(), 1);
     }
 
@@ -491,5 +633,88 @@ mod tests {
                 steps: 1
             }
         );
+    }
+
+    struct ReferenceDenseSimulator {
+        offset: isize,
+        cells: Vec<u8>,
+        scratch: Vec<u8>,
+    }
+
+    impl ReferenceDenseSimulator {
+        fn new(p: usize) -> Self {
+            let cells = if p > 0 { vec![p as u8] } else { Vec::new() };
+            Self {
+                offset: 0,
+                cells,
+                scratch: Vec::with_capacity(p + 4),
+            }
+        }
+
+        fn step(&mut self, program: &Program) -> StepResult {
+            if self.cells.is_empty() {
+                return StepResult::Halted;
+            }
+            for &k in &self.cells {
+                if k > 0 && program.rule(k).is_none() {
+                    return StepResult::MissingRule(k);
+                }
+            }
+            let next_len = self.cells.len() + 2;
+            self.scratch.clear();
+            self.scratch.resize(next_len, 0);
+
+            for (i, &k) in self.cells.iter().enumerate() {
+                if k == 0 {
+                    continue;
+                }
+                let rule = program.rule(k).unwrap();
+                self.scratch[i] += rule.left;
+                self.scratch[i + 1] += rule.stay;
+                self.scratch[i + 2] += rule.right;
+            }
+
+            let Some(first_nz) = self.scratch.iter().position(|&v| v > 0) else {
+                self.cells.clear();
+                self.offset = 0;
+                return StepResult::Stepped;
+            };
+            let last_nz = self.scratch.iter().rposition(|&v| v > 0).unwrap();
+            let next_offset = self.offset - 1 + first_nz as isize;
+            let next_slice = &self.scratch[first_nz..=last_nz];
+
+            if next_offset == self.offset && next_slice == self.cells.as_slice() {
+                return StepResult::Halted;
+            }
+
+            self.offset = next_offset;
+            self.cells.clear();
+            self.cells.extend_from_slice(next_slice);
+            StepResult::Stepped
+        }
+    }
+
+    #[test]
+    fn test_sparse_vs_dense_fuzz_equivalence() {
+        use crate::enumeration::TnfEnumerator;
+        // Test all programs in peBBle(1..=4) across 50 steps
+        for size in 1..=4 {
+            for entry in TnfEnumerator::new(size, 50) {
+                let prog = entry.program;
+                let mut dense = ReferenceDenseSimulator::new(size);
+                let mut sparse = Simulator::new(size);
+
+                for step in 0..50 {
+                    let d_res = dense.step(&prog);
+                    let s_res = sparse.step(&prog);
+                    assert_eq!(s_res, d_res, "step result mismatch on {prog} at step {step}");
+                    if s_res != StepResult::Stepped {
+                        break;
+                    }
+                    assert_eq!(sparse.offset(), dense.offset, "offset mismatch on {prog} at step {step}");
+                    assert_eq!(sparse.cells(), dense.cells, "cells mismatch on {prog} at step {step}");
+                }
+            }
+        }
     }
 }

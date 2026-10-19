@@ -1,4 +1,4 @@
-use crate::deciders::{run_decider_pipeline, Decider};
+use crate::deciders::{run_decider_pipeline_sparse, Decider};
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
 
@@ -237,7 +237,9 @@ fn resolve_leaf_outcome(
     use_deciders: bool,
 ) -> SimOutcome {
     if use_deciders {
-        if let Some(decider) = run_decider_pipeline(prog, Some(sim.cells()), max_steps) {
+        if let Some(decider) =
+            run_decider_pipeline_sparse(prog, Some(sim.sparse_entries()), max_steps)
+        {
             SimOutcome::DecidedNonHalting { decider, steps }
         } else {
             SimOutcome::MaxStepsReached { steps }

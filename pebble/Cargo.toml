@@ -16,5 +16,10 @@ path = "src/bin/sim.rs"
 name = "enum"
 path = "src/bin/enum.rs"
 
+[[bin]]
+name = "bench_deciders"
+path = "src/bin/bench_deciders.rs"
+
 [dependencies]
 rayon = "1.12.0"
+

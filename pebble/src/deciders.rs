@@ -997,11 +997,11 @@ pub fn run_decider_pipeline(
         None => decide_edge_glider(program, max_steps),
     };
     let res = edge_res
+        .or_else(|| decide_static_backtrack(program))
         .or_else(|| decide_cycler(program, max_steps))
         .or_else(|| decide_separated_components(program, max_steps))
         .or_else(|| decide_bouncer(program, max_steps))
-        .or_else(|| decide_ctl(program, max_steps))
-        .or_else(|| decide_static_backtrack(program));
+        .or_else(|| decide_ctl(program, max_steps));
 
     if res.is_none() && (50..200).contains(&max_steps) {
         let ext_steps = 200;
@@ -1009,8 +1009,7 @@ pub fn run_decider_pipeline(
             .or_else(|| decide_cycler(program, ext_steps))
             .or_else(|| decide_separated_components(program, ext_steps))
             .or_else(|| decide_bouncer(program, ext_steps))
-            .or_else(|| decide_ctl(program, ext_steps))
-            .or_else(|| decide_static_backtrack(program));
+            .or_else(|| decide_ctl(program, ext_steps));
     }
     res
 }

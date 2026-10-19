@@ -175,7 +175,7 @@ fn main() {
     println!(
         "Deciders:         {}",
         if use_deciders {
-            "enabled (EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents, Bouncer, CTL)"
+            "enabled (EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents, Bouncer, CTL, StaticBacktrack)"
         } else {
             "disabled"
         }

@@ -25,16 +25,20 @@ pub enum Decider {
     /// modular zero-star gaps `0^r (0^m)*` is entered during simulation, closed under exact
     /// 1-step symbolic transitions, and contains no halting configurations.
     Ctl,
+    /// Static backtrack / invariant decider: proves non-halting via stationary-rule graph
+    /// reachability and monotone pebble threshold invariants.
+    StaticBacktrack,
 }
 
 impl Decider {
-    pub const ALL: [Decider; 6] = [
+    pub const ALL: [Decider; 7] = [
         Decider::EdgeGlider,
         Decider::Cycler,
         Decider::TranslatedCycler,
         Decider::SeparatedComponents,
         Decider::Bouncer,
         Decider::Ctl,
+        Decider::StaticBacktrack,
     ];
 }
 
@@ -47,6 +51,7 @@ impl fmt::Display for Decider {
             Decider::SeparatedComponents => write!(f, "SeparatedComponents"),
             Decider::Bouncer => write!(f, "Bouncer"),
             Decider::Ctl => write!(f, "CTL"),
+            Decider::StaticBacktrack => write!(f, "StaticBacktrack"),
         }
     }
 }
@@ -62,6 +67,7 @@ impl FromStr for Decider {
             "separatedcomponents" | "separated_components" => Ok(Decider::SeparatedComponents),
             "bouncer" => Ok(Decider::Bouncer),
             "ctl" => Ok(Decider::Ctl),
+            "staticbacktrack" | "static_backtrack" | "backtrack" => Ok(Decider::StaticBacktrack),
             other => Err(format!("unknown decider '{other}'")),
         }
     }
@@ -847,8 +853,136 @@ pub fn decide_ctl(program: &Program, max_steps: u64) -> Option<Decider> {
     None
 }
 
+/// Decider 6: StaticBacktrack.
+///
+/// Proves non-halting purely from static rule analysis:
+/// 1. Stationary configuration requirement:
+///    In any stationary configuration C (where step(C) == C), every cell must satisfy
+///    R_{C(x)} = L_{C(x+1)}. At boundary cells, L = 0 (leftmost) and R = 0 (rightmost).
+///    Thus, any rule appearing in a stationary configuration must lie on a directed path
+///    in the rule graph (k1 -> k2 iff R_{k1} == L_{k2}) from a start rule (L = 0) to an end rule (R = 0).
+/// 2. If all rules are defined and no stationary-capable rules exist, no finite configuration can halt.
+/// 3. Monotone Threshold Invariant:
+///    If for some threshold T in 2..=n:
+///    - All stationary-capable rules have count < T.
+///    - Every rule k in T..=n has max(L, S, R) >= T (or if undefined, pigeonhole ceil(k/3) >= T).
+///    Then the property "the tape contains at least one cell with >= T pebbles" is an invariant.
+///    Since the initial state has n >= T, no stationary configuration (all of which require cells < T)
+///    can ever be reached.
+pub fn decide_static_backtrack(program: &Program) -> Option<Decider> {
+    let size = program.size();
+    if size == 0 {
+        return None;
+    }
+
+    let mut can_be_stationary = vec![false; size + 1];
+
+    // Single-cell isolated stationary rule (L = 0 and R = 0)
+    for k in 1..=size as u8 {
+        if let Some(r) = program.rule(k) {
+            if r.is_stationary() {
+                can_be_stationary[k as usize] = true;
+            }
+        }
+    }
+
+    // Directed graph on rules: edge u -> v iff R_u == L_v
+    let mut from_start = vec![false; size + 1];
+    let mut to_end = vec![false; size + 1];
+
+    let mut start_nodes = Vec::new();
+    let mut end_nodes = Vec::new();
+
+    for k in 1..=size as u8 {
+        if let Some(r) = program.rule(k) {
+            if r.left == 0 {
+                start_nodes.push(k as usize);
+                from_start[k as usize] = true;
+            }
+            if r.right == 0 {
+                end_nodes.push(k as usize);
+                to_end[k as usize] = true;
+            }
+        }
+    }
+
+    let mut queue = start_nodes;
+    while let Some(u) = queue.pop() {
+        let u_rule = program.rule(u as u8).unwrap();
+        let target_l = u_rule.right;
+        for v in 1..=size {
+            if !from_start[v] {
+                if let Some(v_rule) = program.rule(v as u8) {
+                    if v_rule.left == target_l {
+                        from_start[v] = true;
+                        queue.push(v);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut queue = end_nodes;
+    while let Some(v) = queue.pop() {
+        let v_rule = program.rule(v as u8).unwrap();
+        let target_r = v_rule.left;
+        for u in 1..=size {
+            if !to_end[u] {
+                if let Some(u_rule) = program.rule(u as u8) {
+                    if u_rule.right == target_r {
+                        to_end[u] = true;
+                        queue.push(u);
+                    }
+                }
+            }
+        }
+    }
+
+    for k in 1..=size {
+        if from_start[k] && to_end[k] {
+            can_be_stationary[k] = true;
+        }
+    }
+
+    // Case 1: Complete program with no possible stationary rules
+    if program.is_complete() && !can_be_stationary.iter().skip(1).any(|&b| b) {
+        return Some(Decider::StaticBacktrack);
+    }
+
+    // Case 2: Monotone threshold invariant
+    for t_thresh in 2..=size {
+        let has_stationary_ge_t = can_be_stationary
+            .iter()
+            .enumerate()
+            .skip(t_thresh)
+            .any(|(_, &b)| b);
+        if has_stationary_ge_t {
+            continue;
+        }
+
+        let mut ok = true;
+        for k in t_thresh..=size {
+            let Some(r) = program.rule(k as u8) else {
+                ok = false;
+                break;
+            };
+            let max_comp = r.left.max(r.stay).max(r.right) as usize;
+            if max_comp < t_thresh {
+                ok = false;
+                break;
+            }
+        }
+
+        if ok {
+            return Some(Decider::StaticBacktrack);
+        }
+    }
+
+    None
+}
+
 /// Run the staged decider pipeline
-/// (`EdgeGlider` -> `Cycler`/`TranslatedCycler` -> `SeparatedComponents` -> `Bouncer` -> `Ctl`)
+/// (`EdgeGlider` -> `Cycler`/`TranslatedCycler` -> `SeparatedComponents` -> `Bouncer` -> `Ctl` -> `StaticBacktrack`)
 /// on a holdout program.
 ///
 /// If `final_cells` from the simulator is provided, `EdgeGlider` is checked in $O(1)$ time on `final_cells`
@@ -866,7 +1000,8 @@ pub fn run_decider_pipeline(
         .or_else(|| decide_cycler(program, max_steps))
         .or_else(|| decide_separated_components(program, max_steps))
         .or_else(|| decide_bouncer(program, max_steps))
-        .or_else(|| decide_ctl(program, max_steps));
+        .or_else(|| decide_ctl(program, max_steps))
+        .or_else(|| decide_static_backtrack(program));
 
     if res.is_none() && (50..200).contains(&max_steps) {
         let ext_steps = 200;
@@ -874,7 +1009,8 @@ pub fn run_decider_pipeline(
             .or_else(|| decide_cycler(program, ext_steps))
             .or_else(|| decide_separated_components(program, ext_steps))
             .or_else(|| decide_bouncer(program, ext_steps))
-            .or_else(|| decide_ctl(program, ext_steps));
+            .or_else(|| decide_ctl(program, ext_steps))
+            .or_else(|| decide_static_backtrack(program));
     }
     res
 }
@@ -993,6 +1129,26 @@ mod tests {
                 decide_ctl(&p, steps),
                 Some(Decider::Ctl),
                 "expected program {code} to be decided by CTL"
+            );
+        }
+    }
+
+    #[test]
+    fn test_static_backtrack_decider() {
+        let programs = [
+            // User example: only halt is all 0s and 1s, but all rules for k >= 2 produce a >= 2 value
+            "00_02_01_40_11_11",
+            // Size 9 holdouts from results/enum_9_e2_unk.txt
+            "00_02_01_40_12_12_70_62_01",
+            "00_02_01_40_12_15_70_16_03",
+            "00_02_01_40_12_12_70_62_11",
+        ];
+        for code in programs {
+            let p: Program = code.parse().unwrap();
+            assert_eq!(
+                decide_static_backtrack(&p),
+                Some(Decider::StaticBacktrack),
+                "expected program {code} to be decided by StaticBacktrack"
             );
         }
     }

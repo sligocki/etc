@@ -724,12 +724,8 @@ fn step_ctl_pre_state(
         return Err(());
     }
 
-    if new_gaps.len() >= 2 {
-        for g in &mut new_gaps {
-            g.rem = widen_rem(g.rem, floor, g.modulus);
-        }
-    } else if new_gaps[0].rem > 36 {
-        return Err(());
+    for g in &mut new_gaps {
+        g.rem = widen_rem(g.rem, floor, g.modulus);
     }
 
     Ok(CtlState {
@@ -773,7 +769,7 @@ fn verify_ctl_closure(
 fn try_prove_ctl_from_tape(program: &Program, cells: &[u8]) -> bool {
     for split_threshold in 2..=6 {
         let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
-        if raw_gaps.len() < 2 || raw_gaps.len() > MAX_CTL_GAPS {
+        if raw_gaps.is_empty() || raw_gaps.len() > MAX_CTL_GAPS {
             continue;
         }
         let floor = 2 * split_threshold + 2;
@@ -790,7 +786,7 @@ fn try_prove_ctl_from_tape(program: &Program, cells: &[u8]) -> bool {
                 blocks: blocks.clone(),
                 gaps,
             };
-            if verify_ctl_closure(seed, program, split_threshold, floor, 256) {
+            if verify_ctl_closure(seed, program, split_threshold, floor, 1024) {
                 return true;
             }
         }
@@ -957,6 +953,8 @@ mod tests {
             ("01_00_02_40_20_21_22_17_34", 100),
             // Escaping left glider + right bouncer (3 gaps)
             ("00_20_10_04_11_33_03_01_01", 100),
+            // Nested alternating left/right outer-wall bouncer
+            ("00_00_30_13_11_06_12_11_15", 100),
         ];
         for (code, steps) in ctl_programs {
             let p: Program = code.parse().unwrap();

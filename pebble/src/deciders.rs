@@ -530,6 +530,39 @@ struct ZeroGap {
     modulus: usize,
 }
 
+impl ZeroGap {
+    #[inline]
+    fn new(rem: usize, floor: usize, modulus: usize) -> Self {
+        Self {
+            rem: if rem >= floor {
+                floor + (rem - floor) % modulus
+            } else {
+                rem
+            },
+            modulus,
+        }
+    }
+
+    #[inline]
+    fn widen(self, floor: usize) -> Self {
+        if self.rem >= floor {
+            Self {
+                rem: floor + (self.rem - floor) % self.modulus,
+                modulus: self.modulus,
+            }
+        } else {
+            self
+        }
+    }
+
+    #[inline]
+    fn is_subset_of(&self, other: &ZeroGap) -> bool {
+        self.rem >= other.rem
+            && self.modulus % other.modulus == 0
+            && (self.rem - other.rem) % other.modulus == 0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CtlState {
     modulus: usize,
@@ -545,18 +578,10 @@ impl CtlState {
         {
             return false;
         }
-        self.gaps.iter().zip(other.gaps.iter()).all(|(g1, g2)| {
-            g1.rem >= g2.rem && g1.modulus % g2.modulus == 0 && (g1.rem - g2.rem) % g2.modulus == 0
-        })
-    }
-}
-
-#[inline]
-fn widen_rem(rem: usize, floor: usize, modulus: usize) -> usize {
-    if rem >= floor {
-        floor + (rem - floor) % modulus
-    } else {
-        rem
+        self.gaps
+            .iter()
+            .zip(other.gaps.iter())
+            .all(|(g1, g2)| g1.is_subset_of(g2))
     }
 }
 
@@ -728,10 +753,10 @@ fn step_ctl_pre_state(
 
     if new_gaps.len() >= 2 {
         for g in &mut new_gaps {
-            g.rem = widen_rem(g.rem, floor, g.modulus);
+            *g = g.widen(floor);
         }
     } else {
-        new_gaps[0].rem = widen_rem(new_gaps[0].rem, floor + 24, new_gaps[0].modulus);
+        new_gaps[0] = new_gaps[0].widen(floor + 24);
     }
 
     Ok(CtlState {
@@ -775,18 +800,18 @@ fn verify_ctl_closure(
 fn try_prove_ctl_from_tape(program: &Program, cells: &[u8]) -> bool {
     for split_threshold in 2..=6 {
         let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
-        if raw_gaps.len() < 2 || raw_gaps.len() > MAX_CTL_GAPS {
+        if raw_gaps.is_empty() || raw_gaps.len() > MAX_CTL_GAPS {
             continue;
         }
         let floor = 2 * split_threshold + 2;
         for modulus in [1, 2, 3, 4, 6] {
-            let gaps = raw_gaps
+            let gaps: Vec<ZeroGap> = raw_gaps
                 .iter()
-                .map(|&g| ZeroGap {
-                    rem: widen_rem(g, floor, modulus),
-                    modulus,
-                })
+                .map(|&g| ZeroGap::new(g, floor, modulus))
                 .collect();
+            if !raw_gaps.iter().any(|&g| g >= floor) {
+                continue;
+            }
             let seed = CtlState {
                 modulus,
                 blocks: blocks.clone(),

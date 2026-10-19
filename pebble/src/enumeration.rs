@@ -154,25 +154,38 @@ impl EnumStats {
 pub struct TnfEnumerator {
     max_steps: u64,
     use_deciders: bool,
-    /// DFS stack of `(partial_program, simulator_at_branch_point)`.
-    stack: Vec<(Program, Simulator)>,
+    break_symmetry: bool,
+    /// DFS stack of `(partial_program, simulator_at_branch_point, is_symmetric)`.
+    stack: Vec<(Program, Simulator, bool)>,
     /// Precomputed valid rules for each pebble count `1..=size`.
     rule_table: Vec<Vec<Rule>>,
 }
 
 impl TnfEnumerator {
     /// Create a new TNF enumerator for programs of `size` running up to `max_steps`,
-    /// with the non-halting decider pipeline enabled on holdouts.
+    /// breaking left-right symmetry by default and enabling the decider pipeline on holdouts.
     pub fn new(size: usize, max_steps: u64) -> Self {
-        Self::with_deciders(size, max_steps, true)
+        Self::with_options(size, max_steps, true, true)
     }
 
-    /// Create a new TNF enumerator with explicit control over whether the decider pipeline is run on holdouts.
+    /// Create a new TNF enumerator with explicit control over whether the decider pipeline is run on holdouts,
+    /// breaking left-right symmetry by default.
     pub fn with_deciders(size: usize, max_steps: u64, use_deciders: bool) -> Self {
+        Self::with_options(size, max_steps, use_deciders, true)
+    }
+
+    /// Create a new TNF enumerator with explicit control over deciders and left-right symmetry reduction.
+    pub fn with_options(
+        size: usize,
+        max_steps: u64,
+        use_deciders: bool,
+        break_symmetry: bool,
+    ) -> Self {
         if size == 0 {
             return Self {
                 max_steps,
                 use_deciders,
+                break_symmetry,
                 stack: Vec::new(),
                 rule_table: Vec::new(),
             };
@@ -183,9 +196,15 @@ impl TnfEnumerator {
         Self {
             max_steps,
             use_deciders,
-            stack: vec![(initial_prog, initial_sim)],
+            break_symmetry,
+            stack: vec![(initial_prog, initial_sim, break_symmetry)],
             rule_table,
         }
+    }
+
+    /// Returns whether left-right symmetry reduction is enabled.
+    pub fn break_symmetry(&self) -> bool {
+        self.break_symmetry
     }
 
     fn from_subtree(
@@ -193,12 +212,15 @@ impl TnfEnumerator {
         sim: Simulator,
         max_steps: u64,
         use_deciders: bool,
+        break_symmetry: bool,
+        is_symmetric: bool,
         rule_table: Vec<Vec<Rule>>,
     ) -> Self {
         Self {
             max_steps,
             use_deciders,
-            stack: vec![(prog, sim)],
+            break_symmetry,
+            stack: vec![(prog, sim, is_symmetric)],
             rule_table,
         }
     }
@@ -227,18 +249,22 @@ impl Iterator for TnfEnumerator {
     type Item = EnumEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((prog, mut sim)) = self.stack.pop() {
+        while let Some((prog, mut sim, is_symmetric)) = self.stack.pop() {
             match sim.run(&prog, self.max_steps) {
                 SimOutcome::MissingRule { pebbles, .. } => {
                     let choices = &self.rule_table[pebbles as usize - 1];
                     // Push in reverse so the stack pops in standard lexicographical order.
                     for &rule in choices.iter().rev() {
+                        if is_symmetric && rule.left > rule.right {
+                            continue;
+                        }
+                        let child_is_symmetric = is_symmetric && (rule.left == rule.right);
                         let mut child_prog = prog.clone();
                         child_prog
                             .set_rule(pebbles, Some(rule))
                             .expect("valid rule for pebbles");
                         let child_sim = sim.clone();
-                        self.stack.push((child_prog, child_sim));
+                        self.stack.push((child_prog, child_sim, child_is_symmetric));
                     }
                 }
                 SimOutcome::Halted { steps } => {
@@ -269,7 +295,7 @@ impl Iterator for TnfEnumerator {
 
 enum FrontierNode {
     Leaf(EnumEntry),
-    Branch(Program, Simulator),
+    Branch(Program, Simulator, bool),
 }
 
 /// Expand the TNF tree in deterministic left-to-right DFS order until at least `target_width`
@@ -278,6 +304,7 @@ fn build_frontier(
     size: usize,
     max_steps: u64,
     use_deciders: bool,
+    break_symmetry: bool,
     rule_table: &[Vec<Rule>],
     target_width: usize,
 ) -> Vec<FrontierNode> {
@@ -287,27 +314,36 @@ fn build_frontier(
     let mut frontier = vec![FrontierNode::Branch(
         Program::empty(size).expect("size > 0"),
         Simulator::new(size),
+        break_symmetry,
     )];
 
     while frontier.len() < target_width
         && frontier
             .iter()
-            .any(|n| matches!(n, FrontierNode::Branch(_, _)))
+            .any(|n| matches!(n, FrontierNode::Branch(_, _, _)))
     {
         let mut next_frontier = Vec::with_capacity(frontier.len() * 4);
         for node in frontier {
             match node {
                 FrontierNode::Leaf(entry) => next_frontier.push(FrontierNode::Leaf(entry)),
-                FrontierNode::Branch(prog, mut sim) => match sim.run(&prog, max_steps) {
+                FrontierNode::Branch(prog, mut sim, is_symmetric) => match sim.run(&prog, max_steps) {
                     SimOutcome::MissingRule { pebbles, .. } => {
                         let choices = &rule_table[pebbles as usize - 1];
                         for &rule in choices {
+                            if is_symmetric && rule.left > rule.right {
+                                continue;
+                            }
+                            let child_is_symmetric = is_symmetric && (rule.left == rule.right);
                             let mut child_prog = prog.clone();
                             child_prog
                                 .set_rule(pebbles, Some(rule))
                                 .expect("valid rule for pebbles");
                             let child_sim = sim.clone();
-                            next_frontier.push(FrontierNode::Branch(child_prog, child_sim));
+                            next_frontier.push(FrontierNode::Branch(
+                                child_prog,
+                                child_sim,
+                                child_is_symmetric,
+                            ));
                         }
                     }
                     SimOutcome::Halted { steps } => {
@@ -357,6 +393,7 @@ pub fn enumerate_parallel<F, P>(
     size: usize,
     max_steps: u64,
     use_deciders: bool,
+    break_symmetry: bool,
     collect_entries: bool,
     holdouts_only: bool,
     on_progress: P,
@@ -375,7 +412,14 @@ where
     }
 
     let rule_table: Vec<Vec<Rule>> = (1..=size as u8).map(Rule::all_for_pebbles).collect();
-    let frontier = build_frontier(size, max_steps, use_deciders, &rule_table, 4096);
+    let frontier = build_frontier(
+        size,
+        max_steps,
+        use_deciders,
+        break_symmetry,
+        &rule_table,
+        4096,
+    );
 
     let live_total = AtomicU64::new(0);
     let live_halted = AtomicU64::new(0);
@@ -441,12 +485,14 @@ where
                         local_entries.push(entry);
                     }
                 }
-                FrontierNode::Branch(prog, sim) => {
+                FrontierNode::Branch(prog, sim, is_symmetric) => {
                     let sub_enum = TnfEnumerator::from_subtree(
                         prog,
                         sim,
                         max_steps,
                         use_deciders,
+                        break_symmetry,
+                        is_symmetric,
                         rule_table.clone(),
                     );
                     let mut b_tot = 0u64;
@@ -515,7 +561,7 @@ mod tests {
             let max_steps = 25;
             let mut stats = EnumStats::new(size, max_steps);
 
-            for entry in TnfEnumerator::new(size, max_steps) {
+            for entry in TnfEnumerator::with_options(size, max_steps, true, false) {
                 stats.record(&entry);
             }
 
@@ -536,7 +582,7 @@ mod tests {
         let size = 5;
         let max_steps = 50;
         let mut stats = EnumStats::new(size, max_steps);
-        for entry in TnfEnumerator::new(size, max_steps) {
+        for entry in TnfEnumerator::with_options(size, max_steps, true, false) {
             stats.record(&entry);
         }
         assert_eq!(stats.total_programs, 12_161);
@@ -547,7 +593,43 @@ mod tests {
 
         // Verify parallel enumeration produces identical stats and champion
         let (par_stats, _) =
-            enumerate_parallel(size, max_steps, true, false, false, |_| {}, |_| false);
+            enumerate_parallel(size, max_steps, true, false, false, false, |_| {}, |_| false);
         assert_eq!(par_stats, stats);
+    }
+
+    #[test]
+    fn test_tnf_enumerator_symmetry_reduction_sizes_1_to_5() {
+        let expected = [
+            // (size, expected_total, expected_halted, expected_decided, expected_holdouts, expected_max_steps)
+            (1, 2u64, 1u64, 1u64, 0u64, 0u64),
+            (2, 7, 3, 4, 0, 1),
+            (3, 58, 16, 42, 0, 3),
+            (4, 469, 114, 355, 0, 6),
+            (5, 6084, 1262, 4822, 0, 11),
+        ];
+
+        for (size, exp_total, exp_halted, exp_decided, exp_holdouts, exp_max_steps) in expected {
+            let max_steps = 50;
+            let mut stats = EnumStats::new(size, max_steps);
+
+            for entry in TnfEnumerator::new(size, max_steps) {
+                stats.record(&entry);
+            }
+
+            assert_eq!(stats.total_programs, exp_total, "size {size} total");
+            assert_eq!(stats.halted_programs, exp_halted, "size {size} halted");
+            assert_eq!(stats.decided_programs, exp_decided, "size {size} decided");
+            assert_eq!(
+                stats.holdout_programs(),
+                exp_holdouts,
+                "size {size} holdouts"
+            );
+            assert_eq!(stats.max_halting_steps, Some(exp_max_steps));
+
+            // Verify parallel enumeration matches sequential exactly
+            let (par_stats, _) =
+                enumerate_parallel(size, max_steps, true, true, false, false, |_| {}, |_| false);
+            assert_eq!(par_stats, stats, "parallel matches sequential for size {size}");
+        }
     }
 }

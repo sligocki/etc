@@ -21,6 +21,7 @@ fn print_usage(bin: &str) {
     eprintln!("  -o, --output <FILE>      Write program results to <FILE>");
     eprintln!("      --holdouts-only      When using -o, only write undecided holdout programs");
     eprintln!("      --no-deciders        Disable non-halting decider pipeline on holdouts");
+    eprintln!("      --no-symmetry        Disable left-right symmetry reduction (enumerate full space)");
     eprintln!("  -h, --help               Show this help message");
 }
 
@@ -58,6 +59,7 @@ fn main() {
     let mut output_path: Option<PathBuf> = None;
     let mut holdouts_only = false;
     let mut use_deciders = true;
+    let mut break_symmetry = true;
 
     let mut i = 1;
     while i < args.len() {
@@ -113,6 +115,12 @@ fn main() {
             }
             "--no-deciders" => {
                 use_deciders = false;
+            }
+            "--no-symmetry" | "--all-symmetries" => {
+                break_symmetry = false;
+            }
+            "--symmetry" => {
+                break_symmetry = true;
             }
             arg if arg.starts_with('-') => {
                 eprintln!("Error: unknown option '{arg}'");
@@ -172,6 +180,14 @@ fn main() {
             "disabled"
         }
     );
+    println!(
+        "Symmetry:         {}",
+        if break_symmetry {
+            "reduced (breaking left-right mirror symmetry)"
+        } else {
+            "full (enumerating all mirror programs)"
+        }
+    );
     println!();
 
     let start = Instant::now();
@@ -217,6 +233,7 @@ fn main() {
         size,
         max_steps,
         use_deciders,
+        break_symmetry,
         output_path.is_some(),
         holdouts_only,
         on_progress,

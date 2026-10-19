@@ -153,7 +153,7 @@ fn run_file_mode(
         .collect();
 
     let elapsed = start.elapsed();
-    let mut stats = EnumStats::new(size, max_steps);
+    let mut stats = EnumStats::new(size, max_steps, max_steps);
     let mut out_records = Vec::new();
     for group in nested_results {
         for entry in group {
@@ -416,7 +416,7 @@ fn main() {
         if matches!(outcome, SimOutcome::MissingRule { .. }) {
             simulate_tnf_subtree(program.clone(), sim, max_steps, &mut out_entries);
             let elapsed = start.elapsed();
-            let mut stats = EnumStats::new(program.size(), max_steps);
+            let mut stats = EnumStats::new(program.size(), max_steps, max_steps);
             for entry in &out_entries {
                 stats.record(entry);
             }

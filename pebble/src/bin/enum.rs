@@ -20,21 +20,22 @@ fn format_duration(d: Duration) -> String {
 }
 
 fn print_usage(bin: &str) {
-    eprintln!("Usage: {bin} [OPTIONS] <SIZE> [MAX_STEPS]");
+    eprintln!("Usage: {bin} [OPTIONS] <SIZE> [DEEP_STEPS]");
     eprintln!();
     eprintln!("Arguments:");
-    eprintln!("  <SIZE>                   Program size / initial pebble count n (e.g. 5)");
-    eprintln!("  [MAX_STEPS]              Maximum steps per program (default: 100)");
+    eprintln!("  <SIZE>                     Program size / initial pebble count n (e.g. 5)");
+    eprintln!("  [DEEP_STEPS]               Maximum deep steps per program (default: 100)");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  -s, --steps <STEPS>      Maximum steps per program (overrides positional)");
-    eprintln!("  -j, --threads <THREADS>  Number of Rayon worker threads (default: all cores)");
-    eprintln!("  -p, --progress <SECS>    Progress update interval in seconds (default: 10s)");
-    eprintln!("  -o, --output <FILE>      Write program results to <FILE>");
-    eprintln!("      --holdouts-only      When using -o, only write undecided holdout programs");
-    eprintln!("      --no-deciders        Disable non-halting decider pipeline on holdouts");
-    eprintln!("      --no-symmetry        Disable left-right symmetry reduction (enumerate full space)");
-    eprintln!("  -h, --help               Show this help message");
+    eprintln!("  -s, --steps <STEPS>        Maximum deep steps per program (overrides positional)");
+    eprintln!("  -e, --early-steps <STEPS>  Early simulation / branching steps (default: min(100, deep_steps))");
+    eprintln!("  -j, --threads <THREADS>    Number of Rayon worker threads (default: all cores)");
+    eprintln!("  -p, --progress <SECS>      Progress update interval in seconds (default: 10s)");
+    eprintln!("  -o, --output <FILE>        Write program results to <FILE>");
+    eprintln!("      --holdouts-only        When using -o, only write undecided holdout programs");
+    eprintln!("      --no-deciders          Disable non-halting decider pipeline on holdouts");
+    eprintln!("      --no-symmetry          Disable left-right symmetry reduction (enumerate full space)");
+    eprintln!("  -h, --help                 Show this help message");
 }
 
 fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
@@ -64,8 +65,9 @@ fn main() {
     let bin = args.first().map(String::as_str).unwrap_or("enum");
 
     let mut size_arg: Option<usize> = None;
-    let mut max_steps: u64 = 100;
-    let mut max_steps_set = false;
+    let mut deep_steps: u64 = 100;
+    let mut deep_steps_set = false;
+    let mut early_steps_arg: Option<u64> = None;
     let mut num_threads: Option<usize> = None;
     let mut progress_interval = Duration::from_secs(10);
     let mut output_path: Option<PathBuf> = None;
@@ -86,11 +88,22 @@ fn main() {
                     eprintln!("Error: missing value for --steps");
                     process::exit(1);
                 }
-                max_steps = args[i].parse().unwrap_or_else(|_| {
+                deep_steps = args[i].parse().unwrap_or_else(|_| {
                     eprintln!("Error: invalid step count '{}'", args[i]);
                     process::exit(1);
                 });
-                max_steps_set = true;
+                deep_steps_set = true;
+            }
+            "-e" | "--early-steps" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: missing value for --early-steps");
+                    process::exit(1);
+                }
+                early_steps_arg = Some(args[i].parse().unwrap_or_else(|_| {
+                    eprintln!("Error: invalid early step count '{}'", args[i]);
+                    process::exit(1);
+                }));
             }
             "-j" | "--threads" => {
                 i += 1;
@@ -145,12 +158,12 @@ fn main() {
                         eprintln!("Error: invalid size '{arg}'");
                         process::exit(1);
                     }));
-                } else if !max_steps_set {
-                    max_steps = arg.parse().unwrap_or_else(|_| {
-                        eprintln!("Error: invalid max_steps '{arg}'");
+                } else if !deep_steps_set {
+                    deep_steps = arg.parse().unwrap_or_else(|_| {
+                        eprintln!("Error: invalid deep_steps '{arg}'");
                         process::exit(1);
                     });
-                    max_steps_set = true;
+                    deep_steps_set = true;
                 } else {
                     eprintln!("Error: unexpected argument '{arg}'");
                     print_usage(bin);
@@ -180,9 +193,14 @@ fn main() {
         }
     }
 
+    let early_steps = early_steps_arg
+        .unwrap_or_else(|| 100.min(deep_steps))
+        .min(deep_steps);
+
     println!("=== Pebble Automaton Enumerator (TNF) ===");
     println!("Size (n):         {size}");
-    println!("Max steps:        {max_steps}");
+    println!("Early steps:      {early_steps}");
+    println!("Deep steps:       {deep_steps}");
     println!("Threads:          {}", rayon::current_num_threads());
     println!(
         "Deciders:         {}",
@@ -243,7 +261,8 @@ fn main() {
 
     let (stats, entries) = enumerate_parallel(
         size,
-        max_steps,
+        early_steps,
+        deep_steps,
         use_deciders,
         break_symmetry,
         output_path.is_some(),
@@ -277,7 +296,7 @@ fn main() {
         println!();
     }
 
-    println!("=== Final Statistics (peBBle({size}), max_steps = {max_steps}) ===");
+    println!("=== Final Statistics (peBBle({size}), early_steps = {early_steps}, deep_steps = {deep_steps}) ===");
     println!("Total programs:         {}", stats.total_programs);
     println!(
         "Halted programs:        {} ({:.2}%)",

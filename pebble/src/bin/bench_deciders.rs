@@ -254,7 +254,7 @@ fn main() {
     } else if let Some(size) = sample_size {
         println!("Generating sample of {sample_count} programs of size {size}...");
         let mut sample = Vec::with_capacity(sample_count);
-        for entry in TnfEnumerator::new(size, max_steps) {
+        for entry in TnfEnumerator::new(size, max_steps, max_steps) {
             sample.push(entry.program);
             if sample.len() >= sample_count {
                 break;

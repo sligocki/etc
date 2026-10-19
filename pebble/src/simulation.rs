@@ -590,6 +590,7 @@ mod tests {
         }
     }
 
+
     #[test]
     fn test_pebble_5_trace_matches_wiki() {
         let prog: Program = "00_11_03_21_04".parse().unwrap();
@@ -699,7 +700,7 @@ mod tests {
         use crate::enumeration::TnfEnumerator;
         // Test all programs in peBBle(1..=4) across 50 steps
         for size in 1..=4 {
-            for entry in TnfEnumerator::new(size, 50) {
+            for entry in TnfEnumerator::new(size, 50, 50) {
                 let prog = entry.program;
                 let mut dense = ReferenceDenseSimulator::new(size);
                 let mut sparse = Simulator::new(size);

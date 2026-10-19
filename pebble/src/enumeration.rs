@@ -46,16 +46,7 @@ pub struct PipelineConfig {
 
 impl PipelineConfig {
     /// Generates the data-driven default pipeline configuration for a given program size and maximum steps.
-    pub fn default_for(size: usize, max_steps: u64) -> Self {
-        let early_steps = if max_steps >= 100 { 100 } else { max_steps.min(50) };
-        let deep_steps = if size >= 9 {
-            max_steps.max(70_000)
-        } else if size == 8 {
-            max_steps.max(200)
-        } else {
-            max_steps.max(200)
-        };
-
+    pub fn default_for(_size: usize, early_steps: u64, deep_steps: u64) -> Self {
         let mut stages = vec![
             PipelineStageSpec {
                 name: "Prefix Sim (Branching)".to_string(),
@@ -207,10 +198,9 @@ impl PartialEq for EnumStats {
 impl Eq for EnumStats {}
 
 impl EnumStats {
-    /// Create a fresh statistics accumulator for `size` and `max_steps`.
-    pub fn new(size: usize, max_steps: u64) -> Self {
-        let pipeline = PipelineConfig::default_for(size, max_steps);
-        Self::with_pipeline(size, max_steps, &pipeline)
+    pub fn new(size: usize, early_steps: u64, deep_steps: u64) -> Self {
+        let pipeline = PipelineConfig::default_for(size, early_steps, deep_steps);
+        Self::with_pipeline(size, deep_steps, &pipeline)
     }
 
     /// Create a fresh statistics accumulator configured with an explicit `PipelineConfig`.
@@ -368,27 +358,33 @@ pub struct TnfEnumerator {
 }
 
 impl TnfEnumerator {
-    /// Create a new TNF enumerator for programs of `size` running up to `max_steps`,
+    /// Create a new TNF enumerator for programs of `size` running with `early_steps` and `deep_steps`,
     /// breaking left-right symmetry by default and enabling the decider pipeline on holdouts.
-    pub fn new(size: usize, max_steps: u64) -> Self {
-        Self::with_options(size, max_steps, true, true)
+    pub fn new(size: usize, early_steps: u64, deep_steps: u64) -> Self {
+        Self::with_options(size, early_steps, deep_steps, true, true)
     }
 
     /// Create a new TNF enumerator with explicit control over whether the decider pipeline is run on holdouts,
     /// breaking left-right symmetry by default.
-    pub fn with_deciders(size: usize, max_steps: u64, use_deciders: bool) -> Self {
-        Self::with_options(size, max_steps, use_deciders, true)
+    pub fn with_deciders(
+        size: usize,
+        early_steps: u64,
+        deep_steps: u64,
+        use_deciders: bool,
+    ) -> Self {
+        Self::with_options(size, early_steps, deep_steps, use_deciders, true)
     }
 
     /// Create a new TNF enumerator with explicit control over deciders and left-right symmetry reduction.
     pub fn with_options(
         size: usize,
-        max_steps: u64,
+        early_steps: u64,
+        deep_steps: u64,
         use_deciders: bool,
         break_symmetry: bool,
     ) -> Self {
-        let pipeline = PipelineConfig::default_for(size, max_steps);
-        Self::with_pipeline(size, max_steps, use_deciders, break_symmetry, pipeline)
+        let pipeline = PipelineConfig::default_for(size, early_steps, deep_steps);
+        Self::with_pipeline(size, deep_steps, use_deciders, break_symmetry, pipeline)
     }
 
     /// Create a new TNF enumerator with an explicit `PipelineConfig`.
@@ -570,6 +566,9 @@ pub fn resolve_leaf_outcome_timed(
                         metrics[i].decided_infinite += 1;
                         return SimOutcome::DecidedNonHalting { decider, steps };
                     }
+                    SimOutcome::MissingRule { pebbles, steps } => {
+                        return SimOutcome::MissingRule { pebbles, steps };
+                    }
                     _ => {}
                 }
             }
@@ -629,10 +628,29 @@ impl Iterator for TnfEnumerator {
                         &self.pipeline,
                         &mut self.metrics,
                     );
-                    return Some(EnumEntry {
-                        program: prog,
-                        outcome,
-                    });
+                    match outcome {
+                        SimOutcome::MissingRule { pebbles, .. } => {
+                            let choices = &self.rule_table[pebbles as usize - 1];
+                            for &rule in choices.iter().rev() {
+                                if is_symmetric && rule.left > rule.right {
+                                    continue;
+                                }
+                                let child_is_symmetric = is_symmetric && (rule.left == rule.right);
+                                let mut child_prog = prog.clone();
+                                child_prog
+                                    .set_rule(pebbles, Some(rule))
+                                    .expect("valid rule for pebbles");
+                                let child_sim = Simulator::new(self.rule_table.len());
+                                self.stack.push((child_prog, child_sim, child_is_symmetric));
+                            }
+                        }
+                        _ => {
+                            return Some(EnumEntry {
+                                program: prog,
+                                outcome,
+                            });
+                        }
+                    }
                 }
                 outcome @ SimOutcome::DecidedNonHalting { .. } => {
                     self.metrics[1].invocations += 1;
@@ -733,10 +751,34 @@ fn build_frontier(
                                 pipeline,
                                 metrics,
                             );
-                            next_frontier.push(FrontierNode::Leaf(EnumEntry {
-                                program: prog,
-                                outcome,
-                            }));
+                            match outcome {
+                                SimOutcome::MissingRule { pebbles, .. } => {
+                                    let choices = &rule_table[pebbles as usize - 1];
+                                    for &rule in choices {
+                                        if is_symmetric && rule.left > rule.right {
+                                            continue;
+                                        }
+                                        let child_is_symmetric =
+                                            is_symmetric && (rule.left == rule.right);
+                                        let mut child_prog = prog.clone();
+                                        child_prog
+                                            .set_rule(pebbles, Some(rule))
+                                            .expect("valid rule for pebbles");
+                                        let child_sim = Simulator::new(rule_table.len());
+                                        next_frontier.push(FrontierNode::Branch(
+                                            child_prog,
+                                            child_sim,
+                                            child_is_symmetric,
+                                        ));
+                                    }
+                                }
+                                _ => {
+                                    next_frontier.push(FrontierNode::Leaf(EnumEntry {
+                                        program: prog,
+                                        outcome,
+                                    }));
+                                }
+                            }
                         }
                         outcome @ SimOutcome::DecidedNonHalting { .. } => {
                             metrics[1].invocations += 1;
@@ -774,7 +816,8 @@ pub struct ProgressSnapshot {
 /// Calls `on_progress` periodically with a live `ProgressSnapshot`.
 pub fn enumerate_parallel<F, P>(
     size: usize,
-    max_steps: u64,
+    early_steps: u64,
+    deep_steps: u64,
     use_deciders: bool,
     break_symmetry: bool,
     collect_entries: bool,
@@ -791,10 +834,10 @@ where
     use std::sync::Mutex;
 
     if size == 0 {
-        return (EnumStats::new(0, max_steps), Vec::new());
+        return (EnumStats::new(0, early_steps, deep_steps), Vec::new());
     }
 
-    let pipeline = PipelineConfig::default_for(size, max_steps);
+    let pipeline = PipelineConfig::default_for(size, early_steps, deep_steps);
     let rule_table: Vec<Vec<Rule>> = (1..=size as u8).map(Rule::all_for_pebbles).collect();
     let mut frontier_metrics = vec![StageMetrics::default(); pipeline.stages.len()];
     let frontier = build_frontier(
@@ -858,7 +901,7 @@ where
     let chunk_results: Vec<(EnumStats, Vec<EnumEntry>)> = frontier
         .into_par_iter()
         .map(|node| {
-            let mut local_stats = EnumStats::with_pipeline(size, max_steps, &pipeline);
+            let mut local_stats = EnumStats::with_pipeline(size, deep_steps, &pipeline);
             let mut local_entries = Vec::new();
             match node {
                 FrontierNode::Leaf(entry) => {
@@ -875,7 +918,7 @@ where
                     let mut sub_enum = TnfEnumerator::from_subtree(
                         prog,
                         sim,
-                        max_steps,
+                        deep_steps,
                         use_deciders,
                         break_symmetry,
                         is_symmetric,
@@ -919,7 +962,7 @@ where
         })
         .collect();
 
-    let mut final_stats = EnumStats::with_pipeline(size, max_steps, &pipeline);
+    let mut final_stats = EnumStats::with_pipeline(size, deep_steps, &pipeline);
     final_stats.merge_metrics(&frontier_metrics);
     let mut final_entries = Vec::new();
     for (sub_stats, mut sub_entries) in chunk_results {
@@ -948,9 +991,9 @@ mod tests {
 
         for (size, exp_total, exp_halted, exp_decided, exp_holdouts, exp_max_steps) in expected {
             let max_steps = 25;
-            let mut stats = EnumStats::new(size, max_steps);
+            let mut stats = EnumStats::new(size, max_steps, max_steps);
 
-            for entry in TnfEnumerator::with_options(size, max_steps, true, false) {
+            for entry in TnfEnumerator::with_options(size, max_steps, max_steps, true, false) {
                 stats.record(&entry);
             }
 
@@ -970,8 +1013,8 @@ mod tests {
     fn test_tnf_pebble_5_champion_and_zero_holdouts() {
         let size = 5;
         let max_steps = 50;
-        let mut stats = EnumStats::new(size, max_steps);
-        for entry in TnfEnumerator::with_options(size, max_steps, true, false) {
+        let mut stats = EnumStats::new(size, max_steps, max_steps);
+        for entry in TnfEnumerator::with_options(size, max_steps, max_steps, true, false) {
             stats.record(&entry);
         }
         assert_eq!(stats.total_programs, 12_161);
@@ -982,7 +1025,7 @@ mod tests {
 
         // Verify parallel enumeration produces identical stats and champion
         let (par_stats, _) =
-            enumerate_parallel(size, max_steps, true, false, false, false, |_| {}, |_| false);
+            enumerate_parallel(size, max_steps, max_steps, true, false, false, false, |_| {}, |_| false);
         assert_eq!(par_stats, stats);
     }
 
@@ -999,9 +1042,9 @@ mod tests {
 
         for (size, exp_total, exp_halted, exp_decided, exp_holdouts, exp_max_steps) in expected {
             let max_steps = 50;
-            let mut stats = EnumStats::new(size, max_steps);
+            let mut stats = EnumStats::new(size, max_steps, max_steps);
 
-            for entry in TnfEnumerator::new(size, max_steps) {
+            for entry in TnfEnumerator::new(size, max_steps, max_steps) {
                 stats.record(&entry);
             }
 
@@ -1017,8 +1060,43 @@ mod tests {
 
             // Verify parallel enumeration matches sequential exactly
             let (par_stats, _) =
-                enumerate_parallel(size, max_steps, true, true, false, false, |_| {}, |_| false);
+                enumerate_parallel(size, max_steps, max_steps, true, true, false, false, |_| {}, |_| false);
             assert_eq!(par_stats, stats, "parallel matches sequential for size {size}");
         }
+    }
+
+    #[test]
+    fn test_extended_sim_missing_rule_splits_and_finds_champion_9() {
+        let partial_prog: Program = "00_20_10_04_41_21_--_25_18".parse().unwrap();
+        assert!(partial_prog.rule(7).is_none());
+        let pipeline = PipelineConfig::default_for(9, 100, 70_000);
+        let rule_table: Vec<Vec<Rule>> = (1..=9u8).map(Rule::all_for_pebbles).collect();
+
+        let mut sub_enum = TnfEnumerator::from_subtree(
+            partial_prog,
+            Simulator::new(9),
+            70_000,
+            true,
+            false,
+            false,
+            rule_table,
+            pipeline.clone(),
+        );
+
+        let mut stats = EnumStats::with_pipeline(9, 70_000, &pipeline);
+        for entry in &mut sub_enum {
+            stats.record(&entry);
+        }
+
+        println!("Total programs from partial split: {}", stats.total_programs);
+        println!("Halted: {}", stats.halted_programs);
+        println!("Decided: {}", stats.decided_programs);
+        println!("Holdouts: {}", stats.holdout_programs());
+        println!("Max halting steps: {:?}", stats.max_halting_steps);
+        println!("Champion: {:?}", stats.champion);
+        assert_eq!(stats.max_halting_steps, Some(63577));
+        let champ = stats.champion.expect("champion found");
+        let expected_champ: Program = "00_20_10_04_41_21_00_25_18".parse().unwrap();
+        assert_eq!(champ, expected_champ);
     }
 }

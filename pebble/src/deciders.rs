@@ -227,9 +227,11 @@ pub fn decide_separated_components(program: &Program, max_steps: u64) -> Option<
                             }
                         } else if cut.seen.len() < 128 {
                             cut.seen.insert(key, (next_l.offset, next_r.offset));
-                            cut.segments = [next_l, next_r];
-                            next_cuts.push(cut);
+                        } else {
+                            continue;
                         }
+                        cut.segments = [next_l, next_r];
+                        next_cuts.push(cut);
                     }
                 }
             }
@@ -724,8 +726,12 @@ fn step_ctl_pre_state(
         return Err(());
     }
 
-    for g in &mut new_gaps {
-        g.rem = widen_rem(g.rem, floor, g.modulus);
+    if new_gaps.len() >= 2 {
+        for g in &mut new_gaps {
+            g.rem = widen_rem(g.rem, floor, g.modulus);
+        }
+    } else {
+        new_gaps[0].rem = widen_rem(new_gaps[0].rem, floor + 24, new_gaps[0].modulus);
     }
 
     Ok(CtlState {
@@ -769,7 +775,7 @@ fn verify_ctl_closure(
 fn try_prove_ctl_from_tape(program: &Program, cells: &[u8]) -> bool {
     for split_threshold in 2..=6 {
         let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
-        if raw_gaps.is_empty() || raw_gaps.len() > MAX_CTL_GAPS {
+        if raw_gaps.len() < 2 || raw_gaps.len() > MAX_CTL_GAPS {
             continue;
         }
         let floor = 2 * split_threshold + 2;

@@ -225,11 +225,11 @@ pub fn decide_separated_components(program: &Program, max_steps: u64) -> Option<
                                     return None;
                                 }
                             }
-                        } else {
+                        } else if cut.seen.len() < 128 {
                             cut.seen.insert(key, (next_l.offset, next_r.offset));
+                            cut.segments = [next_l, next_r];
+                            next_cuts.push(cut);
                         }
-                        cut.segments = [next_l, next_r];
-                        next_cuts.push(cut);
                     }
                 }
             }
@@ -915,7 +915,7 @@ fn try_prove_ctl_from_tape(program: &Program, cells: &[u8]) -> bool {
 /// forward reachability that the language is closed under `step` and free of halting configurations.
 pub fn decide_ctl(program: &Program, max_steps: u64) -> Option<Decider> {
     let mut sim = Simulator::new(program.size());
-    let sample_start = max_steps / 3;
+    let sample_start = (max_steps / 3).max(max_steps.saturating_sub(68));
 
     for step in 0..=max_steps {
         if step >= sample_start && (max_steps - step) % 4 == 0 {

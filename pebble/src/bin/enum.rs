@@ -1,4 +1,4 @@
-use pebble::enumeration::{enumerate_parallel, PipelineStage, ProgressSnapshot};
+use pebble::enumeration::{enumerate_parallel, ProgressSnapshot};
 use pebble::io::{write_records_to_file, ProgramRecord};
 use std::env;
 use std::path::PathBuf;
@@ -312,20 +312,20 @@ fn main() {
         println!();
         println!("=== Pipeline & Decider Performance ===");
         println!(
-            "{:<26} {:>12} {:>10} {:>10} {:>14} {:>14}",
+            "{:<42} {:>10} {:>10} {:>10} {:>14} {:>14}",
             "Stage / Decider", "Run On", "Halted", "Infinite", "Total Time", "Avg / Prog"
         );
-        println!("{:-<90}", "");
-        for stage in PipelineStage::ALL {
-            let m = stats.stage_metrics(stage);
+        println!("{:-<104}", "");
+        for stage in &stats.stages {
+            let m = &stage.metrics;
             let tot_time_str = format_duration(m.total_time());
             let avg_time_str = m
                 .avg_time()
                 .map(format_duration)
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "{:<26} {:>12} {:>10} {:>10} {:>14} {:>14}",
-                stage.name(),
+                "{:<42} {:>10} {:>10} {:>10} {:>14} {:>14}",
+                stage.name,
                 m.invocations,
                 m.decided_halting,
                 m.decided_infinite,
@@ -333,6 +333,6 @@ fn main() {
                 avg_time_str,
             );
         }
-        println!("{:-<90}", "");
+        println!("{:-<104}", "");
     }
 }

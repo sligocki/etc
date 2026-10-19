@@ -1,11 +1,23 @@
-use pebble::deciders::Decider;
-use pebble::enumeration::{enumerate_parallel, ProgressSnapshot};
+use pebble::enumeration::{enumerate_parallel, PipelineStage, ProgressSnapshot};
 use pebble::io::{write_records_to_file, ProgramRecord};
 use std::env;
 use std::path::PathBuf;
 use std::process;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+fn format_duration(d: Duration) -> String {
+    let nanos = d.as_nanos();
+    if nanos < 1_000 {
+        format!("{nanos} ns")
+    } else if nanos < 1_000_000 {
+        format!("{:.2} µs", nanos as f64 / 1_000.0)
+    } else if nanos < 1_000_000_000 {
+        format!("{:.2} ms", nanos as f64 / 1_000_000.0)
+    } else {
+        format!("{:.2} s", nanos as f64 / 1_000_000_000.0)
+    }
+}
 
 fn print_usage(bin: &str) {
     eprintln!("Usage: {bin} [OPTIONS] <SIZE> [MAX_STEPS]");
@@ -278,15 +290,6 @@ fn main() {
             stats.decided_programs,
             stats.decided_percentage()
         );
-        for decider in Decider::ALL {
-            let count = stats.decided_count(decider);
-            let pct = if stats.total_programs > 0 {
-                (count as f64 / stats.total_programs as f64) * 100.0
-            } else {
-                0.0
-            };
-            println!("  - {:<20} {} ({:.2}%)", format!("{decider}:"), count, pct);
-        }
     }
     println!(
         "Holdout programs:       {} ({:.2}%)",
@@ -304,4 +307,32 @@ fn main() {
     }
     println!("Wallclock runtime:      {:.3?}", elapsed);
     println!("Throughput:             {:.0} programs/s", programs_per_sec);
+
+    if use_deciders {
+        println!();
+        println!("=== Pipeline & Decider Performance ===");
+        println!(
+            "{:<26} {:>12} {:>10} {:>10} {:>14} {:>14}",
+            "Stage / Decider", "Run On", "Halted", "Infinite", "Total Time", "Avg / Prog"
+        );
+        println!("{:-<90}", "");
+        for stage in PipelineStage::ALL {
+            let m = stats.stage_metrics(stage);
+            let tot_time_str = format_duration(m.total_time());
+            let avg_time_str = m
+                .avg_time()
+                .map(format_duration)
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "{:<26} {:>12} {:>10} {:>10} {:>14} {:>14}",
+                stage.name(),
+                m.invocations,
+                m.decided_halting,
+                m.decided_infinite,
+                tot_time_str,
+                avg_time_str,
+            );
+        }
+        println!("{:-<90}", "");
+    }
 }

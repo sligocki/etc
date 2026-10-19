@@ -1,6 +1,79 @@
-use crate::deciders::{run_decider_pipeline_sparse, Decider};
+use crate::deciders::{
+    check_edge_glider_sparse, decide_bouncer, decide_ctl, decide_cycler, decide_edge_glider,
+    decide_separated_components, decide_static_backtrack, Decider,
+};
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
+use std::time::{Duration, Instant};
+
+/// Individual pipeline stage identifier in order of execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PipelineStage {
+    PrefixSim = 0,
+    LeafSim = 1,
+    StaticBacktrack = 2,
+    EdgeGlider = 3,
+    Cycler = 4,
+    SeparatedComponents = 5,
+    Bouncer = 6,
+    Ctl = 7,
+}
+
+impl PipelineStage {
+    pub const ALL: [PipelineStage; 8] = [
+        PipelineStage::PrefixSim,
+        PipelineStage::LeafSim,
+        PipelineStage::StaticBacktrack,
+        PipelineStage::EdgeGlider,
+        PipelineStage::Cycler,
+        PipelineStage::SeparatedComponents,
+        PipelineStage::Bouncer,
+        PipelineStage::Ctl,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            PipelineStage::PrefixSim => "Prefix Sim (Branching)",
+            PipelineStage::LeafSim => "Leaf Simulation",
+            PipelineStage::StaticBacktrack => "StaticBacktrack",
+            PipelineStage::EdgeGlider => "EdgeGlider",
+            PipelineStage::Cycler => "Cycler / TransCycler",
+            PipelineStage::SeparatedComponents => "SeparatedComponents",
+            PipelineStage::Bouncer => "Bouncer",
+            PipelineStage::Ctl => "CTL",
+        }
+    }
+}
+
+/// Execution metrics tracked for a single pipeline stage or decider.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StageMetrics {
+    pub invocations: u64,
+    pub decided_halting: u64,
+    pub decided_infinite: u64,
+    pub total_time_nanos: u64,
+}
+
+impl StageMetrics {
+    pub fn merge(&mut self, other: &StageMetrics) {
+        self.invocations += other.invocations;
+        self.decided_halting += other.decided_halting;
+        self.decided_infinite += other.decided_infinite;
+        self.total_time_nanos += other.total_time_nanos;
+    }
+
+    pub fn total_time(&self) -> Duration {
+        Duration::from_nanos(self.total_time_nanos)
+    }
+
+    pub fn avg_time(&self) -> Option<Duration> {
+        if self.invocations == 0 {
+            None
+        } else {
+            Some(Duration::from_nanos(self.total_time_nanos / self.invocations))
+        }
+    }
+}
 
 /// Result item produced when enumerating and simulating a TNF program.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,7 +83,7 @@ pub struct EnumEntry {
 }
 
 /// Summary statistics accumulated across a TNF enumeration run.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct EnumStats {
     pub size: usize,
     pub max_steps: u64,
@@ -27,7 +100,24 @@ pub struct EnumStats {
     pub max_halting_steps: Option<u64>,
     /// First champion program achieving `max_halting_steps`.
     pub champion: Option<Program>,
+    /// Runtime and decision metrics for each pipeline stage.
+    pub stage_metrics: [StageMetrics; 8],
 }
+
+impl PartialEq for EnumStats {
+    fn eq(&self, other: &Self) -> bool {
+        self.size == other.size
+            && self.max_steps == other.max_steps
+            && self.total_programs == other.total_programs
+            && self.halted_programs == other.halted_programs
+            && self.decided_programs == other.decided_programs
+            && self.decided_by_kind == other.decided_by_kind
+            && self.max_halting_steps == other.max_halting_steps
+            && self.champion == other.champion
+    }
+}
+
+impl Eq for EnumStats {}
 
 impl EnumStats {
     /// Create a fresh statistics accumulator for `size` and `max_steps`.
@@ -122,6 +212,18 @@ impl EnumStats {
         }
     }
 
+    /// Returns the metrics for a given pipeline stage.
+    pub fn stage_metrics(&self, stage: PipelineStage) -> StageMetrics {
+        self.stage_metrics[stage as usize]
+    }
+
+    /// Merge an external stage metrics array into `self`.
+    pub fn merge_metrics(&mut self, metrics: &[StageMetrics; 8]) {
+        for i in 0..8 {
+            self.stage_metrics[i].merge(&metrics[i]);
+        }
+    }
+
     /// Merge another `EnumStats` into `self` (preserving first-seen champion on ties).
     pub fn merge(&mut self, other: EnumStats) {
         self.total_programs += other.total_programs;
@@ -133,6 +235,9 @@ impl EnumStats {
             .zip(other.decided_by_kind.iter())
         {
             *dst += *src;
+        }
+        for i in 0..8 {
+            self.stage_metrics[i].merge(&other.stage_metrics[i]);
         }
         if let Some(other_max) = other.max_halting_steps {
             let is_better = match self.max_halting_steps {
@@ -161,6 +266,8 @@ pub struct TnfEnumerator {
     stack: Vec<(Program, Simulator, bool)>,
     /// Precomputed valid rules for each pebble count `1..=size`.
     rule_table: Vec<Vec<Rule>>,
+    /// Accumulated runtime and decision metrics across tree traversal.
+    pub metrics: [StageMetrics; 8],
 }
 
 impl TnfEnumerator {
@@ -190,6 +297,7 @@ impl TnfEnumerator {
                 break_symmetry,
                 stack: Vec::new(),
                 rule_table: Vec::new(),
+                metrics: [StageMetrics::default(); 8],
             };
         }
         let rule_table: Vec<Vec<Rule>> = (1..=size as u8).map(Rule::all_for_pebbles).collect();
@@ -201,6 +309,7 @@ impl TnfEnumerator {
             break_symmetry,
             stack: vec![(initial_prog, initial_sim, break_symmetry)],
             rule_table,
+            metrics: [StageMetrics::default(); 8],
         }
     }
 
@@ -224,29 +333,146 @@ impl TnfEnumerator {
             break_symmetry,
             stack: vec![(prog, sim, is_symmetric)],
             rule_table,
+            metrics: [StageMetrics::default(); 8],
         }
     }
 }
 
 #[inline]
-fn resolve_leaf_outcome(
+pub fn resolve_leaf_outcome_timed(
     prog: &Program,
     sim: &Simulator,
     steps: u64,
     max_steps: u64,
     use_deciders: bool,
+    metrics: &mut [StageMetrics; 8],
 ) -> SimOutcome {
-    if use_deciders {
-        if let Some(decider) =
-            run_decider_pipeline_sparse(prog, Some(sim.sparse_entries()), max_steps)
-        {
-            SimOutcome::DecidedNonHalting { decider, steps }
-        } else {
-            SimOutcome::MaxStepsReached { steps }
-        }
-    } else {
-        SimOutcome::MaxStepsReached { steps }
+    if !use_deciders {
+        return SimOutcome::MaxStepsReached { steps };
     }
+
+    // 1. StaticBacktrack
+    metrics[PipelineStage::StaticBacktrack as usize].invocations += 1;
+    let t0 = Instant::now();
+    let sb_res = decide_static_backtrack(prog);
+    metrics[PipelineStage::StaticBacktrack as usize].total_time_nanos +=
+        t0.elapsed().as_nanos() as u64;
+    if let Some(decider) = sb_res {
+        metrics[PipelineStage::StaticBacktrack as usize].decided_infinite += 1;
+        return SimOutcome::DecidedNonHalting { decider, steps };
+    }
+
+    // 2. EdgeGlider
+    metrics[PipelineStage::EdgeGlider as usize].invocations += 1;
+    let t0 = Instant::now();
+    let eg_res = check_edge_glider_sparse(prog, sim.sparse_entries());
+    metrics[PipelineStage::EdgeGlider as usize].total_time_nanos +=
+        t0.elapsed().as_nanos() as u64;
+    if let Some(decider) = eg_res {
+        metrics[PipelineStage::EdgeGlider as usize].decided_infinite += 1;
+        return SimOutcome::DecidedNonHalting { decider, steps };
+    }
+
+    // 3. Cycler / TranslatedCycler
+    metrics[PipelineStage::Cycler as usize].invocations += 1;
+    let t0 = Instant::now();
+    let cyc_res = decide_cycler(prog, max_steps);
+    metrics[PipelineStage::Cycler as usize].total_time_nanos +=
+        t0.elapsed().as_nanos() as u64;
+    if let Some(decider) = cyc_res {
+        metrics[PipelineStage::Cycler as usize].decided_infinite += 1;
+        return SimOutcome::DecidedNonHalting { decider, steps };
+    }
+
+    // 4. SeparatedComponents
+    metrics[PipelineStage::SeparatedComponents as usize].invocations += 1;
+    let t0 = Instant::now();
+    let sep_res = decide_separated_components(prog, max_steps);
+    metrics[PipelineStage::SeparatedComponents as usize].total_time_nanos +=
+        t0.elapsed().as_nanos() as u64;
+    if let Some(decider) = sep_res {
+        metrics[PipelineStage::SeparatedComponents as usize].decided_infinite += 1;
+        return SimOutcome::DecidedNonHalting { decider, steps };
+    }
+
+    // 5. Bouncer
+    metrics[PipelineStage::Bouncer as usize].invocations += 1;
+    let t0 = Instant::now();
+    let bnc_res = decide_bouncer(prog, max_steps);
+    metrics[PipelineStage::Bouncer as usize].total_time_nanos +=
+        t0.elapsed().as_nanos() as u64;
+    if let Some(decider) = bnc_res {
+        metrics[PipelineStage::Bouncer as usize].decided_infinite += 1;
+        return SimOutcome::DecidedNonHalting { decider, steps };
+    }
+
+    // 6. CTL
+    metrics[PipelineStage::Ctl as usize].invocations += 1;
+    let t0 = Instant::now();
+    let ctl_res = decide_ctl(prog, max_steps);
+    metrics[PipelineStage::Ctl as usize].total_time_nanos +=
+        t0.elapsed().as_nanos() as u64;
+    if let Some(decider) = ctl_res {
+        metrics[PipelineStage::Ctl as usize].decided_infinite += 1;
+        return SimOutcome::DecidedNonHalting { decider, steps };
+    }
+
+    // 7. Extended runs if (50..200).contains(&max_steps)
+    if (50..200).contains(&max_steps) {
+        let ext_steps = 200;
+
+        metrics[PipelineStage::EdgeGlider as usize].invocations += 1;
+        let t0 = Instant::now();
+        let eg = decide_edge_glider(prog, ext_steps);
+        metrics[PipelineStage::EdgeGlider as usize].total_time_nanos +=
+            t0.elapsed().as_nanos() as u64;
+        if let Some(decider) = eg {
+            metrics[PipelineStage::EdgeGlider as usize].decided_infinite += 1;
+            return SimOutcome::DecidedNonHalting { decider, steps };
+        }
+
+        metrics[PipelineStage::Cycler as usize].invocations += 1;
+        let t0 = Instant::now();
+        let cyc = decide_cycler(prog, ext_steps);
+        metrics[PipelineStage::Cycler as usize].total_time_nanos +=
+            t0.elapsed().as_nanos() as u64;
+        if let Some(decider) = cyc {
+            metrics[PipelineStage::Cycler as usize].decided_infinite += 1;
+            return SimOutcome::DecidedNonHalting { decider, steps };
+        }
+
+        metrics[PipelineStage::SeparatedComponents as usize].invocations += 1;
+        let t0 = Instant::now();
+        let sep = decide_separated_components(prog, ext_steps);
+        metrics[PipelineStage::SeparatedComponents as usize].total_time_nanos +=
+            t0.elapsed().as_nanos() as u64;
+        if let Some(decider) = sep {
+            metrics[PipelineStage::SeparatedComponents as usize].decided_infinite += 1;
+            return SimOutcome::DecidedNonHalting { decider, steps };
+        }
+
+        metrics[PipelineStage::Bouncer as usize].invocations += 1;
+        let t0 = Instant::now();
+        let bnc = decide_bouncer(prog, ext_steps);
+        metrics[PipelineStage::Bouncer as usize].total_time_nanos +=
+            t0.elapsed().as_nanos() as u64;
+        if let Some(decider) = bnc {
+            metrics[PipelineStage::Bouncer as usize].decided_infinite += 1;
+            return SimOutcome::DecidedNonHalting { decider, steps };
+        }
+
+        metrics[PipelineStage::Ctl as usize].invocations += 1;
+        let t0 = Instant::now();
+        let ctl = decide_ctl(prog, ext_steps);
+        metrics[PipelineStage::Ctl as usize].total_time_nanos +=
+            t0.elapsed().as_nanos() as u64;
+        if let Some(decider) = ctl {
+            metrics[PipelineStage::Ctl as usize].decided_infinite += 1;
+            return SimOutcome::DecidedNonHalting { decider, steps };
+        }
+    }
+
+    SimOutcome::MaxStepsReached { steps }
 }
 
 impl Iterator for TnfEnumerator {
@@ -254,8 +480,15 @@ impl Iterator for TnfEnumerator {
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((prog, mut sim, is_symmetric)) = self.stack.pop() {
-            match sim.run(&prog, self.max_steps) {
+            let t0 = Instant::now();
+            let outcome = sim.run(&prog, self.max_steps);
+            let elapsed_nanos = t0.elapsed().as_nanos() as u64;
+
+            match outcome {
                 SimOutcome::MissingRule { pebbles, .. } => {
+                    self.metrics[PipelineStage::PrefixSim as usize].invocations += 1;
+                    self.metrics[PipelineStage::PrefixSim as usize].total_time_nanos += elapsed_nanos;
+
                     let choices = &self.rule_table[pebbles as usize - 1];
                     // Push in reverse so the stack pops in standard lexicographical order.
                     for &rule in choices.iter().rev() {
@@ -267,25 +500,42 @@ impl Iterator for TnfEnumerator {
                         child_prog
                             .set_rule(pebbles, Some(rule))
                             .expect("valid rule for pebbles");
-                        let child_sim = sim.clone();
+                        let child_sim = sim;
                         self.stack.push((child_prog, child_sim, child_is_symmetric));
                     }
                 }
                 SimOutcome::Halted { steps } => {
+                    self.metrics[PipelineStage::LeafSim as usize].invocations += 1;
+                    self.metrics[PipelineStage::LeafSim as usize].decided_halting += 1;
+                    self.metrics[PipelineStage::LeafSim as usize].total_time_nanos += elapsed_nanos;
+
                     return Some(EnumEntry {
                         program: prog,
                         outcome: SimOutcome::Halted { steps },
                     });
                 }
                 SimOutcome::MaxStepsReached { steps } => {
-                    let outcome =
-                        resolve_leaf_outcome(&prog, &sim, steps, self.max_steps, self.use_deciders);
+                    self.metrics[PipelineStage::LeafSim as usize].invocations += 1;
+                    self.metrics[PipelineStage::LeafSim as usize].total_time_nanos += elapsed_nanos;
+
+                    let outcome = resolve_leaf_outcome_timed(
+                        &prog,
+                        &sim,
+                        steps,
+                        self.max_steps,
+                        self.use_deciders,
+                        &mut self.metrics,
+                    );
                     return Some(EnumEntry {
                         program: prog,
                         outcome,
                     });
                 }
                 outcome @ SimOutcome::DecidedNonHalting { .. } => {
+                    self.metrics[PipelineStage::LeafSim as usize].invocations += 1;
+                    self.metrics[PipelineStage::LeafSim as usize].decided_infinite += 1;
+                    self.metrics[PipelineStage::LeafSim as usize].total_time_nanos += elapsed_nanos;
+
                     return Some(EnumEntry {
                         program: prog,
                         outcome,
@@ -311,6 +561,7 @@ fn build_frontier(
     break_symmetry: bool,
     rule_table: &[Vec<Rule>],
     target_width: usize,
+    metrics: &mut [StageMetrics; 8],
 ) -> Vec<FrontierNode> {
     if size == 0 {
         return Vec::new();
@@ -330,47 +581,77 @@ fn build_frontier(
         for node in frontier {
             match node {
                 FrontierNode::Leaf(entry) => next_frontier.push(FrontierNode::Leaf(entry)),
-                FrontierNode::Branch(prog, mut sim, is_symmetric) => match sim.run(&prog, max_steps) {
-                    SimOutcome::MissingRule { pebbles, .. } => {
-                        let choices = &rule_table[pebbles as usize - 1];
-                        for &rule in choices {
-                            if is_symmetric && rule.left > rule.right {
-                                continue;
+                FrontierNode::Branch(prog, mut sim, is_symmetric) => {
+                    let start = Instant::now();
+                    let outcome = sim.run(&prog, max_steps);
+                    let elapsed_nanos = start.elapsed().as_nanos() as u64;
+
+                    match outcome {
+                        SimOutcome::MissingRule { pebbles, .. } => {
+                            metrics[PipelineStage::PrefixSim as usize].invocations += 1;
+                            metrics[PipelineStage::PrefixSim as usize].total_time_nanos +=
+                                elapsed_nanos;
+
+                            let choices = &rule_table[pebbles as usize - 1];
+                            for &rule in choices {
+                                if is_symmetric && rule.left > rule.right {
+                                    continue;
+                                }
+                                let child_is_symmetric = is_symmetric && (rule.left == rule.right);
+                                let mut child_prog = prog.clone();
+                                child_prog
+                                    .set_rule(pebbles, Some(rule))
+                                    .expect("valid rule for pebbles");
+                                let child_sim = sim.clone();
+                                next_frontier.push(FrontierNode::Branch(
+                                    child_prog,
+                                    child_sim,
+                                    child_is_symmetric,
+                                ));
                             }
-                            let child_is_symmetric = is_symmetric && (rule.left == rule.right);
-                            let mut child_prog = prog.clone();
-                            child_prog
-                                .set_rule(pebbles, Some(rule))
-                                .expect("valid rule for pebbles");
-                            let child_sim = sim.clone();
-                            next_frontier.push(FrontierNode::Branch(
-                                child_prog,
-                                child_sim,
-                                child_is_symmetric,
-                            ));
+                        }
+                        SimOutcome::Halted { steps } => {
+                            metrics[PipelineStage::LeafSim as usize].invocations += 1;
+                            metrics[PipelineStage::LeafSim as usize].decided_halting += 1;
+                            metrics[PipelineStage::LeafSim as usize].total_time_nanos +=
+                                elapsed_nanos;
+
+                            next_frontier.push(FrontierNode::Leaf(EnumEntry {
+                                program: prog,
+                                outcome: SimOutcome::Halted { steps },
+                            }));
+                        }
+                        SimOutcome::MaxStepsReached { steps } => {
+                            metrics[PipelineStage::LeafSim as usize].invocations += 1;
+                            metrics[PipelineStage::LeafSim as usize].total_time_nanos +=
+                                elapsed_nanos;
+
+                            let outcome = resolve_leaf_outcome_timed(
+                                &prog,
+                                &sim,
+                                steps,
+                                max_steps,
+                                use_deciders,
+                                metrics,
+                            );
+                            next_frontier.push(FrontierNode::Leaf(EnumEntry {
+                                program: prog,
+                                outcome,
+                            }));
+                        }
+                        outcome @ SimOutcome::DecidedNonHalting { .. } => {
+                            metrics[PipelineStage::LeafSim as usize].invocations += 1;
+                            metrics[PipelineStage::LeafSim as usize].decided_infinite += 1;
+                            metrics[PipelineStage::LeafSim as usize].total_time_nanos +=
+                                elapsed_nanos;
+
+                            next_frontier.push(FrontierNode::Leaf(EnumEntry {
+                                program: prog,
+                                outcome,
+                            }));
                         }
                     }
-                    SimOutcome::Halted { steps } => {
-                        next_frontier.push(FrontierNode::Leaf(EnumEntry {
-                            program: prog,
-                            outcome: SimOutcome::Halted { steps },
-                        }));
-                    }
-                    SimOutcome::MaxStepsReached { steps } => {
-                        let outcome =
-                            resolve_leaf_outcome(&prog, &sim, steps, max_steps, use_deciders);
-                        next_frontier.push(FrontierNode::Leaf(EnumEntry {
-                            program: prog,
-                            outcome,
-                        }));
-                    }
-                    outcome @ SimOutcome::DecidedNonHalting { .. } => {
-                        next_frontier.push(FrontierNode::Leaf(EnumEntry {
-                            program: prog,
-                            outcome,
-                        }));
-                    }
-                },
+                }
             }
         }
         frontier = next_frontier;
@@ -416,6 +697,7 @@ where
     }
 
     let rule_table: Vec<Vec<Rule>> = (1..=size as u8).map(Rule::all_for_pebbles).collect();
+    let mut frontier_metrics = [StageMetrics::default(); 8];
     let frontier = build_frontier(
         size,
         max_steps,
@@ -423,6 +705,7 @@ where
         break_symmetry,
         &rule_table,
         4096,
+        &mut frontier_metrics,
     );
 
     let live_total = AtomicU64::new(0);
@@ -490,7 +773,7 @@ where
                     }
                 }
                 FrontierNode::Branch(prog, sim, is_symmetric) => {
-                    let sub_enum = TnfEnumerator::from_subtree(
+                    let mut sub_enum = TnfEnumerator::from_subtree(
                         prog,
                         sim,
                         max_steps,
@@ -504,7 +787,7 @@ where
                     let mut b_dec = 0u64;
                     let mut b_max: Option<u64> = None;
 
-                    for entry in sub_enum {
+                    for entry in &mut sub_enum {
                         local_stats.record(&entry);
                         b_tot += 1;
                         match entry.outcome {
@@ -528,6 +811,7 @@ where
                             b_max = None;
                         }
                     }
+                    local_stats.merge_metrics(&sub_enum.metrics);
                     flush_batch(b_tot, b_halt, b_dec, b_max);
                 }
             }
@@ -536,6 +820,7 @@ where
         .collect();
 
     let mut final_stats = EnumStats::new(size, max_steps);
+    final_stats.merge_metrics(&frontier_metrics);
     let mut final_entries = Vec::new();
     for (sub_stats, mut sub_entries) in chunk_results {
         final_stats.merge(sub_stats);

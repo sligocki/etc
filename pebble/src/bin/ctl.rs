@@ -29,6 +29,7 @@ fn print_usage(bin: &str) {
     eprintln!("  -m, --max-states <STATES> Maximum states allowed in closed language (default: 10000)");
     eprintln!("      --step-interval <N>   Interval between simulation steps to test CTL closure (default: 10)");
     eprintln!("      --min-step <N>        Minimum simulation step before attempting CTL closure (default: 0)");
+    eprintln!("      --split-threshold <N> Split threshold for separating blocks (default: 2)");
     eprintln!("  -j, --threads <THREADS>   Number of Rayon worker threads for file mode (default: all cores)");
     eprintln!("  -p, --progress <SECS>     Progress update interval in seconds (default: 5s)");
     eprintln!("      --proved-only         When writing output file, only write CTL-proved infinite programs");
@@ -63,12 +64,8 @@ fn format_record_line(prog: &Program, outcome: &CtlSearchOutcome) -> String {
     match outcome {
         CtlSearchOutcome::Proved(proof) => {
             format!(
-                "{prog}\tDECIDED\tCTL\t{} # states={} thresh={} floor={} mod={}",
-                proof.num_steps,
-                proof.num_states,
-                proof.split_threshold,
-                proof.floor,
-                proof.modulus
+                "{prog}\tDECIDED\tCTL\t{} # states={} mod={}",
+                proof.num_steps, proof.num_states, proof.modulus
             )
         }
         CtlSearchOutcome::ConcreteHalt { step } => {
@@ -116,8 +113,8 @@ fn run_file_mode(
         println!("Output file:      {}{filter_label}", out.display());
     }
     println!(
-        "Parameters:       max_steps={}, max_states={}, step_interval={}, min_step={}",
-        config.max_steps, config.max_states, config.step_interval, config.min_step
+        "Parameters:       max_steps={}, max_states={}, step_interval={}, min_step={}, split_threshold={}",
+        config.max_steps, config.max_states, config.step_interval, config.min_step, config.split_threshold
     );
     println!("Threads:          {}", rayon::current_num_threads());
     println!();
@@ -210,8 +207,8 @@ fn run_file_mode(
         writeln!(writer, "# Input file: {}", infile.display()).ok();
         writeln!(
             writer,
-            "# Parameters: max_steps={}, max_states={}, step_interval={}, min_step={}",
-            config.max_steps, config.max_states, config.step_interval, config.min_step
+            "# Parameters: max_steps={}, max_states={}, step_interval={}, min_step={}, split_threshold={}",
+            config.max_steps, config.max_states, config.step_interval, config.min_step, config.split_threshold
         )
         .ok();
 
@@ -294,6 +291,7 @@ fn main() {
     let mut max_states: usize = 10000;
     let mut step_interval: u64 = 10;
     let mut min_step: u64 = 0;
+    let mut split_threshold: usize = 2;
     let mut num_threads: Option<usize> = None;
     let mut progress_interval = Duration::from_secs(5);
     let mut proved_only = false;
@@ -377,6 +375,18 @@ fn main() {
                 });
                 i += 1;
             }
+            "--split-threshold" | "--thresh" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: missing value for {}", args[i - 1]);
+                    process::exit(1);
+                }
+                split_threshold = args[i].parse().unwrap_or_else(|_| {
+                    eprintln!("Error: invalid split threshold '{}'", args[i]);
+                    process::exit(1);
+                });
+                i += 1;
+            }
             "-j" | "--threads" => {
                 i += 1;
                 if i >= args.len() {
@@ -436,6 +446,7 @@ fn main() {
         max_steps,
         max_states,
         step_interval,
+        split_threshold,
         verbose,
     };
 
@@ -492,7 +503,7 @@ fn main() {
         program.size()
     );
     println!(
-        "Limits: max_steps={max_steps}, max_states={max_states}, step_interval={step_interval}, min_step={min_step}"
+        "Limits: max_steps={max_steps}, max_states={max_states}, step_interval={step_interval}, min_step={min_step}, split_threshold={split_threshold}"
     );
     println!();
 

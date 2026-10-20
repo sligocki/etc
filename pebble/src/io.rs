@@ -204,11 +204,13 @@ fn parse_ctl_proof_comment(num_steps: u64, comment: &str) -> Option<crate::ctl::
             modulus = v.parse().ok();
         }
     }
+    let split_threshold = split_threshold.unwrap_or(2);
+    let floor = floor.unwrap_or(2 * split_threshold + 2);
     Some(crate::ctl::CtlProof {
         num_steps,
         num_states: num_states?,
-        split_threshold: split_threshold?,
-        floor: floor?,
+        split_threshold,
+        floor,
         modulus: modulus?,
     })
 }
@@ -323,8 +325,8 @@ mod tests {
                     decider: Decider::Ctl(Some(crate::ctl::CtlProof {
                         num_steps: 60,
                         num_states: 4757,
-                        split_threshold: 5,
-                        floor: 12,
+                        split_threshold: 2,
+                        floor: 6,
                         modulus: 1,
                     })),
                     steps: 60,

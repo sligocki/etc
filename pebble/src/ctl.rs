@@ -333,11 +333,7 @@ pub struct CtlProof {
 
 impl std::fmt::Display for CtlProof {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "states={} thresh={} floor={} mod={}",
-            self.num_states, self.split_threshold, self.floor, self.modulus
-        )
+        write!(f, "states={} mod={}", self.num_states, self.modulus)
     }
 }
 
@@ -355,47 +351,55 @@ pub fn try_prove_ctl_from_tape(
     step: u64,
     max_states: usize,
 ) -> TapeProofResult {
+    try_prove_ctl_from_tape_with_threshold(program, cells, step, max_states, 2)
+}
+
+pub fn try_prove_ctl_from_tape_with_threshold(
+    program: &Program,
+    cells: &[u8],
+    step: u64,
+    max_states: usize,
+    split_threshold: usize,
+) -> TapeProofResult {
     let mut hit_undef = None;
     let mut hit_halt = false;
 
-    for split_threshold in 2..=6 {
-        let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
-        if raw_gaps.is_empty() {
-            continue;
-        }
-        let floor = 2 * split_threshold + 2;
-        if !raw_gaps.iter().any(|&g| g >= floor) {
-            continue;
-        }
-        for modulus in [1, 2, 3, 4, 6] {
-            let gaps: Vec<ZeroGap> = raw_gaps
-                .iter()
-                .map(|&g| ZeroGap::new(g, floor, modulus))
-                .collect();
-            let seed = CtlState {
-                modulus,
-                blocks: blocks.clone(),
-                gaps,
-            };
-            match verify_ctl_closure(seed, program, split_threshold, floor, max_states) {
-                CtlVerificationOutcome::Closed { num_states } => {
-                    return TapeProofResult::Proved(CtlProof {
-                        num_steps: step,
-                        num_states,
-                        split_threshold,
-                        floor,
-                        modulus,
-                    });
-                }
-                CtlVerificationOutcome::HitUndefinedRule { pebbles } => {
-                    hit_undef = Some(pebbles);
-                }
-                CtlVerificationOutcome::HitHalt => {
-                    hit_halt = true;
-                }
-                CtlVerificationOutcome::ExceededMaxStates { .. }
-                | CtlVerificationOutcome::StructuralFailure(_) => {}
+    let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
+    if raw_gaps.is_empty() {
+        return TapeProofResult::Inconclusive;
+    }
+    let floor = 2 * split_threshold + 2;
+    if !raw_gaps.iter().any(|&g| g >= floor) {
+        return TapeProofResult::Inconclusive;
+    }
+    for modulus in [1, 2, 3, 4, 6] {
+        let gaps: Vec<ZeroGap> = raw_gaps
+            .iter()
+            .map(|&g| ZeroGap::new(g, floor, modulus))
+            .collect();
+        let seed = CtlState {
+            modulus,
+            blocks: blocks.clone(),
+            gaps,
+        };
+        match verify_ctl_closure(seed, program, split_threshold, floor, max_states) {
+            CtlVerificationOutcome::Closed { num_states } => {
+                return TapeProofResult::Proved(CtlProof {
+                    num_steps: step,
+                    num_states,
+                    split_threshold,
+                    floor,
+                    modulus,
+                });
             }
+            CtlVerificationOutcome::HitUndefinedRule { pebbles } => {
+                hit_undef = Some(pebbles);
+            }
+            CtlVerificationOutcome::HitHalt => {
+                hit_halt = true;
+            }
+            CtlVerificationOutcome::ExceededMaxStates { .. }
+            | CtlVerificationOutcome::StructuralFailure(_) => {}
         }
     }
 
@@ -434,6 +438,7 @@ pub struct CtlConfig {
     pub max_steps: u64,
     pub max_states: usize,
     pub step_interval: u64,
+    pub split_threshold: usize,
     pub verbose: bool,
 }
 
@@ -444,6 +449,7 @@ impl Default for CtlConfig {
             max_steps: 5000,
             max_states: 10000,
             step_interval: 10,
+            split_threshold: 2,
             verbose: false,
         }
     }
@@ -474,7 +480,13 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                     sim.sparse_entries().len()
                 );
             }
-            match try_prove_ctl_from_tape(program, &cells, step, config.max_states) {
+            match try_prove_ctl_from_tape_with_threshold(
+                program,
+                &cells,
+                step,
+                config.max_states,
+                config.split_threshold,
+            ) {
                 TapeProofResult::Proved(proof) => return CtlSearchOutcome::Proved(proof),
                 TapeProofResult::HitUndefinedRule { pebbles } => {
                     last_hit_undef = Some((step, pebbles));
@@ -522,6 +534,7 @@ mod tests {
             max_steps: 500,
             max_states: 5000,
             step_interval: 50,
+            split_threshold: 2,
             verbose: false,
         };
         let outcome = run_ctl_search(&prog, &config);

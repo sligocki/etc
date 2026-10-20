@@ -182,16 +182,18 @@ pub struct EnumStats {
     pub stages: Vec<StageReport>,
     /// Number of CTL proofs found.
     pub ctl_proofs_count: u64,
+    /// Minimum steps simulated across CTL proofs.
+    pub ctl_min_steps: u64,
+    /// Maximum steps simulated across CTL proofs.
+    pub ctl_max_steps: u64,
+    /// Total steps simulated across CTL proofs.
+    pub ctl_total_steps: u64,
     /// Minimum states in closed language across CTL proofs.
     pub ctl_min_states: usize,
     /// Maximum states in closed language across CTL proofs.
     pub ctl_max_states: usize,
     /// Total states in closed language across CTL proofs.
     pub ctl_total_states: u64,
-    /// Distribution of split thresholds in CTL proofs.
-    pub ctl_thresh_counts: std::collections::BTreeMap<usize, u64>,
-    /// Distribution of floors in CTL proofs.
-    pub ctl_floor_counts: std::collections::BTreeMap<usize, u64>,
     /// Distribution of moduli in CTL proofs.
     pub ctl_mod_counts: std::collections::BTreeMap<usize, u64>,
 }
@@ -207,11 +209,12 @@ impl PartialEq for EnumStats {
             && self.max_halting_steps == other.max_halting_steps
             && self.champion == other.champion
             && self.ctl_proofs_count == other.ctl_proofs_count
+            && self.ctl_min_steps == other.ctl_min_steps
+            && self.ctl_max_steps == other.ctl_max_steps
+            && self.ctl_total_steps == other.ctl_total_steps
             && self.ctl_min_states == other.ctl_min_states
             && self.ctl_max_states == other.ctl_max_states
             && self.ctl_total_states == other.ctl_total_states
-            && self.ctl_thresh_counts == other.ctl_thresh_counts
-            && self.ctl_floor_counts == other.ctl_floor_counts
             && self.ctl_mod_counts == other.ctl_mod_counts
     }
 }
@@ -271,15 +274,18 @@ impl EnumStats {
                         if let Some(proof) = proof_opt {
                             self.ctl_proofs_count += 1;
                             if self.ctl_proofs_count == 1 {
+                                self.ctl_min_steps = proof.num_steps;
+                                self.ctl_max_steps = proof.num_steps;
                                 self.ctl_min_states = proof.num_states;
                                 self.ctl_max_states = proof.num_states;
                             } else {
+                                self.ctl_min_steps = self.ctl_min_steps.min(proof.num_steps);
+                                self.ctl_max_steps = self.ctl_max_steps.max(proof.num_steps);
                                 self.ctl_min_states = self.ctl_min_states.min(proof.num_states);
                                 self.ctl_max_states = self.ctl_max_states.max(proof.num_states);
                             }
+                            self.ctl_total_steps += proof.num_steps;
                             self.ctl_total_states += proof.num_states as u64;
-                            *self.ctl_thresh_counts.entry(proof.split_threshold).or_insert(0) += 1;
-                            *self.ctl_floor_counts.entry(proof.floor).or_insert(0) += 1;
                             *self.ctl_mod_counts.entry(proof.modulus).or_insert(0) += 1;
                         }
                         5
@@ -375,20 +381,19 @@ impl EnumStats {
         }
         if other.ctl_proofs_count > 0 {
             if self.ctl_proofs_count == 0 {
+                self.ctl_min_steps = other.ctl_min_steps;
+                self.ctl_max_steps = other.ctl_max_steps;
                 self.ctl_min_states = other.ctl_min_states;
                 self.ctl_max_states = other.ctl_max_states;
             } else {
+                self.ctl_min_steps = self.ctl_min_steps.min(other.ctl_min_steps);
+                self.ctl_max_steps = self.ctl_max_steps.max(other.ctl_max_steps);
                 self.ctl_min_states = self.ctl_min_states.min(other.ctl_min_states);
                 self.ctl_max_states = self.ctl_max_states.max(other.ctl_max_states);
             }
             self.ctl_proofs_count += other.ctl_proofs_count;
+            self.ctl_total_steps += other.ctl_total_steps;
             self.ctl_total_states += other.ctl_total_states;
-            for (k, v) in other.ctl_thresh_counts {
-                *self.ctl_thresh_counts.entry(k).or_insert(0) += v;
-            }
-            for (k, v) in other.ctl_floor_counts {
-                *self.ctl_floor_counts.entry(k).or_insert(0) += v;
-            }
             for (k, v) in other.ctl_mod_counts {
                 *self.ctl_mod_counts.entry(k).or_insert(0) += v;
             }
@@ -1189,11 +1194,12 @@ mod tests {
         });
 
         assert_eq!(stats1.ctl_proofs_count, 1);
+        assert_eq!(stats1.ctl_min_steps, 60);
+        assert_eq!(stats1.ctl_max_steps, 60);
+        assert_eq!(stats1.ctl_total_steps, 60);
         assert_eq!(stats1.ctl_min_states, 4757);
         assert_eq!(stats1.ctl_max_states, 4757);
         assert_eq!(stats1.ctl_total_states, 4757);
-        assert_eq!(stats1.ctl_thresh_counts.get(&5), Some(&1));
-        assert_eq!(stats1.ctl_floor_counts.get(&12), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&1), Some(&1));
 
         let mut stats2 = EnumStats::default();
@@ -1207,13 +1213,12 @@ mod tests {
 
         stats1.merge(stats2);
         assert_eq!(stats1.ctl_proofs_count, 2);
+        assert_eq!(stats1.ctl_min_steps, 60);
+        assert_eq!(stats1.ctl_max_steps, 80);
+        assert_eq!(stats1.ctl_total_steps, 60 + 80);
         assert_eq!(stats1.ctl_min_states, 120);
         assert_eq!(stats1.ctl_max_states, 4757);
         assert_eq!(stats1.ctl_total_states, 4757 + 120);
-        assert_eq!(stats1.ctl_thresh_counts.get(&2), Some(&1));
-        assert_eq!(stats1.ctl_thresh_counts.get(&5), Some(&1));
-        assert_eq!(stats1.ctl_floor_counts.get(&0), Some(&1));
-        assert_eq!(stats1.ctl_floor_counts.get(&12), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&1), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&2), Some(&1));
     }

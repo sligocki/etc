@@ -20,6 +20,10 @@ path = "src/bin/enum.rs"
 name = "bench_deciders"
 path = "src/bin/bench_deciders.rs"
 
+[[bin]]
+name = "ctl"
+path = "src/bin/ctl.rs"
+
 [dependencies]
 rayon = "1.12.0"
 

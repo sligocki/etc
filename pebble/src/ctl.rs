@@ -322,13 +322,23 @@ pub fn verify_ctl_closure(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CtlProof {
     pub num_steps: u64,
     pub num_states: usize,
     pub split_threshold: usize,
     pub floor: usize,
     pub modulus: usize,
+}
+
+impl std::fmt::Display for CtlProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "states={} thresh={} floor={} mod={}",
+            self.num_states, self.split_threshold, self.floor, self.modulus
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -405,10 +415,10 @@ pub fn decide_ctl(program: &Program, max_steps: u64) -> Option<Decider> {
 
     for step in 0..=max_steps {
         if step >= sample_start && (max_steps - step) % 4 == 0 {
-            if let TapeProofResult::Proved(_) =
+            if let TapeProofResult::Proved(proof) =
                 try_prove_ctl_from_tape(program, &sim.cells(), step, 1024)
             {
-                return Some(Decider::Ctl);
+                return Some(Decider::Ctl(Some(proof)));
             }
         }
         if sim.step(program) != StepResult::Stepped {

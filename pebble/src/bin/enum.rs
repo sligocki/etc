@@ -353,5 +353,42 @@ fn main() {
             );
         }
         println!("{:-<104}", "");
+
+        if stats.ctl_proofs_count > 0 {
+            println!();
+            println!(
+                "=== CTL Proof Statistics ({} proved) ===",
+                stats.ctl_proofs_count
+            );
+            let avg_states = stats.ctl_total_states as f64 / stats.ctl_proofs_count as f64;
+            println!(
+                "States:           min = {}, avg = {:.1}, max = {}",
+                stats.ctl_min_states, avg_states, stats.ctl_max_states
+            );
+
+            let thresh_str = stats
+                .ctl_thresh_counts
+                .iter()
+                .map(|(t, c)| format!("thresh={t} ({c})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("Split thresholds: {}", thresh_str);
+
+            let floor_str = stats
+                .ctl_floor_counts
+                .iter()
+                .map(|(f, c)| format!("floor={f} ({c})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("Floors:           {}", floor_str);
+
+            let mod_str = stats
+                .ctl_mod_counts
+                .iter()
+                .map(|(m, c)| format!("mod={m} ({c})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("Moduli:           {}", mod_str);
+        }
     }
 }

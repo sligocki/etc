@@ -1,3 +1,4 @@
+use crate::ctl::CtlProof;
 use crate::program::Program;
 use crate::simulation::{Simulator, StepResult};
 use std::collections::HashMap;
@@ -24,7 +25,7 @@ pub enum Decider {
     /// Closed Tape Language (CTL) regular-set proof: a set of symbolic configurations with
     /// modular zero-star gaps `0^r (0^m)*` is entered during simulation, closed under exact
     /// 1-step symbolic transitions, and contains no halting configurations.
-    Ctl,
+    Ctl(Option<CtlProof>),
     /// Static backtrack / invariant decider: proves non-halting via stationary-rule graph
     /// reachability and monotone pebble threshold invariants.
     StaticBacktrack,
@@ -37,7 +38,7 @@ impl Decider {
         Decider::TranslatedCycler,
         Decider::SeparatedComponents,
         Decider::Bouncer,
-        Decider::Ctl,
+        Decider::Ctl(None),
         Decider::StaticBacktrack,
     ];
 }
@@ -50,7 +51,7 @@ impl fmt::Display for Decider {
             Decider::TranslatedCycler => write!(f, "TranslatedCycler"),
             Decider::SeparatedComponents => write!(f, "SeparatedComponents"),
             Decider::Bouncer => write!(f, "Bouncer"),
-            Decider::Ctl => write!(f, "CTL"),
+            Decider::Ctl(_) => write!(f, "CTL"),
             Decider::StaticBacktrack => write!(f, "StaticBacktrack"),
         }
     }
@@ -66,7 +67,7 @@ impl FromStr for Decider {
             "translatedcycler" | "translated_cycler" => Ok(Decider::TranslatedCycler),
             "separatedcomponents" | "separated_components" => Ok(Decider::SeparatedComponents),
             "bouncer" => Ok(Decider::Bouncer),
-            "ctl" => Ok(Decider::Ctl),
+            "ctl" => Ok(Decider::Ctl(None)),
             "staticbacktrack" | "static_backtrack" | "backtrack" => Ok(Decider::StaticBacktrack),
             other => Err(format!("unknown decider '{other}'")),
         }
@@ -813,9 +814,8 @@ mod tests {
         ];
         for (code, steps) in ctl_programs {
             let p: Program = code.parse().unwrap();
-            assert_eq!(
-                decide_ctl(&p, steps),
-                Some(Decider::Ctl),
+            assert!(
+                matches!(decide_ctl(&p, steps), Some(Decider::Ctl(_))),
                 "expected program {code} to be decided by CTL"
             );
         }

@@ -61,9 +61,12 @@ impl fmt::Display for SimOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SimOutcome::Halted { steps } => write!(f, "HALT\t{steps}"),
-            SimOutcome::DecidedNonHalting { decider, steps } => {
-                write!(f, "DECIDED\t{decider}\t{steps}")
-            }
+            SimOutcome::DecidedNonHalting { decider, steps } => match decider {
+                Decider::Ctl(Some(proof)) => {
+                    write!(f, "DECIDED\tCTL\t{} # {proof}", proof.num_steps)
+                }
+                _ => write!(f, "DECIDED\t{decider}\t{steps}"),
+            },
             SimOutcome::MaxStepsReached { steps } => write!(f, "MAX_STEPS\t{steps}"),
             SimOutcome::MissingRule { pebbles, steps } => {
                 write!(f, "MISSING_RULE\t{pebbles}\t{steps}")

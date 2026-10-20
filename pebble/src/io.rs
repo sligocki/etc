@@ -66,7 +66,12 @@ impl fmt::Display for ProgramRecord {
 /// - `<program>\tMAX_STEPS\t<steps>` (or `HOLD` / `TIMEOUT`)
 /// - `<program>\tMISSING_RULE\t<pebbles>\t<steps>`
 pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, IoError> {
-    let mut fields = line.split_whitespace();
+    let (code_part, comment_part) = match line.split_once('#') {
+        Some((code, comment)) => (code.trim(), Some(comment.trim())),
+        None => (line.trim(), None),
+    };
+
+    let mut fields = code_part.split_whitespace();
     let prog_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
         line: line_num,
         detail: "unexpected empty line".to_string(),
@@ -103,7 +108,7 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                 line: line_num,
                 detail: "missing decider name after DECIDED".to_string(),
             })?;
-            let decider = decider_str
+            let mut decider: crate::deciders::Decider = decider_str
                 .parse()
                 .map_err(|detail| IoError::ParseOutcome {
                     line: line_num,
@@ -117,6 +122,13 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                 line: line_num,
                 detail: format!("invalid step count '{steps_str}'"),
             })?;
+            if matches!(decider, crate::deciders::Decider::Ctl(_)) {
+                if let Some(comment) = comment_part {
+                    if let Some(proof) = parse_ctl_proof_comment(steps, comment) {
+                        decider = crate::deciders::Decider::Ctl(Some(proof));
+                    }
+                }
+            }
             SimOutcome::DecidedNonHalting { decider, steps }
         }
         "MAX_STEPS" | "HOLD" | "HOLDOUT" | "TIMEOUT" => {
@@ -175,17 +187,43 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
     })
 }
 
-/// Read `ProgramRecord`s from any `BufRead` source, ignoring `#` comments and blank lines.
+fn parse_ctl_proof_comment(num_steps: u64, comment: &str) -> Option<crate::ctl::CtlProof> {
+    let mut num_states = None;
+    let mut split_threshold = None;
+    let mut floor = None;
+    let mut modulus = None;
+    for part in comment.split_whitespace() {
+        let part = part.trim_start_matches('#');
+        if let Some(v) = part.strip_prefix("states=") {
+            num_states = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("thresh=") {
+            split_threshold = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("floor=") {
+            floor = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("mod=") {
+            modulus = v.parse().ok();
+        }
+    }
+    Some(crate::ctl::CtlProof {
+        num_steps,
+        num_states: num_states?,
+        split_threshold: split_threshold?,
+        floor: floor?,
+        modulus: modulus?,
+    })
+}
+
+/// Read `ProgramRecord`s from any `BufRead` source, ignoring comment-only and blank lines.
 pub fn read_records<R: BufRead>(reader: R) -> Result<Vec<ProgramRecord>, IoError> {
     let mut records = Vec::new();
     for (idx, line_res) in reader.lines().enumerate() {
         let line_num = idx + 1;
         let raw_line = line_res?;
-        let stripped = raw_line.split('#').next().unwrap_or("").trim();
-        if stripped.is_empty() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        records.push(parse_record_line(stripped, line_num)?);
+        records.push(parse_record_line(trimmed, line_num)?);
     }
     Ok(records)
 }
@@ -277,6 +315,19 @@ mod tests {
                 Some(SimOutcome::MissingRule {
                     pebbles: 4,
                     steps: 1,
+                }),
+            ),
+            ProgramRecord::new(
+                "00_20_10_04_21_21_07_50_17_01".parse().unwrap(),
+                Some(SimOutcome::DecidedNonHalting {
+                    decider: Decider::Ctl(Some(crate::ctl::CtlProof {
+                        num_steps: 60,
+                        num_states: 4757,
+                        split_threshold: 5,
+                        floor: 12,
+                        modulus: 1,
+                    })),
+                    steps: 60,
                 }),
             ),
             ProgramRecord::new("00_01_20_03".parse().unwrap(), None),

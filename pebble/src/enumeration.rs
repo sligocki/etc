@@ -180,6 +180,20 @@ pub struct EnumStats {
     pub champion: Option<Program>,
     /// Runtime and decision metrics for each pipeline stage.
     pub stages: Vec<StageReport>,
+    /// Number of CTL proofs found.
+    pub ctl_proofs_count: u64,
+    /// Minimum states in closed language across CTL proofs.
+    pub ctl_min_states: usize,
+    /// Maximum states in closed language across CTL proofs.
+    pub ctl_max_states: usize,
+    /// Total states in closed language across CTL proofs.
+    pub ctl_total_states: u64,
+    /// Distribution of split thresholds in CTL proofs.
+    pub ctl_thresh_counts: std::collections::BTreeMap<usize, u64>,
+    /// Distribution of floors in CTL proofs.
+    pub ctl_floor_counts: std::collections::BTreeMap<usize, u64>,
+    /// Distribution of moduli in CTL proofs.
+    pub ctl_mod_counts: std::collections::BTreeMap<usize, u64>,
 }
 
 impl PartialEq for EnumStats {
@@ -192,6 +206,13 @@ impl PartialEq for EnumStats {
             && self.decided_by_kind == other.decided_by_kind
             && self.max_halting_steps == other.max_halting_steps
             && self.champion == other.champion
+            && self.ctl_proofs_count == other.ctl_proofs_count
+            && self.ctl_min_states == other.ctl_min_states
+            && self.ctl_max_states == other.ctl_max_states
+            && self.ctl_total_states == other.ctl_total_states
+            && self.ctl_thresh_counts == other.ctl_thresh_counts
+            && self.ctl_floor_counts == other.ctl_floor_counts
+            && self.ctl_mod_counts == other.ctl_mod_counts
     }
 }
 
@@ -246,7 +267,23 @@ impl EnumStats {
                     Decider::TranslatedCycler => 2,
                     Decider::SeparatedComponents => 3,
                     Decider::Bouncer => 4,
-                    Decider::Ctl => 5,
+                    Decider::Ctl(proof_opt) => {
+                        if let Some(proof) = proof_opt {
+                            self.ctl_proofs_count += 1;
+                            if self.ctl_proofs_count == 1 {
+                                self.ctl_min_states = proof.num_states;
+                                self.ctl_max_states = proof.num_states;
+                            } else {
+                                self.ctl_min_states = self.ctl_min_states.min(proof.num_states);
+                                self.ctl_max_states = self.ctl_max_states.max(proof.num_states);
+                            }
+                            self.ctl_total_states += proof.num_states as u64;
+                            *self.ctl_thresh_counts.entry(proof.split_threshold).or_insert(0) += 1;
+                            *self.ctl_floor_counts.entry(proof.floor).or_insert(0) += 1;
+                            *self.ctl_mod_counts.entry(proof.modulus).or_insert(0) += 1;
+                        }
+                        5
+                    }
                     Decider::StaticBacktrack => 6,
                 };
                 self.decided_by_kind[idx] += 1;
@@ -263,7 +300,7 @@ impl EnumStats {
             Decider::TranslatedCycler => 2,
             Decider::SeparatedComponents => 3,
             Decider::Bouncer => 4,
-            Decider::Ctl => 5,
+            Decider::Ctl(_) => 5,
             Decider::StaticBacktrack => 6,
         };
         self.decided_by_kind[idx]
@@ -334,6 +371,26 @@ impl EnumStats {
             if is_better {
                 self.max_halting_steps = Some(other_max);
                 self.champion = other.champion;
+            }
+        }
+        if other.ctl_proofs_count > 0 {
+            if self.ctl_proofs_count == 0 {
+                self.ctl_min_states = other.ctl_min_states;
+                self.ctl_max_states = other.ctl_max_states;
+            } else {
+                self.ctl_min_states = self.ctl_min_states.min(other.ctl_min_states);
+                self.ctl_max_states = self.ctl_max_states.max(other.ctl_max_states);
+            }
+            self.ctl_proofs_count += other.ctl_proofs_count;
+            self.ctl_total_states += other.ctl_total_states;
+            for (k, v) in other.ctl_thresh_counts {
+                *self.ctl_thresh_counts.entry(k).or_insert(0) += v;
+            }
+            for (k, v) in other.ctl_floor_counts {
+                *self.ctl_floor_counts.entry(k).or_insert(0) += v;
+            }
+            for (k, v) in other.ctl_mod_counts {
+                *self.ctl_mod_counts.entry(k).or_insert(0) += v;
             }
         }
     }
@@ -542,9 +599,13 @@ pub fn resolve_leaf_outcome_timed(
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
                 if let Some(decider) = res {
                     metrics[i].decided_infinite += 1;
+                    let proof_steps = match decider {
+                        Decider::Ctl(Some(proof)) => proof.num_steps,
+                        _ => sim.steps(),
+                    };
                     return SimOutcome::DecidedNonHalting {
                         decider,
-                        steps: sim.steps(),
+                        steps: proof_steps,
                     };
                 }
             }
@@ -1098,5 +1159,62 @@ mod tests {
         let champ = stats.champion.expect("champion found");
         let expected_champ: Program = "00_20_10_04_41_21_00_25_18".parse().unwrap();
         assert_eq!(champ, expected_champ);
+    }
+
+    #[test]
+    fn test_enum_stats_ctl_proof_recording_and_merging() {
+        use crate::ctl::CtlProof;
+        let proof1 = CtlProof {
+            num_steps: 60,
+            num_states: 4757,
+            split_threshold: 5,
+            floor: 12,
+            modulus: 1,
+        };
+        let proof2 = CtlProof {
+            num_steps: 80,
+            num_states: 120,
+            split_threshold: 2,
+            floor: 0,
+            modulus: 2,
+        };
+
+        let mut stats1 = EnumStats::default();
+        stats1.record(&EnumEntry {
+            program: "00_20_10_04_21_21_07_50_17_01".parse().unwrap(),
+            outcome: SimOutcome::DecidedNonHalting {
+                decider: Decider::Ctl(Some(proof1)),
+                steps: 60,
+            },
+        });
+
+        assert_eq!(stats1.ctl_proofs_count, 1);
+        assert_eq!(stats1.ctl_min_states, 4757);
+        assert_eq!(stats1.ctl_max_states, 4757);
+        assert_eq!(stats1.ctl_total_states, 4757);
+        assert_eq!(stats1.ctl_thresh_counts.get(&5), Some(&1));
+        assert_eq!(stats1.ctl_floor_counts.get(&12), Some(&1));
+        assert_eq!(stats1.ctl_mod_counts.get(&1), Some(&1));
+
+        let mut stats2 = EnumStats::default();
+        stats2.record(&EnumEntry {
+            program: "01_01".parse().unwrap(),
+            outcome: SimOutcome::DecidedNonHalting {
+                decider: Decider::Ctl(Some(proof2)),
+                steps: 80,
+            },
+        });
+
+        stats1.merge(stats2);
+        assert_eq!(stats1.ctl_proofs_count, 2);
+        assert_eq!(stats1.ctl_min_states, 120);
+        assert_eq!(stats1.ctl_max_states, 4757);
+        assert_eq!(stats1.ctl_total_states, 4757 + 120);
+        assert_eq!(stats1.ctl_thresh_counts.get(&2), Some(&1));
+        assert_eq!(stats1.ctl_thresh_counts.get(&5), Some(&1));
+        assert_eq!(stats1.ctl_floor_counts.get(&0), Some(&1));
+        assert_eq!(stats1.ctl_floor_counts.get(&12), Some(&1));
+        assert_eq!(stats1.ctl_mod_counts.get(&1), Some(&1));
+        assert_eq!(stats1.ctl_mod_counts.get(&2), Some(&1));
     }
 }

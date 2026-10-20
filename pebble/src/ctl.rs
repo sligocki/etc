@@ -197,19 +197,25 @@ pub fn step_ctl_pre_state(
     let mut stepped_blocks = Vec::with_capacity(pre.blocks.len());
     let mut delta_lefts = Vec::with_capacity(pre.blocks.len());
     let mut delta_rights = Vec::with_capacity(pre.blocks.len());
-    let mut all_stationary = true;
+    let mut any_pebbles_move = false;
 
     for b in &pre.blocks {
         let (nb, dl, dr) = step_isolated_block(b, program)?;
-        if dl != 0 || &nb != b {
-            all_stationary = false;
+        for &k in b {
+            if k > 0 {
+                if let Some(r) = program.rule(k) {
+                    if r.left > 0 || r.right > 0 {
+                        any_pebbles_move = true;
+                    }
+                }
+            }
         }
         stepped_blocks.push(nb);
         delta_lefts.push(dl);
         delta_rights.push(dr);
     }
 
-    if all_stationary {
+    if !any_pebbles_move {
         return Err(CtlStepError::AllStationary);
     }
 
@@ -246,7 +252,7 @@ pub fn step_ctl_pre_state(
     }
 
     if new_gaps.is_empty() {
-        return Err(CtlStepError::AllStationary);
+        return Err(CtlStepError::UnrollFailed);
     }
 
     if new_gaps.len() >= 2 {
@@ -294,7 +300,7 @@ pub fn verify_ctl_closure(
                 Err(CtlStepError::UndefinedRule { pebbles }) => {
                     return CtlVerificationOutcome::HitUndefinedRule { pebbles };
                 }
-                Err(CtlStepError::HaltingState) => {
+                Err(CtlStepError::HaltingState) | Err(CtlStepError::AllStationary) => {
                     return CtlVerificationOutcome::HitHalt;
                 }
                 Err(e) => {

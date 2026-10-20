@@ -566,15 +566,14 @@ pub use crate::ctl::decide_ctl;
 ///
 /// Proves non-halting purely from static rule analysis:
 /// 1. Stationary configuration requirement:
-///    In any stationary configuration C (where step(C) == C), every cell must satisfy
-///    R_{C(x)} = L_{C(x+1)}. At boundary cells, L = 0 (leftmost) and R = 0 (rightmost).
-///    Thus, any rule appearing in a stationary configuration must lie on a directed path
-///    in the rule graph (k1 -> k2 iff R_{k1} == L_{k2}) from a start rule (L = 0) to an end rule (R = 0).
-/// 2. If all rules are defined and no stationary-capable rules exist, no finite configuration can halt.
+///    Under the "no pebbles move" halting criterion, any configuration that halts
+///    must consist entirely of cells where L = 0 and R = 0.
+/// 2. If all rules are defined and no stationary rules exist (no rule has L = 0 and R = 0),
+///    no finite configuration can ever halt.
 /// 3. Monotone Threshold Invariant:
 ///    If for some threshold T in 2..=n:
-///    - All stationary-capable rules have count < T.
-///    - Every rule k in T..=n has max(L, S, R) >= T (or if undefined, pigeonhole ceil(k/3) >= T).
+///    - All stationary rules have count < T.
+///    - Every rule k in T..=n has max(L, S, R) >= T.
 ///    Then the property "the tape contains at least one cell with >= T pebbles" is an invariant.
 ///    Since the initial state has n >= T, no stationary configuration (all of which require cells < T)
 ///    can ever be reached.
@@ -586,70 +585,12 @@ pub fn decide_static_backtrack(program: &Program) -> Option<Decider> {
 
     let mut can_be_stationary = vec![false; size + 1];
 
-    // Single-cell isolated stationary rule (L = 0 and R = 0)
+    // Under "no pebbles move", a rule can appear in a halting configuration iff L = 0 and R = 0.
     for k in 1..=size as u8 {
         if let Some(r) = program.rule(k) {
             if r.is_stationary() {
                 can_be_stationary[k as usize] = true;
             }
-        }
-    }
-
-    // Directed graph on rules: edge u -> v iff R_u == L_v
-    let mut from_start = vec![false; size + 1];
-    let mut to_end = vec![false; size + 1];
-
-    let mut start_nodes = Vec::new();
-    let mut end_nodes = Vec::new();
-
-    for k in 1..=size as u8 {
-        if let Some(r) = program.rule(k) {
-            if r.left == 0 {
-                start_nodes.push(k as usize);
-                from_start[k as usize] = true;
-            }
-            if r.right == 0 {
-                end_nodes.push(k as usize);
-                to_end[k as usize] = true;
-            }
-        }
-    }
-
-    let mut queue = start_nodes;
-    while let Some(u) = queue.pop() {
-        let u_rule = program.rule(u as u8).unwrap();
-        let target_l = u_rule.right;
-        for v in 1..=size {
-            if !from_start[v] {
-                if let Some(v_rule) = program.rule(v as u8) {
-                    if v_rule.left == target_l {
-                        from_start[v] = true;
-                        queue.push(v);
-                    }
-                }
-            }
-        }
-    }
-
-    let mut queue = end_nodes;
-    while let Some(v) = queue.pop() {
-        let v_rule = program.rule(v as u8).unwrap();
-        let target_r = v_rule.left;
-        for u in 1..=size {
-            if !to_end[u] {
-                if let Some(u_rule) = program.rule(u as u8) {
-                    if u_rule.right == target_r {
-                        to_end[u] = true;
-                        queue.push(u);
-                    }
-                }
-            }
-        }
-    }
-
-    for k in 1..=size {
-        if from_start[k] && to_end[k] {
-            can_be_stationary[k] = true;
         }
     }
 
@@ -782,6 +723,12 @@ mod tests {
             decide_cycler(&trans_cycler, 10),
             Some(Decider::TranslatedCycler)
         );
+
+        // Period-1 dynamic equilibrium cycler:
+        // 5 -> 0|2|3 (03), 2 -> 0|1|1 (01), 3 -> 1|2|0 (10)
+        // Tape reaches [2, 3] at t=1, then shuttles pebbles continuously in period-1 equilibrium
+        let dyn_cycler: Program = "00_01_10_00_03".parse().unwrap();
+        assert_eq!(decide_cycler(&dyn_cycler, 10), Some(Decider::Cycler));
     }
 
     #[test]

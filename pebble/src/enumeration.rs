@@ -985,8 +985,8 @@ mod tests {
             // (size, expected_total, expected_halted, expected_decided, expected_holdouts, expected_max_steps)
             (1, 3u64, 1u64, 2u64, 0u64, 0u64),
             (2, 12, 4, 8, 0, 1),
-            (3, 114, 30, 84, 0, 3),
-            (4, 933, 223, 710, 0, 6),
+            (3, 114, 26, 88, 0, 3),
+            (4, 933, 217, 716, 0, 6),
         ];
 
         for (size, exp_total, exp_halted, exp_decided, exp_holdouts, exp_max_steps) in expected {
@@ -1018,8 +1018,8 @@ mod tests {
             stats.record(&entry);
         }
         assert_eq!(stats.total_programs, 12_161);
-        assert_eq!(stats.halted_programs, 2_517);
-        assert_eq!(stats.decided_programs, 9_644);
+        assert_eq!(stats.halted_programs, 2_365);
+        assert_eq!(stats.decided_programs, 9_796);
         assert_eq!(stats.holdout_programs(), 0);
         assert_eq!(stats.max_halting_steps, Some(11));
 
@@ -1035,9 +1035,9 @@ mod tests {
             // (size, expected_total, expected_halted, expected_decided, expected_holdouts, expected_max_steps)
             (1, 2u64, 1u64, 1u64, 0u64, 0u64),
             (2, 7, 3, 4, 0, 1),
-            (3, 58, 16, 42, 0, 3),
-            (4, 469, 114, 355, 0, 6),
-            (5, 6084, 1262, 4822, 0, 11),
+            (3, 58, 14, 44, 0, 3),
+            (4, 469, 111, 358, 0, 6),
+            (5, 6084, 1186, 4898, 0, 11),
         ];
 
         for (size, exp_total, exp_halted, exp_decided, exp_holdouts, exp_max_steps) in expected {

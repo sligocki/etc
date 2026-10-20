@@ -155,6 +155,23 @@ impl SparseTape {
         }
     }
 
+    /// Create a sparse tape directly from non-zero `(x, pebbles)` coordinate entries.
+    pub fn from_entries(entries: &[(isize, u8)]) -> Self {
+        let mut buf = [(0, 0); MAX_SPARSE_PEBBLES];
+        let mut len = 0;
+        for &(x, k) in entries {
+            if k > 0 {
+                assert!(len < MAX_SPARSE_PEBBLES, "exceeded MAX_SPARSE_PEBBLES");
+                buf[len] = (x, k);
+                len += 1;
+            }
+        }
+        Self {
+            len: len as u8,
+            entries: buf,
+        }
+    }
+
     /// Number of active non-zero piles currently on the tape.
     #[inline]
     pub fn len(&self) -> usize {
@@ -234,12 +251,22 @@ impl SparseTape {
             return StepResult::Halted;
         }
 
-        // Verify all non-zero cells have defined rules
+        // Verify all non-zero cells have defined rules and check if any pebbles move
+        let mut any_moved = false;
         for i in 0..self.len as usize {
             let k = self.entries[i].1;
-            if program.rule(k).is_none() {
-                return StepResult::MissingRule(k);
+            match program.rule(k) {
+                None => return StepResult::MissingRule(k),
+                Some(rule) => {
+                    if rule.left > 0 || rule.right > 0 {
+                        any_moved = true;
+                    }
+                }
             }
+        }
+
+        if !any_moved {
+            return StepResult::Halted;
         }
 
         *scratch_len = 0;
@@ -291,12 +318,6 @@ impl SparseTape {
             next_len += 1;
         }
 
-        if next_len == self.len as usize
-            && next_entries[..next_len] == self.entries[..self.len as usize]
-        {
-            return StepResult::Halted;
-        }
-
         self.entries = next_entries;
         self.len = next_len as u8;
         StepResult::Stepped
@@ -321,6 +342,14 @@ impl Simulator {
         );
         Self {
             tape: SparseTape::new(initial_pebbles as u8),
+            steps: 0,
+        }
+    }
+
+    /// Create a simulator initialized with specific coordinate entries at `t = 0`.
+    pub fn from_entries(entries: &[(isize, u8)]) -> Self {
+        Self {
+            tape: SparseTape::from_entries(entries),
             steps: 0,
         }
     }
@@ -636,6 +665,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_dynamic_equilibrium_does_not_halt() {
+        // 2 -> 0|1|1 (01), 3 -> 1|2|0 (10)
+        // Tape with [2, 3] shuttles pebbles back and forth while preserving [2, 3] on tape.
+        // Under the new "no pebbles move" halting criteria, this must NOT halt.
+        let prog: Program = "00_01_10".parse().unwrap();
+        let mut sim = Simulator::from_entries(&[(0, 2), (1, 3)]);
+        let res = sim.step(&prog);
+        assert_eq!(res, StepResult::Stepped);
+        assert_eq!(sim.cells(), vec![2, 3]);
+        assert_eq!(sim.steps(), 1);
+
+        // However, a tape with isolated stationary single-pebble piles [1, 0, 1] halts immediately
+        let mut sim_stationary = Simulator::from_entries(&[(0, 1), (2, 1)]);
+        let res2 = sim_stationary.step(&prog);
+        assert_eq!(res2, StepResult::Halted);
+        assert_eq!(sim_stationary.steps(), 0);
+    }
+
     struct ReferenceDenseSimulator {
         offset: isize,
         cells: Vec<u8>,
@@ -656,11 +704,23 @@ mod tests {
             if self.cells.is_empty() {
                 return StepResult::Halted;
             }
+            let mut any_moved = false;
             for &k in &self.cells {
-                if k > 0 && program.rule(k).is_none() {
-                    return StepResult::MissingRule(k);
+                if k > 0 {
+                    match program.rule(k) {
+                        None => return StepResult::MissingRule(k),
+                        Some(rule) => {
+                            if rule.left > 0 || rule.right > 0 {
+                                any_moved = true;
+                            }
+                        }
+                    }
                 }
             }
+            if !any_moved {
+                return StepResult::Halted;
+            }
+
             let next_len = self.cells.len() + 2;
             self.scratch.clear();
             self.scratch.resize(next_len, 0);
@@ -683,10 +743,6 @@ mod tests {
             let last_nz = self.scratch.iter().rposition(|&v| v > 0).unwrap();
             let next_offset = self.offset - 1 + first_nz as isize;
             let next_slice = &self.scratch[first_nz..=last_nz];
-
-            if next_offset == self.offset && next_slice == self.cells.as_slice() {
-                return StepResult::Halted;
-            }
 
             self.offset = next_offset;
             self.cells.clear();

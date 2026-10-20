@@ -1,7 +1,9 @@
 use pebble::enumeration::{EnumEntry, EnumStats};
 use pebble::io::{read_records_from_file, write_records_to_file, ProgramRecord};
 use pebble::program::{Program, Rule};
-use pebble::simulation::{format_trace_bounds, simulate_with_trace, SimOutcome, Simulator};
+use pebble::simulation::{
+    format_trace_bounds, simulate_from_sim_with_trace, SimOutcome, Simulator, SparseTape,
+};
 use rayon::prelude::*;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -22,6 +24,8 @@ fn print_usage(bin: &str) {
     eprintln!("  [OUTFILE]                Optional path to write simulation results");
     eprintln!();
     eprintln!("Options:");
+    eprintln!("  -c, --config <CONFIG>    Initial tape configuration (e.g. \"0230\", \".[2]3.\", \"-5:2, 5:3\")");
+    eprintln!("      --offset <OFFSET>    Coordinate offset for initial tape (default: 0)");
     eprintln!("  -i, --input <FILE>       Read programs to simulate from <FILE> (alias: --infile)");
     eprintln!("  -o, --output <FILE>      Write simulation results to <FILE> (alias: --outfile)");
     eprintln!("      --holdouts-only      When writing output file, only write undecided holdouts");
@@ -83,6 +87,7 @@ fn run_file_mode(
     max_steps: u64,
     holdouts_only: bool,
     progress_interval: Duration,
+    initial_tape: Option<SparseTape>,
 ) {
     let input_records = read_records_from_file(infile).unwrap_or_else(|err| {
         eprintln!("Error reading input file '{}': {err}", infile.display());
@@ -91,6 +96,7 @@ fn run_file_mode(
 
     let total_input = input_records.len();
     let size = input_records.first().map(|r| r.program.size()).unwrap_or(0);
+    let stat_size = initial_tape.map(|t| t.total_pebbles()).unwrap_or(size);
 
     println!("=== Pebble Automaton Batch Simulator ===");
     println!("Input file:       {} ({total_input} programs)", infile.display());
@@ -99,6 +105,23 @@ fn run_file_mode(
             "Output file:      {}{}",
             out.display(),
             if holdouts_only { " (holdouts only)" } else { "" }
+        );
+    }
+    if let Some(tape) = initial_tape {
+        let (min_x, max_x) = match (tape.min_x(), tape.max_x()) {
+            (Some(min), Some(max)) => (min, max),
+            _ => (0, 0),
+        };
+        let (off, cells) = tape.to_dense();
+        let snap = pebble::simulation::TapeSnapshot {
+            step: 0,
+            offset: off,
+            cells,
+        };
+        println!(
+            "Initial tape:     {} (x in {min_x}..={max_x}, {} pebbles)",
+            snap.format_range(min_x, max_x),
+            tape.total_pebbles()
         );
     }
     println!("Max steps:        {max_steps}");
@@ -115,7 +138,10 @@ fn run_file_mode(
         .into_par_iter()
         .map(|rec| {
             let mut local_entries = Vec::with_capacity(1);
-            let sim = Simulator::new(rec.program.size());
+            let sim = match initial_tape {
+                Some(tape) => Simulator::from_tape(tape),
+                None => Simulator::new(rec.program.size()),
+            };
             simulate_tnf_subtree(rec.program, sim, max_steps, &mut local_entries);
 
             let local_halt = local_entries
@@ -153,7 +179,7 @@ fn run_file_mode(
         .collect();
 
     let elapsed = start.elapsed();
-    let mut stats = EnumStats::new(size, max_steps, max_steps);
+    let mut stats = EnumStats::new(stat_size, max_steps, max_steps);
     let mut out_records = Vec::new();
     for group in nested_results {
         for entry in group {
@@ -220,6 +246,8 @@ fn main() {
     let mut progress_interval = Duration::from_secs(10);
     let mut input_path: Option<PathBuf> = None;
     let mut output_path: Option<PathBuf> = None;
+    let mut initial_config_arg: Option<String> = None;
+    let mut offset_arg: isize = 0;
     let mut positionals: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -234,6 +262,27 @@ fn main() {
             }
             "--holdouts-only" => {
                 holdouts_only = true;
+            }
+            "-c" | "--config" | "--tape" | "--start-config" | "--init" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: missing value for --config");
+                    print_usage(bin);
+                    process::exit(1);
+                }
+                initial_config_arg = Some(args[i].clone());
+            }
+            "--offset" | "--origin" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: missing value for --offset");
+                    print_usage(bin);
+                    process::exit(1);
+                }
+                offset_arg = args[i].parse().unwrap_or_else(|_| {
+                    eprintln!("Error: invalid offset '{}'", args[i]);
+                    process::exit(1);
+                });
             }
             "-i" | "--input" | "--infile" => {
                 i += 1;
@@ -298,6 +347,17 @@ fn main() {
         i += 1;
     }
 
+    let initial_tape = match &initial_config_arg {
+        Some(s) => match SparseTape::parse_with_offset(s, offset_arg) {
+            Ok(tape) => Some(tape),
+            Err(err) => {
+                eprintln!("Error parsing start configuration '{s}': {err}");
+                process::exit(1);
+            }
+        },
+        None => None,
+    };
+
     if let Some(threads) = num_threads {
         if let Err(err) = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
@@ -343,6 +403,7 @@ fn main() {
             max_steps,
             holdouts_only,
             progress_interval,
+            initial_tape,
         );
         return;
     }
@@ -378,10 +439,27 @@ fn main() {
     }
     println!();
 
+    let sim_init = match initial_tape {
+        Some(tape) => Simulator::from_tape(tape),
+        None => Simulator::new(program.size()),
+    };
+
+    if initial_tape.is_some() {
+        let snap = sim_init.snapshot();
+        let min_x = snap.min_x();
+        let max_x = snap.max_x();
+        println!(
+            "Initial tape (x in {min_x}..={max_x}): {}",
+            snap.format_range(min_x, max_x)
+        );
+        println!("Total pebbles: {}", sim_init.total_pebbles());
+        println!();
+    }
+
     let start = Instant::now();
 
     if verbose {
-        let (outcome, trace) = simulate_with_trace(&program, max_steps);
+        let (outcome, trace) = simulate_from_sim_with_trace(&program, sim_init, max_steps);
         let elapsed = start.elapsed();
 
         let (min_x, max_x) = format_trace_bounds(&trace);
@@ -411,12 +489,13 @@ fn main() {
         }
     } else {
         let mut out_entries = Vec::with_capacity(1);
-        let mut sim = Simulator::new(program.size());
+        let mut sim = sim_init;
         let outcome = sim.run(&program, max_steps);
         if matches!(outcome, SimOutcome::MissingRule { .. }) {
             simulate_tnf_subtree(program.clone(), sim, max_steps, &mut out_entries);
             let elapsed = start.elapsed();
-            let mut stats = EnumStats::new(program.size(), max_steps, max_steps);
+            let stat_size = initial_tape.map(|t| t.total_pebbles()).unwrap_or(program.size());
+            let mut stats = EnumStats::new(stat_size, max_steps, max_steps);
             for entry in &out_entries {
                 stats.record(entry);
             }

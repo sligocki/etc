@@ -1,5 +1,5 @@
 use crate::deciders::Decider;
-use crate::program::{encode_pebble_digit, Program};
+use crate::program::{decode_pebble_digit, encode_pebble_digit, Program};
 use std::fmt;
 
 /// Result of attempting a single step in a Pebble Automaton simulation.
@@ -136,6 +136,63 @@ pub const MAX_SPARSE_PEBBLES: usize = 32;
 /// Maximum scratch buffer capacity for emitted fragments ($3 \times \text{MAX\_SPARSE\_PEBBLES}$).
 pub const MAX_SCRATCH_ENTRIES: usize = MAX_SPARSE_PEBBLES * 3;
 
+/// Error produced when parsing a tape configuration string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TapeParseError {
+    EmptyTape,
+    InvalidCharacter(char),
+    InvalidCoordinate(String),
+    InvalidPebbleCount(String),
+    MultipleOriginMarkers,
+    UnmatchedBracket,
+    TooManyPiles(usize),
+    TooManyPebbles(usize),
+}
+
+impl fmt::Display for TapeParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TapeParseError::EmptyTape => write!(f, "tape configuration cannot be empty"),
+            TapeParseError::InvalidCharacter(c) => {
+                write!(f, "invalid character '{c}' in tape configuration")
+            }
+            TapeParseError::InvalidCoordinate(s) => write!(f, "invalid coordinate '{s}'"),
+            TapeParseError::InvalidPebbleCount(s) => write!(f, "invalid pebble count '{s}'"),
+            TapeParseError::MultipleOriginMarkers => {
+                write!(f, "multiple origin markers '[...]' in tape configuration")
+            }
+            TapeParseError::UnmatchedBracket => {
+                write!(f, "unmatched bracket in tape configuration")
+            }
+            TapeParseError::TooManyPiles(n) => write!(
+                f,
+                "number of non-zero piles ({n}) exceeds MAX_SPARSE_PEBBLES ({MAX_SPARSE_PEBBLES})"
+            ),
+            TapeParseError::TooManyPebbles(n) => write!(
+                f,
+                "total pebbles ({n}) exceeds MAX_SPARSE_PEBBLES ({MAX_SPARSE_PEBBLES})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TapeParseError {}
+
+fn parse_pebble_value(part: &str) -> Result<u8, TapeParseError> {
+    if let Ok(val) = part.parse::<u8>() {
+        if val <= 35 {
+            return Ok(val);
+        }
+    }
+    if part.len() == 1 {
+        let ch = part.chars().next().unwrap();
+        if let Ok(val) = decode_pebble_digit(ch) {
+            return Ok(val);
+        }
+    }
+    Err(TapeParseError::InvalidPebbleCount(part.to_string()))
+}
+
 /// Compact stack-allocated sparse representation of the active tape.
 ///
 /// Stores non-zero entries `(x, pebbles)` sorted strictly by coordinate `x`.
@@ -243,6 +300,197 @@ impl SparseTape {
         (min_x, cells)
     }
 
+    /// Parse a tape configuration string with an explicit coordinate offset.
+    ///
+    /// Supported formats:
+    /// - Dense tape string: `"0230"`, `".23."`, `"102"`, `"23"`
+    /// - Origin marker bracket: `"0[2]30"` (cell inside bracket is at x=0)
+    /// - Offset prefix: `"-1:0230"`
+    /// - Sparse coordinate pairs: `"-1:2, 0:3"`, `"2@-1, 3@0"`, `"(-1, 2), (0, 3)"`
+    pub fn parse_with_offset(raw: &str, default_offset: isize) -> Result<Self, TapeParseError> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(TapeParseError::EmptyTape);
+        }
+
+        // Check if input represents sparse coordinate pairs
+        let is_sparse_pairs = trimmed.contains('@')
+            || (trimmed.contains(',') && (trimmed.contains(':') || trimmed.contains('(')))
+            || (trimmed.contains(':') && trimmed.matches(':').count() > 1);
+
+        if is_sparse_pairs {
+            return Self::parse_sparse_pairs(trimmed, default_offset);
+        }
+
+        // Otherwise, treat as dense tape string with optional prefix offset `<offset>:<tape>`
+        let (offset, tape_str) = if let Some((prefix, rest)) = trimmed.split_once(':') {
+            if let Ok(off) = prefix.trim().parse::<isize>() {
+                (off, rest.trim())
+            } else {
+                (default_offset, trimmed)
+            }
+        } else {
+            (default_offset, trimmed)
+        };
+
+        Self::parse_dense_tape(tape_str, offset)
+    }
+
+    /// Parse a tape configuration string assuming default coordinate offset 0.
+    pub fn parse(raw: &str) -> Result<Self, TapeParseError> {
+        Self::parse_with_offset(raw, 0)
+    }
+
+    fn parse_sparse_pairs(s: &str, default_offset: isize) -> Result<Self, TapeParseError> {
+        let mut raw_pairs = Vec::new();
+        if s.contains('(') {
+            let mut start = None;
+            for (idx, ch) in s.char_indices() {
+                if ch == '(' {
+                    start = Some(idx + 1);
+                } else if ch == ')' {
+                    if let Some(st) = start {
+                        raw_pairs.push(&s[st..idx]);
+                        start = None;
+                    }
+                }
+            }
+        } else if s.contains(',') {
+            for part in s.split(',') {
+                let p = part.trim();
+                if !p.is_empty() {
+                    raw_pairs.push(p);
+                }
+            }
+        } else {
+            for part in s.split_whitespace() {
+                raw_pairs.push(part);
+            }
+        }
+
+        let mut pile_map = std::collections::BTreeMap::<isize, u8>::new();
+        for pair in raw_pairs {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+            let (x, k) = if let Some((k_part, x_part)) = pair.split_once('@') {
+                let x: isize = x_part
+                    .trim()
+                    .parse()
+                    .map_err(|_| TapeParseError::InvalidCoordinate(x_part.trim().to_string()))?;
+                let k = parse_pebble_value(k_part.trim())?;
+                (x, k)
+            } else if let Some((x_part, k_part)) = pair.split_once(':') {
+                let x: isize = x_part
+                    .trim()
+                    .parse()
+                    .map_err(|_| TapeParseError::InvalidCoordinate(x_part.trim().to_string()))?;
+                let k = parse_pebble_value(k_part.trim())?;
+                (x, k)
+            } else if let Some((x_part, k_part)) = pair.split_once(',') {
+                let x: isize = x_part
+                    .trim()
+                    .parse()
+                    .map_err(|_| TapeParseError::InvalidCoordinate(x_part.trim().to_string()))?;
+                let k = parse_pebble_value(k_part.trim())?;
+                (x, k)
+            } else {
+                return Err(TapeParseError::InvalidCoordinate(pair.to_string()));
+            };
+
+            let coord = x
+                .checked_add(default_offset)
+                .ok_or_else(|| TapeParseError::InvalidCoordinate(x.to_string()))?;
+            let entry = pile_map.entry(coord).or_insert(0);
+            *entry = entry
+                .checked_add(k)
+                .ok_or_else(|| TapeParseError::TooManyPebbles(*entry as usize + k as usize))?;
+        }
+
+        let mut entries = Vec::new();
+        let mut total_pebbles = 0usize;
+        for (x, k) in pile_map {
+            if k > 0 {
+                total_pebbles += k as usize;
+                entries.push((x, k));
+            }
+        }
+
+        if entries.len() > MAX_SPARSE_PEBBLES {
+            return Err(TapeParseError::TooManyPiles(entries.len()));
+        }
+        if total_pebbles > MAX_SPARSE_PEBBLES {
+            return Err(TapeParseError::TooManyPebbles(total_pebbles));
+        }
+
+        Ok(Self::from_entries(&entries))
+    }
+
+    fn parse_dense_tape(s: &str, offset: isize) -> Result<Self, TapeParseError> {
+        let mut chars = Vec::new();
+        let mut origin_idx = None;
+        let mut in_bracket = false;
+
+        for ch in s.chars() {
+            if ch.is_whitespace() {
+                continue;
+            }
+            if ch == '[' {
+                if in_bracket || origin_idx.is_some() {
+                    return Err(TapeParseError::MultipleOriginMarkers);
+                }
+                in_bracket = true;
+                continue;
+            }
+            if ch == ']' {
+                if !in_bracket {
+                    return Err(TapeParseError::UnmatchedBracket);
+                }
+                in_bracket = false;
+                continue;
+            }
+
+            let val = match ch {
+                '.' | '_' | '0' => 0u8,
+                '1'..='9' | 'a'..='z' | 'A'..='Z' => {
+                    decode_pebble_digit(ch).map_err(|_| TapeParseError::InvalidCharacter(ch))?
+                }
+                other => return Err(TapeParseError::InvalidCharacter(other)),
+            };
+
+            if in_bracket && origin_idx.is_none() {
+                origin_idx = Some(chars.len());
+            }
+            chars.push(val);
+        }
+
+        if in_bracket {
+            return Err(TapeParseError::UnmatchedBracket);
+        }
+
+        let origin = origin_idx.unwrap_or(0);
+        let mut entries = Vec::new();
+        let mut total_pebbles = 0usize;
+
+        for (idx, &val) in chars.iter().enumerate() {
+            if val > 0 {
+                let x = offset + (idx as isize - origin as isize);
+                total_pebbles += val as usize;
+                entries.push((x, val));
+            }
+        }
+
+        if entries.len() > MAX_SPARSE_PEBBLES {
+            return Err(TapeParseError::TooManyPiles(entries.len()));
+        }
+        if total_pebbles > MAX_SPARSE_PEBBLES {
+            return Err(TapeParseError::TooManyPebbles(total_pebbles));
+        }
+
+        Ok(Self::from_entries(&entries))
+    }
+
     /// Advance the sparse tape by 1 generation according to `program`.
     pub fn step(
         &mut self,
@@ -327,6 +575,14 @@ impl SparseTape {
     }
 }
 
+impl std::str::FromStr for SparseTape {
+    type Err = TapeParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
 /// Stateful simulator for a 1D Pebble Automaton using sparse stack-allocated storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Simulator {
@@ -347,6 +603,23 @@ impl Simulator {
             tape: SparseTape::new(initial_pebbles as u8),
             steps: 0,
         }
+    }
+
+    /// Create a simulator initialized from an existing sparse tape.
+    pub fn from_tape(tape: SparseTape) -> Self {
+        Self { tape, steps: 0 }
+    }
+
+    /// Create a simulator initialized from a parsed tape configuration string.
+    pub fn from_config(s: &str) -> Result<Self, TapeParseError> {
+        let tape = SparseTape::parse(s)?;
+        Ok(Self::from_tape(tape))
+    }
+
+    /// Create a simulator initialized from a parsed tape configuration string with explicit offset.
+    pub fn from_config_with_offset(s: &str, offset: isize) -> Result<Self, TapeParseError> {
+        let tape = SparseTape::parse_with_offset(s, offset)?;
+        Ok(Self::from_tape(tape))
     }
 
     /// Create a simulator initialized with specific coordinate entries at `t = 0`.
@@ -528,9 +801,13 @@ pub fn simulate_with_edge_glider(program: &Program, max_steps: u64) -> SimOutcom
     sim.run_with_edge_glider(program, max_steps)
 }
 
-/// Simulate a `program` from `t = 0` for up to `max_steps` and record the tape at each generation.
-pub fn simulate_with_trace(program: &Program, max_steps: u64) -> (SimOutcome, Vec<TapeSnapshot>) {
-    let mut sim = Simulator::new(program.size());
+/// Simulate a `program` starting from an arbitrary `Simulator` state for up to `max_steps`
+/// and record the tape at each generation.
+pub fn simulate_from_sim_with_trace(
+    program: &Program,
+    mut sim: Simulator,
+    max_steps: u64,
+) -> (SimOutcome, Vec<TapeSnapshot>) {
     let mut trace = Vec::new();
     trace.push(sim.snapshot());
 
@@ -557,6 +834,11 @@ pub fn simulate_with_trace(program: &Program, max_steps: u64) -> (SimOutcome, Ve
             }
         }
     }
+}
+
+/// Simulate a `program` from `t = 0` for up to `max_steps` and record the tape at each generation.
+pub fn simulate_with_trace(program: &Program, max_steps: u64) -> (SimOutcome, Vec<TapeSnapshot>) {
+    simulate_from_sim_with_trace(program, Simulator::new(program.size()), max_steps)
 }
 
 /// Format a slice of `TapeSnapshot`s aligned to a common `[min_x..=max_x]` bounding box,
@@ -776,5 +1058,50 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_parse_tape_config() {
+        let t1 = SparseTape::parse("0230").unwrap();
+        assert_eq!(t1.entries(), &[(1, 2), (2, 3)]);
+        assert_eq!(t1.total_pebbles(), 5);
+
+        let t2 = SparseTape::parse("0[2]30").unwrap();
+        assert_eq!(t2.entries(), &[(0, 2), (1, 3)]);
+        assert_eq!(t2.total_pebbles(), 5);
+
+        let t3 = SparseTape::parse_with_offset("0230", -1).unwrap();
+        assert_eq!(t3.entries(), &[(0, 2), (1, 3)]);
+
+        let t4 = SparseTape::parse("-1:0230").unwrap();
+        assert_eq!(t4.entries(), &[(0, 2), (1, 3)]);
+
+        let t5 = SparseTape::parse(".2.3.").unwrap();
+        assert_eq!(t5.entries(), &[(1, 2), (3, 3)]);
+
+        let t6 = SparseTape::parse("c").unwrap();
+        assert_eq!(t6.entries(), &[(0, 12)]);
+
+        let t7 = SparseTape::parse("2@-1, 3@0").unwrap();
+        assert_eq!(t7.entries(), &[((-1), 2), (0, 3)]);
+
+        let t8 = SparseTape::parse("-1:2, 0:3").unwrap();
+        assert_eq!(t8.entries(), &[(min_x_val(-1), 2), (0, 3)]);
+
+        let t9 = SparseTape::parse("(-1, 2), (0, 3)").unwrap();
+        assert_eq!(t9.entries(), &[(min_x_val(-1), 2), (0, 3)]);
+
+        let empty = SparseTape::parse("...").unwrap();
+        assert_eq!(empty.len(), 0);
+        assert_eq!(empty.total_pebbles(), 0);
+
+        assert!(SparseTape::parse("").is_err());
+        assert!(SparseTape::parse("0[2][3]0").is_err());
+        assert!(SparseTape::parse("0[23").is_err());
+        assert!(SparseTape::parse("xyz!").is_err());
+    }
+
+    fn min_x_val(v: isize) -> isize {
+        v
     }
 }

@@ -96,8 +96,6 @@ pub fn split_slice_by_threshold(slice: &[u8], split_threshold: usize) -> (Vec<Ve
     (blocks, gaps)
 }
 
-pub const MAX_CTL_GAPS: usize = 4;
-
 pub fn unroll_ctl_state(state: &CtlState) -> Result<Vec<CtlState>, ()> {
     if state.gaps.is_empty() {
         return Err(());
@@ -150,7 +148,6 @@ pub fn unroll_ctl_state(state: &CtlState) -> Result<Vec<CtlState>, ()> {
 pub enum CtlStepError {
     UndefinedRule { pebbles: u8 },
     HaltingState,
-    MaxGapsExceeded { count: usize, max: usize },
     BlockTooLarge { len: usize, max: usize },
     AllStationary,
     NegativeGap,
@@ -251,12 +248,6 @@ pub fn step_ctl_pre_state(
     if new_gaps.is_empty() {
         return Err(CtlStepError::AllStationary);
     }
-    if new_gaps.len() > MAX_CTL_GAPS {
-        return Err(CtlStepError::MaxGapsExceeded {
-            count: new_gaps.len(),
-            max: MAX_CTL_GAPS,
-        });
-    }
 
     if new_gaps.len() >= 2 {
         for g in &mut new_gaps {
@@ -314,6 +305,7 @@ pub fn verify_ctl_closure(
                 if language.len() >= max_states {
                     return CtlVerificationOutcome::ExceededMaxStates { limit: max_states };
                 }
+                language.retain(|existing| !existing.is_subset_of(&next_state));
                 language.push(next_state.clone());
                 queue.push_back(next_state);
             }
@@ -352,7 +344,7 @@ pub fn try_prove_ctl_from_tape(
 
     for split_threshold in 2..=6 {
         let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
-        if raw_gaps.is_empty() || raw_gaps.len() > MAX_CTL_GAPS {
+        if raw_gaps.is_empty() {
             continue;
         }
         let floor = 2 * split_threshold + 2;
@@ -547,6 +539,19 @@ mod tests {
                 pebbles: 1
             }
         );
+    }
+
+    #[test]
+    fn test_ctl_search_user_prog_2() {
+        let prog: Program = "00_20_10_04_21_21_07_50_17_01".parse().unwrap();
+        let config = CtlConfig::default();
+        let outcome = run_ctl_search(&prog, &config);
+        match outcome {
+            CtlSearchOutcome::Proved(proof) => {
+                assert!(proof.num_states <= 500, "proof size too large: {}", proof.num_states);
+            }
+            other => panic!("expected Proved, got {:?}", other),
+        }
     }
 }
 

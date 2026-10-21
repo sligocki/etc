@@ -54,9 +54,9 @@ struct Cli {
     #[arg(long = "split-threshold", visible_alias = "thresh", default_value_t = 2)]
     split_threshold: usize,
 
-    /// Minimum gap floor for widening (default: 2*threshold+2)
-    #[arg(short = 'f', long = "floor")]
-    floor: Option<usize>,
+    /// Gap floor value(s) for widening (e.g. -f 8 or -f 6,8,10)
+    #[arg(short = 'f', long = "floor", value_delimiter = ',', num_args = 1..)]
+    floor: Option<Vec<usize>>,
 
     /// Modulus for gap widening (default: auto [1, 2, 3, 4, 6, 12])
     #[arg(long = "modulus", visible_alias = "mod")]
@@ -161,10 +161,14 @@ fn run_file_mode(
         };
         println!("Output file:      {}{filter_label}", out.display());
     }
-    let effective_floor = config.floor.unwrap_or(2 * config.split_threshold + 2);
+    let floors_label = if config.floors.len() == 1 {
+        format!("floor={}", config.floors[0])
+    } else {
+        format!("floors={:?}", config.floors)
+    };
     println!(
-        "Parameters:       max_steps={}, max_states={}, step_interval={}, min_step={}, split_threshold={}, floor={}",
-        config.max_steps, config.max_states, config.step_interval, config.min_step, config.split_threshold, effective_floor
+        "Parameters:       max_steps={}, max_states={}, step_interval={}, min_step={}, split_threshold={}, {floors_label}",
+        config.max_steps, config.max_states, config.step_interval, config.min_step, config.split_threshold
     );
     println!("Threads:          {}", rayon::current_num_threads());
     println!();
@@ -348,7 +352,6 @@ fn main() {
     let step_interval = cli.step_interval;
     let min_step = cli.min_step;
     let split_threshold = cli.split_threshold;
-    let floor = cli.floor;
     let modulus = cli.modulus;
     let num_threads = cli.threads;
     let progress_interval = cli.progress;
@@ -365,17 +368,6 @@ fn main() {
             process::exit(1);
         }
     }
-
-    let config = CtlConfig {
-        min_step,
-        max_steps,
-        max_states,
-        step_interval,
-        split_threshold,
-        floor,
-        modulus,
-        verbose,
-    };
 
     // Disambiguate positional arguments: file mode vs single-program mode
     if input_path.is_none() {
@@ -396,6 +388,21 @@ fn main() {
     }
 
     if let Some(infile) = input_path {
+        let floors = match cli.floor {
+            Some(ref fs) if !fs.is_empty() => fs.clone(),
+            _ => vec![2 * split_threshold + 2],
+        };
+        let config = CtlConfig {
+            min_step,
+            max_steps,
+            max_states,
+            step_interval,
+            split_threshold,
+            floor: floors.first().copied(),
+            floors,
+            modulus,
+            verbose,
+        };
         run_file_mode(
             &infile,
             output_path.as_deref(),
@@ -407,7 +414,26 @@ fn main() {
         return;
     }
 
-    // Single-program mode
+    // Single-program mode: cycle through multiple floors [base, base+2, base+4] by default
+    let floors = match cli.floor {
+        Some(ref fs) if !fs.is_empty() => fs.clone(),
+        _ => {
+            let base = 2 * split_threshold + 2;
+            vec![base, base + 2, base + 4]
+        }
+    };
+    let config = CtlConfig {
+        min_step,
+        max_steps,
+        max_states,
+        step_interval,
+        split_threshold,
+        floor: floors.first().copied(),
+        floors,
+        modulus,
+        verbose,
+    };
+
     let program_raw = match positionals.first() {
         Some(s) => s.as_str(),
         None => {
@@ -428,13 +454,17 @@ fn main() {
         "Running CTL decider on program: {program_raw} (size {})",
         program.size()
     );
-    let effective_floor = config.floor.unwrap_or(2 * config.split_threshold + 2);
+    let floors_label = if config.floors.len() == 1 {
+        format!("floor={}", config.floors[0])
+    } else {
+        format!("floors={:?}", config.floors)
+    };
     let mod_str = config
         .modulus
         .map(|m| format!(", mod={m}"))
         .unwrap_or_default();
     println!(
-        "Limits: max_steps={max_steps}, max_states={max_states}, step_interval={step_interval}, min_step={min_step}, split_threshold={split_threshold}, floor={effective_floor}{mod_str}"
+        "Limits: max_steps={max_steps}, max_states={max_states}, step_interval={step_interval}, min_step={min_step}, split_threshold={split_threshold}, {floors_label}{mod_str}"
     );
     println!();
 
@@ -519,9 +549,14 @@ fn main() {
             println!();
             println!("Failure Diagnosis:");
             if *candidates_tested == 0 {
-                let floor_val = cli.floor.unwrap_or(2 * cli.split_threshold + 2);
+                let min_floor = config.floors.iter().min().copied().unwrap_or(2 * cli.split_threshold + 2);
+                let floor_str = if config.floors.len() == 1 {
+                    format!("floor={}", config.floors[0])
+                } else {
+                    format!("min floor={min_floor}")
+                };
                 println!(
-                    "  No candidate configurations had any zero-gap >= floor (floor={floor_val})."
+                    "  No candidate configurations had any zero-gap >= floor ({floor_str})."
                 );
                 println!("  Largest zero-gap observed during concrete simulation: {max_gap_seen}");
                 println!(

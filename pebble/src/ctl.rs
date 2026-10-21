@@ -514,12 +514,33 @@ pub fn try_prove_ctl_from_tape_with_params(
     floor: usize,
     forced_modulus: Option<usize>,
 ) -> TapeProofResult {
+    try_prove_ctl_from_tape_with_floors(
+        program,
+        cells,
+        step,
+        max_states,
+        split_threshold,
+        &[floor],
+        forced_modulus,
+    )
+}
+
+pub fn try_prove_ctl_from_tape_with_floors(
+    program: &Program,
+    cells: &[u8],
+    step: u64,
+    max_states: usize,
+    split_threshold: usize,
+    floors: &[usize],
+    forced_modulus: Option<usize>,
+) -> TapeProofResult {
     let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
     if raw_gaps.is_empty() {
         return TapeProofResult::Inconclusive { max_gap: 0 };
     }
     let max_gap = *raw_gaps.iter().max().unwrap_or(&0);
-    if max_gap < floor {
+    let min_floor = *floors.iter().min().unwrap_or(&usize::MAX);
+    if max_gap < min_floor {
         return TapeProofResult::Inconclusive { max_gap };
     }
     let default_moduli = [1, 2, 3, 4, 6, 12];
@@ -532,78 +553,83 @@ pub fn try_prove_ctl_from_tape_with_params(
     let mut structural_failure = None;
     let mut limit_failure = None;
 
-    for &modulus in moduli {
-        let gaps: Vec<ZeroGap> = raw_gaps
-            .iter()
-            .map(|&g| ZeroGap::new(g, floor, modulus))
-            .collect();
-        let seed = CtlState {
-            modulus,
-            blocks: blocks.clone(),
-            gaps,
-        };
-        match verify_ctl_closure(seed, program, split_threshold, floor, max_states) {
-            CtlVerificationOutcome::Closed { num_states } => {
-                return TapeProofResult::Proved(CtlProof {
-                    num_steps: step,
-                    num_states,
-                    split_threshold,
-                    floor,
-                    modulus,
-                });
-            }
-            CtlVerificationOutcome::HitUndefinedRule { pebbles, state } => {
-                hit_undef = Some((
-                    pebbles,
-                    CtlFailureDiagnostic {
-                        step,
+    for &floor in floors {
+        if max_gap < floor {
+            continue;
+        }
+        for &modulus in moduli {
+            let gaps: Vec<ZeroGap> = raw_gaps
+                .iter()
+                .map(|&g| ZeroGap::new(g, floor, modulus))
+                .collect();
+            let seed = CtlState {
+                modulus,
+                blocks: blocks.clone(),
+                gaps,
+            };
+            match verify_ctl_closure(seed, program, split_threshold, floor, max_states) {
+                CtlVerificationOutcome::Closed { num_states } => {
+                    return TapeProofResult::Proved(CtlProof {
+                        num_steps: step,
+                        num_states,
+                        split_threshold,
                         floor,
                         modulus,
-                        detail: CtlFailureDetail::HitUndefinedRule { pebbles, state },
-                    },
-                ));
-            }
-            CtlVerificationOutcome::HitHalt { state } => {
-                hit_halt = Some(CtlFailureDiagnostic {
-                    step,
-                    floor,
-                    modulus,
-                    detail: CtlFailureDetail::HitHalt { state },
-                });
-            }
-            CtlVerificationOutcome::ExceededMaxStates { limit, last_state } => {
-                if limit_failure.is_none() {
-                    limit_failure = Some(CtlFailureDiagnostic {
-                        step,
-                        floor,
-                        modulus,
-                        detail: CtlFailureDetail::ExceededMaxStates { limit, last_state },
                     });
                 }
-            }
-            CtlVerificationOutcome::StructuralFailure { error, state } => {
-                let detail = match error {
-                    CtlStepError::BlockTooLarge { len, max } => {
-                        CtlFailureDetail::BlockTooLarge { len, max, state }
-                    }
-                    CtlStepError::NegativeGap => CtlFailureDetail::NegativeGap { state },
-                    CtlStepError::UnrollFailed => {
-                        CtlFailureDetail::PrematureCollapse { state }
-                    }
-                    CtlStepError::UndefinedRule { pebbles } => {
-                        CtlFailureDetail::HitUndefinedRule { pebbles, state }
-                    }
-                    CtlStepError::HaltingState | CtlStepError::AllStationary => {
-                        CtlFailureDetail::HitHalt { state }
-                    }
-                };
-                if structural_failure.is_none() {
-                    structural_failure = Some(CtlFailureDiagnostic {
+                CtlVerificationOutcome::HitUndefinedRule { pebbles, state } => {
+                    hit_undef = Some((
+                        pebbles,
+                        CtlFailureDiagnostic {
+                            step,
+                            floor,
+                            modulus,
+                            detail: CtlFailureDetail::HitUndefinedRule { pebbles, state },
+                        },
+                    ));
+                }
+                CtlVerificationOutcome::HitHalt { state } => {
+                    hit_halt = Some(CtlFailureDiagnostic {
                         step,
                         floor,
                         modulus,
-                        detail,
+                        detail: CtlFailureDetail::HitHalt { state },
                     });
+                }
+                CtlVerificationOutcome::ExceededMaxStates { limit, last_state } => {
+                    if limit_failure.is_none() {
+                        limit_failure = Some(CtlFailureDiagnostic {
+                            step,
+                            floor,
+                            modulus,
+                            detail: CtlFailureDetail::ExceededMaxStates { limit, last_state },
+                        });
+                    }
+                }
+                CtlVerificationOutcome::StructuralFailure { error, state } => {
+                    let detail = match error {
+                        CtlStepError::BlockTooLarge { len, max } => {
+                            CtlFailureDetail::BlockTooLarge { len, max, state }
+                        }
+                        CtlStepError::NegativeGap => CtlFailureDetail::NegativeGap { state },
+                        CtlStepError::UnrollFailed => {
+                            CtlFailureDetail::PrematureCollapse { state }
+                        }
+                        CtlStepError::UndefinedRule { pebbles } => {
+                            CtlFailureDetail::HitUndefinedRule { pebbles, state }
+                        }
+                        CtlStepError::HaltingState | CtlStepError::AllStationary => {
+                            CtlFailureDetail::HitHalt { state }
+                        }
+                    };
+                    if structural_failure.is_none() {
+                        structural_failure = Some(CtlFailureDiagnostic {
+                            step,
+                            floor,
+                            modulus,
+                            detail,
+                        });
+                    }
                 }
             }
         }
@@ -618,10 +644,12 @@ pub fn try_prove_ctl_from_tape_with_params(
         TapeProofResult::HitHalt {
             diagnostic: Some(diag),
         }
-    } else {
+    } else if structural_failure.is_some() || limit_failure.is_some() {
         TapeProofResult::Failed {
             diagnostic: structural_failure.or(limit_failure),
         }
+    } else {
+        TapeProofResult::Inconclusive { max_gap }
     }
 }
 
@@ -653,6 +681,7 @@ pub struct CtlConfig {
     pub step_interval: u64,
     pub split_threshold: usize,
     pub floor: Option<usize>,
+    pub floors: Vec<usize>,
     pub modulus: Option<usize>,
     pub verbose: bool,
 }
@@ -666,6 +695,7 @@ impl Default for CtlConfig {
             step_interval: 10,
             split_threshold: 2,
             floor: None,
+            floors: Vec::new(),
             modulus: None,
             verbose: false,
         }
@@ -718,14 +748,20 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                     sim.sparse_entries().len()
                 );
             }
-            let floor = config.floor.unwrap_or(2 * config.split_threshold + 2);
-            match try_prove_ctl_from_tape_with_params(
+            let floors: Vec<usize> = if !config.floors.is_empty() {
+                config.floors.clone()
+            } else if let Some(f) = config.floor {
+                vec![f]
+            } else {
+                vec![2 * config.split_threshold + 2]
+            };
+            match try_prove_ctl_from_tape_with_floors(
                 program,
                 &cells,
                 step,
                 config.max_states,
                 config.split_threshold,
-                floor,
+                &floors,
                 config.modulus,
             ) {
                 TapeProofResult::Proved(proof) => return CtlSearchOutcome::Proved(proof),
@@ -799,6 +835,7 @@ mod tests {
             step_interval: 50,
             split_threshold: 2,
             floor: None,
+            floors: Vec::new(),
             modulus: None,
             verbose: false,
         };
@@ -905,6 +942,7 @@ mod tests {
             step_interval: 10,
             split_threshold: 2,
             floor: Some(6),
+            floors: Vec::new(),
             modulus: None,
             verbose: false,
         };
@@ -920,6 +958,30 @@ mod tests {
                 other => panic!("expected PrematureCollapse, got {:?}", other),
             },
             other => panic!("expected LimitReached with diagnostic, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_ctl_search_multiple_floors() {
+        let prog: Program = "01_00_02_03_05_60_23_05_--_23".parse().unwrap();
+        let config = CtlConfig {
+            min_step: 0,
+            max_steps: 300,
+            max_states: 1000,
+            step_interval: 10,
+            split_threshold: 2,
+            floor: None,
+            floors: vec![6, 8, 10],
+            modulus: None,
+            verbose: false,
+        };
+        let outcome = run_ctl_search(&prog, &config);
+        match outcome {
+            CtlSearchOutcome::Proved(proof) => {
+                assert_eq!(proof.floor, 8);
+                assert_eq!(proof.num_steps, 240);
+            }
+            other => panic!("expected Proved with floor 8, got {:?}", other),
         }
     }
 }

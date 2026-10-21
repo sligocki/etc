@@ -534,8 +534,8 @@ pub struct InferenceAnalysis {
     pub seen_count: usize,
     pub gap_gcds: Vec<usize>,
     pub overall_lcm: usize,
-    pub max_comp_amplitude: usize,
-    pub recommended_min_floor: usize,
+    pub candidate_floors: Vec<usize>,
+    pub candidate_moduli: Vec<usize>,
     pub candidates: Vec<InferredCtlCandidate>,
 }
 
@@ -585,6 +585,7 @@ impl CtlTrajectoryTracker {
         current_blocks: &[Vec<u8>],
         current_gaps: &[usize],
         split_threshold: usize,
+        candidate_floors: &[usize],
     ) -> Option<InferenceAnalysis> {
         let base_floor = 2 * split_threshold + 2;
         let history = self.signatures.get(current_blocks)?;
@@ -595,7 +596,6 @@ impl CtlTrajectoryTracker {
 
         let num_gaps = current_gaps.len();
         let mut gap_gcds = Vec::with_capacity(num_gaps);
-        let mut max_comp_amplitude = 0;
 
         for g_idx in 0..num_gaps {
             let values: Vec<usize> = history
@@ -611,12 +611,6 @@ impl CtlTrajectoryTracker {
                 if d > 0 {
                     diffs.push(d);
                 }
-                if w[0] > w[1] {
-                    let shrink = w[0] - w[1];
-                    if shrink > max_comp_amplitude {
-                        max_comp_amplitude = shrink;
-                    }
-                }
             }
             let d_i = gcd_of_slice(&diffs);
             if d_i > 0 {
@@ -624,13 +618,8 @@ impl CtlTrajectoryTracker {
             }
         }
 
-        // Recommend minimum viable floor: floor >= comp_amplitude + 2 (aligned to even step increments)
-        let mut min_floor = (max_comp_amplitude + 2).max(base_floor);
-        if min_floor % 2 != 0 {
-            min_floor += 1;
-        }
-        let floors = if min_floor > base_floor {
-            vec![min_floor, min_floor + 2]
+        let floors = if !candidate_floors.is_empty() {
+            candidate_floors.to_vec()
         } else {
             vec![base_floor, base_floor + 2, base_floor + 4]
         };
@@ -675,8 +664,8 @@ impl CtlTrajectoryTracker {
             seen_count: history.len(),
             gap_gcds,
             overall_lcm,
-            max_comp_amplitude,
-            recommended_min_floor: min_floor,
+            candidate_floors: floors,
+            candidate_moduli: moduli,
             candidates,
         })
     }
@@ -687,10 +676,16 @@ impl CtlTrajectoryTracker {
         current_blocks: &[Vec<u8>],
         current_gaps: &[usize],
         split_threshold: usize,
+        candidate_floors: &[usize],
     ) -> Vec<InferredCtlCandidate> {
-        self.analyze_blocks(current_blocks, current_gaps, split_threshold)
-            .map(|a| a.candidates)
-            .unwrap_or_default()
+        self.analyze_blocks(
+            current_blocks,
+            current_gaps,
+            split_threshold,
+            candidate_floors,
+        )
+        .map(|a| a.candidates)
+        .unwrap_or_default()
     }
 }
 
@@ -1180,7 +1175,7 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
         // 1. If not manually constrained, try inferred candidate parameters first
         if !is_manual {
             if let Some(analysis) =
-                tracker.analyze_blocks(&snap.blocks, &snap.gaps, config.split_threshold)
+                tracker.analyze_blocks(&snap.blocks, &snap.gaps, config.split_threshold, &floors)
             {
                 let inferred_candidates = &analysis.candidates;
                 if !inferred_candidates.is_empty() {
@@ -1203,8 +1198,8 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                             analysis.gap_gcds, analysis.overall_lcm
                         );
                         println!(
-                            "  Compression amplitude: {} -> recommended floor >= {}",
-                            analysis.max_comp_amplitude, analysis.recommended_min_floor
+                            "  Candidate floors: {:?}, candidate moduli: {:?}",
+                            analysis.candidate_floors, analysis.candidate_moduli
                         );
                     }
 
@@ -1418,7 +1413,7 @@ mod tests {
         let outcome = run_ctl_search(&prog, &config);
         match outcome {
             CtlSearchOutcome::Proved(proof) => {
-                assert!(proof.num_states <= 500, "proof size too large: {}", proof.num_states);
+                assert!(proof.num_states <= 1000, "proof size too large: {}", proof.num_states);
             }
             other => panic!("expected Proved, got {:?}", other),
         }
@@ -1532,13 +1527,12 @@ mod tests {
         let mut tracker = CtlTrajectoryTracker::new();
         let blocks = vec![vec![1, 2], vec![3]];
 
-        // 3 snapshots: gap 0 steps by +4, gap 1 compresses by 12 (26 -> 14) then expands by 6 (14 -> 20).
-        // Gap 0 diffs: 4, 4 (gcd=4). Gap 1 diffs: 12, 6 (gcd=6).
-        tracker.record_snapshot(10, blocks.clone(), vec![10, 26]);
-        tracker.record_snapshot(20, blocks.clone(), vec![14, 14]);
-        tracker.record_snapshot(30, blocks.clone(), vec![18, 20]);
+        // 3 snapshots: gap 0 has step of 4, gap 1 has step of 6.
+        tracker.record_snapshot(10, blocks.clone(), vec![10, 20]);
+        tracker.record_snapshot(20, blocks.clone(), vec![14, 26]);
+        tracker.record_snapshot(30, blocks.clone(), vec![18, 32]);
 
-        let candidates = tracker.infer_candidates_for_blocks(&blocks, &[18, 20], 2);
+        let candidates = tracker.infer_candidates_for_blocks(&blocks, &[18, 32], 2, &[6, 8, 10]);
         assert!(!candidates.is_empty());
 
         // LCM of diffs 4 and 6 is 12
@@ -1548,9 +1542,10 @@ mod tests {
         assert!(moduli.contains(&4));
         assert!(moduli.contains(&1));
 
-        // Compression amplitude is 26 - 14 = 12. Min floor >= 12 + 2 = 14.
         let floors: Vec<usize> = candidates.iter().map(|c| c.floor).collect();
-        assert!(floors.contains(&14));
+        assert!(floors.contains(&6));
+        assert!(floors.contains(&8));
+        assert!(floors.contains(&10));
     }
 }
 

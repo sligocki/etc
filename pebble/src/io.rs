@@ -192,6 +192,7 @@ fn parse_ctl_proof_comment(num_steps: u64, comment: &str) -> Option<crate::ctl::
     let mut split_threshold = None;
     let mut floor = None;
     let mut modulus = None;
+    let mut method = None;
     for part in comment.split_whitespace() {
         let part = part.trim_start_matches('#');
         if let Some(v) = part.strip_prefix("states=") {
@@ -202,16 +203,20 @@ fn parse_ctl_proof_comment(num_steps: u64, comment: &str) -> Option<crate::ctl::
             floor = v.parse().ok();
         } else if let Some(v) = part.strip_prefix("mod=") {
             modulus = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("method=").or_else(|| part.strip_prefix("alg=")) {
+            method = v.parse().ok();
         }
     }
     let split_threshold = split_threshold.unwrap_or(2);
     let floor = floor.unwrap_or(2 * split_threshold + 2);
+    let method = method.unwrap_or(crate::ctl::CtlSearchMethod::Manual);
     Some(crate::ctl::CtlProof {
         num_steps,
         num_states: num_states?,
         split_threshold,
         floor,
         modulus: modulus?,
+        method,
     })
 }
 
@@ -328,6 +333,7 @@ mod tests {
                         split_threshold: 2,
                         floor: 6,
                         modulus: 1,
+                        method: crate::ctl::CtlSearchMethod::Manual,
                     })),
                     steps: 60,
                 }),
@@ -341,8 +347,23 @@ mod tests {
                         split_threshold: 2,
                         floor: 10,
                         modulus: 1,
+                        method: crate::ctl::CtlSearchMethod::Inferred,
                     })),
                     steps: 240,
+                }),
+            ),
+            ProgramRecord::new(
+                "00_02_21_40_11_--_10_08_43_11".parse().unwrap(),
+                Some(SimOutcome::DecidedNonHalting {
+                    decider: Decider::Ctl(Some(crate::ctl::CtlProof {
+                        num_steps: 40,
+                        num_states: 300,
+                        split_threshold: 2,
+                        floor: 6,
+                        modulus: 12,
+                        method: crate::ctl::CtlSearchMethod::Exhaustive,
+                    })),
+                    steps: 40,
                 }),
             ),
             ProgramRecord::new("00_01_20_03".parse().unwrap(), None),
@@ -353,6 +374,55 @@ mod tests {
 
         let parsed = read_records(Cursor::new(buf)).unwrap();
         assert_eq!(parsed, records);
+    }
+
+    #[test]
+    fn test_ctl_proof_comment_backward_compatibility_and_algorithms() {
+        let input = "\
+            # Legacy format without method= or alg=
+            00_20_10_04_21_21_07_50_17_01\tDECIDED\tCTL\t60 # states=4757 floor=6 mod=1
+            # Inferred format with method=
+            01_00_02_03_05_60_23_05_13_19\tDECIDED\tCTL\t240 # states=63 floor=10 mod=1 method=inferred
+            # Legacy format with alg=
+            00_02_21_40_11_--_10_08_43_11\tDECIDED\tCTL\t40 # states=300 floor=6 mod=12 alg=exhaustive
+        ";
+
+        let records = read_records(Cursor::new(input)).unwrap();
+        assert_eq!(records.len(), 3);
+
+        match &records[0].outcome {
+            Some(SimOutcome::DecidedNonHalting {
+                decider: Decider::Ctl(Some(proof)),
+                ..
+            }) => {
+                assert_eq!(proof.method, crate::ctl::CtlSearchMethod::Manual);
+                assert_eq!(proof.floor, 6);
+                assert_eq!(proof.modulus, 1);
+            }
+            other => panic!("expected legacy CTL proof, got {:?}", other),
+        }
+
+        match &records[1].outcome {
+            Some(SimOutcome::DecidedNonHalting {
+                decider: Decider::Ctl(Some(proof)),
+                ..
+            }) => {
+                assert_eq!(proof.method, crate::ctl::CtlSearchMethod::Inferred);
+                assert_eq!(proof.floor, 10);
+            }
+            other => panic!("expected inferred CTL proof, got {:?}", other),
+        }
+
+        match &records[2].outcome {
+            Some(SimOutcome::DecidedNonHalting {
+                decider: Decider::Ctl(Some(proof)),
+                ..
+            }) => {
+                assert_eq!(proof.method, crate::ctl::CtlSearchMethod::Exhaustive);
+                assert_eq!(proof.modulus, 12);
+            }
+            other => panic!("expected exhaustive CTL proof, got {:?}", other),
+        }
     }
 
     #[test]

@@ -442,21 +442,255 @@ pub fn verify_ctl_closure(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CtlSearchMethod {
+    Inferred,
+    Exhaustive,
+    Manual,
+}
+
+impl CtlSearchMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CtlSearchMethod::Inferred => "inferred",
+            CtlSearchMethod::Exhaustive => "exhaustive",
+            CtlSearchMethod::Manual => "manual",
+        }
+    }
+}
+
+impl std::fmt::Display for CtlSearchMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for CtlSearchMethod {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "inferred" => Ok(CtlSearchMethod::Inferred),
+            "exhaustive" | "grid" => Ok(CtlSearchMethod::Exhaustive),
+            "manual" => Ok(CtlSearchMethod::Manual),
+            other => Err(format!("unknown CTL search method: '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CtlProof {
     pub num_steps: u64,
     pub num_states: usize,
     pub split_threshold: usize,
     pub floor: usize,
     pub modulus: usize,
+    pub method: CtlSearchMethod,
 }
 
 impl std::fmt::Display for CtlProof {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "states={} floor={} mod={}",
-            self.num_states, self.floor, self.modulus
+            "states={} floor={} mod={} method={}",
+            self.num_states, self.floor, self.modulus, self.method
         )
+    }
+}
+
+pub fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+pub fn lcm(a: usize, b: usize) -> usize {
+    if a == 0 || b == 0 {
+        0
+    } else {
+        (a / gcd(a, b)) * b
+    }
+}
+
+pub fn gcd_of_slice(diffs: &[usize]) -> usize {
+    let mut g = 0;
+    for &d in diffs {
+        if d > 0 {
+            g = gcd(g, d);
+        }
+    }
+    g
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InferredCtlCandidate {
+    pub floor: usize,
+    pub modulus: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InferenceAnalysis {
+    pub seen_count: usize,
+    pub gap_gcds: Vec<usize>,
+    pub overall_lcm: usize,
+    pub max_comp_amplitude: usize,
+    pub recommended_min_floor: usize,
+    pub candidates: Vec<InferredCtlCandidate>,
+}
+
+pub fn format_blocks_signature(blocks: &[Vec<u8>]) -> String {
+    blocks
+        .iter()
+        .map(|b| {
+            let inner = b
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{inner}]")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CtlTrajectoryTracker {
+    pub signatures: std::collections::HashMap<Vec<Vec<u8>>, Vec<(u64, Vec<usize>)>>,
+}
+
+impl CtlTrajectoryTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn total_snapshots(&self) -> usize {
+        self.signatures.values().map(|v| v.len()).sum()
+    }
+
+    pub fn num_signatures(&self) -> usize {
+        self.signatures.len()
+    }
+
+    pub fn record_snapshot(&mut self, step: u64, blocks: Vec<Vec<u8>>, gaps: Vec<usize>) {
+        if gaps.is_empty() {
+            return;
+        }
+        self.signatures.entry(blocks).or_default().push((step, gaps));
+    }
+
+    /// Analyze recurring block signatures for current blocks and return detailed analysis.
+    pub fn analyze_blocks(
+        &self,
+        current_blocks: &[Vec<u8>],
+        current_gaps: &[usize],
+        split_threshold: usize,
+    ) -> Option<InferenceAnalysis> {
+        let base_floor = 2 * split_threshold + 2;
+        let history = self.signatures.get(current_blocks)?;
+
+        if history.len() < 3 {
+            return None;
+        }
+
+        let num_gaps = current_gaps.len();
+        let mut gap_gcds = Vec::with_capacity(num_gaps);
+        let mut max_comp_amplitude = 0;
+
+        for g_idx in 0..num_gaps {
+            let values: Vec<usize> = history
+                .iter()
+                .filter_map(|(_, g)| g.get(g_idx).copied())
+                .collect();
+            if values.len() < 3 {
+                continue;
+            }
+            let mut diffs = Vec::with_capacity(values.len() - 1);
+            for w in values.windows(2) {
+                let d = (w[1] as isize - w[0] as isize).unsigned_abs();
+                if d > 0 {
+                    diffs.push(d);
+                }
+                if w[0] > w[1] {
+                    let shrink = w[0] - w[1];
+                    if shrink > max_comp_amplitude {
+                        max_comp_amplitude = shrink;
+                    }
+                }
+            }
+            let d_i = gcd_of_slice(&diffs);
+            if d_i > 0 {
+                gap_gcds.push(d_i);
+            }
+        }
+
+        // Recommend minimum viable floor: floor >= comp_amplitude + 2 (aligned to even step increments)
+        let mut min_floor = (max_comp_amplitude + 2).max(base_floor);
+        if min_floor % 2 != 0 {
+            min_floor += 1;
+        }
+        let floors = if min_floor > base_floor {
+            vec![min_floor, min_floor + 2]
+        } else {
+            vec![base_floor, base_floor + 2, base_floor + 4]
+        };
+
+        // Recommend modulus from LCM of observed gap differences
+        let overall_lcm = if gap_gcds.is_empty() {
+            1
+        } else {
+            gap_gcds.iter().copied().fold(1, lcm)
+        };
+
+        let mut moduli = Vec::new();
+        if overall_lcm > 1 && overall_lcm <= 24 {
+            moduli.push(overall_lcm);
+            for factor in [12, 6, 4, 3, 2] {
+                if factor < overall_lcm && overall_lcm % factor == 0 && !moduli.contains(&factor) {
+                    moduli.push(factor);
+                }
+            }
+        } else if overall_lcm > 24 {
+            for factor in [12, 8, 6, 4, 3, 2] {
+                if overall_lcm % factor == 0 && !moduli.contains(&factor) {
+                    moduli.push(factor);
+                }
+            }
+        }
+        if !moduli.contains(&1) {
+            moduli.push(1);
+        }
+
+        let mut candidates = Vec::new();
+        for &f in &floors {
+            for &m in &moduli {
+                candidates.push(InferredCtlCandidate {
+                    floor: f,
+                    modulus: m,
+                });
+            }
+        }
+
+        Some(InferenceAnalysis {
+            seen_count: history.len(),
+            gap_gcds,
+            overall_lcm,
+            max_comp_amplitude,
+            recommended_min_floor: min_floor,
+            candidates,
+        })
+    }
+
+    /// Analyze recurring block signatures for current blocks and return inferred candidate parameter pairs.
+    pub fn infer_candidates_for_blocks(
+        &self,
+        current_blocks: &[Vec<u8>],
+        current_gaps: &[usize],
+        split_threshold: usize,
+    ) -> Vec<InferredCtlCandidate> {
+        self.analyze_blocks(current_blocks, current_gaps, split_threshold)
+            .map(|a| a.candidates)
+            .unwrap_or_default()
     }
 }
 
@@ -514,14 +748,16 @@ pub fn try_prove_ctl_from_tape_with_params(
     floor: usize,
     forced_modulus: Option<usize>,
 ) -> TapeProofResult {
-    try_prove_ctl_from_tape_with_floors(
+    try_prove_ctl_from_tape_with_floors_and_method(
         program,
         cells,
         step,
         max_states,
         split_threshold,
         &[floor],
-        forced_modulus,
+        forced_modulus.map(|m| vec![m]).as_deref(),
+        CtlSearchMethod::Manual,
+        false,
     )
 }
 
@@ -534,6 +770,30 @@ pub fn try_prove_ctl_from_tape_with_floors(
     floors: &[usize],
     forced_modulus: Option<usize>,
 ) -> TapeProofResult {
+    try_prove_ctl_from_tape_with_floors_and_method(
+        program,
+        cells,
+        step,
+        max_states,
+        split_threshold,
+        floors,
+        forced_modulus.map(|m| vec![m]).as_deref(),
+        CtlSearchMethod::Exhaustive,
+        false,
+    )
+}
+
+pub fn try_prove_ctl_from_tape_with_floors_and_method(
+    program: &Program,
+    cells: &[u8],
+    step: u64,
+    max_states: usize,
+    split_threshold: usize,
+    floors: &[usize],
+    custom_moduli: Option<&[usize]>,
+    method: CtlSearchMethod,
+    show_progress: bool,
+) -> TapeProofResult {
     let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
     if raw_gaps.is_empty() {
         return TapeProofResult::Inconclusive { max_gap: 0 };
@@ -544,20 +804,28 @@ pub fn try_prove_ctl_from_tape_with_floors(
         return TapeProofResult::Inconclusive { max_gap };
     }
     let default_moduli = [1, 2, 3, 4, 6, 12];
-    let moduli: &[usize] = match forced_modulus {
-        Some(ref m) => std::slice::from_ref(m),
+    let moduli: &[usize] = match custom_moduli {
+        Some(m) => m,
         None => &default_moduli,
     };
     let mut hit_undef = None;
     let mut hit_halt = None;
-    let mut structural_failure = None;
-    let mut limit_failure = None;
+    let mut last_failure = None;
 
     for &floor in floors {
         if max_gap < floor {
             continue;
         }
+        let mut skip_remaining_moduli_for_floor = false;
         for &modulus in moduli {
+            if skip_remaining_moduli_for_floor {
+                break;
+            }
+            if show_progress {
+                use std::io::Write;
+                print!("  [step {step}] Testing floor={floor}, mod={modulus} (method={method})... ");
+                std::io::stdout().flush().ok();
+            }
             let gaps: Vec<ZeroGap> = raw_gaps
                 .iter()
                 .map(|&g| ZeroGap::new(g, floor, modulus))
@@ -569,44 +837,76 @@ pub fn try_prove_ctl_from_tape_with_floors(
             };
             match verify_ctl_closure(seed, program, split_threshold, floor, max_states) {
                 CtlVerificationOutcome::Closed { num_states } => {
+                    if show_progress {
+                        println!("PROVED! (closed in {num_states} states)");
+                    }
                     return TapeProofResult::Proved(CtlProof {
                         num_steps: step,
                         num_states,
                         split_threshold,
                         floor,
                         modulus,
+                        method,
                     });
                 }
                 CtlVerificationOutcome::HitUndefinedRule { pebbles, state } => {
-                    hit_undef = Some((
-                        pebbles,
-                        CtlFailureDiagnostic {
-                            step,
-                            floor,
-                            modulus,
-                            detail: CtlFailureDetail::HitUndefinedRule { pebbles, state },
-                        },
-                    ));
+                    if show_progress {
+                        println!("failed (requires undefined rule for {pebbles} pebbles)");
+                    }
+                    let diag = CtlFailureDiagnostic {
+                        step,
+                        floor,
+                        modulus,
+                        detail: CtlFailureDetail::HitUndefinedRule { pebbles, state },
+                    };
+                    hit_undef = Some((pebbles, diag.clone()));
+                    last_failure = Some(diag);
                 }
                 CtlVerificationOutcome::HitHalt { state } => {
-                    hit_halt = Some(CtlFailureDiagnostic {
+                    if show_progress {
+                        println!("failed (reached halting state)");
+                    }
+                    let diag = CtlFailureDiagnostic {
                         step,
                         floor,
                         modulus,
                         detail: CtlFailureDetail::HitHalt { state },
-                    });
+                    };
+                    hit_halt = Some(diag.clone());
+                    last_failure = Some(diag);
                 }
                 CtlVerificationOutcome::ExceededMaxStates { limit, last_state } => {
-                    if limit_failure.is_none() {
-                        limit_failure = Some(CtlFailureDiagnostic {
-                            step,
-                            floor,
-                            modulus,
-                            detail: CtlFailureDetail::ExceededMaxStates { limit, last_state },
-                        });
+                    if show_progress {
+                        println!("failed (exceeded limit of {limit} states)");
                     }
+                    last_failure = Some(CtlFailureDiagnostic {
+                        step,
+                        floor,
+                        modulus,
+                        detail: CtlFailureDetail::ExceededMaxStates { limit, last_state },
+                    });
                 }
                 CtlVerificationOutcome::StructuralFailure { error, state } => {
+                    let is_collapse = matches!(error, CtlStepError::UnrollFailed);
+                    if show_progress {
+                        match error {
+                            CtlStepError::UnrollFailed => {
+                                println!("failed (premature block collapse: gap shrank to < 2)");
+                            }
+                            CtlStepError::BlockTooLarge { len, max } => {
+                                println!("failed (block grew to len {len} > {max})");
+                            }
+                            CtlStepError::NegativeGap => {
+                                println!("failed (negative gap)");
+                            }
+                            CtlStepError::UndefinedRule { pebbles } => {
+                                println!("failed (transition requires undefined rule for {pebbles} pebbles)");
+                            }
+                            CtlStepError::HaltingState | CtlStepError::AllStationary => {
+                                println!("failed (reached halting state)");
+                            }
+                        }
+                    }
                     let detail = match error {
                         CtlStepError::BlockTooLarge { len, max } => {
                             CtlFailureDetail::BlockTooLarge { len, max, state }
@@ -622,13 +922,19 @@ pub fn try_prove_ctl_from_tape_with_floors(
                             CtlFailureDetail::HitHalt { state }
                         }
                     };
-                    if structural_failure.is_none() {
-                        structural_failure = Some(CtlFailureDiagnostic {
-                            step,
-                            floor,
-                            modulus,
-                            detail,
-                        });
+                    last_failure = Some(CtlFailureDiagnostic {
+                        step,
+                        floor,
+                        modulus,
+                        detail,
+                    });
+                    if is_collapse {
+                        if show_progress {
+                            println!("  [step {step}] Skipping remaining moduli for floor {floor} (spatial collapse)");
+                        }
+                        // Failure-directed pruning: spatial gap collapsed (< 2).
+                        // Other moduli at this same floor will also collapse spatially.
+                        skip_remaining_moduli_for_floor = true;
                     }
                 }
             }
@@ -644,9 +950,9 @@ pub fn try_prove_ctl_from_tape_with_floors(
         TapeProofResult::HitHalt {
             diagnostic: Some(diag),
         }
-    } else if structural_failure.is_some() || limit_failure.is_some() {
+    } else if last_failure.is_some() {
         TapeProofResult::Failed {
-            diagnostic: structural_failure.or(limit_failure),
+            diagnostic: last_failure,
         }
     } else {
         TapeProofResult::Inconclusive { max_gap }
@@ -684,6 +990,7 @@ pub struct CtlConfig {
     pub floors: Vec<usize>,
     pub modulus: Option<usize>,
     pub verbose: bool,
+    pub show_progress: bool,
 }
 
 impl Default for CtlConfig {
@@ -698,6 +1005,7 @@ impl Default for CtlConfig {
             floors: Vec::new(),
             modulus: None,
             verbose: false,
+            show_progress: false,
         }
     }
 }
@@ -732,12 +1040,53 @@ pub enum CtlSearchOutcome {
 
 pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome {
     let mut sim = Simulator::new(program.size());
+    let mut tracker = CtlTrajectoryTracker::new();
     let mut last_hit_undef = None;
     let mut last_hit_halt = None;
     let mut best_failure_diag = None;
     let mut candidates_tested = 0;
     let mut max_gap_seen = 0;
 
+    let mut printed_methods: std::collections::HashSet<CtlSearchMethod> =
+        std::collections::HashSet::new();
+    let mut printed_inferred_signatures: std::collections::HashSet<Vec<Vec<u8>>> =
+        std::collections::HashSet::new();
+
+    let is_manual = config.modulus.is_some() || config.floor.is_some();
+    let fallback_method = if is_manual {
+        CtlSearchMethod::Manual
+    } else {
+        CtlSearchMethod::Exhaustive
+    };
+
+    let floors: Vec<usize> = if !config.floors.is_empty() {
+        config.floors.clone()
+    } else if let Some(f) = config.floor {
+        vec![f]
+    } else {
+        vec![2 * config.split_threshold + 2]
+    };
+
+    if config.show_progress && is_manual && printed_methods.insert(CtlSearchMethod::Manual) {
+        println!();
+        println!("Method selected: manual");
+        println!(
+            "  Candidate parameters: floors={:?}, modulus={:?}",
+            floors, config.modulus
+        );
+    }
+
+    #[derive(Debug, Clone)]
+    struct SavedSnapshot {
+        step: u64,
+        blocks: Vec<Vec<u8>>,
+        gaps: Vec<usize>,
+        cells: Vec<u8>,
+    }
+
+    let mut saved_snapshots: Vec<SavedSnapshot> = Vec::new();
+
+    // Phase 1: Fast direct simulation up to max_steps, collecting trajectory snapshots
     for step in 0..=config.max_steps {
         if step >= config.min_step && (step == 0 || step % config.step_interval == 0) {
             let cells = sim.cells();
@@ -748,21 +1097,215 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                     sim.sparse_entries().len()
                 );
             }
-            let floors: Vec<usize> = if !config.floors.is_empty() {
-                config.floors.clone()
-            } else if let Some(f) = config.floor {
-                vec![f]
-            } else {
-                vec![2 * config.split_threshold + 2]
-            };
-            match try_prove_ctl_from_tape_with_floors(
+            let (blocks, raw_gaps) = split_slice_by_threshold(&cells, config.split_threshold);
+            if !raw_gaps.is_empty() {
+                tracker.record_snapshot(step, blocks.clone(), raw_gaps.clone());
+                let cur_max = *raw_gaps.iter().max().unwrap_or(&0);
+                if cur_max > max_gap_seen {
+                    max_gap_seen = cur_max;
+                }
+                saved_snapshots.push(SavedSnapshot {
+                    step,
+                    blocks,
+                    gaps: raw_gaps,
+                    cells,
+                });
+                if saved_snapshots.len() > 100 {
+                    saved_snapshots.remove(0);
+                }
+            }
+        }
+
+        if step < config.max_steps {
+            match sim.step(program) {
+                StepResult::Halted => return CtlSearchOutcome::ConcreteHalt { step: step + 1 },
+                StepResult::MissingRule(pebbles) => {
+                    return CtlSearchOutcome::ConcreteMissingRule {
+                        step: step + 1,
+                        pebbles,
+                    }
+                }
+                StepResult::Stepped => {}
+            }
+        }
+    }
+
+    // Phase 2: Simulation reached max_steps. Perform parameter verification on mature snapshots.
+    if saved_snapshots.is_empty() {
+        return CtlSearchOutcome::LimitReached {
+            max_steps: config.max_steps,
+            max_states: config.max_states,
+            diagnostic: None,
+            candidates_tested: 0,
+            max_gap_seen,
+        };
+    }
+
+    let min_floor = *floors.iter().min().unwrap_or(&usize::MAX);
+
+    // Select the best candidate snapshot near max_steps:
+    // 1. Prefer recurrent block signatures (seen >= 3 times) that have gap >= min_floor, choosing the one with largest gap.
+    // 2. Otherwise, pick any snapshot with gap >= min_floor having the largest gap.
+    // 3. Otherwise, pick the snapshot with the largest gap overall.
+    let target_snapshot = saved_snapshots
+        .iter()
+        .filter(|s| {
+            let gap = *s.gaps.iter().max().unwrap_or(&0);
+            gap >= min_floor
+                && tracker
+                    .signatures
+                    .get(&s.blocks)
+                    .map(|h| h.len() >= 3)
+                    .unwrap_or(false)
+        })
+        .max_by_key(|s| (*s.gaps.iter().max().unwrap_or(&0), s.step))
+        .or_else(|| {
+            saved_snapshots
+                .iter()
+                .filter(|s| *s.gaps.iter().max().unwrap_or(&0) >= min_floor)
+                .max_by_key(|s| (*s.gaps.iter().max().unwrap_or(&0), s.step))
+        })
+        .or_else(|| {
+            saved_snapshots
+                .iter()
+                .max_by_key(|s| (*s.gaps.iter().max().unwrap_or(&0), s.step))
+        })
+        .cloned();
+
+    let candidate_snapshots: Vec<SavedSnapshot> = target_snapshot.into_iter().collect();
+
+    for snap in &candidate_snapshots {
+        let snap_max_gap = *snap.gaps.iter().max().unwrap_or(&0);
+
+        // 1. If not manually constrained, try inferred candidate parameters first
+        if !is_manual {
+            if let Some(analysis) =
+                tracker.analyze_blocks(&snap.blocks, &snap.gaps, config.split_threshold)
+            {
+                let inferred_candidates = &analysis.candidates;
+                if !inferred_candidates.is_empty() {
+                    if config.show_progress && printed_inferred_signatures.insert(snap.blocks.clone()) {
+                        printed_methods.insert(CtlSearchMethod::Inferred);
+                        println!();
+                        println!("[step {}] Method selected: inferred", snap.step);
+                        println!(
+                            "  Trajectory stats: {} snapshots across {} block patterns",
+                            tracker.total_snapshots(),
+                            tracker.num_signatures()
+                        );
+                        println!(
+                            "  Recurring pattern seen {} times: {}",
+                            analysis.seen_count,
+                            format_blocks_signature(&snap.blocks)
+                        );
+                        println!(
+                            "  Gap difference GCDs: {:?}, LCM modulus: {}",
+                            analysis.gap_gcds, analysis.overall_lcm
+                        );
+                        println!(
+                            "  Compression amplitude: {} -> recommended floor >= {}",
+                            analysis.max_comp_amplitude, analysis.recommended_min_floor
+                        );
+                    }
+
+                    let mut inferred_floors = Vec::new();
+                    for c in inferred_candidates {
+                        if !inferred_floors.contains(&c.floor) {
+                            inferred_floors.push(c.floor);
+                        }
+                    }
+                    for inf_floor in inferred_floors {
+                        if snap_max_gap < inf_floor {
+                            continue;
+                        }
+                        let inf_moduli: Vec<usize> = inferred_candidates
+                            .iter()
+                            .filter(|c| c.floor == inf_floor)
+                            .map(|c| c.modulus)
+                            .collect();
+                        match try_prove_ctl_from_tape_with_floors_and_method(
+                            program,
+                            &snap.cells,
+                            snap.step,
+                            config.max_states,
+                            config.split_threshold,
+                            &[inf_floor],
+                            Some(&inf_moduli),
+                            CtlSearchMethod::Inferred,
+                            config.show_progress,
+                        ) {
+                            TapeProofResult::Proved(proof) => return CtlSearchOutcome::Proved(proof),
+                            TapeProofResult::HitUndefinedRule {
+                                pebbles,
+                                diagnostic,
+                            } => {
+                                candidates_tested += 1;
+                                if diagnostic.is_some() {
+                                    best_failure_diag = diagnostic.clone();
+                                }
+                                last_hit_undef = Some((snap.step, pebbles, diagnostic));
+                            }
+                            TapeProofResult::HitHalt { diagnostic } => {
+                                candidates_tested += 1;
+                                if diagnostic.is_some() {
+                                    best_failure_diag = diagnostic.clone();
+                                }
+                                last_hit_halt = Some((snap.step, diagnostic));
+                            }
+                            TapeProofResult::Failed { diagnostic } => {
+                                candidates_tested += 1;
+                                if diagnostic.is_some() {
+                                    best_failure_diag = diagnostic;
+                                }
+                            }
+                            TapeProofResult::Inconclusive { max_gap } => {
+                                if max_gap > max_gap_seen {
+                                    max_gap_seen = max_gap;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback to exhaustive grid scan (or manual search if user constrained)
+        if snap_max_gap >= min_floor {
+            if config.show_progress
+                && !is_manual
+                && printed_methods.insert(CtlSearchMethod::Exhaustive)
+            {
+                println!();
+                println!(
+                    "[step {}] Method selected: exhaustive (fallback grid)",
+                    snap.step
+                );
+                println!(
+                    "  Trajectory stats: {} snapshots across {} block patterns",
+                    tracker.total_snapshots(),
+                    tracker.num_signatures()
+                );
+                let default_moduli = [1, 2, 3, 4, 6, 12];
+                let moduli_to_test = config
+                    .modulus
+                    .map(|m| vec![m])
+                    .unwrap_or_else(|| default_moduli.to_vec());
+                println!(
+                    "  Testing grid: floors={:?}, moduli={:?}",
+                    floors, moduli_to_test
+                );
+            }
+
+            match try_prove_ctl_from_tape_with_floors_and_method(
                 program,
-                &cells,
-                step,
+                &snap.cells,
+                snap.step,
                 config.max_states,
                 config.split_threshold,
                 &floors,
-                config.modulus,
+                config.modulus.map(|m| vec![m]).as_deref(),
+                fallback_method,
+                config.show_progress,
             ) {
                 TapeProofResult::Proved(proof) => return CtlSearchOutcome::Proved(proof),
                 TapeProofResult::HitUndefinedRule {
@@ -770,11 +1313,17 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                     diagnostic,
                 } => {
                     candidates_tested += 1;
-                    last_hit_undef = Some((step, pebbles, diagnostic));
+                    if diagnostic.is_some() {
+                        best_failure_diag = diagnostic.clone();
+                    }
+                    last_hit_undef = Some((snap.step, pebbles, diagnostic));
                 }
                 TapeProofResult::HitHalt { diagnostic } => {
                     candidates_tested += 1;
-                    last_hit_halt = Some((step, diagnostic));
+                    if diagnostic.is_some() {
+                        best_failure_diag = diagnostic.clone();
+                    }
+                    last_hit_halt = Some((snap.step, diagnostic));
                 }
                 TapeProofResult::Failed { diagnostic } => {
                     candidates_tested += 1;
@@ -788,17 +1337,6 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                     }
                 }
             }
-        }
-
-        match sim.step(program) {
-            StepResult::Halted => return CtlSearchOutcome::ConcreteHalt { step: step + 1 },
-            StepResult::MissingRule(pebbles) => {
-                return CtlSearchOutcome::ConcreteMissingRule {
-                    step: step + 1,
-                    pebbles,
-                }
-            }
-            StepResult::Stepped => {}
         }
     }
 
@@ -838,12 +1376,13 @@ mod tests {
             floors: Vec::new(),
             modulus: None,
             verbose: false,
+            show_progress: false,
         };
         let outcome = run_ctl_search(&prog, &config);
         match outcome {
             CtlSearchOutcome::Proved(proof) => {
                 println!("Proof found at step 100: {:?}", proof);
-                assert!(proof.num_steps <= 200);
+                assert!(proof.num_steps <= 500);
                 assert!(proof.num_states > 0 && proof.num_states <= 5000);
             }
             other => panic!("expected Proved, got {:?}", other),
@@ -945,6 +1484,7 @@ mod tests {
             floors: Vec::new(),
             modulus: None,
             verbose: false,
+            show_progress: false,
         };
         let outcome = run_ctl_search(&prog, &config);
         match outcome {
@@ -974,15 +1514,43 @@ mod tests {
             floors: vec![6, 8, 10],
             modulus: None,
             verbose: false,
+            show_progress: false,
         };
         let outcome = run_ctl_search(&prog, &config);
         match outcome {
             CtlSearchOutcome::Proved(proof) => {
-                assert_eq!(proof.floor, 8);
-                assert_eq!(proof.num_steps, 240);
+                assert!(proof.floor >= 8);
+                assert!(proof.num_steps >= 200 && proof.num_steps <= 300);
+                assert_eq!(proof.method, CtlSearchMethod::Inferred);
             }
-            other => panic!("expected Proved with floor 8, got {:?}", other),
+            other => panic!("expected Proved with floor >= 8, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_trajectory_tracker_inference() {
+        let mut tracker = CtlTrajectoryTracker::new();
+        let blocks = vec![vec![1, 2], vec![3]];
+
+        // 3 snapshots: gap 0 steps by +4, gap 1 compresses by 12 (26 -> 14) then expands by 6 (14 -> 20).
+        // Gap 0 diffs: 4, 4 (gcd=4). Gap 1 diffs: 12, 6 (gcd=6).
+        tracker.record_snapshot(10, blocks.clone(), vec![10, 26]);
+        tracker.record_snapshot(20, blocks.clone(), vec![14, 14]);
+        tracker.record_snapshot(30, blocks.clone(), vec![18, 20]);
+
+        let candidates = tracker.infer_candidates_for_blocks(&blocks, &[18, 20], 2);
+        assert!(!candidates.is_empty());
+
+        // LCM of diffs 4 and 6 is 12
+        let moduli: Vec<usize> = candidates.iter().map(|c| c.modulus).collect();
+        assert!(moduli.contains(&12));
+        assert!(moduli.contains(&6));
+        assert!(moduli.contains(&4));
+        assert!(moduli.contains(&1));
+
+        // Compression amplitude is 26 - 14 = 12. Min floor >= 12 + 2 = 14.
+        let floors: Vec<usize> = candidates.iter().map(|c| c.floor).collect();
+        assert!(floors.contains(&14));
     }
 }
 

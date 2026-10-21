@@ -1175,13 +1175,14 @@ mod tests {
 
     #[test]
     fn test_enum_stats_ctl_proof_recording_and_merging() {
-        use crate::ctl::CtlProof;
+        use crate::ctl::{CtlProof, CtlSearchMethod};
         let proof1 = CtlProof {
             num_steps: 60,
             num_states: 4757,
             split_threshold: 5,
             floor: 12,
             modulus: 1,
+            method: CtlSearchMethod::Manual,
         };
         let proof2 = CtlProof {
             num_steps: 80,
@@ -1189,6 +1190,7 @@ mod tests {
             split_threshold: 2,
             floor: 0,
             modulus: 2,
+            method: CtlSearchMethod::Manual,
         };
 
         let mut stats1 = EnumStats::default();

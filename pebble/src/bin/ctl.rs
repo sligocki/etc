@@ -113,8 +113,8 @@ fn format_record_line(prog: &Program, outcome: &CtlSearchOutcome) -> String {
     match outcome {
         CtlSearchOutcome::Proved(proof) => {
             format!(
-                "{prog}\tDECIDED\tCTL\t{} # states={} floor={} mod={}",
-                proof.num_steps, proof.num_states, proof.floor, proof.modulus
+                "{prog}\tDECIDED\tCTL\t{} # states={} floor={} mod={} method={}",
+                proof.num_steps, proof.num_states, proof.floor, proof.modulus, proof.method
             )
         }
         CtlSearchOutcome::ConcreteHalt { step } => {
@@ -379,6 +379,10 @@ fn main() {
                         output_path = Some(PathBuf::from(second));
                     }
                 }
+            } else if let Some(second) = positionals.get(1) {
+                if output_path.is_none() {
+                    output_path = Some(PathBuf::from(second));
+                }
             }
         }
     } else if let Some(first) = positionals.first() {
@@ -386,6 +390,8 @@ fn main() {
             output_path = Some(PathBuf::from(first));
         }
     }
+
+    let is_user_floor = cli.floor.is_some();
 
     if let Some(infile) = input_path {
         let floors = match cli.floor {
@@ -398,10 +404,11 @@ fn main() {
             max_states,
             step_interval,
             split_threshold,
-            floor: floors.first().copied(),
+            floor: if is_user_floor { floors.first().copied() } else { None },
             floors,
             modulus,
             verbose,
+            show_progress: false,
         };
         run_file_mode(
             &infile,
@@ -428,10 +435,11 @@ fn main() {
         max_states,
         step_interval,
         split_threshold,
-        floor: floors.first().copied(),
+        floor: if is_user_floor { floors.first().copied() } else { None },
         floors,
         modulus,
         verbose,
+        show_progress: true,
     };
 
     let program_raw = match positionals.first() {
@@ -483,6 +491,7 @@ fn main() {
             println!("  split_threshold: {}", proof.split_threshold);
             println!("  floor:           {}", proof.floor);
             println!("  modulus:         {}", proof.modulus);
+            println!("  search_method:   {}", proof.method);
             println!("  time:            {:.2?}", elapsed);
         }
         CtlSearchOutcome::ConcreteHalt { step } => {

@@ -579,6 +579,62 @@ impl CtlTrajectoryTracker {
         self.signatures.entry(blocks).or_default().push((step, gaps));
     }
 
+    /// Return the top N block patterns by frequency of occurrence in the trajectory.
+    pub fn top_signatures(&self, n: usize) -> Vec<(Vec<Vec<u8>>, usize)> {
+        let mut list: Vec<(Vec<Vec<u8>>, usize)> = self
+            .signatures
+            .iter()
+            .map(|(blocks, hist)| (blocks.clone(), hist.len()))
+            .collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        list.truncate(n);
+        list
+    }
+
+    /// Return the rank (1-indexed) and occurrence count of a specific block pattern.
+    pub fn signature_rank(&self, blocks: &[Vec<u8>]) -> Option<(usize, usize)> {
+        let mut list: Vec<(usize, &Vec<Vec<u8>>)> = self
+            .signatures
+            .iter()
+            .map(|(b, hist)| (hist.len(), b))
+            .collect();
+        list.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+        list.iter()
+            .position(|(_, b)| b.as_slice() == blocks)
+            .map(|idx| (idx + 1, list[idx].0))
+    }
+
+    /// Count how many distinct gap residue combinations (g_i - floor) % modulus
+    /// were observed for this pattern in the trajectory.
+    pub fn observed_gap_residues(
+        &self,
+        blocks: &[Vec<u8>],
+        floor: usize,
+        modulus: usize,
+    ) -> (usize, usize) {
+        let history = match self.signatures.get(blocks) {
+            Some(h) => h,
+            None => return (0, 0),
+        };
+        let num_gaps = history.first().map(|(_, g)| g.len()).unwrap_or(0);
+        let max_possible = if modulus <= 1 {
+            1
+        } else {
+            modulus.checked_pow(num_gaps as u32).unwrap_or(usize::MAX)
+        };
+        let mut distinct = std::collections::HashSet::new();
+        for (_, gaps) in history {
+            if gaps.iter().all(|&g| g >= floor) {
+                let residue_tuple: Vec<usize> = gaps
+                    .iter()
+                    .map(|&g| (g - floor) % modulus)
+                    .collect();
+                distinct.insert(residue_tuple);
+            }
+        }
+        (distinct.len(), max_possible)
+    }
+
     /// Analyze recurring block signatures for current blocks and return detailed analysis.
     pub fn analyze_blocks(
         &self,
@@ -753,6 +809,7 @@ pub fn try_prove_ctl_from_tape_with_params(
         forced_modulus.map(|m| vec![m]).as_deref(),
         CtlSearchMethod::Manual,
         false,
+        None,
     )
 }
 
@@ -775,6 +832,7 @@ pub fn try_prove_ctl_from_tape_with_floors(
         forced_modulus.map(|m| vec![m]).as_deref(),
         CtlSearchMethod::Exhaustive,
         false,
+        None,
     )
 }
 
@@ -788,6 +846,7 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
     custom_moduli: Option<&[usize]>,
     method: CtlSearchMethod,
     show_progress: bool,
+    tracker: Option<&CtlTrajectoryTracker>,
 ) -> TapeProofResult {
     let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
     if raw_gaps.is_empty() {
@@ -818,7 +877,17 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
             }
             if show_progress {
                 use std::io::Write;
-                print!("  [step {step}] Testing floor={floor}, mod={modulus} (method={method})... ");
+                let res_info = if let Some(tr) = tracker {
+                    let (obs, max_comb) = tr.observed_gap_residues(&blocks, floor, modulus);
+                    if max_comb > 1 {
+                        format!(", {obs}/{max_comb} trajectory gap residues")
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                print!("  Testing floor={floor}, mod={modulus} (method={method}{res_info})... ");
                 std::io::stdout().flush().ok();
             }
             let gaps: Vec<ZeroGap> = raw_gaps
@@ -925,7 +994,7 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                     });
                     if is_collapse {
                         if show_progress {
-                            println!("  [step {step}] Skipping remaining moduli for floor {floor} (spatial collapse)");
+                            println!("  Skipping remaining moduli for floor {floor} (spatial collapse)");
                         }
                         // Failure-directed pruning: spatial gap collapsed (< 2).
                         // Other moduli at this same floor will also collapse spatially.
@@ -1062,15 +1131,6 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
         vec![2 * config.split_threshold + 2]
     };
 
-    if config.show_progress && is_manual && printed_methods.insert(CtlSearchMethod::Manual) {
-        println!();
-        println!("Method selected: manual");
-        println!(
-            "  Candidate parameters: floors={:?}, modulus={:?}",
-            floors, config.modulus
-        );
-    }
-
     #[derive(Debug, Clone)]
     struct SavedSnapshot {
         step: u64,
@@ -1136,6 +1196,44 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
         };
     }
 
+    if config.show_progress {
+        let total_snaps = tracker.total_snapshots();
+        let num_patterns = tracker.num_signatures();
+        let recurrent_count = tracker
+            .signatures
+            .values()
+            .filter(|h| h.len() >= 3)
+            .count();
+
+        println!();
+        println!("=== Trajectory Simulation Summary ===");
+        println!("  Simulation steps:    {}", config.max_steps);
+        println!(
+            "  Snapshots recorded:  {} (sampled every {} steps)",
+            total_snaps, config.step_interval
+        );
+        println!("  Max gap seen:        {}", max_gap_seen);
+        println!(
+            "  Flattened configs:   {} distinct block patterns ({} recurrent >= 3 times)",
+            num_patterns, recurrent_count
+        );
+        println!("  Top flattened block patterns by frequency:");
+        for (rank, (pattern, count)) in tracker.top_signatures(5).into_iter().enumerate() {
+            let pct = if total_snaps > 0 {
+                (count as f64 / total_snaps as f64) * 100.0
+            } else {
+                0.0
+            };
+            println!(
+                "    #{}. {} (seen {}x, {:.1}%)",
+                rank + 1,
+                format_blocks_signature(&pattern),
+                count,
+                pct
+            );
+        }
+    }
+
     let min_floor = *floors.iter().min().unwrap_or(&usize::MAX);
 
     // Select the best candidate snapshot near max_steps:
@@ -1182,23 +1280,30 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                     if config.show_progress && printed_inferred_signatures.insert(snap.blocks.clone()) {
                         printed_methods.insert(CtlSearchMethod::Inferred);
                         println!();
-                        println!("[step {}] Method selected: inferred", snap.step);
+                        println!("Method selected: inferred");
+                        let (rank, count) = tracker
+                            .signature_rank(&snap.blocks)
+                            .unwrap_or((0, analysis.seen_count));
+                        let pct = if tracker.total_snapshots() > 0 {
+                            (count as f64 / tracker.total_snapshots() as f64) * 100.0
+                        } else {
+                            0.0
+                        };
                         println!(
-                            "  Trajectory stats: {} snapshots across {} block patterns",
-                            tracker.total_snapshots(),
-                            tracker.num_signatures()
+                            "  Target pattern (step {}): {} (seen {}x, rank #{}, {:.1}% of trajectory)",
+                            snap.step,
+                            format_blocks_signature(&snap.blocks),
+                            count,
+                            rank,
+                            pct
+                        );
+                        let num_gaps = snap.gaps.len();
+                        println!(
+                            "  Gaps in pattern:     {} -> difference GCDs: {:?}, overall LCM modulus: {}",
+                            num_gaps, analysis.gap_gcds, analysis.overall_lcm
                         );
                         println!(
-                            "  Recurring pattern seen {} times: {}",
-                            analysis.seen_count,
-                            format_blocks_signature(&snap.blocks)
-                        );
-                        println!(
-                            "  Gap difference GCDs: {:?}, LCM modulus: {}",
-                            analysis.gap_gcds, analysis.overall_lcm
-                        );
-                        println!(
-                            "  Candidate floors: {:?}, candidate moduli: {:?}",
+                            "  Candidate floors:    {:?}, candidate moduli: {:?}",
                             analysis.candidate_floors, analysis.candidate_moduli
                         );
                     }
@@ -1228,6 +1333,7 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                             Some(&inf_moduli),
                             CtlSearchMethod::Inferred,
                             config.show_progress,
+                            Some(&tracker),
                         ) {
                             TapeProofResult::Proved(proof) => return CtlSearchOutcome::Proved(proof),
                             TapeProofResult::HitUndefinedRule {
@@ -1267,28 +1373,46 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
         // 2. Fallback to exhaustive grid scan (or manual search if user constrained)
         if snap_max_gap >= min_floor {
             if config.show_progress
-                && !is_manual
-                && printed_methods.insert(CtlSearchMethod::Exhaustive)
+                && printed_methods.insert(fallback_method)
             {
                 println!();
+                if is_manual {
+                    println!("Method selected: manual");
+                } else {
+                    println!("Method selected: exhaustive (fallback grid)");
+                }
+                let (rank, count) = tracker
+                    .signature_rank(&snap.blocks)
+                    .unwrap_or((0, 0));
+                let pct = if tracker.total_snapshots() > 0 {
+                    (count as f64 / tracker.total_snapshots() as f64) * 100.0
+                } else {
+                    0.0
+                };
                 println!(
-                    "[step {}] Method selected: exhaustive (fallback grid)",
-                    snap.step
+                    "  Target pattern (step {}): {} (seen {}x, rank #{}, {:.1}% of trajectory)",
+                    snap.step,
+                    format_blocks_signature(&snap.blocks),
+                    count,
+                    rank,
+                    pct
                 );
-                println!(
-                    "  Trajectory stats: {} snapshots across {} block patterns",
-                    tracker.total_snapshots(),
-                    tracker.num_signatures()
-                );
-                let default_moduli = [1, 2, 3, 4, 6, 12];
-                let moduli_to_test = config
-                    .modulus
-                    .map(|m| vec![m])
-                    .unwrap_or_else(|| default_moduli.to_vec());
-                println!(
-                    "  Testing grid: floors={:?}, moduli={:?}",
-                    floors, moduli_to_test
-                );
+                if is_manual {
+                    println!(
+                        "  Candidate parameters: floors={:?}, modulus={:?}",
+                        floors, config.modulus
+                    );
+                } else {
+                    let default_moduli = [1, 2, 3, 4, 6, 12];
+                    let moduli_to_test = config
+                        .modulus
+                        .map(|m| vec![m])
+                        .unwrap_or_else(|| default_moduli.to_vec());
+                    println!(
+                        "  Testing grid:        floors={:?}, moduli={:?}",
+                        floors, moduli_to_test
+                    );
+                }
             }
 
             match try_prove_ctl_from_tape_with_floors_and_method(
@@ -1301,6 +1425,7 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                 config.modulus.map(|m| vec![m]).as_deref(),
                 fallback_method,
                 config.show_progress,
+                Some(&tracker),
             ) {
                 TapeProofResult::Proved(proof) => return CtlSearchOutcome::Proved(proof),
                 TapeProofResult::HitUndefinedRule {

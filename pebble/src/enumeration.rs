@@ -194,6 +194,8 @@ pub struct EnumStats {
     pub ctl_max_states: usize,
     /// Total states in closed language across CTL proofs.
     pub ctl_total_states: u64,
+    /// Distribution of floors in CTL proofs.
+    pub ctl_floor_counts: std::collections::BTreeMap<usize, u64>,
     /// Distribution of moduli in CTL proofs.
     pub ctl_mod_counts: std::collections::BTreeMap<usize, u64>,
 }
@@ -215,6 +217,7 @@ impl PartialEq for EnumStats {
             && self.ctl_min_states == other.ctl_min_states
             && self.ctl_max_states == other.ctl_max_states
             && self.ctl_total_states == other.ctl_total_states
+            && self.ctl_floor_counts == other.ctl_floor_counts
             && self.ctl_mod_counts == other.ctl_mod_counts
     }
 }
@@ -286,6 +289,7 @@ impl EnumStats {
                             }
                             self.ctl_total_steps += proof.num_steps;
                             self.ctl_total_states += proof.num_states as u64;
+                            *self.ctl_floor_counts.entry(proof.floor).or_insert(0) += 1;
                             *self.ctl_mod_counts.entry(proof.modulus).or_insert(0) += 1;
                         }
                         5
@@ -394,6 +398,9 @@ impl EnumStats {
             self.ctl_proofs_count += other.ctl_proofs_count;
             self.ctl_total_steps += other.ctl_total_steps;
             self.ctl_total_states += other.ctl_total_states;
+            for (k, v) in other.ctl_floor_counts {
+                *self.ctl_floor_counts.entry(k).or_insert(0) += v;
+            }
             for (k, v) in other.ctl_mod_counts {
                 *self.ctl_mod_counts.entry(k).or_insert(0) += v;
             }
@@ -1200,6 +1207,7 @@ mod tests {
         assert_eq!(stats1.ctl_min_states, 4757);
         assert_eq!(stats1.ctl_max_states, 4757);
         assert_eq!(stats1.ctl_total_states, 4757);
+        assert_eq!(stats1.ctl_floor_counts.get(&12), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&1), Some(&1));
 
         let mut stats2 = EnumStats::default();
@@ -1219,6 +1227,8 @@ mod tests {
         assert_eq!(stats1.ctl_min_states, 120);
         assert_eq!(stats1.ctl_max_states, 4757);
         assert_eq!(stats1.ctl_total_states, 4757 + 120);
+        assert_eq!(stats1.ctl_floor_counts.get(&0), Some(&1));
+        assert_eq!(stats1.ctl_floor_counts.get(&12), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&1), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&2), Some(&1));
     }

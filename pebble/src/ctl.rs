@@ -333,7 +333,11 @@ pub struct CtlProof {
 
 impl std::fmt::Display for CtlProof {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "states={} mod={}", self.num_states, self.modulus)
+        write!(
+            f,
+            "states={} floor={} mod={}",
+            self.num_states, self.floor, self.modulus
+        )
     }
 }
 
@@ -361,6 +365,24 @@ pub fn try_prove_ctl_from_tape_with_threshold(
     max_states: usize,
     split_threshold: usize,
 ) -> TapeProofResult {
+    try_prove_ctl_from_tape_with_params(
+        program,
+        cells,
+        step,
+        max_states,
+        split_threshold,
+        2 * split_threshold + 2,
+    )
+}
+
+pub fn try_prove_ctl_from_tape_with_params(
+    program: &Program,
+    cells: &[u8],
+    step: u64,
+    max_states: usize,
+    split_threshold: usize,
+    floor: usize,
+) -> TapeProofResult {
     let mut hit_undef = None;
     let mut hit_halt = false;
 
@@ -368,7 +390,6 @@ pub fn try_prove_ctl_from_tape_with_threshold(
     if raw_gaps.is_empty() {
         return TapeProofResult::Inconclusive;
     }
-    let floor = 2 * split_threshold + 2;
     if !raw_gaps.iter().any(|&g| g >= floor) {
         return TapeProofResult::Inconclusive;
     }
@@ -439,6 +460,7 @@ pub struct CtlConfig {
     pub max_states: usize,
     pub step_interval: u64,
     pub split_threshold: usize,
+    pub floor: Option<usize>,
     pub verbose: bool,
 }
 
@@ -450,6 +472,7 @@ impl Default for CtlConfig {
             max_states: 10000,
             step_interval: 10,
             split_threshold: 2,
+            floor: None,
             verbose: false,
         }
     }
@@ -480,12 +503,14 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                     sim.sparse_entries().len()
                 );
             }
-            match try_prove_ctl_from_tape_with_threshold(
+            let floor = config.floor.unwrap_or(2 * config.split_threshold + 2);
+            match try_prove_ctl_from_tape_with_params(
                 program,
                 &cells,
                 step,
                 config.max_states,
                 config.split_threshold,
+                floor,
             ) {
                 TapeProofResult::Proved(proof) => return CtlSearchOutcome::Proved(proof),
                 TapeProofResult::HitUndefinedRule { pebbles } => {
@@ -535,6 +560,7 @@ mod tests {
             max_states: 5000,
             step_interval: 50,
             split_threshold: 2,
+            floor: None,
             verbose: false,
         };
         let outcome = run_ctl_search(&prog, &config);
@@ -581,6 +607,29 @@ mod tests {
             }
             other => panic!("expected Proved, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_ctl_user_prog_floor_10() {
+        let prog: Program = "01_00_02_03_05_60_23_05_13_19".parse().unwrap();
+        let mut sim = Simulator::new(prog.size());
+        for _ in 0..240 {
+            sim.step(&prog);
+        }
+        let cells = sim.cells();
+        let (blocks, raw_gaps) = split_slice_by_threshold(&cells, 2);
+        let floor = 10;
+        let gaps: Vec<ZeroGap> = raw_gaps
+            .iter()
+            .map(|&g| ZeroGap::new(g, floor, 1))
+            .collect();
+        let seed = CtlState {
+            modulus: 1,
+            blocks,
+            gaps,
+        };
+        let outcome = verify_ctl_closure(seed, &prog, 2, floor, 500);
+        assert_eq!(outcome, CtlVerificationOutcome::Closed { num_states: 63 });
     }
 }
 

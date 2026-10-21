@@ -332,6 +332,19 @@ mod tests {
                     steps: 60,
                 }),
             ),
+            ProgramRecord::new(
+                "01_00_02_03_05_60_23_05_13_19".parse().unwrap(),
+                Some(SimOutcome::DecidedNonHalting {
+                    decider: Decider::Ctl(Some(crate::ctl::CtlProof {
+                        num_steps: 240,
+                        num_states: 63,
+                        split_threshold: 2,
+                        floor: 10,
+                        modulus: 1,
+                    })),
+                    steps: 240,
+                }),
+            ),
             ProgramRecord::new("00_01_20_03".parse().unwrap(), None),
         ];
 

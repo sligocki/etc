@@ -371,6 +371,14 @@ fn main() {
                 stats.ctl_min_states, avg_states, stats.ctl_max_states
             );
 
+            let floor_str = stats
+                .ctl_floor_counts
+                .iter()
+                .map(|(f, c)| format!("floor={f} ({c})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("Floors:           {}", floor_str);
+
             let mod_str = stats
                 .ctl_mod_counts
                 .iter()

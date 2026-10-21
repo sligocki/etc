@@ -82,6 +82,10 @@ struct Cli {
     #[arg(short = 'v', long = "verbose")]
     verbose: bool,
 
+    /// Show derivation path for failing state in failure diagnosis
+    #[arg(long = "path", visible_alias = "show-path")]
+    path: bool,
+
     /// Explain why CTL proof failed (enabled by default in single program mode)
     #[arg(long = "explain", visible_alias = "why", visible_alias = "diagnose", hide = true)]
     explain: bool,
@@ -527,7 +531,7 @@ fn main() {
             if let Some(diag) = diagnostic {
                 println!();
                 println!("Failure Diagnosis:");
-                print!("{}", diag.format_explanation());
+                print!("{}", diag.format_explanation(cli.path));
             }
         }
         CtlSearchOutcome::ClosureHitHalt { step, diagnostic } => {
@@ -539,7 +543,7 @@ fn main() {
             if let Some(diag) = diagnostic {
                 println!();
                 println!("Failure Diagnosis:");
-                print!("{}", diag.format_explanation());
+                print!("{}", diag.format_explanation(cli.path));
             }
         }
         CtlSearchOutcome::LimitReached {
@@ -573,7 +577,7 @@ fn main() {
                     max_gap_seen.max(&1)
                 );
             } else if let Some(diag) = diagnostic {
-                print!("{}", diag.format_explanation());
+                print!("{}", diag.format_explanation(cli.path));
             } else {
                 println!("  No candidate closed, but no specific failure state was recorded.");
             }

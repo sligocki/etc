@@ -321,15 +321,23 @@ pub enum CtlFailureDetail {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivationStep {
+    pub state: CtlState,
+    pub observed_count: usize,
+    pub rank: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CtlFailureDiagnostic {
     pub step: u64,
     pub floor: usize,
     pub modulus: usize,
     pub detail: CtlFailureDetail,
+    pub path: Vec<DerivationStep>,
 }
 
 impl CtlFailureDiagnostic {
-    pub fn format_explanation(&self) -> String {
+    pub fn format_explanation(&self, show_path: bool) -> String {
         let mut out = String::new();
         out.push_str(&format!(
             "  Tested candidate at step {} (mod={}, floor={}):\n",
@@ -379,17 +387,204 @@ impl CtlFailureDiagnostic {
                 out.push_str("  Suggestion: Try increasing --max-states, adjusting --floor, or specifying --modulus.\n");
             }
         }
+
+        if !self.path.is_empty() {
+            let last_step = self.path.last().unwrap();
+            let failing_blocks = &last_step.state.blocks;
+            let failing_pat = format_blocks_signature(failing_blocks);
+
+            if !show_path {
+                if last_step.observed_count > 0 {
+                    out.push_str(&format!(
+                        "  Pattern observation: {failing_pat} was observed in simulation (seen {}x, rank #{}).\n",
+                        last_step.observed_count, last_step.rank
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "  Pattern observation: {failing_pat} was NOT observed in simulation (seen 0 times in trajectory).\n"
+                    ));
+                }
+                out.push_str("  (Pass --path to view derivation path)\n");
+                return out;
+            }
+
+            out.push_str("\n  Pattern Analysis:\n");
+            if last_step.observed_count > 0 {
+                out.push_str(&format!(
+                    "  - Failing pattern {failing_pat} WAS observed in simulation (seen {}x, rank #{}).\n",
+                    last_step.observed_count, last_step.rank
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  - Failing pattern {failing_pat} was NOT observed in simulation (seen 0 times in trajectory).\n"
+                ));
+                out.push_str("    It was generated purely during symbolic expansion.\n");
+            }
+
+            // Group consecutive steps that share the same block pattern
+            struct PatternSegment<'a> {
+                blocks: &'a [Vec<u8>],
+                observed_count: usize,
+                rank: usize,
+                num_steps: usize,
+                first_state: &'a CtlState,
+                last_state: &'a CtlState,
+            }
+
+            let mut segments: Vec<PatternSegment> = Vec::new();
+            for step in &self.path {
+                if let Some(prev) = segments.last_mut() {
+                    if prev.blocks == step.state.blocks.as_slice() {
+                        prev.num_steps += 1;
+                        prev.last_state = &step.state;
+                        continue;
+                    }
+                }
+                segments.push(PatternSegment {
+                    blocks: &step.state.blocks,
+                    observed_count: step.observed_count,
+                    rank: step.rank,
+                    num_steps: 1,
+                    first_state: &step.state,
+                    last_state: &step.state,
+                });
+            }
+
+            // Find index of the last segment that was observed in simulation
+            let last_observed_idx = segments.iter().rposition(|s| s.observed_count > 0);
+
+            out.push_str("\n  Pattern Derivation Path:\n");
+            out.push_str(&format!(
+                "  (Total {} pattern transitions over {} symbolic steps)\n",
+                segments.len(),
+                self.path.len()
+            ));
+
+            let mut show_indices: Vec<usize> = Vec::new();
+            if segments.len() <= 12 {
+                show_indices = (0..segments.len()).collect();
+            } else {
+                show_indices.push(0); // Seed segment
+                if let Some(last_obs) = last_observed_idx {
+                    if last_obs > 0 {
+                        if last_obs > 1 {
+                            show_indices.push(usize::MAX); // Ellipsis
+                        }
+                        show_indices.push(last_obs);
+                    }
+                    if last_obs + 1 < segments.len() {
+                        show_indices.push(last_obs + 1);
+                    }
+                    if last_obs + 2 < segments.len().saturating_sub(6) {
+                        show_indices.push(last_obs + 2);
+                        show_indices.push(usize::MAX); // Ellipsis
+                    }
+                } else {
+                    show_indices.push(usize::MAX);
+                }
+                let tail_start = segments.len().saturating_sub(6);
+                for i in tail_start..segments.len() {
+                    show_indices.push(i);
+                }
+            }
+            show_indices.dedup();
+
+            let describe_transition = |prev: &CtlState, next: &CtlState| -> String {
+                if prev.blocks.len() > next.blocks.len() {
+                    format!(
+                        "blocks merged: {} -> {} blocks (gap collapsed below split threshold)",
+                        prev.blocks.len(),
+                        next.blocks.len()
+                    )
+                } else if prev.blocks.len() < next.blocks.len() {
+                    format!(
+                        "block split: {} -> {} blocks (gap widened >= split threshold)",
+                        prev.blocks.len(),
+                        next.blocks.len()
+                    )
+                } else {
+                    "block evolution (pebbles collided/rewritten inside block)".to_string()
+                }
+            };
+
+            for (pos, &idx) in show_indices.iter().enumerate() {
+                if idx == usize::MAX {
+                    let prev_idx = show_indices.get(pos.saturating_sub(1)).copied().unwrap_or(0);
+                    let next_idx = show_indices.get(pos + 1).copied().unwrap_or(segments.len());
+                    let omitted = next_idx.saturating_sub(prev_idx + 1);
+                    out.push_str(&format!(
+                        "        ... ({} intermediate pattern transitions omitted) ...\n\n",
+                        omitted
+                    ));
+                    continue;
+                }
+                let seg = &segments[idx];
+                let pat_str = format_blocks_signature(seg.blocks);
+                let obs_desc = if seg.observed_count > 0 {
+                    format!("seen {}x in simulation, rank #{}", seg.observed_count, seg.rank)
+                } else {
+                    "NOT seen in simulation".to_string()
+                };
+
+                let step_desc = if seg.num_steps == 1 {
+                    format!("{}", seg.first_state)
+                } else {
+                    format!("{} ... ({} steps) ... -> {}", seg.first_state, seg.num_steps, seg.last_state)
+                };
+
+                let label = if idx == 0 {
+                    "Seed Pattern"
+                } else if Some(idx) == last_observed_idx {
+                    "Last Observed Pattern"
+                } else if idx == segments.len() - 1 {
+                    "Failing Pattern"
+                } else {
+                    "Pattern"
+                };
+
+                out.push_str(&format!(
+                    "    [{}/{}] {}: {} ({})\n",
+                    idx + 1, segments.len(), label, pat_str, obs_desc
+                ));
+                out.push_str(&format!("         State: {step_desc}\n"));
+
+                let next_in_list = show_indices.get(pos + 1).copied();
+                if let Some(next_idx) = next_in_list {
+                    if next_idx == idx + 1 {
+                        let trans = describe_transition(seg.last_state, &segments[next_idx].first_state);
+                        out.push_str(&format!("             ↓ transition: {}\n", trans));
+                    }
+                }
+            }
+        }
         out
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CtlVerificationOutcome {
-    Closed { num_states: usize },
-    ExceededMaxStates { limit: usize, last_state: CtlState },
-    HitUndefinedRule { pebbles: u8, state: CtlState },
-    HitHalt { state: CtlState },
-    StructuralFailure { error: CtlStepError, state: CtlState },
+    Closed {
+        num_states: usize,
+    },
+    ExceededMaxStates {
+        limit: usize,
+        last_state: CtlState,
+        path: Vec<CtlState>,
+    },
+    HitUndefinedRule {
+        pebbles: u8,
+        state: CtlState,
+        path: Vec<CtlState>,
+    },
+    HitHalt {
+        state: CtlState,
+        path: Vec<CtlState>,
+    },
+    StructuralFailure {
+        error: CtlStepError,
+        state: CtlState,
+        path: Vec<CtlState>,
+    },
 }
 
 pub fn verify_ctl_closure(
@@ -399,40 +594,93 @@ pub fn verify_ctl_closure(
     floor: usize,
     max_states: usize,
 ) -> CtlVerificationOutcome {
-    let mut language: Vec<CtlState> = vec![seed.clone()];
-    let mut queue: std::collections::VecDeque<CtlState> = std::collections::VecDeque::new();
-    queue.push_back(seed);
+    #[derive(Clone)]
+    struct StateNode {
+        state: CtlState,
+        parent_id: Option<usize>,
+    }
 
-    while let Some(curr) = queue.pop_front() {
+    let mut state_nodes: Vec<StateNode> = vec![StateNode {
+        state: seed.clone(),
+        parent_id: None,
+    }];
+    let mut language: Vec<usize> = vec![0];
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    queue.push_back(0);
+
+    let get_path = |node_id: usize, extra: Option<CtlState>, state_nodes: &[StateNode]| -> Vec<CtlState> {
+        let mut p = Vec::new();
+        if let Some(s) = extra {
+            if s != state_nodes[node_id].state {
+                p.push(s);
+            }
+        }
+        let mut curr = Some(node_id);
+        while let Some(idx) = curr {
+            p.push(state_nodes[idx].state.clone());
+            curr = state_nodes[idx].parent_id;
+        }
+        p.reverse();
+        p
+    };
+
+    while let Some(curr_id) = queue.pop_front() {
+        let curr = state_nodes[curr_id].state.clone();
         let Ok(pre_branches) = unroll_ctl_state(&curr) else {
+            let path = get_path(curr_id, None, &state_nodes);
             return CtlVerificationOutcome::StructuralFailure {
                 error: CtlStepError::UnrollFailed,
                 state: curr,
+                path,
             };
         };
         for pre in pre_branches {
             let next_state = match step_ctl_pre_state(&pre, program, split_threshold, floor) {
                 Ok(s) => s,
                 Err(CtlStepError::UndefinedRule { pebbles }) => {
-                    return CtlVerificationOutcome::HitUndefinedRule { pebbles, state: pre };
+                    let path = get_path(curr_id, Some(pre.clone()), &state_nodes);
+                    return CtlVerificationOutcome::HitUndefinedRule {
+                        pebbles,
+                        state: pre,
+                        path,
+                    };
                 }
                 Err(CtlStepError::HaltingState) | Err(CtlStepError::AllStationary) => {
-                    return CtlVerificationOutcome::HitHalt { state: pre };
+                    let path = get_path(curr_id, Some(pre.clone()), &state_nodes);
+                    return CtlVerificationOutcome::HitHalt {
+                        state: pre,
+                        path,
+                    };
                 }
                 Err(e) => {
-                    return CtlVerificationOutcome::StructuralFailure { error: e, state: pre };
+                    let path = get_path(curr_id, Some(pre.clone()), &state_nodes);
+                    return CtlVerificationOutcome::StructuralFailure {
+                        error: e,
+                        state: pre,
+                        path,
+                    };
                 }
             };
-            if !language.iter().any(|existing| next_state.is_subset_of(existing)) {
+            if !language
+                .iter()
+                .any(|&existing_id| next_state.is_subset_of(&state_nodes[existing_id].state))
+            {
                 if language.len() >= max_states {
+                    let path = get_path(curr_id, Some(next_state.clone()), &state_nodes);
                     return CtlVerificationOutcome::ExceededMaxStates {
                         limit: max_states,
                         last_state: next_state,
+                        path,
                     };
                 }
-                language.retain(|existing| !existing.is_subset_of(&next_state));
-                language.push(next_state.clone());
-                queue.push_back(next_state);
+                language.retain(|&existing_id| !state_nodes[existing_id].state.is_subset_of(&next_state));
+                let next_id = state_nodes.len();
+                state_nodes.push(StateNode {
+                    state: next_state,
+                    parent_id: Some(curr_id),
+                });
+                language.push(next_id);
+                queue.push_back(next_id);
             }
         }
     }
@@ -866,6 +1114,21 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
     let mut hit_halt = None;
     let mut last_failure = None;
 
+    let make_derivation_path = |path: Vec<CtlState>| -> Vec<DerivationStep> {
+        path.into_iter()
+            .map(|st| {
+                let (rank, count) = tracker
+                    .and_then(|tr| tr.signature_rank(&st.blocks))
+                    .unwrap_or((0, 0));
+                DerivationStep {
+                    state: st,
+                    observed_count: count,
+                    rank,
+                }
+            })
+            .collect()
+    };
+
     for &floor in floors {
         if max_gap < floor {
             continue;
@@ -913,7 +1176,7 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                         method,
                     });
                 }
-                CtlVerificationOutcome::HitUndefinedRule { pebbles, state } => {
+                CtlVerificationOutcome::HitUndefinedRule { pebbles, state, path } => {
                     if show_progress {
                         println!("failed (requires undefined rule for {pebbles} pebbles)");
                     }
@@ -922,11 +1185,12 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                         floor,
                         modulus,
                         detail: CtlFailureDetail::HitUndefinedRule { pebbles, state },
+                        path: make_derivation_path(path),
                     };
                     hit_undef = Some((pebbles, diag.clone()));
                     last_failure = Some(diag);
                 }
-                CtlVerificationOutcome::HitHalt { state } => {
+                CtlVerificationOutcome::HitHalt { state, path } => {
                     if show_progress {
                         println!("failed (reached halting state)");
                     }
@@ -935,11 +1199,12 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                         floor,
                         modulus,
                         detail: CtlFailureDetail::HitHalt { state },
+                        path: make_derivation_path(path),
                     };
                     hit_halt = Some(diag.clone());
                     last_failure = Some(diag);
                 }
-                CtlVerificationOutcome::ExceededMaxStates { limit, last_state } => {
+                CtlVerificationOutcome::ExceededMaxStates { limit, last_state, path } => {
                     if show_progress {
                         println!("failed (exceeded limit of {limit} states)");
                     }
@@ -948,9 +1213,10 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                         floor,
                         modulus,
                         detail: CtlFailureDetail::ExceededMaxStates { limit, last_state },
+                        path: make_derivation_path(path),
                     });
                 }
-                CtlVerificationOutcome::StructuralFailure { error, state } => {
+                CtlVerificationOutcome::StructuralFailure { error, state, path } => {
                     let is_collapse = matches!(error, CtlStepError::UnrollFailed);
                     if show_progress {
                         match error {
@@ -991,6 +1257,7 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                         floor,
                         modulus,
                         detail,
+                        path: make_derivation_path(path),
                     });
                     if is_collapse {
                         if show_progress {

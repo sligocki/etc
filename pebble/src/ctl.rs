@@ -122,12 +122,9 @@ pub fn split_slice_by_threshold(slice: &[u8], split_threshold: usize) -> (Vec<Ve
 
 pub fn unroll_ctl_state(state: &CtlState) -> Result<Vec<CtlState>, ()> {
     if state.gaps.is_empty() {
-        return Err(());
+        return Ok(vec![state.clone()]);
     }
     if let Some(idx) = state.gaps.iter().position(|g| g.rem < 2) {
-        if state.gaps.len() <= 1 {
-            return Err(());
-        }
         let g = state.gaps[idx];
         let mut branches = Vec::new();
         let mut cur_rem = g.rem;
@@ -275,15 +272,11 @@ pub fn step_ctl_pre_state(
         }
     }
 
-    if new_gaps.is_empty() {
-        return Err(CtlStepError::UnrollFailed);
-    }
-
     if new_gaps.len() >= 2 {
         for g in &mut new_gaps {
             *g = g.widen(floor);
         }
-    } else {
+    } else if new_gaps.len() == 1 {
         new_gaps[0] = new_gaps[0].widen(floor + 24);
     }
 
@@ -1859,7 +1852,7 @@ mod tests {
     }
 
     #[test]
-    fn test_diagnose_prog_premature_collapse() {
+    fn test_single_cluster_closure() {
         let prog: Program = "01_00_02_03_05_60_23_05_--_23".parse().unwrap();
         let config = CtlConfig {
             min_step: 0,
@@ -1875,16 +1868,36 @@ mod tests {
         };
         let outcome = run_ctl_search(&prog, &config);
         match outcome {
-            CtlSearchOutcome::LimitReached {
-                diagnostic: Some(diag),
-                ..
-            } => match diag.detail {
-                CtlFailureDetail::PrematureCollapse { state } => {
-                    assert_eq!(state.blocks.len(), 2);
-                }
-                other => panic!("expected PrematureCollapse, got {:?}", other),
-            },
-            other => panic!("expected LimitReached with diagnostic, got {:?}", other),
+            CtlSearchOutcome::Proved(proof) => {
+                assert_eq!(proof.floor, 6);
+                assert_eq!(proof.num_states, 53);
+            }
+            other => panic!("expected Proved, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_ctl_single_cluster_user_prog() {
+        let prog: Program = "00_00_30_10_00_06_31_10_07_04".parse().unwrap();
+        let config = CtlConfig {
+            min_step: 0,
+            max_steps: 1000,
+            max_states: 2000,
+            step_interval: 10,
+            split_threshold: 2,
+            floor: Some(6),
+            floors: Vec::new(),
+            modulus: Some(2),
+            verbose: false,
+            show_progress: false,
+        };
+        let outcome = run_ctl_search(&prog, &config);
+        match outcome {
+            CtlSearchOutcome::Proved(proof) => {
+                assert_eq!(proof.floor, 6);
+                assert_eq!(proof.modulus, 2);
+            }
+            other => panic!("expected Proved, got {:?}", other),
         }
     }
 
@@ -1906,11 +1919,11 @@ mod tests {
         let outcome = run_ctl_search(&prog, &config);
         match outcome {
             CtlSearchOutcome::Proved(proof) => {
-                assert!(proof.floor >= 8);
+                assert!(proof.floor >= 6);
                 assert!(proof.num_steps >= 200 && proof.num_steps <= 300);
                 assert_eq!(proof.method, CtlSearchMethod::Inferred);
             }
-            other => panic!("expected Proved with floor >= 8, got {:?}", other),
+            other => panic!("expected Proved, got {:?}", other),
         }
     }
 

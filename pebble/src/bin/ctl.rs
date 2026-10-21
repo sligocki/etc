@@ -2,7 +2,7 @@ use pebble::ctl::{run_ctl_search, CtlConfig, CtlSearchOutcome};
 use pebble::io::read_records_from_file;
 use pebble::program::Program;
 use rayon::prelude::*;
-use std::env;
+use clap::Parser;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -11,32 +11,72 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-fn print_usage(bin: &str) {
-    eprintln!("Usage:");
-    eprintln!("  {bin} [OPTIONS] <PROGRAM>");
-    eprintln!("  {bin} [OPTIONS] -i <INFILE> [-o <OUTFILE>]");
-    eprintln!("  {bin} [OPTIONS] <INFILE> [OUTFILE]");
-    eprintln!();
-    eprintln!("Arguments:");
-    eprintln!("  <PROGRAM>                 Pebble program in short notation (e.g. 00_00_30_10_11_06_21_03_07_19)");
-    eprintln!("  <INFILE>                  Path to input file containing programs/records");
-    eprintln!("  [OUTFILE]                 Optional path to write CTL decider results");
-    eprintln!();
-    eprintln!("Options:");
-    eprintln!("  -i, --input <FILE>        Read programs to evaluate from <FILE> (alias: --infile)");
-    eprintln!("  -o, --output <FILE>       Write results to <FILE> (alias: --outfile)");
-    eprintln!("  -s, --max-steps <STEPS>   Maximum simulation steps to explore (default: 5000)");
-    eprintln!("  -m, --max-states <STATES> Maximum states allowed in closed language (default: 10000)");
-    eprintln!("      --step-interval <N>   Interval between simulation steps to test CTL closure (default: 10)");
-    eprintln!("      --min-step <N>        Minimum simulation step before attempting CTL closure (default: 0)");
-    eprintln!("      --split-threshold <N> Split threshold for separating blocks (default: 2)
-  -f, --floor <N>           Minimum gap floor for widening (default: 2*threshold+2)");
-    eprintln!("  -j, --threads <THREADS>   Number of Rayon worker threads for file mode (default: all cores)");
-    eprintln!("  -p, --progress <SECS>     Progress update interval in seconds (default: 5s)");
-    eprintln!("      --proved-only         When writing output file, only write CTL-proved infinite programs");
-    eprintln!("      --holdouts-only       When writing output file, only write undecided holdout programs");
-    eprintln!("  -v, --verbose             Print verbose step inspection details (single program mode)");
-    eprintln!("  -h, --help                Show this help message");
+#[derive(Parser, Debug)]
+#[command(
+    name = "ctl",
+    about = "Run Closed Tape Language (CTL) decider on pebble programs",
+    version
+)]
+struct Cli {
+    /// Pebble program in short notation or input file path
+    #[arg(value_name = "PROGRAM")]
+    program_or_file: Option<String>,
+
+    /// Path to output file
+    #[arg(value_name = "OUTFILE")]
+    outfile: Option<PathBuf>,
+
+    /// Read programs to evaluate from <FILE>
+    #[arg(short = 'i', long = "input", visible_alias = "infile")]
+    input: Option<PathBuf>,
+
+    /// Write results to <FILE>
+    #[arg(short = 'o', long = "output", visible_alias = "outfile")]
+    output: Option<PathBuf>,
+
+    /// Maximum simulation steps to explore
+    #[arg(short = 's', long = "max-steps", visible_alias = "steps", default_value_t = 5000)]
+    max_steps: u64,
+
+    /// Maximum states allowed in closed language
+    #[arg(short = 'm', long = "max-states", visible_alias = "states", default_value_t = 10000)]
+    max_states: usize,
+
+    /// Interval between simulation steps to test CTL closure
+    #[arg(long = "step-interval", visible_alias = "interval", default_value_t = 10)]
+    step_interval: u64,
+
+    /// Minimum simulation step before attempting CTL closure
+    #[arg(long = "min-step", default_value_t = 0)]
+    min_step: u64,
+
+    /// Split threshold for separating blocks
+    #[arg(long = "split-threshold", visible_alias = "thresh", default_value_t = 2)]
+    split_threshold: usize,
+
+    /// Minimum gap floor for widening (default: 2*threshold+2)
+    #[arg(short = 'f', long = "floor")]
+    floor: Option<usize>,
+
+    /// Number of Rayon worker threads for file mode (default: all cores)
+    #[arg(short = 'j', long = "threads")]
+    threads: Option<usize>,
+
+    /// Progress update interval in seconds (default: 5s)
+    #[arg(short = 'p', long = "progress", default_value = "5s", value_parser = parse_duration_arg)]
+    progress: Duration,
+
+    /// When writing output file, only write CTL-proved infinite programs
+    #[arg(long = "proved-only")]
+    proved_only: bool,
+
+    /// When writing output file, only write undecided holdout programs
+    #[arg(long = "holdouts-only", visible_alias = "undecided-only")]
+    holdouts_only: bool,
+
+    /// Print verbose step inspection details (single program mode)
+    #[arg(short = 'v', long = "verbose")]
+    verbose: bool,
 }
 
 fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
@@ -283,169 +323,29 @@ fn run_file_mode(
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let bin_name = args.get(0).map(|s| s.as_str()).unwrap_or("ctl");
+    let cli = Cli::parse();
 
-    let mut input_path: Option<PathBuf> = None;
-    let mut output_path: Option<PathBuf> = None;
+    let mut input_path: Option<PathBuf> = cli.input;
+    let mut output_path: Option<PathBuf> = cli.output;
     let mut positionals: Vec<String> = Vec::new();
-
-    let mut max_steps: u64 = 5000;
-    let mut max_states: usize = 10000;
-    let mut step_interval: u64 = 10;
-    let mut min_step: u64 = 0;
-    let mut split_threshold: usize = 2;
-    let mut floor: Option<usize> = None;
-    let mut num_threads: Option<usize> = None;
-    let mut progress_interval = Duration::from_secs(5);
-    let mut proved_only = false;
-    let mut holdouts_only = false;
-    let mut verbose = false;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-h" | "--help" => {
-                print_usage(bin_name);
-                process::exit(0);
-            }
-            "-v" | "--verbose" => {
-                verbose = true;
-                i += 1;
-            }
-            "-i" | "--input" | "--infile" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                input_path = Some(PathBuf::from(&args[i]));
-                i += 1;
-            }
-            "-o" | "--output" | "--outfile" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                output_path = Some(PathBuf::from(&args[i]));
-                i += 1;
-            }
-            "-s" | "--max-steps" | "--steps" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                max_steps = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid steps '{}'", args[i]);
-                    process::exit(1);
-                });
-                i += 1;
-            }
-            "-m" | "--max-states" | "--states" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                max_states = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid max states '{}'", args[i]);
-                    process::exit(1);
-                });
-                i += 1;
-            }
-            "--step-interval" | "--interval" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                step_interval = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid step interval '{}'", args[i]);
-                    process::exit(1);
-                });
-                i += 1;
-            }
-            "--min-step" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                min_step = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid min step '{}'", args[i]);
-                    process::exit(1);
-                });
-                i += 1;
-            }
-            "--split-threshold" | "--thresh" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                split_threshold = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid split threshold '{}'", args[i]);
-                    process::exit(1);
-                });
-                i += 1;
-            }
-            "-f" | "--floor" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                floor = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid floor '{}'", args[i]);
-                    process::exit(1);
-                }));
-                i += 1;
-            }
-            "-j" | "--threads" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                num_threads = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid thread count '{}'", args[i]);
-                    process::exit(1);
-                }));
-                i += 1;
-            }
-            "-p" | "--progress" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for {}", args[i - 1]);
-                    process::exit(1);
-                }
-                progress_interval = parse_duration_arg(&args[i]).unwrap_or_else(|err| {
-                    eprintln!("Error: {err}");
-                    process::exit(1);
-                });
-                i += 1;
-            }
-            "--proved-only" => {
-                proved_only = true;
-                i += 1;
-            }
-            "--holdouts-only" | "--undecided-only" => {
-                holdouts_only = true;
-                i += 1;
-            }
-            arg if arg.starts_with('-') => {
-                eprintln!("Error: unknown option '{arg}'");
-                print_usage(bin_name);
-                process::exit(1);
-            }
-            arg => {
-                positionals.push(arg.to_string());
-                i += 1;
-            }
-        }
+    if let Some(p) = cli.program_or_file {
+        positionals.push(p);
     }
+    if let Some(o) = cli.outfile {
+        positionals.push(o.to_string_lossy().to_string());
+    }
+
+    let max_steps = cli.max_steps;
+    let max_states = cli.max_states;
+    let step_interval = cli.step_interval;
+    let min_step = cli.min_step;
+    let split_threshold = cli.split_threshold;
+    let floor = cli.floor;
+    let num_threads = cli.threads;
+    let progress_interval = cli.progress;
+    let proved_only = cli.proved_only;
+    let holdouts_only = cli.holdouts_only;
+    let verbose = cli.verbose;
 
     if let Some(threads) = num_threads {
         if let Err(err) = rayon::ThreadPoolBuilder::new()
@@ -502,7 +402,6 @@ fn main() {
         Some(s) => s.as_str(),
         None => {
             eprintln!("Error: no program or input file specified.");
-            print_usage(bin_name);
             process::exit(1);
         }
     };

@@ -26,4 +26,5 @@ path = "src/bin/ctl.rs"
 
 [dependencies]
 rayon = "1.12.0"
+clap = { version = "4", features = ["derive"] }
 

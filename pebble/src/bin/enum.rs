@@ -1,6 +1,5 @@
 use pebble::enumeration::{enumerate_parallel, ProgressSnapshot};
 use pebble::io::{write_records_to_file, ProgramRecord};
-use std::env;
 use std::path::PathBuf;
 use std::process;
 use std::sync::Mutex;
@@ -19,24 +18,7 @@ fn format_duration(d: Duration) -> String {
     }
 }
 
-fn print_usage(bin: &str) {
-    eprintln!("Usage: {bin} [OPTIONS] <SIZE> [DEEP_STEPS]");
-    eprintln!();
-    eprintln!("Arguments:");
-    eprintln!("  <SIZE>                     Program size / initial pebble count n (e.g. 5)");
-    eprintln!("  [DEEP_STEPS]               Maximum deep steps per program (default: 100)");
-    eprintln!();
-    eprintln!("Options:");
-    eprintln!("  -s, --steps <STEPS>        Maximum deep steps per program (overrides positional)");
-    eprintln!("  -e, --early-steps <STEPS>  Early simulation / branching steps (default: min(100, deep_steps))");
-    eprintln!("  -j, --threads <THREADS>    Number of Rayon worker threads (default: all cores)");
-    eprintln!("  -p, --progress <SECS>      Progress update interval in seconds (default: 10s)");
-    eprintln!("  -o, --output <FILE>        Write program results to <FILE>");
-    eprintln!("      --holdouts-only        When using -o, only write undecided holdout programs");
-    eprintln!("      --no-deciders          Disable non-halting decider pipeline on holdouts");
-    eprintln!("      --no-symmetry          Disable left-right symmetry reduction (enumerate full space)");
-    eprintln!("  -h, --help                 Show this help message");
-}
+use clap::Parser;
 
 fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
     let s = raw.trim();
@@ -60,128 +42,75 @@ fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs_f64(secs))
 }
 
+#[derive(Parser, Debug)]
+#[command(
+    name = "enum",
+    about = "Enumerate pebble programs in Tree Normal Form (TNF) and run simulation / deciders.",
+    version
+)]
+struct Cli {
+    /// Program size / initial pebble count n (e.g. 5)
+    #[arg(value_name = "SIZE")]
+    size: usize,
+
+    /// Maximum deep steps per program (default: 100)
+    #[arg(value_name = "DEEP_STEPS")]
+    deep_steps: Option<u64>,
+
+    /// Maximum deep steps per program (overrides positional)
+    #[arg(short = 's', long = "steps")]
+    steps: Option<u64>,
+
+    /// Early simulation / branching steps (default: min(100, deep_steps))
+    #[arg(short = 'e', long = "early-steps")]
+    early_steps: Option<u64>,
+
+    /// Number of Rayon worker threads (default: all cores)
+    #[arg(short = 'j', long = "threads")]
+    threads: Option<usize>,
+
+    /// Progress update interval in seconds (default: 10s)
+    #[arg(short = 'p', long = "progress", default_value = "10s", value_parser = parse_duration_arg)]
+    progress: Duration,
+
+    /// Write program results to <FILE>
+    #[arg(short = 'o', long = "output")]
+    output: Option<PathBuf>,
+
+    /// When using -o, only write undecided holdout programs
+    #[arg(long = "holdouts-only")]
+    holdouts_only: bool,
+
+    /// Disable non-halting decider pipeline on holdouts
+    #[arg(long = "no-deciders")]
+    no_deciders: bool,
+
+    /// Disable left-right symmetry reduction (enumerate full space)
+    #[arg(long = "no-symmetry", visible_alias = "all-symmetries")]
+    no_symmetry: bool,
+
+    /// Enable left-right symmetry reduction (default: true)
+    #[arg(long = "symmetry")]
+    symmetry: bool,
+}
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let bin = args.first().map(String::as_str).unwrap_or("enum");
+    let cli = Cli::parse();
 
-    let mut size_arg: Option<usize> = None;
-    let mut deep_steps: u64 = 100;
-    let mut deep_steps_set = false;
-    let mut early_steps_arg: Option<u64> = None;
-    let mut num_threads: Option<usize> = None;
-    let mut progress_interval = Duration::from_secs(10);
-    let mut output_path: Option<PathBuf> = None;
-    let mut holdouts_only = false;
-    let mut use_deciders = true;
-    let mut break_symmetry = true;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-h" | "--help" => {
-                print_usage(bin);
-                return;
-            }
-            "-s" | "--steps" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --steps");
-                    process::exit(1);
-                }
-                deep_steps = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid step count '{}'", args[i]);
-                    process::exit(1);
-                });
-                deep_steps_set = true;
-            }
-            "-e" | "--early-steps" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --early-steps");
-                    process::exit(1);
-                }
-                early_steps_arg = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid early step count '{}'", args[i]);
-                    process::exit(1);
-                }));
-            }
-            "-j" | "--threads" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --threads");
-                    process::exit(1);
-                }
-                num_threads = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid thread count '{}'", args[i]);
-                    process::exit(1);
-                }));
-            }
-            "-p" | "--progress" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --progress");
-                    process::exit(1);
-                }
-                progress_interval = parse_duration_arg(&args[i]).unwrap_or_else(|err| {
-                    eprintln!("Error: {err}");
-                    process::exit(1);
-                });
-            }
-            "-o" | "--output" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing file path for --output");
-                    process::exit(1);
-                }
-                output_path = Some(PathBuf::from(&args[i]));
-            }
-            "--holdouts-only" => {
-                holdouts_only = true;
-            }
-            "--no-deciders" => {
-                use_deciders = false;
-            }
-            "--no-symmetry" | "--all-symmetries" => {
-                break_symmetry = false;
-            }
-            "--symmetry" => {
-                break_symmetry = true;
-            }
-            arg if arg.starts_with('-') => {
-                eprintln!("Error: unknown option '{arg}'");
-                print_usage(bin);
-                process::exit(1);
-            }
-            arg => {
-                if size_arg.is_none() {
-                    size_arg = Some(arg.parse().unwrap_or_else(|_| {
-                        eprintln!("Error: invalid size '{arg}'");
-                        process::exit(1);
-                    }));
-                } else if !deep_steps_set {
-                    deep_steps = arg.parse().unwrap_or_else(|_| {
-                        eprintln!("Error: invalid deep_steps '{arg}'");
-                        process::exit(1);
-                    });
-                    deep_steps_set = true;
-                } else {
-                    eprintln!("Error: unexpected argument '{arg}'");
-                    print_usage(bin);
-                    process::exit(1);
-                }
-            }
-        }
-        i += 1;
-    }
-
-    let Some(size) = size_arg else {
-        print_usage(bin);
-        process::exit(1);
-    };
+    let size = cli.size;
     if size == 0 {
         eprintln!("Error: size must be at least 1");
         process::exit(1);
-    };
+    }
+
+    let deep_steps = cli.steps.or(cli.deep_steps).unwrap_or(100);
+    let early_steps_arg = cli.early_steps;
+    let num_threads = cli.threads;
+    let progress_interval = cli.progress;
+    let output_path = cli.output;
+    let holdouts_only = cli.holdouts_only;
+    let use_deciders = !cli.no_deciders;
+    let break_symmetry = !cli.no_symmetry || cli.symmetry;
 
     if let Some(threads) = num_threads {
         if let Err(err) = rayon::ThreadPoolBuilder::new()

@@ -4,36 +4,64 @@ use pebble::program::{Program, Rule};
 use pebble::simulation::{
     format_trace_bounds, simulate_from_sim_with_trace, SimOutcome, Simulator, SparseTape,
 };
+use clap::Parser;
 use rayon::prelude::*;
-use std::env;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-fn print_usage(bin: &str) {
-    eprintln!("Usage:");
-    eprintln!("  {bin} [OPTIONS] <PROGRAM>");
-    eprintln!("  {bin} [OPTIONS] -i <INFILE> [-o <OUTFILE>]");
-    eprintln!("  {bin} [OPTIONS] <INFILE> [OUTFILE]");
-    eprintln!();
-    eprintln!("Arguments:");
-    eprintln!("  <PROGRAM>                Single program in short notation (e.g. 00_11_03_21_04)");
-    eprintln!("  <INFILE>                 Path to input file containing programs/records");
-    eprintln!("  [OUTFILE]                Optional path to write simulation results");
-    eprintln!();
-    eprintln!("Options:");
-    eprintln!("  -c, --config <CONFIG>    Initial tape configuration (e.g. \"0230\", \".[2]3.\", \"-5:2, 5:3\")");
-    eprintln!("      --offset <OFFSET>    Coordinate offset for initial tape (default: 0)");
-    eprintln!("  -i, --input <FILE>       Read programs to simulate from <FILE> (alias: --infile)");
-    eprintln!("  -o, --output <FILE>      Write simulation results to <FILE> (alias: --outfile)");
-    eprintln!("      --holdouts-only      When writing output file, only write undecided holdouts");
-    eprintln!("  -s, --steps <STEPS>      Maximum number of steps to simulate (default: 1000)");
-    eprintln!("  -j, --threads <THREADS>  Number of Rayon worker threads for file mode");
-    eprintln!("  -p, --progress <SECS>    Progress update interval in seconds (default: 10s)");
-    eprintln!("  -v, --verbose            Print the tape configuration at every step (single program)");
-    eprintln!("  -h, --help               Show this help message");
+#[derive(Parser, Debug)]
+#[command(
+    name = "sim",
+    about = "Simulate pebble automata from initial configurations or input files",
+    version
+)]
+struct Cli {
+    /// Single program in short notation or input file path
+    #[arg(value_name = "PROGRAM")]
+    program_or_file: Option<String>,
+
+    /// Maximum steps (if program) or output file (if input file)
+    #[arg(value_name = "STEPS_OR_OUTFILE")]
+    steps_or_outfile: Option<String>,
+
+    /// Initial tape configuration (e.g. "0230", ".[2]3.", "-5:2, 5:3")
+    #[arg(short = 'c', long = "config", visible_aliases = ["tape", "start-config", "init"])]
+    config: Option<String>,
+
+    /// Coordinate offset for initial tape (default: 0)
+    #[arg(long = "offset", visible_alias = "origin", default_value_t = 0)]
+    offset: isize,
+
+    /// Read programs to simulate from <FILE>
+    #[arg(short = 'i', long = "input", visible_alias = "infile")]
+    input: Option<PathBuf>,
+
+    /// Write simulation results to <FILE>
+    #[arg(short = 'o', long = "output", visible_alias = "outfile")]
+    output: Option<PathBuf>,
+
+    /// When writing output file, only write undecided holdouts
+    #[arg(long = "holdouts-only")]
+    holdouts_only: bool,
+
+    /// Maximum number of steps to simulate
+    #[arg(short = 's', long = "steps")]
+    steps: Option<u64>,
+
+    /// Number of Rayon worker threads for file mode
+    #[arg(short = 'j', long = "threads")]
+    threads: Option<usize>,
+
+    /// Progress update interval in seconds (default: 10s)
+    #[arg(short = 'p', long = "progress", default_value = "10s", value_parser = parse_duration_arg)]
+    progress: Duration,
+
+    /// Print the tape configuration at every step (single program)
+    #[arg(short = 'v', long = "verbose")]
+    verbose: bool,
 }
 
 fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
@@ -235,116 +263,24 @@ fn run_file_mode(
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let bin = args.first().map(String::as_str).unwrap_or("sim");
+    let cli = Cli::parse();
 
-    let mut verbose = false;
-    let mut holdouts_only = false;
-    let mut max_steps: u64 = 1000;
-    let mut max_steps_set = false;
-    let mut num_threads: Option<usize> = None;
-    let mut progress_interval = Duration::from_secs(10);
-    let mut input_path: Option<PathBuf> = None;
-    let mut output_path: Option<PathBuf> = None;
-    let mut initial_config_arg: Option<String> = None;
-    let mut offset_arg: isize = 0;
+    let verbose = cli.verbose;
+    let holdouts_only = cli.holdouts_only;
+    let mut max_steps: u64 = cli.steps.unwrap_or(1000);
+    let max_steps_set = cli.steps.is_some();
+    let num_threads = cli.threads;
+    let progress_interval = cli.progress;
+    let mut input_path: Option<PathBuf> = cli.input;
+    let mut output_path: Option<PathBuf> = cli.output;
+    let initial_config_arg = cli.config;
+    let offset_arg = cli.offset;
     let mut positionals: Vec<String> = Vec::new();
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-h" | "--help" => {
-                print_usage(bin);
-                return;
-            }
-            "-v" | "--verbose" => {
-                verbose = true;
-            }
-            "--holdouts-only" => {
-                holdouts_only = true;
-            }
-            "-c" | "--config" | "--tape" | "--start-config" | "--init" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --config");
-                    print_usage(bin);
-                    process::exit(1);
-                }
-                initial_config_arg = Some(args[i].clone());
-            }
-            "--offset" | "--origin" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --offset");
-                    print_usage(bin);
-                    process::exit(1);
-                }
-                offset_arg = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid offset '{}'", args[i]);
-                    process::exit(1);
-                });
-            }
-            "-i" | "--input" | "--infile" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --input");
-                    process::exit(1);
-                }
-                input_path = Some(PathBuf::from(&args[i]));
-            }
-            "-o" | "--output" | "--outfile" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --output");
-                    process::exit(1);
-                }
-                output_path = Some(PathBuf::from(&args[i]));
-            }
-            "-s" | "--steps" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --steps");
-                    print_usage(bin);
-                    process::exit(1);
-                }
-                max_steps = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid step count '{}'", args[i]);
-                    process::exit(1);
-                });
-                max_steps_set = true;
-            }
-            "-j" | "--threads" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --threads");
-                    process::exit(1);
-                }
-                num_threads = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid thread count '{}'", args[i]);
-                    process::exit(1);
-                }));
-            }
-            "-p" | "--progress" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --progress");
-                    process::exit(1);
-                }
-                progress_interval = parse_duration_arg(&args[i]).unwrap_or_else(|err| {
-                    eprintln!("Error: {err}");
-                    process::exit(1);
-                });
-            }
-            arg if arg.starts_with('-') => {
-                eprintln!("Error: unknown option '{arg}'");
-                print_usage(bin);
-                process::exit(1);
-            }
-            arg => {
-                positionals.push(arg.to_string());
-            }
-        }
-        i += 1;
+    if let Some(p) = cli.program_or_file {
+        positionals.push(p);
+    }
+    if let Some(s) = cli.steps_or_outfile {
+        positionals.push(s);
     }
 
     let initial_tape = match &initial_config_arg {
@@ -380,7 +316,6 @@ fn main() {
                         output_path = Some(PathBuf::from(second));
                     } else {
                         eprintln!("Error: unexpected argument '{second}'");
-                        print_usage(bin);
                         process::exit(1);
                     }
                 }
@@ -391,7 +326,6 @@ fn main() {
             output_path = Some(PathBuf::from(first));
         } else {
             eprintln!("Error: unexpected argument '{first}'");
-            print_usage(bin);
             process::exit(1);
         }
     }
@@ -409,7 +343,7 @@ fn main() {
     }
 
     let Some(prog_str) = positionals.first() else {
-        print_usage(bin);
+        eprintln!("Error: please provide a program or input file");
         process::exit(1);
     };
     if let Some(second) = positionals.get(1) {
@@ -420,7 +354,6 @@ fn main() {
                 output_path = Some(PathBuf::from(second));
             } else {
                 eprintln!("Error: unexpected argument '{second}'");
-                print_usage(bin);
                 process::exit(1);
             }
         }

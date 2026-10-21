@@ -7,30 +7,48 @@ use pebble::io::read_records_from_file;
 use pebble::program::Program;
 use pebble::simulation::{simulate_with_edge_glider, Simulator};
 use rayon::prelude::*;
-use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process;
 use std::time::{Duration, Instant};
 
-fn print_usage(bin: &str) {
-    eprintln!("Usage: {bin} [OPTIONS] [INFILE]");
-    eprintln!();
-    eprintln!("Benchmark individual deciders on a list of programs to evaluate runtime,");
-    eprintln!("deciding rate, cost efficiency, and optimal pipeline ordering.");
-    eprintln!();
-    eprintln!("Arguments:");
-    eprintln!("  [INFILE]                 Optional path to file containing program records or short codes");
-    eprintln!();
-    eprintln!("Options:");
-    eprintln!("  -i, --input <FILE>       Path to input file of programs (overrides positional)");
-    eprintln!("  -s, --steps <STEPS>      Base max_steps for deciders and simulation (default: 100)");
-    eprintln!("  -n, --limit <LIMIT>      Limit benchmark to first <LIMIT> programs from file");
-    eprintln!("      --sample <SIZE> [N]  Generate a sample of [N] TNF programs of <SIZE> if no file");
-    eprintln!("  -j, --threads <THREADS>  Number of worker threads (default: all cores)");
-    eprintln!("      --extended           Include extended parameter variants (e.g. 200 steps)");
-    eprintln!("  -h, --help               Show this help message");
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "bench_deciders",
+    about = "Benchmark individual deciders on a list of programs to evaluate runtime, deciding rate, cost efficiency, and optimal pipeline ordering.",
+    version
+)]
+struct Cli {
+    /// Optional path to file containing program records or short codes
+    #[arg(value_name = "INFILE")]
+    infile: Option<PathBuf>,
+
+    /// Path to input file of programs (overrides positional)
+    #[arg(short = 'i', long, visible_alias = "infile")]
+    input: Option<PathBuf>,
+
+    /// Base max_steps for deciders and simulation
+    #[arg(short = 's', long = "steps", default_value_t = 100)]
+    steps: u64,
+
+    /// Limit benchmark to first <LIMIT> programs from file
+    #[arg(short = 'n', long = "limit")]
+    limit: Option<usize>,
+
+    /// Generate a sample of [COUNT] TNF programs of <SIZE> if no file (e.g. --sample 5 or --sample 5 1000)
+    #[arg(long = "sample", num_args = 1..=2, value_names = ["SIZE", "COUNT"])]
+    sample: Option<Vec<usize>>,
+
+    /// Number of worker threads (default: all cores)
+    #[arg(short = 'j', long = "threads")]
+    threads: Option<usize>,
+
+    /// Include extended parameter variants (e.g. 200 steps)
+    #[arg(long = "extended")]
+    extended: bool,
 }
 
 fn run_simulation(p: &Program, steps: u64) -> bool {
@@ -138,100 +156,21 @@ fn load_programs_from_file(path: &PathBuf, limit: Option<usize>) -> Result<Vec<P
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let bin = args.first().map(String::as_str).unwrap_or("bench_deciders");
+    let cli = Cli::parse();
 
-    let mut input_path: Option<PathBuf> = None;
-    let mut max_steps: u64 = 100;
-    let mut limit: Option<usize> = None;
-    let mut sample_size: Option<usize> = None;
-    let mut sample_count: usize = 1000;
-    let mut num_threads: Option<usize> = None;
-    let mut extended = false;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-h" | "--help" => {
-                print_usage(bin);
-                return;
-            }
-            "-i" | "--input" | "--infile" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing file path for --input");
-                    process::exit(1);
-                }
-                input_path = Some(PathBuf::from(&args[i]));
-            }
-            "-s" | "--steps" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --steps");
-                    process::exit(1);
-                }
-                max_steps = args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid steps '{}'", args[i]);
-                    process::exit(1);
-                });
-            }
-            "-n" | "--limit" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --limit");
-                    process::exit(1);
-                }
-                limit = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid limit '{}'", args[i]);
-                    process::exit(1);
-                }));
-            }
-            "--sample" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing size for --sample");
-                    process::exit(1);
-                }
-                sample_size = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid size '{}'", args[i]);
-                    process::exit(1);
-                }));
-                if i + 1 < args.len() && !args[i + 1].starts_with('-') {
-                    i += 1;
-                    sample_count = args[i].parse().unwrap_or(sample_count);
-                }
-            }
-            "-j" | "--threads" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("Error: missing value for --threads");
-                    process::exit(1);
-                }
-                num_threads = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("Error: invalid thread count '{}'", args[i]);
-                    process::exit(1);
-                }));
-            }
-            "--extended" => {
-                extended = true;
-            }
-            arg if arg.starts_with('-') => {
-                eprintln!("Error: unknown option '{arg}'");
-                print_usage(bin);
-                process::exit(1);
-            }
-            arg => {
-                if input_path.is_none() {
-                    input_path = Some(PathBuf::from(arg));
-                } else {
-                    eprintln!("Error: unexpected argument '{arg}'");
-                    print_usage(bin);
-                    process::exit(1);
-                }
-            }
+    let input_path = cli.input.or(cli.infile);
+    let max_steps = cli.steps;
+    let limit = cli.limit;
+    let (sample_size, sample_count) = match cli.sample {
+        Some(s) => {
+            let size = s[0];
+            let count = if s.len() > 1 { s[1] } else { 1000 };
+            (Some(size), count)
         }
-        i += 1;
-    }
+        None => (None, 1000),
+    };
+    let num_threads = cli.threads;
+    let extended = cli.extended;
 
     if let Some(threads) = num_threads {
         if let Err(err) = rayon::ThreadPoolBuilder::new()
@@ -263,7 +202,6 @@ fn main() {
         sample
     } else {
         eprintln!("Error: please provide an input file or use --sample <SIZE> [COUNT]");
-        print_usage(bin);
         process::exit(1);
     };
 

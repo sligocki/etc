@@ -58,6 +58,10 @@ struct Cli {
     #[arg(short = 'f', long = "floor")]
     floor: Option<usize>,
 
+    /// Modulus for gap widening (default: auto [1, 2, 3, 4, 6, 12])
+    #[arg(long = "modulus", visible_alias = "mod")]
+    modulus: Option<usize>,
+
     /// Number of Rayon worker threads for file mode (default: all cores)
     #[arg(short = 'j', long = "threads")]
     threads: Option<usize>,
@@ -77,6 +81,10 @@ struct Cli {
     /// Print verbose step inspection details (single program mode)
     #[arg(short = 'v', long = "verbose")]
     verbose: bool,
+
+    /// Explain why CTL proof failed (enabled by default in single program mode)
+    #[arg(long = "explain", visible_alias = "why", visible_alias = "diagnose", hide = true)]
+    explain: bool,
 }
 
 fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
@@ -115,10 +123,10 @@ fn format_record_line(prog: &Program, outcome: &CtlSearchOutcome) -> String {
         CtlSearchOutcome::ConcreteMissingRule { step, pebbles } => {
             format!("{prog}\tMISSING_RULE\t{pebbles}\t{step}")
         }
-        CtlSearchOutcome::ClosureHitUndefinedRule { step, pebbles } => {
+        CtlSearchOutcome::ClosureHitUndefinedRule { step, pebbles, .. } => {
             format!("{prog}\tMAX_STEPS\t{step} # closure hit undefined rule for {pebbles} pebbles")
         }
-        CtlSearchOutcome::ClosureHitHalt { step } => {
+        CtlSearchOutcome::ClosureHitHalt { step, .. } => {
             format!("{prog}\tMAX_STEPS\t{step} # closure hit halting configuration")
         }
         CtlSearchOutcome::LimitReached { max_steps, .. } => {
@@ -341,6 +349,7 @@ fn main() {
     let min_step = cli.min_step;
     let split_threshold = cli.split_threshold;
     let floor = cli.floor;
+    let modulus = cli.modulus;
     let num_threads = cli.threads;
     let progress_interval = cli.progress;
     let proved_only = cli.proved_only;
@@ -364,6 +373,7 @@ fn main() {
         step_interval,
         split_threshold,
         floor,
+        modulus,
         verbose,
     };
 
@@ -419,8 +429,12 @@ fn main() {
         program.size()
     );
     let effective_floor = config.floor.unwrap_or(2 * config.split_threshold + 2);
+    let mod_str = config
+        .modulus
+        .map(|m| format!(", mod={m}"))
+        .unwrap_or_default();
     println!(
-        "Limits: max_steps={max_steps}, max_states={max_states}, step_interval={step_interval}, min_step={min_step}, split_threshold={split_threshold}, floor={effective_floor}"
+        "Limits: max_steps={max_steps}, max_states={max_states}, step_interval={step_interval}, min_step={min_step}, split_threshold={split_threshold}, floor={effective_floor}{mod_str}"
     );
     println!();
 
@@ -456,7 +470,11 @@ fn main() {
             println!("  reason:       concrete simulation reached undefined rule slot in TNF");
             println!("  time:         {:.2?}", elapsed);
         }
-        CtlSearchOutcome::ClosureHitUndefinedRule { step, pebbles } => {
+        CtlSearchOutcome::ClosureHitUndefinedRule {
+            step,
+            pebbles,
+            diagnostic,
+        } => {
             println!(
                 "Result: Failed to find closure (reached undefined transition in candidate language)"
             );
@@ -467,23 +485,54 @@ fn main() {
                 "  reason:       symbolic forward reachability generated configuration with undefined rule"
             );
             println!("  time:         {:.2?}", elapsed);
+            if let Some(diag) = diagnostic {
+                println!();
+                println!("Failure Diagnosis:");
+                print!("{}", diag.format_explanation());
+            }
         }
-        CtlSearchOutcome::ClosureHitHalt { step } => {
+        CtlSearchOutcome::ClosureHitHalt { step, diagnostic } => {
             println!("Result: Failed to find closure (reached halting state in candidate language)");
             println!("Status: CANDIDATE_CLOSURE_HALT");
             println!("  sampled_step: {}", step);
             println!("  reason:       symbolic forward reachability generated empty tape (all zeros)");
             println!("  time:         {:.2?}", elapsed);
+            if let Some(diag) = diagnostic {
+                println!();
+                println!("Failure Diagnosis:");
+                print!("{}", diag.format_explanation());
+            }
         }
         CtlSearchOutcome::LimitReached {
             max_steps,
             max_states,
+            diagnostic,
+            candidates_tested,
+            max_gap_seen,
         } => {
             println!("Result: Undecided (closure not found within limits)");
             println!("Status: UNDECIDED");
             println!("  max_steps:  {}", max_steps);
             println!("  max_states: {}", max_states);
+            println!("  candidates: {} candidates tested", candidates_tested);
             println!("  time:       {:.2?}", elapsed);
+            println!();
+            println!("Failure Diagnosis:");
+            if *candidates_tested == 0 {
+                let floor_val = cli.floor.unwrap_or(2 * cli.split_threshold + 2);
+                println!(
+                    "  No candidate configurations had any zero-gap >= floor (floor={floor_val})."
+                );
+                println!("  Largest zero-gap observed during concrete simulation: {max_gap_seen}");
+                println!(
+                    "  Suggestion: Try lowering --floor (e.g. -f {}) or reducing --split-threshold.",
+                    max_gap_seen.max(&1)
+                );
+            } else if let Some(diag) = diagnostic {
+                print!("{}", diag.format_explanation());
+            } else {
+                println!("  No candidate closed, but no specific failure state was recorded.");
+            }
         }
     }
 

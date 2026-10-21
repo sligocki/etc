@@ -63,6 +63,30 @@ impl CtlState {
     }
 }
 
+impl std::fmt::Display for CtlState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, b) in self.blocks.iter().enumerate() {
+            if i > 0 && i - 1 < self.gaps.len() {
+                let g = self.gaps[i - 1];
+                if g.modulus == 1 {
+                    write!(f, " (0^{}) ", g.rem)?;
+                } else {
+                    write!(f, " (0^{}+{}k) ", g.rem, g.modulus)?;
+                }
+            }
+            write!(f, "[")?;
+            for (j, &c) in b.iter().enumerate() {
+                if j > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{c}")?;
+            }
+            write!(f, "]")?;
+        }
+        Ok(())
+    }
+}
+
 pub fn merge_blocks_with_zeros(b1: &[u8], zeros: usize, b2: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(b1.len() + zeros + b2.len());
     out.extend_from_slice(b1);
@@ -271,12 +295,101 @@ pub fn step_ctl_pre_state(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CtlFailureDetail {
+    HitUndefinedRule {
+        pebbles: u8,
+        state: CtlState,
+    },
+    HitHalt {
+        state: CtlState,
+    },
+    PrematureCollapse {
+        state: CtlState,
+    },
+    BlockTooLarge {
+        len: usize,
+        max: usize,
+        state: CtlState,
+    },
+    NegativeGap {
+        state: CtlState,
+    },
+    ExceededMaxStates {
+        limit: usize,
+        last_state: CtlState,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CtlFailureDiagnostic {
+    pub step: u64,
+    pub floor: usize,
+    pub modulus: usize,
+    pub detail: CtlFailureDetail,
+}
+
+impl CtlFailureDiagnostic {
+    pub fn format_explanation(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "  Tested candidate at step {} (mod={}, floor={}):\n",
+            self.step, self.modulus, self.floor
+        ));
+        match &self.detail {
+            CtlFailureDetail::PrematureCollapse { state } => {
+                out.push_str(&format!("  Failing state: {state}\n"));
+                out.push_str("  Problem: Premature block collapse (gap shrank to < 2, leaving 0 separated blocks).\n");
+                out.push_str(&format!(
+                    "  Explanation: Floor {} allows the gap to shrink too small during symbolic expansion, merging all blocks into one.\n",
+                    self.floor
+                ));
+                out.push_str(&format!(
+                    "  Suggestion: Try increasing --floor (e.g. -f {} or -f {}).\n",
+                    self.floor + 2, self.floor + 4
+                ));
+            }
+            CtlFailureDetail::HitUndefinedRule { pebbles, state } => {
+                out.push_str(&format!("  Failing state: {state}\n"));
+                out.push_str(&format!(
+                    "  Problem: Transition requires undefined rule for {pebbles} pebbles.\n"
+                ));
+                out.push_str("  Explanation: Symbolic zero-gap expansion allowed an unconstrained collision phase that hits this rule slot.\n");
+                out.push_str("  Suggestion: If concrete simulation never hits this rule, gap parity is likely periodic. Try specifying --modulus (e.g. --mod 2, 3, 4, 6, 12).\n");
+            }
+            CtlFailureDetail::HitHalt { state } => {
+                out.push_str(&format!("  Failing state: {state}\n"));
+                out.push_str("  Problem: Symbolic transition generated a halting configuration (empty tape / all stationary pebbles).\n");
+            }
+            CtlFailureDetail::BlockTooLarge { len, max, state } => {
+                out.push_str(&format!("  Failing state: {state}\n"));
+                out.push_str(&format!(
+                    "  Problem: A block grew to length {len} (maximum supported block size is {max}).\n"
+                ));
+                out.push_str("  Explanation: The pebbles in this block do not remain tightly localized under the current split threshold.\n");
+            }
+            CtlFailureDetail::NegativeGap { state } => {
+                out.push_str(&format!("  Failing state: {state}\n"));
+                out.push_str("  Problem: Gap became negative without merging.\n");
+            }
+            CtlFailureDetail::ExceededMaxStates { limit, last_state } => {
+                out.push_str(&format!("  Last state generated: {last_state}\n"));
+                out.push_str(&format!(
+                    "  Problem: Language reached limit of {limit} states without closing.\n"
+                ));
+                out.push_str("  Suggestion: Try increasing --max-states, adjusting --floor, or specifying --modulus.\n");
+            }
+        }
+        out
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CtlVerificationOutcome {
     Closed { num_states: usize },
-    ExceededMaxStates { limit: usize },
-    HitUndefinedRule { pebbles: u8 },
-    HitHalt,
-    StructuralFailure(CtlStepError),
+    ExceededMaxStates { limit: usize, last_state: CtlState },
+    HitUndefinedRule { pebbles: u8, state: CtlState },
+    HitHalt { state: CtlState },
+    StructuralFailure { error: CtlStepError, state: CtlState },
 }
 
 pub fn verify_ctl_closure(
@@ -292,24 +405,30 @@ pub fn verify_ctl_closure(
 
     while let Some(curr) = queue.pop_front() {
         let Ok(pre_branches) = unroll_ctl_state(&curr) else {
-            return CtlVerificationOutcome::StructuralFailure(CtlStepError::UnrollFailed);
+            return CtlVerificationOutcome::StructuralFailure {
+                error: CtlStepError::UnrollFailed,
+                state: curr,
+            };
         };
         for pre in pre_branches {
             let next_state = match step_ctl_pre_state(&pre, program, split_threshold, floor) {
                 Ok(s) => s,
                 Err(CtlStepError::UndefinedRule { pebbles }) => {
-                    return CtlVerificationOutcome::HitUndefinedRule { pebbles };
+                    return CtlVerificationOutcome::HitUndefinedRule { pebbles, state: pre };
                 }
                 Err(CtlStepError::HaltingState) | Err(CtlStepError::AllStationary) => {
-                    return CtlVerificationOutcome::HitHalt;
+                    return CtlVerificationOutcome::HitHalt { state: pre };
                 }
                 Err(e) => {
-                    return CtlVerificationOutcome::StructuralFailure(e);
+                    return CtlVerificationOutcome::StructuralFailure { error: e, state: pre };
                 }
             };
             if !language.iter().any(|existing| next_state.is_subset_of(existing)) {
                 if language.len() >= max_states {
-                    return CtlVerificationOutcome::ExceededMaxStates { limit: max_states };
+                    return CtlVerificationOutcome::ExceededMaxStates {
+                        limit: max_states,
+                        last_state: next_state,
+                    };
                 }
                 language.retain(|existing| !existing.is_subset_of(&next_state));
                 language.push(next_state.clone());
@@ -344,9 +463,19 @@ impl std::fmt::Display for CtlProof {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TapeProofResult {
     Proved(CtlProof),
-    HitUndefinedRule { pebbles: u8 },
-    HitHalt,
-    Inconclusive,
+    HitUndefinedRule {
+        pebbles: u8,
+        diagnostic: Option<CtlFailureDiagnostic>,
+    },
+    HitHalt {
+        diagnostic: Option<CtlFailureDiagnostic>,
+    },
+    Failed {
+        diagnostic: Option<CtlFailureDiagnostic>,
+    },
+    Inconclusive {
+        max_gap: usize,
+    },
 }
 
 pub fn try_prove_ctl_from_tape(
@@ -372,6 +501,7 @@ pub fn try_prove_ctl_from_tape_with_threshold(
         max_states,
         split_threshold,
         2 * split_threshold + 2,
+        None,
     )
 }
 
@@ -382,18 +512,27 @@ pub fn try_prove_ctl_from_tape_with_params(
     max_states: usize,
     split_threshold: usize,
     floor: usize,
+    forced_modulus: Option<usize>,
 ) -> TapeProofResult {
-    let mut hit_undef = None;
-    let mut hit_halt = false;
-
     let (blocks, raw_gaps) = split_slice_by_threshold(cells, split_threshold);
     if raw_gaps.is_empty() {
-        return TapeProofResult::Inconclusive;
+        return TapeProofResult::Inconclusive { max_gap: 0 };
     }
-    if !raw_gaps.iter().any(|&g| g >= floor) {
-        return TapeProofResult::Inconclusive;
+    let max_gap = *raw_gaps.iter().max().unwrap_or(&0);
+    if max_gap < floor {
+        return TapeProofResult::Inconclusive { max_gap };
     }
-    for modulus in [1, 2, 3, 4, 6] {
+    let default_moduli = [1, 2, 3, 4, 6, 12];
+    let moduli: &[usize] = match forced_modulus {
+        Some(ref m) => std::slice::from_ref(m),
+        None => &default_moduli,
+    };
+    let mut hit_undef = None;
+    let mut hit_halt = None;
+    let mut structural_failure = None;
+    let mut limit_failure = None;
+
+    for &modulus in moduli {
         let gaps: Vec<ZeroGap> = raw_gaps
             .iter()
             .map(|&g| ZeroGap::new(g, floor, modulus))
@@ -413,23 +552,76 @@ pub fn try_prove_ctl_from_tape_with_params(
                     modulus,
                 });
             }
-            CtlVerificationOutcome::HitUndefinedRule { pebbles } => {
-                hit_undef = Some(pebbles);
+            CtlVerificationOutcome::HitUndefinedRule { pebbles, state } => {
+                hit_undef = Some((
+                    pebbles,
+                    CtlFailureDiagnostic {
+                        step,
+                        floor,
+                        modulus,
+                        detail: CtlFailureDetail::HitUndefinedRule { pebbles, state },
+                    },
+                ));
             }
-            CtlVerificationOutcome::HitHalt => {
-                hit_halt = true;
+            CtlVerificationOutcome::HitHalt { state } => {
+                hit_halt = Some(CtlFailureDiagnostic {
+                    step,
+                    floor,
+                    modulus,
+                    detail: CtlFailureDetail::HitHalt { state },
+                });
             }
-            CtlVerificationOutcome::ExceededMaxStates { .. }
-            | CtlVerificationOutcome::StructuralFailure(_) => {}
+            CtlVerificationOutcome::ExceededMaxStates { limit, last_state } => {
+                if limit_failure.is_none() {
+                    limit_failure = Some(CtlFailureDiagnostic {
+                        step,
+                        floor,
+                        modulus,
+                        detail: CtlFailureDetail::ExceededMaxStates { limit, last_state },
+                    });
+                }
+            }
+            CtlVerificationOutcome::StructuralFailure { error, state } => {
+                let detail = match error {
+                    CtlStepError::BlockTooLarge { len, max } => {
+                        CtlFailureDetail::BlockTooLarge { len, max, state }
+                    }
+                    CtlStepError::NegativeGap => CtlFailureDetail::NegativeGap { state },
+                    CtlStepError::UnrollFailed => {
+                        CtlFailureDetail::PrematureCollapse { state }
+                    }
+                    CtlStepError::UndefinedRule { pebbles } => {
+                        CtlFailureDetail::HitUndefinedRule { pebbles, state }
+                    }
+                    CtlStepError::HaltingState | CtlStepError::AllStationary => {
+                        CtlFailureDetail::HitHalt { state }
+                    }
+                };
+                if structural_failure.is_none() {
+                    structural_failure = Some(CtlFailureDiagnostic {
+                        step,
+                        floor,
+                        modulus,
+                        detail,
+                    });
+                }
+            }
         }
     }
 
-    if let Some(pebbles) = hit_undef {
-        TapeProofResult::HitUndefinedRule { pebbles }
-    } else if hit_halt {
-        TapeProofResult::HitHalt
+    if let Some((pebbles, diag)) = hit_undef {
+        TapeProofResult::HitUndefinedRule {
+            pebbles,
+            diagnostic: Some(diag),
+        }
+    } else if let Some(diag) = hit_halt {
+        TapeProofResult::HitHalt {
+            diagnostic: Some(diag),
+        }
     } else {
-        TapeProofResult::Inconclusive
+        TapeProofResult::Failed {
+            diagnostic: structural_failure.or(limit_failure),
+        }
     }
 }
 
@@ -461,6 +653,7 @@ pub struct CtlConfig {
     pub step_interval: u64,
     pub split_threshold: usize,
     pub floor: Option<usize>,
+    pub modulus: Option<usize>,
     pub verbose: bool,
 }
 
@@ -473,6 +666,7 @@ impl Default for CtlConfig {
             step_interval: 10,
             split_threshold: 2,
             floor: None,
+            modulus: None,
             verbose: false,
         }
     }
@@ -481,17 +675,38 @@ impl Default for CtlConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CtlSearchOutcome {
     Proved(CtlProof),
-    ConcreteHalt { step: u64 },
-    ConcreteMissingRule { step: u64, pebbles: u8 },
-    ClosureHitUndefinedRule { step: u64, pebbles: u8 },
-    ClosureHitHalt { step: u64 },
-    LimitReached { max_steps: u64, max_states: usize },
+    ConcreteHalt {
+        step: u64,
+    },
+    ConcreteMissingRule {
+        step: u64,
+        pebbles: u8,
+    },
+    ClosureHitUndefinedRule {
+        step: u64,
+        pebbles: u8,
+        diagnostic: Option<CtlFailureDiagnostic>,
+    },
+    ClosureHitHalt {
+        step: u64,
+        diagnostic: Option<CtlFailureDiagnostic>,
+    },
+    LimitReached {
+        max_steps: u64,
+        max_states: usize,
+        diagnostic: Option<CtlFailureDiagnostic>,
+        candidates_tested: usize,
+        max_gap_seen: usize,
+    },
 }
 
 pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome {
     let mut sim = Simulator::new(program.size());
     let mut last_hit_undef = None;
     let mut last_hit_halt = None;
+    let mut best_failure_diag = None;
+    let mut candidates_tested = 0;
+    let mut max_gap_seen = 0;
 
     for step in 0..=config.max_steps {
         if step >= config.min_step && (step == 0 || step % config.step_interval == 0) {
@@ -511,15 +726,31 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                 config.max_states,
                 config.split_threshold,
                 floor,
+                config.modulus,
             ) {
                 TapeProofResult::Proved(proof) => return CtlSearchOutcome::Proved(proof),
-                TapeProofResult::HitUndefinedRule { pebbles } => {
-                    last_hit_undef = Some((step, pebbles));
+                TapeProofResult::HitUndefinedRule {
+                    pebbles,
+                    diagnostic,
+                } => {
+                    candidates_tested += 1;
+                    last_hit_undef = Some((step, pebbles, diagnostic));
                 }
-                TapeProofResult::HitHalt => {
-                    last_hit_halt = Some(step);
+                TapeProofResult::HitHalt { diagnostic } => {
+                    candidates_tested += 1;
+                    last_hit_halt = Some((step, diagnostic));
                 }
-                TapeProofResult::Inconclusive => {}
+                TapeProofResult::Failed { diagnostic } => {
+                    candidates_tested += 1;
+                    if diagnostic.is_some() {
+                        best_failure_diag = diagnostic;
+                    }
+                }
+                TapeProofResult::Inconclusive { max_gap } => {
+                    if max_gap > max_gap_seen {
+                        max_gap_seen = max_gap;
+                    }
+                }
             }
         }
 
@@ -535,14 +766,21 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
         }
     }
 
-    if let Some((step, pebbles)) = last_hit_undef {
-        CtlSearchOutcome::ClosureHitUndefinedRule { step, pebbles }
-    } else if let Some(step) = last_hit_halt {
-        CtlSearchOutcome::ClosureHitHalt { step }
+    if let Some((step, pebbles, diagnostic)) = last_hit_undef {
+        CtlSearchOutcome::ClosureHitUndefinedRule {
+            step,
+            pebbles,
+            diagnostic,
+        }
+    } else if let Some((step, diagnostic)) = last_hit_halt {
+        CtlSearchOutcome::ClosureHitHalt { step, diagnostic }
     } else {
         CtlSearchOutcome::LimitReached {
             max_steps: config.max_steps,
             max_states: config.max_states,
+            diagnostic: best_failure_diag,
+            candidates_tested,
+            max_gap_seen,
         }
     }
 }
@@ -561,6 +799,7 @@ mod tests {
             step_interval: 50,
             split_threshold: 2,
             floor: None,
+            modulus: None,
             verbose: false,
         };
         let outcome = run_ctl_search(&prog, &config);
@@ -631,5 +870,58 @@ mod tests {
         let outcome = verify_ctl_closure(seed, &prog, 2, floor, 500);
         assert_eq!(outcome, CtlVerificationOutcome::Closed { num_states: 63 });
     }
+
+    #[test]
+    fn test_ctl_user_prog_modulus_12() {
+        let prog: Program = "00_02_21_40_11_--_10_08_43_11".parse().unwrap();
+        let mut sim = Simulator::new(prog.size());
+        for _ in 0..200 {
+            sim.step(&prog);
+        }
+        let cells = sim.cells();
+        let (blocks, raw_gaps) = split_slice_by_threshold(&cells, 2);
+        let floor = 6;
+        let modulus = 12;
+        let gaps: Vec<ZeroGap> = raw_gaps
+            .iter()
+            .map(|&g| ZeroGap::new(g, floor, modulus))
+            .collect();
+        let seed = CtlState {
+            modulus,
+            blocks,
+            gaps,
+        };
+        let outcome = verify_ctl_closure(seed, &prog, 2, floor, 1000);
+        assert_eq!(outcome, CtlVerificationOutcome::Closed { num_states: 454 });
+    }
+
+    #[test]
+    fn test_diagnose_prog_premature_collapse() {
+        let prog: Program = "01_00_02_03_05_60_23_05_--_23".parse().unwrap();
+        let config = CtlConfig {
+            min_step: 0,
+            max_steps: 200,
+            max_states: 1000,
+            step_interval: 10,
+            split_threshold: 2,
+            floor: Some(6),
+            modulus: None,
+            verbose: false,
+        };
+        let outcome = run_ctl_search(&prog, &config);
+        match outcome {
+            CtlSearchOutcome::LimitReached {
+                diagnostic: Some(diag),
+                ..
+            } => match diag.detail {
+                CtlFailureDetail::PrematureCollapse { state } => {
+                    assert_eq!(state.blocks.len(), 2);
+                }
+                other => panic!("expected PrematureCollapse, got {:?}", other),
+            },
+            other => panic!("expected LimitReached with diagnostic, got {:?}", other),
+        }
+    }
 }
+
 

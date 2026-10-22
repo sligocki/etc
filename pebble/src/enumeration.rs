@@ -67,10 +67,6 @@ impl PipelineConfig {
                 kind: PipelineStageKind::Simulation { steps: early_steps },
             },
             PipelineStageSpec {
-                name: "EdgeGlider (sparse)".to_string(),
-                kind: PipelineStageKind::EdgeGliderCurrent,
-            },
-            PipelineStageSpec {
                 name: format!("Cycler / TransCycler ({early_steps} steps)"),
                 kind: PipelineStageKind::Cycler { steps: early_steps },
             },
@@ -92,10 +88,6 @@ impl PipelineConfig {
             stages.push(PipelineStageSpec {
                 name: format!("Simulation ({deep_steps} steps)"),
                 kind: PipelineStageKind::ExtendedSim { steps: deep_steps },
-            });
-            stages.push(PipelineStageSpec {
-                name: "EdgeGlider (deep)".to_string(),
-                kind: PipelineStageKind::EdgeGliderCurrent,
             });
             stages.push(PipelineStageSpec {
                 name: format!("Cycler / TransCycler ({deep_steps} steps)"),
@@ -600,7 +592,16 @@ pub fn run_stage(
                 SimOutcome::Inf { decider, steps } => {
                     PipelineStepOutcome::Inf { decider, steps }
                 }
-                SimOutcome::Unknown { .. } => PipelineStepOutcome::Undecided,
+                SimOutcome::Unknown { .. } => {
+                    if let Some(d) = check_edge_glider_sparse(prog, s.sparse_entries()) {
+                        PipelineStepOutcome::Inf {
+                            decider: d,
+                            steps: s.steps(),
+                        }
+                    } else {
+                        PipelineStepOutcome::Undecided
+                    }
+                }
             }
         }
         PipelineStageKind::EdgeGliderCurrent => {

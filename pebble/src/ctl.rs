@@ -1303,17 +1303,41 @@ pub fn decide_ctl(program: &Program, max_steps: u64) -> Option<Decider> {
     None
 }
 
-/// Run CTL decider sampling tapes starting from an existing `sim` state, returning full outcome.
-pub fn decide_ctl_from_sim_outcome(
+/// Run CTL decider sampling tapes starting from an existing `sim` state with customizable parameters.
+pub fn decide_ctl_from_sim_outcome_with_params(
     program: &Program,
     sim: &mut Simulator,
     max_steps: u64,
+    max_states: usize,
+    floors: &[usize],
+    moduli: &[usize],
 ) -> StepDeciderOutcome {
+    let default_floors = [6];
+    let effective_floors: &[usize] = if floors.is_empty() {
+        &default_floors
+    } else {
+        floors
+    };
+    let effective_moduli: Option<&[usize]> = if moduli.is_empty() {
+        None
+    } else {
+        Some(moduli)
+    };
+
     for _ in 0..=max_steps {
         if sim.steps() % 4 == 0 {
-            if let TapeProofResult::Proved(proof) =
-                try_prove_ctl_from_tape(program, &sim.cells(), sim.steps(), 1024)
-            {
+            if let TapeProofResult::Proved(proof) = try_prove_ctl_from_tape_with_floors_and_method(
+                program,
+                &sim.cells(),
+                sim.steps(),
+                max_states,
+                2,
+                effective_floors,
+                effective_moduli,
+                CtlSearchMethod::Exhaustive,
+                false,
+                None,
+            ) {
                 return StepDeciderOutcome::Proved(Decider::Ctl(Some(proof)));
             }
         }
@@ -1329,6 +1353,15 @@ pub fn decide_ctl_from_sim_outcome(
         }
     }
     StepDeciderOutcome::Undecided
+}
+
+/// Run CTL decider sampling tapes starting from an existing `sim` state, returning full outcome.
+pub fn decide_ctl_from_sim_outcome(
+    program: &Program,
+    sim: &mut Simulator,
+    max_steps: u64,
+) -> StepDeciderOutcome {
+    decide_ctl_from_sim_outcome_with_params(program, sim, max_steps, 1024, &[6], &[1, 2, 3, 4, 6, 12])
 }
 
 /// Run CTL decider sampling tapes starting from an existing `sim` state.

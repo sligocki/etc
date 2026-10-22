@@ -1,16 +1,16 @@
 use crate::deciders::{
-    check_edge_glider_sparse, decide_bouncer_outcome, decide_ctl_from_sim_outcome,
-    decide_cycler_from_sim, decide_separated_components_from_sim, decide_static_backtrack,
-    Decider, StepDeciderOutcome,
+    check_edge_glider_sparse, decide_bouncer_outcome, decide_ctl_from_sim_outcome_with_params,
+    decide_cycler_from_sim, decide_separated_components_from_sim, decide_static_backtrack, Decider,
+    StepDeciderOutcome,
 };
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
+use std::fmt;
 use std::time::{Duration, Instant};
 
 /// Individual pipeline stage identifier in order of execution.
-/// Kind of pipeline step executed during enumeration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PipelineStageKind {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PipelineStage {
     /// Simulation of the program up to `steps` (including prefix branching).
     Simulation { steps: u64 },
     /// Static backtracking analysis on program rules.
@@ -24,93 +24,108 @@ pub enum PipelineStageKind {
     /// Bouncer detection up to `steps`.
     Bouncer { steps: u64 },
     /// CTL regular language verification up to `steps`.
-    Ctl { steps: u64 },
-    /// Extended simulation continuing from current step count up to `steps`.
-    ExtendedSim { steps: u64 },
+    Ctl {
+        steps: u64,
+        max_states: usize,
+        floors: Vec<usize>,
+        moduli: Vec<usize>,
+    },
 }
 
-impl PipelineStageKind {
+impl PipelineStage {
     /// Returns true if this stage is a mathematical decider (as opposed to raw simulation).
     #[inline]
     pub fn is_decider(&self) -> bool {
-        !matches!(
-            self,
-            PipelineStageKind::Simulation { .. } | PipelineStageKind::ExtendedSim { .. }
-        )
+        !matches!(self, PipelineStage::Simulation { .. })
+    }
+
+    /// Automatically generates a descriptive name based on the stage type and its parameters.
+    pub fn name(&self) -> String {
+        match self {
+            PipelineStage::StaticBacktrack => "StaticBacktrack".to_string(),
+            PipelineStage::Simulation { steps } => format!("Simulation ({steps} steps)"),
+            PipelineStage::EdgeGliderCurrent => "EdgeGliderCurrent".to_string(),
+            PipelineStage::Cycler { steps } => format!("Cycler / TransCycler ({steps} steps)"),
+            PipelineStage::SeparatedComponents { steps } => {
+                format!("SeparatedComponents ({steps} steps)")
+            }
+            PipelineStage::Bouncer { steps } => format!("Bouncer ({steps} steps)"),
+            PipelineStage::Ctl {
+                steps,
+                max_states,
+                floors,
+                moduli,
+            } => {
+                let default_floors = &[6];
+                let default_moduli = &[1, 2, 3, 4, 6, 12];
+                if *max_states == 1024
+                    && floors.as_slice() == default_floors
+                    && moduli.as_slice() == default_moduli
+                {
+                    format!("CTL ({steps} steps)")
+                } else {
+                    let mut extra = Vec::new();
+                    if *max_states != 1024 {
+                        extra.push(format!("states={max_states}"));
+                    }
+                    if floors.as_slice() != default_floors {
+                        extra.push(format!("floors={floors:?}"));
+                    }
+                    if moduli.as_slice() != default_moduli {
+                        extra.push(format!("moduli={moduli:?}"));
+                    }
+                    format!("CTL ({steps} steps, {})", extra.join(", "))
+                }
+            }
+        }
     }
 }
 
-/// Specification of a single stage in the pipeline.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PipelineStageSpec {
-    pub name: String,
-    pub kind: PipelineStageKind,
+impl fmt::Display for PipelineStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name())
+    }
 }
 
 /// Overall pipeline configuration defining the execution stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PipelineConfig {
-    pub initial_steps: u64,
-    pub stages: Vec<PipelineStageSpec>,
+    pub stages: Vec<PipelineStage>,
 }
 
 impl PipelineConfig {
     /// Generates the data-driven default pipeline configuration for a given program size and maximum steps.
     pub fn default_for(_size: usize, early_steps: u64, deep_steps: u64) -> Self {
+        let default_floors = vec![6];
+        let default_moduli = vec![1, 2, 3, 4, 6, 12];
         let mut stages = vec![
-            PipelineStageSpec {
-                name: "StaticBacktrack".to_string(),
-                kind: PipelineStageKind::StaticBacktrack,
-            },
-            PipelineStageSpec {
-                name: format!("Simulation ({early_steps} steps)"),
-                kind: PipelineStageKind::Simulation { steps: early_steps },
-            },
-            PipelineStageSpec {
-                name: format!("Cycler / TransCycler ({early_steps} steps)"),
-                kind: PipelineStageKind::Cycler { steps: early_steps },
-            },
-            PipelineStageSpec {
-                name: format!("SeparatedComponents ({early_steps} steps)"),
-                kind: PipelineStageKind::SeparatedComponents { steps: early_steps },
-            },
-            PipelineStageSpec {
-                name: format!("Bouncer ({early_steps} steps)"),
-                kind: PipelineStageKind::Bouncer { steps: early_steps },
-            },
-            PipelineStageSpec {
-                name: format!("CTL ({early_steps} steps)"),
-                kind: PipelineStageKind::Ctl { steps: early_steps },
+            PipelineStage::StaticBacktrack,
+            PipelineStage::Simulation { steps: early_steps },
+            PipelineStage::Cycler { steps: early_steps },
+            PipelineStage::SeparatedComponents { steps: early_steps },
+            PipelineStage::Bouncer { steps: early_steps },
+            PipelineStage::Ctl {
+                steps: early_steps,
+                max_states: 1024,
+                floors: default_floors.clone(),
+                moduli: default_moduli.clone(),
             },
         ];
 
         if deep_steps > early_steps {
-            stages.push(PipelineStageSpec {
-                name: format!("Simulation ({deep_steps} steps)"),
-                kind: PipelineStageKind::ExtendedSim { steps: deep_steps },
-            });
-            stages.push(PipelineStageSpec {
-                name: format!("Cycler / TransCycler ({deep_steps} steps)"),
-                kind: PipelineStageKind::Cycler { steps: deep_steps },
-            });
-            stages.push(PipelineStageSpec {
-                name: format!("SeparatedComponents ({deep_steps} steps)"),
-                kind: PipelineStageKind::SeparatedComponents { steps: deep_steps },
-            });
-            stages.push(PipelineStageSpec {
-                name: format!("Bouncer ({deep_steps} steps)"),
-                kind: PipelineStageKind::Bouncer { steps: deep_steps },
-            });
-            stages.push(PipelineStageSpec {
-                name: format!("CTL ({deep_steps} steps)"),
-                kind: PipelineStageKind::Ctl { steps: deep_steps },
+            stages.push(PipelineStage::Simulation { steps: deep_steps });
+            stages.push(PipelineStage::Cycler { steps: deep_steps });
+            stages.push(PipelineStage::SeparatedComponents { steps: deep_steps });
+            stages.push(PipelineStage::Bouncer { steps: deep_steps });
+            stages.push(PipelineStage::Ctl {
+                steps: deep_steps,
+                max_states: 1024,
+                floors: default_floors,
+                moduli: default_moduli,
             });
         }
 
-        Self {
-            initial_steps: early_steps,
-            stages,
-        }
+        Self { stages }
     }
 
     /// Index of the primary simulation stage in `stages`.
@@ -118,7 +133,7 @@ impl PipelineConfig {
     pub fn sim_stage_index(&self) -> usize {
         self.stages
             .iter()
-            .position(|s| matches!(s.kind, PipelineStageKind::Simulation { .. }))
+            .position(|s| matches!(s, PipelineStage::Simulation { .. }))
             .unwrap_or(0)
     }
 }
@@ -245,7 +260,7 @@ impl EnumStats {
             .stages
             .iter()
             .map(|s| StageReport {
-                name: s.name.clone(),
+                name: s.name(),
                 metrics: StageMetrics::default(),
             })
             .collect();
@@ -564,12 +579,12 @@ pub enum PipelineStepOutcome {
 
 #[inline]
 pub fn run_stage(
-    stage: &PipelineStageSpec,
+    stage: &PipelineStage,
     prog: &Program,
     sim: &mut Option<Simulator>,
 ) -> PipelineStepOutcome {
-    match stage.kind {
-        PipelineStageKind::StaticBacktrack => {
+    match stage {
+        PipelineStage::StaticBacktrack => {
             if let Some(d) = decide_static_backtrack(prog) {
                 let steps = sim.as_ref().map_or(0, |s| s.steps());
                 PipelineStepOutcome::Inf { decider: d, steps }
@@ -577,10 +592,10 @@ pub fn run_stage(
                 PipelineStepOutcome::Undecided
             }
         }
-        PipelineStageKind::Simulation { steps } => {
+        PipelineStage::Simulation { steps } => {
             let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
-            let outcome = if s.steps() < steps {
-                s.run(prog, steps)
+            let outcome = if s.steps() < *steps {
+                s.run(prog, *steps)
             } else {
                 SimOutcome::Unknown { steps: s.steps() }
             };
@@ -604,7 +619,7 @@ pub fn run_stage(
                 }
             }
         }
-        PipelineStageKind::EdgeGliderCurrent => {
+        PipelineStage::EdgeGliderCurrent => {
             let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
             if let Some(d) = check_edge_glider_sparse(prog, s.sparse_entries()) {
                 PipelineStepOutcome::Inf {
@@ -615,9 +630,9 @@ pub fn run_stage(
                 PipelineStepOutcome::Undecided
             }
         }
-        PipelineStageKind::Cycler { steps } => {
+        PipelineStage::Cycler { steps } => {
             let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
-            let res = decide_cycler_from_sim(prog, s, steps);
+            let res = decide_cycler_from_sim(prog, s, *steps);
             match res {
                 StepDeciderOutcome::Proved(d) => PipelineStepOutcome::Inf {
                     decider: d,
@@ -630,9 +645,9 @@ pub fn run_stage(
                 StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
             }
         }
-        PipelineStageKind::SeparatedComponents { steps } => {
+        PipelineStage::SeparatedComponents { steps } => {
             let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
-            let res = decide_separated_components_from_sim(prog, s, steps);
+            let res = decide_separated_components_from_sim(prog, s, *steps);
             match res {
                 StepDeciderOutcome::Proved(d) => PipelineStepOutcome::Inf {
                     decider: d,
@@ -645,8 +660,8 @@ pub fn run_stage(
                 StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
             }
         }
-        PipelineStageKind::Bouncer { steps } => {
-            let res = decide_bouncer_outcome(prog, steps);
+        PipelineStage::Bouncer { steps } => {
+            let res = decide_bouncer_outcome(prog, *steps);
             match res {
                 StepDeciderOutcome::Proved(d) => {
                     let s_steps = sim.as_ref().map_or(0, |s| s.steps());
@@ -662,9 +677,21 @@ pub fn run_stage(
                 StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
             }
         }
-        PipelineStageKind::Ctl { steps } => {
+        PipelineStage::Ctl {
+            steps,
+            max_states,
+            floors,
+            moduli,
+        } => {
             let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
-            let res = decide_ctl_from_sim_outcome(prog, s, steps);
+            let res = decide_ctl_from_sim_outcome_with_params(
+                prog,
+                s,
+                *steps,
+                *max_states,
+                floors,
+                moduli,
+            );
             match res {
                 StepDeciderOutcome::Proved(d) => {
                     let proof_steps = match d {
@@ -681,33 +708,6 @@ pub fn run_stage(
                     PipelineStepOutcome::Split { pebbles, steps }
                 }
                 StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
-            }
-        }
-        PipelineStageKind::ExtendedSim { steps } => {
-            let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
-            let outcome = if s.steps() < steps {
-                s.run(prog, steps)
-            } else {
-                SimOutcome::Unknown { steps: s.steps() }
-            };
-            match outcome {
-                SimOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
-                SimOutcome::MissingRule { pebbles, steps } => {
-                    PipelineStepOutcome::Split { pebbles, steps }
-                }
-                SimOutcome::Inf { decider, steps } => {
-                    PipelineStepOutcome::Inf { decider, steps }
-                }
-                SimOutcome::Unknown { .. } => {
-                    if let Some(d) = check_edge_glider_sparse(prog, s.sparse_entries()) {
-                        PipelineStepOutcome::Inf {
-                            decider: d,
-                            steps: s.steps(),
-                        }
-                    } else {
-                        PipelineStepOutcome::Undecided
-                    }
-                }
             }
         }
     }
@@ -733,7 +733,7 @@ pub fn evaluate_pipeline(
     let mut sim: Option<Simulator> = None;
 
     for (stage_idx, stage) in pipeline.stages.iter().enumerate() {
-        if !use_deciders && stage.kind.is_decider() {
+        if !use_deciders && stage.is_decider() {
             continue;
         }
 
@@ -1247,5 +1247,47 @@ mod tests {
         assert_eq!(stats1.ctl_floor_counts.get(&12), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&1), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&2), Some(&1));
+    }
+
+    #[test]
+    fn test_pipeline_config_and_stage_names() {
+        let pipeline = PipelineConfig {
+            stages: vec![
+                PipelineStage::StaticBacktrack,
+                PipelineStage::Simulation { steps: 50 },
+                PipelineStage::Cycler { steps: 50 },
+                PipelineStage::SeparatedComponents { steps: 50 },
+                PipelineStage::Bouncer { steps: 50 },
+                PipelineStage::Ctl {
+                    steps: 50,
+                    max_states: 1024,
+                    floors: vec![6],
+                    moduli: vec![1, 2, 3, 4, 6, 12],
+                },
+                PipelineStage::Simulation { steps: 10_000 },
+                PipelineStage::Ctl {
+                    steps: 10_000,
+                    max_states: 8000,
+                    floors: vec![6, 8, 10],
+                    moduli: vec![1, 2, 4],
+                },
+            ],
+        };
+
+        assert_eq!(pipeline.stages[0].name(), "StaticBacktrack");
+        assert_eq!(pipeline.stages[1].name(), "Simulation (50 steps)");
+        assert_eq!(pipeline.stages[2].name(), "Cycler / TransCycler (50 steps)");
+        assert_eq!(pipeline.stages[3].name(), "SeparatedComponents (50 steps)");
+        assert_eq!(pipeline.stages[4].name(), "Bouncer (50 steps)");
+        assert_eq!(pipeline.stages[5].name(), "CTL (50 steps)");
+        assert_eq!(pipeline.stages[6].name(), "Simulation (10000 steps)");
+        assert_eq!(
+            pipeline.stages[7].name(),
+            "CTL (10000 steps, states=8000, floors=[6, 8, 10], moduli=[1, 2, 4])"
+        );
+
+        let stats = EnumStats::with_pipeline(5, 10_000, &pipeline);
+        assert_eq!(stats.stages.len(), 8);
+        assert_eq!(stats.stages[7].name, pipeline.stages[7].name());
     }
 }

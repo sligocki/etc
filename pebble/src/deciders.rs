@@ -643,7 +643,10 @@ pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
 }
 
 /// Decider 5: Closed Tape Language (CTL) regular-set non-halting prover.
-pub use crate::ctl::{decide_ctl, decide_ctl_from_sim, decide_ctl_from_sim_outcome};
+pub use crate::ctl::{
+    decide_ctl, decide_ctl_from_sim, decide_ctl_from_sim_outcome,
+    decide_ctl_from_sim_outcome_with_params,
+};
 
 
 /// Decider 6: StaticBacktrack.

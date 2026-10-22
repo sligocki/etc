@@ -8,22 +8,6 @@ description = "Busy Beaver simulator and enumerator for 1D Pebble Automata"
 name = "pebble"
 path = "src/lib.rs"
 
-[[bin]]
-name = "sim"
-path = "src/bin/sim.rs"
-
-[[bin]]
-name = "enum"
-path = "src/bin/enum.rs"
-
-[[bin]]
-name = "bench_deciders"
-path = "src/bin/bench_deciders.rs"
-
-[[bin]]
-name = "ctl"
-path = "src/bin/ctl.rs"
-
 [dependencies]
 rayon = "1.12.0"
 clap = { version = "4", features = ["derive"] }

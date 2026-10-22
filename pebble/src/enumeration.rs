@@ -3,9 +3,12 @@ use crate::deciders::{
     decide_cycler_from_sim, decide_separated_components_from_sim, decide_static_backtrack, Decider,
     StepDeciderOutcome,
 };
+use crate::io::{format_count, write_records_to_file, ProgramRecord};
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
+use clap::Parser;
 use std::fmt;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// Individual pipeline stage identifier in order of execution.
@@ -134,6 +137,18 @@ impl PipelineConfig {
         self.stages
             .iter()
             .position(|s| matches!(s, PipelineStage::Simulation { .. }))
+            .unwrap_or(0)
+    }
+
+    /// Returns the maximum simulation step count found in any stage of the pipeline.
+    pub fn max_simulation_steps(&self) -> u64 {
+        self.stages
+            .iter()
+            .filter_map(|s| match s {
+                PipelineStage::Simulation { steps } => Some(*steps),
+                _ => None,
+            })
+            .max()
             .unwrap_or(0)
     }
 }
@@ -897,14 +912,10 @@ impl ProgressSnapshot {
     }
 }
 
-/// Enumerate all TNF programs of `size` in parallel using Rayon, returning the exact
-/// `EnumStats` and any collected `EnumEntry` items matching `filter_entry`.
-///
-/// Calls `on_progress` periodically with a live `ProgressSnapshot`.
-pub fn enumerate_parallel<F, P>(
+/// Enumerate all TNF programs of `size` in parallel using Rayon and a custom `PipelineConfig`.
+pub fn enumerate_parallel_with_pipeline<F, P>(
     size: usize,
-    early_steps: u64,
-    deep_steps: u64,
+    pipeline: PipelineConfig,
     use_deciders: bool,
     break_symmetry: bool,
     collect_entries: bool,
@@ -920,11 +931,11 @@ where
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
 
+    let deep_steps = pipeline.max_simulation_steps();
     if size == 0 {
-        return (EnumStats::new(0, early_steps, deep_steps), Vec::new());
+        return (EnumStats::with_pipeline(0, deep_steps, &pipeline), Vec::new());
     }
 
-    let pipeline = PipelineConfig::default_for(size, early_steps, deep_steps);
     let rule_table: Vec<Vec<Rule>> = (1..=size as u8).map(Rule::all_for_pebbles).collect();
     let mut frontier_metrics = vec![StageMetrics::default(); pipeline.stages.len()];
     let frontier = build_frontier(
@@ -1060,6 +1071,330 @@ where
     }
 
     (final_stats, final_entries)
+}
+
+/// Enumerate all TNF programs of `size` in parallel using Rayon, returning the exact
+/// `EnumStats` and any collected `EnumEntry` items matching `filter_entry`.
+///
+/// Calls `on_progress` periodically with a live `ProgressSnapshot`.
+pub fn enumerate_parallel<F, P>(
+    size: usize,
+    early_steps: u64,
+    deep_steps: u64,
+    use_deciders: bool,
+    break_symmetry: bool,
+    collect_entries: bool,
+    holdouts_only: bool,
+    on_progress: P,
+    filter_fn: F,
+) -> (EnumStats, Vec<EnumEntry>)
+where
+    F: Fn(&ProgressSnapshot) -> bool + Sync,
+    P: Fn(&ProgressSnapshot) + Sync,
+{
+    let pipeline = PipelineConfig::default_for(size, early_steps, deep_steps);
+    enumerate_parallel_with_pipeline(
+        size,
+        pipeline,
+        use_deciders,
+        break_symmetry,
+        collect_entries,
+        holdouts_only,
+        on_progress,
+        filter_fn,
+    )
+}
+
+/// Formats a `Duration` into a clean human-readable string.
+pub fn format_duration(d: Duration) -> String {
+    let nanos = d.as_nanos();
+    if nanos < 1_000 {
+        format!("{nanos} ns")
+    } else if nanos < 1_000_000 {
+        format!("{:.2} µs", nanos as f64 / 1_000.0)
+    } else if nanos < 1_000_000_000 {
+        format!("{:.2} ms", nanos as f64 / 1_000_000.0)
+    } else {
+        format!("{:.2} s", nanos as f64 / 1_000_000_000.0)
+    }
+}
+
+/// Parses a human duration string (e.g. "10s", "500ms") into a `Duration`.
+pub fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
+    let s = raw.trim();
+    if let Some(ms_str) = s.strip_suffix("ms") {
+        let ms: f64 = ms_str
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid duration '{raw}'"))?;
+        if ms < 0.0 || !ms.is_finite() {
+            return Err(format!("invalid duration '{raw}'"));
+        }
+        return Ok(Duration::from_secs_f64(ms / 1000.0));
+    }
+    let secs_str = s.strip_suffix('s').unwrap_or(s).trim();
+    let secs: f64 = secs_str
+        .parse()
+        .map_err(|_| format!("invalid duration '{raw}'"))?;
+    if secs < 0.0 || !secs.is_finite() {
+        return Err(format!("invalid duration '{raw}'"));
+    }
+    Ok(Duration::from_secs_f64(secs))
+}
+
+/// Prints the formatted summary and decider metrics report for an enumeration run.
+pub fn print_enum_report(stats: &EnumStats, elapsed: Duration, use_deciders: bool) {
+    let secs = elapsed.as_secs_f64();
+    let programs_per_sec = if secs > 0.0 {
+        stats.total_programs as f64 / secs
+    } else {
+        stats.total_programs as f64
+    };
+
+    println!("=== Final Statistics (peBBle({}), max_steps = {}) ===", stats.size, stats.max_steps);
+    println!("Total programs:         {}", format_count(stats.total_programs));
+    println!(
+        "Halted programs:        {} ({:.2}%)",
+        format_count(stats.halted_programs),
+        stats.halted_percentage()
+    );
+    if use_deciders {
+        println!(
+            "Infinite programs:      {} ({:.2}%)",
+            format_count(stats.inf_programs),
+            stats.inf_percentage()
+        );
+    }
+    println!(
+        "Unknown programs:       {} ({:.2}%)",
+        format_count(stats.unknown_programs()),
+        stats.unknown_percentage()
+    );
+    match (&stats.max_halting_steps, &stats.champion) {
+        (Some(max_s), Some(champ)) => {
+            println!("Max halting step count: {}", format_count(*max_s));
+            println!("Champion program:       {champ}");
+        }
+        _ => {
+            println!("Max halting step count: none");
+        }
+    }
+    println!("Wallclock runtime:      {:.3?}", elapsed);
+    println!("Throughput:             {} programs/s", format_count(programs_per_sec as u64));
+
+    if use_deciders {
+        println!();
+        println!("=== Pipeline & Decider Performance ===");
+        println!(
+            "{:<48} {:>12} {:>12} {:>12} {:>12} {:>14} {:>14}",
+            "Stage / Decider", "Run On", "Split On", "Halted", "Inf", "Total Time", "Avg / Prog"
+        );
+        println!("{:-<120}", "");
+        for stage in &stats.stages {
+            let m = &stage.metrics;
+            let tot_time_str = format_duration(m.total_time());
+            let avg_time_str = m
+                .avg_time()
+                .map(format_duration)
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "{:<48} {:>12} {:>12} {:>12} {:>12} {:>14} {:>14}",
+                stage.name,
+                format_count(m.invocations),
+                format_count(m.splits),
+                format_count(m.decided_halting),
+                format_count(m.decided_inf),
+                tot_time_str,
+                avg_time_str,
+            );
+        }
+        println!("{:-<120}", "");
+
+        if stats.ctl_proofs_count > 0 {
+            println!();
+            println!(
+                "=== CTL Proof Statistics ({} proved) ===",
+                format_count(stats.ctl_proofs_count)
+            );
+            let avg_steps = stats.ctl_total_steps as f64 / stats.ctl_proofs_count as f64;
+            println!(
+                "Steps:            min = {}, avg = {:.1}, max = {}",
+                format_count(stats.ctl_min_steps),
+                avg_steps,
+                format_count(stats.ctl_max_steps)
+            );
+            let avg_states = stats.ctl_total_states as f64 / stats.ctl_proofs_count as f64;
+            println!(
+                "States:           min = {}, avg = {:.1}, max = {}",
+                format_count(stats.ctl_min_states as u64),
+                avg_states,
+                format_count(stats.ctl_max_states as u64)
+            );
+
+            let floor_str = stats
+                .ctl_floor_counts
+                .iter()
+                .map(|(f, c)| format!("floor={f} ({})", format_count(*c)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("Floors:           {}", floor_str);
+
+            let mod_str = stats
+                .ctl_mod_counts
+                .iter()
+                .map(|(m, c)| format!("mod={m} ({})", format_count(*c)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("Moduli:           {}", mod_str);
+        }
+    }
+}
+
+/// Standard command line options for custom enumeration binaries.
+#[derive(Parser, Debug)]
+#[command(
+    about = "Enumerate pebble programs in Tree Normal Form (TNF) with custom pipeline.",
+    version
+)]
+pub struct CustomPipelineCli {
+    /// Number of Rayon worker threads (default: all cores)
+    #[arg(short = 'j', long = "threads")]
+    pub threads: Option<usize>,
+
+    /// Progress update interval in seconds (default: 10s)
+    #[arg(short = 'p', long = "progress", default_value = "10s", value_parser = parse_duration_arg)]
+    pub progress: Duration,
+
+    /// Write program results to <FILE>
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<PathBuf>,
+
+    /// When using -o, only write undecided holdout programs
+    #[arg(long = "holdouts-only")]
+    pub holdouts_only: bool,
+
+    /// Disable non-halting decider pipeline on holdouts
+    #[arg(long = "no-deciders")]
+    pub no_deciders: bool,
+
+    /// Disable left-right symmetry reduction (enumerate full space)
+    #[arg(long = "no-symmetry", visible_alias = "all-symmetries")]
+    pub no_symmetry: bool,
+
+    /// Enable left-right symmetry reduction (default: true)
+    #[arg(long = "symmetry")]
+    pub symmetry: bool,
+}
+
+/// Convenience driver for custom size binaries (`bb8`, `bb9`, `bb10`, etc.).
+pub fn run_enumeration_cli(size: usize, pipeline: PipelineConfig) {
+    let cli = CustomPipelineCli::parse();
+
+    if let Some(threads) = cli.threads {
+        if let Err(err) = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+        {
+            eprintln!("Error configuring Rayon thread pool: {err}");
+            std::process::exit(1);
+        }
+    }
+
+    let use_deciders = !cli.no_deciders;
+    let break_symmetry = !cli.no_symmetry || cli.symmetry;
+    let progress_interval = cli.progress;
+    let output_path = cli.output;
+    let holdouts_only = cli.holdouts_only;
+
+    println!("=== Pebble Automaton Custom Enumerator: bb{size} (TNF) ===");
+    println!("Size (n):         {size}");
+    println!("Max sim steps:    {}", pipeline.max_simulation_steps());
+    println!("Stages ({}):", pipeline.stages.len());
+    for (i, stage) in pipeline.stages.iter().enumerate() {
+        println!("  {}. {}", i + 1, stage.name());
+    }
+    println!("Threads:          {}", rayon::current_num_threads());
+    println!("Deciders:         {}", if use_deciders { "enabled" } else { "disabled" });
+    println!(
+        "Symmetry:         {}",
+        if break_symmetry {
+            "reduced (breaking left-right mirror symmetry)"
+        } else {
+            "full"
+        }
+    );
+    println!();
+
+    let start = Instant::now();
+    let last_report = std::sync::Mutex::new(Instant::now());
+
+    let should_report = |_snap: &ProgressSnapshot| -> bool {
+        if progress_interval.is_zero() {
+            return false;
+        }
+        last_report
+            .try_lock()
+            .map(|t| t.elapsed() >= progress_interval)
+            .unwrap_or(false)
+    };
+
+    let on_progress = |snap: &ProgressSnapshot| {
+        if let Ok(mut t) = last_report.lock() {
+            *t = Instant::now();
+        }
+        let tot_f = snap.total_programs.max(1) as f64;
+        let halt_pct = (snap.halted_programs as f64 / tot_f) * 100.0;
+        let inf_pct = (snap.inf_programs as f64 / tot_f) * 100.0;
+        let unk_pct = (snap.unknown_programs as f64 / tot_f) * 100.0;
+        let max_steps_str = snap
+            .max_halting_steps
+            .map(format_count)
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "[Progress] programs: {} | halted: {} ({:.2}%) | inf: {} ({:.2}%) | unknown: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
+            format_count(snap.total_programs),
+            format_count(snap.halted_programs),
+            halt_pct,
+            format_count(snap.inf_programs),
+            inf_pct,
+            format_count(snap.unknown_programs),
+            unk_pct,
+            max_steps_str,
+            start.elapsed()
+        );
+    };
+
+    let (stats, entries) = enumerate_parallel_with_pipeline(
+        size,
+        pipeline,
+        use_deciders,
+        break_symmetry,
+        output_path.is_some(),
+        holdouts_only,
+        on_progress,
+        should_report,
+    );
+
+    let elapsed = start.elapsed();
+
+    if let Some(ref path) = output_path {
+        let records_to_write: Vec<ProgramRecord> = entries
+            .into_iter()
+            .map(|e| ProgramRecord::new(e.program, Some(e.outcome)))
+            .collect();
+        if let Err(err) = write_records_to_file(path, &records_to_write) {
+            eprintln!("Error writing output file '{}': {err}", path.display());
+            std::process::exit(1);
+        }
+        println!(
+            "Wrote {} records to {}",
+            format_count(records_to_write.len() as u64),
+            path.display()
+        );
+        println!();
+    }
+
+    print_enum_report(&stats, elapsed, use_deciders);
 }
 
 #[cfg(test)]

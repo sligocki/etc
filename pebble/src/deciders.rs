@@ -146,6 +146,16 @@ pub enum StepDeciderOutcome {
     Undecided,
 }
 
+impl StepDeciderOutcome {
+    #[inline]
+    pub fn proved(self) -> Option<Decider> {
+        match self {
+            StepDeciderOutcome::Proved(d) => Some(d),
+            _ => None,
+        }
+    }
+}
+
 /// Decider 2: Simulate `program` up to `max_steps` and detect `Cycler` (`dx == 0`)
 /// or `TranslatedCycler` (`dx != 0`).
 pub fn decide_cycler(program: &Program, max_steps: u64) -> Option<Decider> {
@@ -489,10 +499,8 @@ struct BounceCandidate {
     g_1: usize,
 }
 
-/// Decider 4: Simulate `program` up to `max_steps` and detect a Level-1 `Bouncer`
-/// (a period-1 shuttle bouncing between two stationary walls `W_L` and `W_R` with a growing gap
-/// while each wall stays causally isolated during the opposite bounce).
-pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
+/// Decider 4: Simulate `program` up to `max_steps` and detect a Level-1 `Bouncer` returning full `StepDeciderOutcome`.
+pub fn decide_bouncer_outcome(program: &Program, max_steps: u64) -> StepDeciderOutcome {
     let mut sim = Simulator::new(program.size());
     let mut waiting_opposite: Vec<BounceCandidate> = Vec::new();
     let mut waiting_return: Vec<BounceCandidate> = Vec::new();
@@ -532,7 +540,7 @@ pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
                         && tr.w_r == cand.w_r
                         && tr.total_gap > cand.g_1
                     {
-                        return Some(Decider::Bouncer);
+                        return StepDeciderOutcome::Proved(Decider::Bouncer);
                     }
                 }
                 next_return.push(cand);
@@ -615,15 +623,27 @@ pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
             waiting_return = next_return;
         }
 
-        if sim.step(program) != StepResult::Stepped {
-            return None;
+        match sim.step(program) {
+            StepResult::Stepped => {}
+            StepResult::Halted => return StepDeciderOutcome::Halted { steps: sim.steps() },
+            StepResult::MissingRule(pebbles) => {
+                return StepDeciderOutcome::MissingRule {
+                    pebbles,
+                    steps: sim.steps(),
+                };
+            }
         }
     }
-    None
+    StepDeciderOutcome::Undecided
+}
+
+/// Decider 4: Search for a recurrent bouncer with a contracting/bounded core.
+pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
+    decide_bouncer_outcome(program, max_steps).proved()
 }
 
 /// Decider 5: Closed Tape Language (CTL) regular-set non-halting prover.
-pub use crate::ctl::{decide_ctl, decide_ctl_from_sim};
+pub use crate::ctl::{decide_ctl, decide_ctl_from_sim, decide_ctl_from_sim_outcome};
 
 
 /// Decider 6: StaticBacktrack.

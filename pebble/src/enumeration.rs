@@ -1,6 +1,7 @@
 use crate::deciders::{
-    check_edge_glider_sparse, decide_bouncer, decide_ctl_from_sim, decide_cycler_from_sim,
-    decide_separated_components_from_sim, decide_static_backtrack, Decider, StepDeciderOutcome,
+    check_edge_glider_sparse, decide_bouncer_outcome, decide_ctl_from_sim_outcome,
+    decide_cycler_from_sim, decide_separated_components_from_sim, decide_static_backtrack,
+    Decider, StepDeciderOutcome,
 };
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
@@ -28,6 +29,17 @@ pub enum PipelineStageKind {
     ExtendedSim { steps: u64 },
 }
 
+impl PipelineStageKind {
+    /// Returns true if this stage is a mathematical decider (as opposed to raw simulation).
+    #[inline]
+    pub fn is_decider(&self) -> bool {
+        !matches!(
+            self,
+            PipelineStageKind::Simulation { .. } | PipelineStageKind::ExtendedSim { .. }
+        )
+    }
+}
+
 /// Specification of a single stage in the pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PipelineStageSpec {
@@ -47,12 +59,12 @@ impl PipelineConfig {
     pub fn default_for(_size: usize, early_steps: u64, deep_steps: u64) -> Self {
         let mut stages = vec![
             PipelineStageSpec {
-                name: format!("Simulation ({early_steps} steps)"),
-                kind: PipelineStageKind::Simulation { steps: early_steps },
-            },
-            PipelineStageSpec {
                 name: "StaticBacktrack".to_string(),
                 kind: PipelineStageKind::StaticBacktrack,
+            },
+            PipelineStageSpec {
+                name: format!("Simulation ({early_steps} steps)"),
+                kind: PipelineStageKind::Simulation { steps: early_steps },
             },
             PipelineStageSpec {
                 name: "EdgeGlider (sparse)".to_string(),
@@ -107,6 +119,15 @@ impl PipelineConfig {
             initial_steps: early_steps,
             stages,
         }
+    }
+
+    /// Index of the primary simulation stage in `stages`.
+    #[inline]
+    pub fn sim_stage_index(&self) -> usize {
+        self.stages
+            .iter()
+            .position(|s| matches!(s.kind, PipelineStageKind::Simulation { .. }))
+            .unwrap_or(0)
     }
 }
 
@@ -436,8 +457,8 @@ pub struct TnfEnumerator {
     use_deciders: bool,
     break_symmetry: bool,
     pipeline: PipelineConfig,
-    /// DFS stack of `(partial_program, simulator_at_branch_point, is_symmetric)`.
-    stack: Vec<(Program, Simulator, bool)>,
+    /// DFS stack of `(partial_program, is_symmetric)`.
+    stack: Vec<(Program, bool)>,
     /// Precomputed valid rules for each pebble count `1..=size`.
     rule_table: Vec<Vec<Rule>>,
     /// Accumulated runtime and decision metrics across tree traversal.
@@ -496,13 +517,12 @@ impl TnfEnumerator {
         }
         let rule_table: Vec<Vec<Rule>> = (1..=size as u8).map(Rule::all_for_pebbles).collect();
         let initial_prog = Program::empty(size).expect("size > 0");
-        let initial_sim = Simulator::new(size);
         Self {
             max_steps,
             use_deciders,
             break_symmetry,
             pipeline,
-            stack: vec![(initial_prog, initial_sim, break_symmetry)],
+            stack: vec![(initial_prog, break_symmetry)],
             rule_table,
             metrics,
         }
@@ -518,9 +538,9 @@ impl TnfEnumerator {
         self.max_steps
     }
 
-    fn from_subtree(
+    pub fn from_subtree(
         prog: Program,
-        sim: Simulator,
+        _sim: Simulator,
         max_steps: u64,
         use_deciders: bool,
         break_symmetry: bool,
@@ -534,249 +554,257 @@ impl TnfEnumerator {
             use_deciders,
             break_symmetry,
             pipeline,
-            stack: vec![(prog, sim, is_symmetric)],
+            stack: vec![(prog, is_symmetric)],
             rule_table,
             metrics,
         }
     }
 }
 
-#[inline]
-pub fn resolve_leaf_outcome_timed(
-    prog: &Program,
-    sim: &mut Simulator,
-    use_deciders: bool,
-    pipeline: &PipelineConfig,
-    metrics: &mut [StageMetrics],
-) -> SimOutcome {
-    if !use_deciders {
-        return SimOutcome::Unknown { steps: sim.steps() };
-    }
+/// Outcome of evaluating a single stage on a candidate program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PipelineStepOutcome {
+    Inf { decider: Decider, steps: u64 },
+    Halted { steps: u64 },
+    Split { pebbles: u8, steps: u64 },
+    Undecided,
+}
 
-    // Stage 0 is Simulation; subsequent stages are evaluated on holdouts.
-    for (i, spec) in pipeline.stages.iter().enumerate().skip(1) {
-        match spec.kind {
-            PipelineStageKind::Simulation { .. } => unreachable!(),
-            PipelineStageKind::StaticBacktrack => {
-                metrics[i].invocations += 1;
-                let t0 = Instant::now();
-                let res = decide_static_backtrack(prog);
-                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                if let Some(decider) = res {
-                    metrics[i].decided_inf += 1;
-                    return SimOutcome::Inf {
-                        decider,
-                        steps: sim.steps(),
+#[inline]
+pub fn run_stage(
+    stage: &PipelineStageSpec,
+    prog: &Program,
+    sim: &mut Option<Simulator>,
+) -> PipelineStepOutcome {
+    match stage.kind {
+        PipelineStageKind::StaticBacktrack => {
+            if let Some(d) = decide_static_backtrack(prog) {
+                let steps = sim.as_ref().map_or(0, |s| s.steps());
+                PipelineStepOutcome::Inf { decider: d, steps }
+            } else {
+                PipelineStepOutcome::Undecided
+            }
+        }
+        PipelineStageKind::Simulation { steps } => {
+            let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
+            let outcome = if s.steps() < steps {
+                s.run(prog, steps)
+            } else {
+                SimOutcome::Unknown { steps: s.steps() }
+            };
+            match outcome {
+                SimOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
+                SimOutcome::MissingRule { pebbles, steps } => {
+                    PipelineStepOutcome::Split { pebbles, steps }
+                }
+                SimOutcome::Inf { decider, steps } => {
+                    PipelineStepOutcome::Inf { decider, steps }
+                }
+                SimOutcome::Unknown { .. } => PipelineStepOutcome::Undecided,
+            }
+        }
+        PipelineStageKind::EdgeGliderCurrent => {
+            let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
+            if let Some(d) = check_edge_glider_sparse(prog, s.sparse_entries()) {
+                PipelineStepOutcome::Inf {
+                    decider: d,
+                    steps: s.steps(),
+                }
+            } else {
+                PipelineStepOutcome::Undecided
+            }
+        }
+        PipelineStageKind::Cycler { steps } => {
+            let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
+            let res = decide_cycler_from_sim(prog, s, steps);
+            match res {
+                StepDeciderOutcome::Proved(d) => PipelineStepOutcome::Inf {
+                    decider: d,
+                    steps: s.steps(),
+                },
+                StepDeciderOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
+                StepDeciderOutcome::MissingRule { pebbles, steps } => {
+                    PipelineStepOutcome::Split { pebbles, steps }
+                }
+                StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
+            }
+        }
+        PipelineStageKind::SeparatedComponents { steps } => {
+            let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
+            let res = decide_separated_components_from_sim(prog, s, steps);
+            match res {
+                StepDeciderOutcome::Proved(d) => PipelineStepOutcome::Inf {
+                    decider: d,
+                    steps: s.steps(),
+                },
+                StepDeciderOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
+                StepDeciderOutcome::MissingRule { pebbles, steps } => {
+                    PipelineStepOutcome::Split { pebbles, steps }
+                }
+                StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
+            }
+        }
+        PipelineStageKind::Bouncer { steps } => {
+            let res = decide_bouncer_outcome(prog, steps);
+            match res {
+                StepDeciderOutcome::Proved(d) => {
+                    let s_steps = sim.as_ref().map_or(0, |s| s.steps());
+                    PipelineStepOutcome::Inf {
+                        decider: d,
+                        steps: s_steps,
+                    }
+                }
+                StepDeciderOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
+                StepDeciderOutcome::MissingRule { pebbles, steps } => {
+                    PipelineStepOutcome::Split { pebbles, steps }
+                }
+                StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
+            }
+        }
+        PipelineStageKind::Ctl { steps } => {
+            let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
+            let res = decide_ctl_from_sim_outcome(prog, s, steps);
+            match res {
+                StepDeciderOutcome::Proved(d) => {
+                    let proof_steps = match d {
+                        Decider::Ctl(Some(ref proof)) => proof.num_steps,
+                        _ => s.steps(),
                     };
-                }
-            }
-            PipelineStageKind::EdgeGliderCurrent => {
-                metrics[i].invocations += 1;
-                let t0 = Instant::now();
-                let res = check_edge_glider_sparse(prog, sim.sparse_entries());
-                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                if let Some(decider) = res {
-                    metrics[i].decided_inf += 1;
-                    return SimOutcome::Inf {
-                        decider,
-                        steps: sim.steps(),
-                    };
-                }
-            }
-            PipelineStageKind::Cycler { steps } => {
-                metrics[i].invocations += 1;
-                let t0 = Instant::now();
-                let res = decide_cycler_from_sim(prog, sim, steps);
-                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                match res {
-                    StepDeciderOutcome::Proved(decider) => {
-                        metrics[i].decided_inf += 1;
-                        return SimOutcome::Inf {
-                            decider,
-                            steps: sim.steps(),
-                        };
-                    }
-                    StepDeciderOutcome::Halted { steps } => {
-                        metrics[i].decided_halting += 1;
-                        return SimOutcome::Halted { steps };
-                    }
-                    StepDeciderOutcome::MissingRule { pebbles, steps } => {
-                        metrics[i].splits += 1;
-                        return SimOutcome::MissingRule { pebbles, steps };
-                    }
-                    StepDeciderOutcome::Undecided => {}
-                }
-            }
-            PipelineStageKind::SeparatedComponents { steps } => {
-                metrics[i].invocations += 1;
-                let t0 = Instant::now();
-                let res = decide_separated_components_from_sim(prog, sim, steps);
-                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                match res {
-                    StepDeciderOutcome::Proved(decider) => {
-                        metrics[i].decided_inf += 1;
-                        return SimOutcome::Inf {
-                            decider,
-                            steps: sim.steps(),
-                        };
-                    }
-                    StepDeciderOutcome::Halted { steps } => {
-                        metrics[i].decided_halting += 1;
-                        return SimOutcome::Halted { steps };
-                    }
-                    StepDeciderOutcome::MissingRule { pebbles, steps } => {
-                        metrics[i].splits += 1;
-                        return SimOutcome::MissingRule { pebbles, steps };
-                    }
-                    StepDeciderOutcome::Undecided => {}
-                }
-            }
-            PipelineStageKind::Bouncer { steps } => {
-                metrics[i].invocations += 1;
-                let t0 = Instant::now();
-                let res = decide_bouncer(prog, steps);
-                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                if let Some(decider) = res {
-                    metrics[i].decided_inf += 1;
-                    return SimOutcome::Inf {
-                        decider,
-                        steps: sim.steps(),
-                    };
-                }
-            }
-            PipelineStageKind::Ctl { steps } => {
-                metrics[i].invocations += 1;
-                let t0 = Instant::now();
-                let res = decide_ctl_from_sim(prog, sim, steps);
-                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                if let Some(decider) = res {
-                    metrics[i].decided_inf += 1;
-                    let proof_steps = match decider {
-                        Decider::Ctl(Some(proof)) => proof.num_steps,
-                        _ => sim.steps(),
-                    };
-                    return SimOutcome::Inf {
-                        decider,
+                    PipelineStepOutcome::Inf {
+                        decider: d,
                         steps: proof_steps,
-                    };
+                    }
                 }
+                StepDeciderOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
+                StepDeciderOutcome::MissingRule { pebbles, steps } => {
+                    PipelineStepOutcome::Split { pebbles, steps }
+                }
+                StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
             }
-            PipelineStageKind::ExtendedSim { steps } => {
-                metrics[i].invocations += 1;
-                let t0 = Instant::now();
-                let outcome = if sim.steps() < steps {
-                    sim.run(prog, steps)
-                } else {
-                    SimOutcome::Unknown { steps: sim.steps() }
-                };
-                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                match outcome {
-                    SimOutcome::Halted { steps } => {
-                        metrics[i].decided_halting += 1;
-                        return SimOutcome::Halted { steps };
-                    }
-                    SimOutcome::MissingRule { pebbles, steps } => {
-                        metrics[i].splits += 1;
-                        return SimOutcome::MissingRule { pebbles, steps };
-                    }
-                    SimOutcome::Unknown { .. } => {
-                        if let Some(decider) = check_edge_glider_sparse(prog, sim.sparse_entries()) {
-                            metrics[i].decided_inf += 1;
-                            return SimOutcome::Inf {
-                                decider,
-                                steps: sim.steps(),
-                            };
+        }
+        PipelineStageKind::ExtendedSim { steps } => {
+            let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
+            let outcome = if s.steps() < steps {
+                s.run(prog, steps)
+            } else {
+                SimOutcome::Unknown { steps: s.steps() }
+            };
+            match outcome {
+                SimOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
+                SimOutcome::MissingRule { pebbles, steps } => {
+                    PipelineStepOutcome::Split { pebbles, steps }
+                }
+                SimOutcome::Inf { decider, steps } => {
+                    PipelineStepOutcome::Inf { decider, steps }
+                }
+                SimOutcome::Unknown { .. } => {
+                    if let Some(d) = check_edge_glider_sparse(prog, s.sparse_entries()) {
+                        PipelineStepOutcome::Inf {
+                            decider: d,
+                            steps: s.steps(),
                         }
-                    }
-                    SimOutcome::Inf { decider, steps } => {
-                        metrics[i].decided_inf += 1;
-                        return SimOutcome::Inf { decider, steps };
+                    } else {
+                        PipelineStepOutcome::Undecided
                     }
                 }
             }
         }
     }
+}
 
-    SimOutcome::Unknown { steps: sim.steps() }
+/// Evaluation result of running all pipeline stages on a candidate program.
+pub enum PipelineEvalResult {
+    Done(EnumEntry),
+    Split {
+        children: Vec<(Program, bool)>,
+    },
+}
+
+#[inline]
+pub fn evaluate_pipeline(
+    prog: Program,
+    is_symmetric: bool,
+    use_deciders: bool,
+    pipeline: &PipelineConfig,
+    metrics: &mut [StageMetrics],
+    rule_table: &[Vec<Rule>],
+) -> PipelineEvalResult {
+    let mut sim: Option<Simulator> = None;
+
+    for (stage_idx, stage) in pipeline.stages.iter().enumerate() {
+        if !use_deciders && stage.kind.is_decider() {
+            continue;
+        }
+
+        metrics[stage_idx].invocations += 1;
+        let t0 = Instant::now();
+        let outcome = run_stage(stage, &prog, &mut sim);
+        metrics[stage_idx].total_time_nanos += t0.elapsed().as_nanos() as u64;
+
+        match outcome {
+            PipelineStepOutcome::Inf { decider, steps } => {
+                metrics[stage_idx].decided_inf += 1;
+                return PipelineEvalResult::Done(EnumEntry {
+                    program: prog,
+                    outcome: SimOutcome::Inf { decider, steps },
+                });
+            }
+            PipelineStepOutcome::Halted { steps } => {
+                metrics[stage_idx].decided_halting += 1;
+                return PipelineEvalResult::Done(EnumEntry {
+                    program: prog,
+                    outcome: SimOutcome::Halted { steps },
+                });
+            }
+            PipelineStepOutcome::Split { pebbles, .. } => {
+                metrics[stage_idx].splits += 1;
+                let choices = &rule_table[pebbles as usize - 1];
+                let mut children = Vec::with_capacity(choices.len());
+                for &rule in choices.iter().rev() {
+                    if is_symmetric && rule.left > rule.right {
+                        continue;
+                    }
+                    let child_is_symmetric = is_symmetric && (rule.left == rule.right);
+                    let mut child_prog = prog.clone();
+                    child_prog
+                        .set_rule(pebbles, Some(rule))
+                        .expect("valid rule for pebbles");
+                    children.push((child_prog, child_is_symmetric));
+                }
+                return PipelineEvalResult::Split { children };
+            }
+            PipelineStepOutcome::Undecided => {}
+        }
+    }
+
+    let final_steps = sim.as_ref().map_or(0, |s| s.steps());
+    PipelineEvalResult::Done(EnumEntry {
+        program: prog,
+        outcome: SimOutcome::Unknown { steps: final_steps },
+    })
 }
 
 impl Iterator for TnfEnumerator {
     type Item = EnumEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((prog, mut sim, is_symmetric)) = self.stack.pop() {
-            self.metrics[0].invocations += 1;
-            let t0 = Instant::now();
-            let outcome = sim.run(&prog, self.pipeline.initial_steps);
-            let elapsed_nanos = t0.elapsed().as_nanos() as u64;
-            self.metrics[0].total_time_nanos += elapsed_nanos;
-
-            match outcome {
-                SimOutcome::MissingRule { pebbles, .. } => {
-                    self.metrics[0].splits += 1;
-
-                    let choices = &self.rule_table[pebbles as usize - 1];
-                    // Push in reverse so the stack pops in standard lexicographical order.
-                    for &rule in choices.iter().rev() {
-                        if is_symmetric && rule.left > rule.right {
-                            continue;
-                        }
-                        let child_is_symmetric = is_symmetric && (rule.left == rule.right);
-                        let mut child_prog = prog.clone();
-                        child_prog
-                            .set_rule(pebbles, Some(rule))
-                            .expect("valid rule for pebbles");
-                        let child_sim = sim;
-                        self.stack.push((child_prog, child_sim, child_is_symmetric));
+        while let Some((prog, is_symmetric)) = self.stack.pop() {
+            let res = evaluate_pipeline(
+                prog,
+                is_symmetric,
+                self.use_deciders,
+                &self.pipeline,
+                &mut self.metrics,
+                &self.rule_table,
+            );
+            match res {
+                PipelineEvalResult::Split { children } => {
+                    for child in children {
+                        self.stack.push(child);
                     }
                 }
-                SimOutcome::Halted { steps } => {
-                    self.metrics[0].decided_halting += 1;
-
-                    return Some(EnumEntry {
-                        program: prog,
-                        outcome: SimOutcome::Halted { steps },
-                    });
-                }
-                SimOutcome::Unknown { .. } => {
-                    let outcome = resolve_leaf_outcome_timed(
-                        &prog,
-                        &mut sim,
-                        self.use_deciders,
-                        &self.pipeline,
-                        &mut self.metrics,
-                    );
-                    match outcome {
-                        SimOutcome::MissingRule { pebbles, .. } => {
-                            let choices = &self.rule_table[pebbles as usize - 1];
-                            for &rule in choices.iter().rev() {
-                                if is_symmetric && rule.left > rule.right {
-                                    continue;
-                                }
-                                let child_is_symmetric = is_symmetric && (rule.left == rule.right);
-                                let mut child_prog = prog.clone();
-                                child_prog
-                                    .set_rule(pebbles, Some(rule))
-                                    .expect("valid rule for pebbles");
-                                let child_sim = Simulator::new(self.rule_table.len());
-                                self.stack.push((child_prog, child_sim, child_is_symmetric));
-                            }
-                        }
-                        _ => {
-                            return Some(EnumEntry {
-                                program: prog,
-                                outcome,
-                            });
-                        }
-                    }
-                }
-                SimOutcome::Inf { decider, steps } => {
-                    self.metrics[0].decided_inf += 1;
-
-                    return Some(EnumEntry {
-                        program: prog,
-                        outcome: SimOutcome::Inf { decider, steps },
-                    });
+                PipelineEvalResult::Done(entry) => {
+                    return Some(entry);
                 }
             }
         }
@@ -786,7 +814,7 @@ impl Iterator for TnfEnumerator {
 
 enum FrontierNode {
     Leaf(EnumEntry),
-    Branch(Program, Simulator, bool),
+    Branch(Program, bool),
 }
 
 /// Expand the TNF tree in deterministic left-to-right DFS order until at least `target_width`
@@ -805,100 +833,36 @@ fn build_frontier(
     }
     let mut frontier = vec![FrontierNode::Branch(
         Program::empty(size).expect("size > 0"),
-        Simulator::new(size),
         break_symmetry,
     )];
 
     while frontier.len() < target_width
-        && frontier
-            .iter()
-            .any(|n| matches!(n, FrontierNode::Branch(_, _, _)))
+        && frontier.iter().any(|n| matches!(n, FrontierNode::Branch(_, _)))
     {
         let mut next_frontier = Vec::with_capacity(frontier.len() * 4);
         for node in frontier {
             match node {
                 FrontierNode::Leaf(entry) => next_frontier.push(FrontierNode::Leaf(entry)),
-                FrontierNode::Branch(prog, mut sim, is_symmetric) => {
-                    metrics[0].invocations += 1;
-                    let start = Instant::now();
-                    let outcome = sim.run(&prog, pipeline.initial_steps);
-                    let elapsed_nanos = start.elapsed().as_nanos() as u64;
-                    metrics[0].total_time_nanos += elapsed_nanos;
-
-                    match outcome {
-                        SimOutcome::MissingRule { pebbles, .. } => {
-                            metrics[0].splits += 1;
-
-                            let choices = &rule_table[pebbles as usize - 1];
-                            for &rule in choices {
-                                if is_symmetric && rule.left > rule.right {
-                                    continue;
-                                }
-                                let child_is_symmetric = is_symmetric && (rule.left == rule.right);
-                                let mut child_prog = prog.clone();
-                                child_prog
-                                    .set_rule(pebbles, Some(rule))
-                                    .expect("valid rule for pebbles");
-                                let child_sim = sim.clone();
+                FrontierNode::Branch(prog, is_symmetric) => {
+                    let res = evaluate_pipeline(
+                        prog,
+                        is_symmetric,
+                        use_deciders,
+                        pipeline,
+                        metrics,
+                        rule_table,
+                    );
+                    match res {
+                        PipelineEvalResult::Split { children } => {
+                            for (child_prog, child_is_symmetric) in children.into_iter().rev() {
                                 next_frontier.push(FrontierNode::Branch(
                                     child_prog,
-                                    child_sim,
                                     child_is_symmetric,
                                 ));
                             }
                         }
-                        SimOutcome::Halted { steps } => {
-                            metrics[0].decided_halting += 1;
-
-                            next_frontier.push(FrontierNode::Leaf(EnumEntry {
-                                program: prog,
-                                outcome: SimOutcome::Halted { steps },
-                            }));
-                        }
-                        SimOutcome::Unknown { .. } => {
-                            let outcome = resolve_leaf_outcome_timed(
-                                &prog,
-                                &mut sim,
-                                use_deciders,
-                                pipeline,
-                                metrics,
-                            );
-                            match outcome {
-                                SimOutcome::MissingRule { pebbles, .. } => {
-                                    let choices = &rule_table[pebbles as usize - 1];
-                                    for &rule in choices {
-                                        if is_symmetric && rule.left > rule.right {
-                                            continue;
-                                        }
-                                        let child_is_symmetric =
-                                            is_symmetric && (rule.left == rule.right);
-                                        let mut child_prog = prog.clone();
-                                        child_prog
-                                            .set_rule(pebbles, Some(rule))
-                                            .expect("valid rule for pebbles");
-                                        let child_sim = Simulator::new(rule_table.len());
-                                        next_frontier.push(FrontierNode::Branch(
-                                            child_prog,
-                                            child_sim,
-                                            child_is_symmetric,
-                                        ));
-                                    }
-                                }
-                                _ => {
-                                    next_frontier.push(FrontierNode::Leaf(EnumEntry {
-                                        program: prog,
-                                        outcome,
-                                    }));
-                                }
-                            }
-                        }
-                        SimOutcome::Inf { decider, steps } => {
-                            metrics[0].decided_inf += 1;
-
-                            next_frontier.push(FrontierNode::Leaf(EnumEntry {
-                                program: prog,
-                                outcome: SimOutcome::Inf { decider, steps },
-                            }));
+                        PipelineEvalResult::Done(entry) => {
+                            next_frontier.push(FrontierNode::Leaf(entry));
                         }
                     }
                 }
@@ -1036,10 +1000,10 @@ where
                         local_entries.push(entry);
                     }
                 }
-                FrontierNode::Branch(prog, sim, is_symmetric) => {
+                FrontierNode::Branch(prog, is_symmetric) => {
                     let mut sub_enum = TnfEnumerator::from_subtree(
                         prog,
-                        sim,
+                        Simulator::new(size),
                         deep_steps,
                         use_deciders,
                         break_symmetry,

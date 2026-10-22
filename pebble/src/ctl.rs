@@ -1,4 +1,4 @@
-use crate::deciders::Decider;
+use crate::deciders::{Decider, StepDeciderOutcome};
 use crate::program::Program;
 use crate::simulation::{Simulator, StepResult};
 
@@ -1303,21 +1303,37 @@ pub fn decide_ctl(program: &Program, max_steps: u64) -> Option<Decider> {
     None
 }
 
-/// Run CTL decider sampling tapes starting from an existing `sim` state.
-pub fn decide_ctl_from_sim(program: &Program, sim: &mut Simulator, max_steps: u64) -> Option<Decider> {
+/// Run CTL decider sampling tapes starting from an existing `sim` state, returning full outcome.
+pub fn decide_ctl_from_sim_outcome(
+    program: &Program,
+    sim: &mut Simulator,
+    max_steps: u64,
+) -> StepDeciderOutcome {
     for _ in 0..=max_steps {
         if sim.steps() % 4 == 0 {
             if let TapeProofResult::Proved(proof) =
                 try_prove_ctl_from_tape(program, &sim.cells(), sim.steps(), 1024)
             {
-                return Some(Decider::Ctl(Some(proof)));
+                return StepDeciderOutcome::Proved(Decider::Ctl(Some(proof)));
             }
         }
-        if sim.step(program) != StepResult::Stepped {
-            return None;
+        match sim.step(program) {
+            StepResult::Stepped => {}
+            StepResult::Halted => return StepDeciderOutcome::Halted { steps: sim.steps() },
+            StepResult::MissingRule(pebbles) => {
+                return StepDeciderOutcome::MissingRule {
+                    pebbles,
+                    steps: sim.steps(),
+                };
+            }
         }
     }
-    None
+    StepDeciderOutcome::Undecided
+}
+
+/// Run CTL decider sampling tapes starting from an existing `sim` state.
+pub fn decide_ctl_from_sim(program: &Program, sim: &mut Simulator, max_steps: u64) -> Option<Decider> {
+    decide_ctl_from_sim_outcome(program, sim, max_steps).proved()
 }
 
 #[derive(Debug, Clone)]

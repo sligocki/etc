@@ -1,6 +1,6 @@
 use crate::deciders::{
-    check_edge_glider_sparse, decide_bouncer, decide_ctl, decide_cycler,
-    decide_separated_components, decide_static_backtrack, Decider,
+    check_edge_glider_sparse, decide_bouncer, decide_ctl_from_sim, decide_cycler_from_sim,
+    decide_separated_components_from_sim, decide_static_backtrack, Decider,
 };
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
@@ -568,7 +568,7 @@ pub fn resolve_leaf_outcome_timed(
             PipelineStageKind::Cycler { steps } => {
                 metrics[i].invocations += 1;
                 let t0 = Instant::now();
-                let res = decide_cycler(prog, steps);
+                let res = decide_cycler_from_sim(prog, sim, steps);
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
                 if let Some(decider) = res {
                     metrics[i].decided_infinite += 1;
@@ -581,7 +581,7 @@ pub fn resolve_leaf_outcome_timed(
             PipelineStageKind::SeparatedComponents { steps } => {
                 metrics[i].invocations += 1;
                 let t0 = Instant::now();
-                let res = decide_separated_components(prog, steps);
+                let res = decide_separated_components_from_sim(prog, sim, steps);
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
                 if let Some(decider) = res {
                     metrics[i].decided_infinite += 1;
@@ -607,7 +607,7 @@ pub fn resolve_leaf_outcome_timed(
             PipelineStageKind::Ctl { steps } => {
                 metrics[i].invocations += 1;
                 let t0 = Instant::now();
-                let res = decide_ctl(prog, steps);
+                let res = decide_ctl_from_sim(prog, sim, steps);
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
                 if let Some(decider) = res {
                     metrics[i].decided_infinite += 1;

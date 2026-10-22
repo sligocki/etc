@@ -1303,6 +1303,23 @@ pub fn decide_ctl(program: &Program, max_steps: u64) -> Option<Decider> {
     None
 }
 
+/// Run CTL decider sampling tapes starting from an existing `sim` state.
+pub fn decide_ctl_from_sim(program: &Program, sim: &mut Simulator, max_steps: u64) -> Option<Decider> {
+    for _ in 0..=max_steps {
+        if sim.steps() % 4 == 0 {
+            if let TapeProofResult::Proved(proof) =
+                try_prove_ctl_from_tape(program, &sim.cells(), sim.steps(), 1024)
+            {
+                return Some(Decider::Ctl(Some(proof)));
+            }
+        }
+        if sim.step(program) != StepResult::Stepped {
+            return None;
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone)]
 pub struct CtlConfig {
     pub min_step: u64,

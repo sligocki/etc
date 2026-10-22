@@ -142,6 +142,16 @@ pub fn decide_edge_glider(program: &Program, max_steps: u64) -> Option<Decider> 
 /// or `TranslatedCycler` (`dx != 0`).
 pub fn decide_cycler(program: &Program, max_steps: u64) -> Option<Decider> {
     let mut sim = Simulator::new(program.size());
+    decide_cycler_from_sim(program, &mut sim, max_steps)
+}
+
+/// Simulate `program` starting from an existing `sim` state up to `max_steps` additional steps
+/// and detect `Cycler` (`dx == 0`) or `TranslatedCycler` (`dx != 0`).
+pub fn decide_cycler_from_sim(
+    program: &Program,
+    sim: &mut Simulator,
+    max_steps: u64,
+) -> Option<Decider> {
     let mut seen_shapes: HashMap<Vec<(isize, u8)>, isize> = HashMap::new();
 
     for _ in 0..=max_steps {
@@ -234,6 +244,15 @@ struct ActiveCut {
 /// `SeparatedComponents` whose shapes repeat with non-shrinking separation (`dx_left <= dx_right`).
 pub fn decide_separated_components(program: &Program, max_steps: u64) -> Option<Decider> {
     let mut sim = Simulator::new(program.size());
+    decide_separated_components_from_sim(program, &mut sim, max_steps)
+}
+
+/// Detect causally independent `SeparatedComponents` starting from an existing `sim` state.
+pub fn decide_separated_components_from_sim(
+    program: &Program,
+    sim: &mut Simulator,
+    max_steps: u64,
+) -> Option<Decider> {
     let mut active_cuts: Vec<ActiveCut> = Vec::new();
 
     for _ in 0..=max_steps {
@@ -560,7 +579,7 @@ pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
 }
 
 /// Decider 5: Closed Tape Language (CTL) regular-set non-halting prover.
-pub use crate::ctl::decide_ctl;
+pub use crate::ctl::{decide_ctl, decide_ctl_from_sim};
 
 
 /// Decider 6: StaticBacktrack.

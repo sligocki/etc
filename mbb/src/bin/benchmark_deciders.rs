@@ -1,4 +1,3 @@
-use mbb::deciders::bouncers::BouncersDecider;
 use mbb::deciders::{Decider, DeciderResult};
 use mbb::parse::parse_program;
 use std::fs::File;
@@ -23,8 +22,6 @@ fn main() {
             }
         }
 
-        let bouncers = BouncersDecider { step_limit: 10000 };
-
         // Benchmark Backwards
         let backwards = mbb::deciders::backwards::BackwardsDecider;
         let start = Instant::now();
@@ -39,17 +36,6 @@ fn main() {
             "Backwards: {} solved in {:?}",
             backwards_solved, backwards_time
         );
-
-        // Benchmark Bouncers
-        let start = Instant::now();
-        let mut bouncer_solved = 0;
-        for p in &progs {
-            if matches!(bouncers.decide(p), DeciderResult::Infinite(_)) {
-                bouncer_solved += 1;
-            }
-        }
-        let bouncer_time = start.elapsed();
-        println!("Bouncers: {} solved in {:?}", bouncer_solved, bouncer_time);
 
         // Benchmark Polyhedral Guesser
         let start = Instant::now();

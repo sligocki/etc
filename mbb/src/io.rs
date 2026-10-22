@@ -56,17 +56,6 @@ pub fn write_result<W: Write>(
                         prog_str, state, conditions
                     )
                 }
-                InfiniteReason::Bouncer {
-                    start_by,
-                    period,
-                    is_min_start,
-                } => {
-                    writeln!(
-                        writer,
-                        "{}\tInfinite\tBouncer(start_by: {}, period: {}, is_min_start: {})",
-                        prog_str, start_by, period, is_min_start
-                    )
-                }
                 InfiniteReason::Semilinear1D {
                     state,
                     base,

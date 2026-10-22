@@ -572,3 +572,304 @@ pub fn enumerate(
         println!("  {}: {:.2?}", name, duration);
     }
 }
+
+pub fn evaluate_file(
+    input_file: &str,
+    step_limit: u64,
+    exact_start: bool,
+    limit: Option<usize>,
+    config: &crate::deciders::DeciderConfig,
+    only_unknown: bool,
+    out_file: &str,
+) {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader, BufWriter, Write};
+
+    let file = File::open(input_file).unwrap_or_else(|e| {
+        eprintln!("Error opening input file '{}': {}", input_file, e);
+        std::process::exit(1);
+    });
+    let reader = BufReader::new(file);
+    let mut lines = Vec::new();
+    for line_res in reader.lines() {
+        let line = line_res.unwrap();
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        lines.push(line);
+        if let Some(l) = limit {
+            if lines.len() >= l {
+                break;
+            }
+        }
+    }
+
+    let total_count = lines.len();
+    if total_count == 0 {
+        println!("No programs found in input file: {}", input_file);
+        return;
+    }
+
+    let out = File::create(out_file).unwrap_or_else(|e| {
+        eprintln!("Error creating output file '{}': {}", out_file, e);
+        std::process::exit(1);
+    });
+    let mut writer = BufWriter::new(out);
+
+    let num_threads = rayon::current_num_threads();
+    let chunk_size = (total_count / (num_threads * 8)).clamp(1, 1000);
+
+    let (tx, rx) = crossbeam_channel::unbounded();
+
+    let rx_thread = std::thread::spawn(move || {
+        let mut last_print_time = std::time::Instant::now();
+        let mut local_total_explored = 0u64;
+        let mut num_halted = 0u64;
+        let mut num_unknown = 0u64;
+        let mut num_infinite = 0u64;
+        let mut infinite_counts: std::collections::HashMap<&'static str, u64> =
+            std::collections::HashMap::new();
+        let mut max_steps = 0u64;
+        let mut max_program = String::new();
+        let mut total_stats = crate::deciders::DeciderStats::default();
+
+        for msg in rx {
+            match msg {
+                WorkerMsg::Batch {
+                    output,
+                    explored,
+                    halted,
+                    unknown,
+                    infinite,
+                } => {
+                    writer.write_all(&output).unwrap();
+                    local_total_explored += explored;
+                    num_halted += halted;
+                    num_unknown += unknown;
+                    num_infinite += infinite;
+
+                    if last_print_time.elapsed().as_secs() >= 5 {
+                        let total_leaves = num_halted + num_unknown + num_infinite;
+                        let halt_pct = if total_leaves > 0 {
+                            (num_halted as f64 / total_leaves as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+                        let inf_pct = if total_leaves > 0 {
+                            (num_infinite as f64 / total_leaves as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+                        let unknown_pct = if total_leaves > 0 {
+                            (num_unknown as f64 / total_leaves as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+
+                        let progress_pct =
+                            (local_total_explored as f64 / total_count as f64) * 100.0;
+                        println!(
+                            "Progress: {} / {} programs processed ({:.1}%)",
+                            local_total_explored, total_count, progress_pct
+                        );
+                        println!(
+                            "  Halted: {} ({:.2}%) | Infinite: {} ({:.2}%) | Unknown: {} ({:.2}%) | Max steps: {}",
+                            num_halted, halt_pct, num_infinite, inf_pct, num_unknown, unknown_pct, max_steps
+                        );
+                        last_print_time = std::time::Instant::now();
+                    }
+                }
+                WorkerMsg::Done {
+                    infinite_counts: ic,
+                    max_steps: ms,
+                    max_program: mp,
+                    stats,
+                } => {
+                    for (k, v) in ic {
+                        *infinite_counts.entry(k).or_insert(0) += v;
+                    }
+                    if ms > max_steps {
+                        max_steps = ms;
+                        max_program = mp;
+                    }
+                    for (name, duration) in stats.runtimes {
+                        total_stats.add_time(name, duration);
+                    }
+                }
+            }
+        }
+
+        writer.flush().unwrap();
+
+        (
+            local_total_explored,
+            num_halted,
+            num_unknown,
+            num_infinite,
+            infinite_counts,
+            max_steps,
+            max_program,
+            total_stats,
+        )
+    });
+
+    let config = config.clone();
+
+    lines.par_chunks(chunk_size).for_each_with(tx, |tx, chunk| {
+        let mut local_explored = 0u64;
+        let mut local_halted = 0u64;
+        let mut local_unknown = 0u64;
+        let mut local_infinite = 0u64;
+        let mut local_infinite_counts: std::collections::HashMap<&'static str, u64> =
+            std::collections::HashMap::new();
+        let mut local_max_steps = 0u64;
+        let mut local_max_program = String::new();
+        let mut local_stats = crate::deciders::DeciderStats::default();
+        let mut buf = Vec::new();
+
+        for line in chunk {
+            let prog_str = line.split_whitespace().next().unwrap_or("");
+            let Some(prog) = crate::parse::parse_program(prog_str) else {
+                eprintln!("Warning: Failed to parse program: {}", prog_str);
+                continue;
+            };
+
+            local_explored += 1;
+
+            let mut res = crate::deciders::decide_with_stats(
+                &prog,
+                step_limit,
+                true,
+                exact_start,
+                &config,
+                &mut local_stats,
+            );
+
+            if let DeciderResult::Halt {
+                steps,
+                registers,
+                hit_undef: Some(_),
+            } = res
+            {
+                res = DeciderResult::Halt {
+                    steps,
+                    registers,
+                    hit_undef: None,
+                };
+            }
+
+            match &res {
+                DeciderResult::Halt { steps, .. } => {
+                    local_halted += 1;
+                    if *steps > local_max_steps {
+                        local_max_steps = *steps;
+                        local_max_program = prog_str.to_string();
+                    }
+                }
+                DeciderResult::Infinite(reason) => {
+                    local_infinite += 1;
+                    *local_infinite_counts
+                        .entry(reason.decider_name())
+                        .or_insert(0) += 1;
+                }
+                DeciderResult::Unknown => {
+                    local_unknown += 1;
+                }
+                _ => {}
+            }
+
+            if !only_unknown || matches!(&res, DeciderResult::Unknown) {
+                crate::io::write_result(&mut buf, prog_str, &res).unwrap();
+            }
+
+            if buf.len() > 64 * 1024 {
+                tx.send(WorkerMsg::Batch {
+                    output: std::mem::take(&mut buf),
+                    explored: local_explored,
+                    halted: local_halted,
+                    unknown: local_unknown,
+                    infinite: local_infinite,
+                })
+                .unwrap();
+
+                local_explored = 0;
+                local_halted = 0;
+                local_unknown = 0;
+                local_infinite = 0;
+            }
+        }
+
+        if local_explored > 0 || !buf.is_empty() {
+            tx.send(WorkerMsg::Batch {
+                output: std::mem::take(&mut buf),
+                explored: local_explored,
+                halted: local_halted,
+                unknown: local_unknown,
+                infinite: local_infinite,
+            })
+            .unwrap();
+        }
+
+        tx.send(WorkerMsg::Done {
+            infinite_counts: local_infinite_counts,
+            max_steps: local_max_steps,
+            max_program: local_max_program,
+            stats: local_stats,
+        })
+        .unwrap();
+    });
+
+    let (
+        total_explored,
+        num_halted,
+        num_unknown,
+        num_infinite,
+        infinite_counts,
+        max_steps,
+        max_program,
+        total_stats,
+    ) = rx_thread.join().unwrap();
+
+    let total_leaves = num_halted + num_unknown + num_infinite;
+    let halt_pct = if total_leaves > 0 {
+        (num_halted as f64 / total_leaves as f64) * 100.0
+    } else {
+        0.0
+    };
+    let inf_pct = if total_leaves > 0 {
+        (num_infinite as f64 / total_leaves as f64) * 100.0
+    } else {
+        0.0
+    };
+    let unknown_pct = if total_leaves > 0 {
+        (num_unknown as f64 / total_leaves as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!(
+        "Evaluation complete! Processed {} total programs.",
+        total_explored
+    );
+    println!("Total programs: {}", total_leaves);
+    println!("  Halted: {} ({:.2}%)", num_halted, halt_pct);
+    println!("  Infinite: {} ({:.2}%)", num_infinite, inf_pct);
+    if num_infinite > 0 {
+        let mut sorted_counts: Vec<_> = infinite_counts.iter().collect();
+        sorted_counts.sort_by_key(|&(_, &count)| std::cmp::Reverse(count));
+
+        for (name, count) in sorted_counts {
+            let pct = (*count as f64 / num_infinite as f64) * 100.0;
+            println!("    {}: {} ({:.2}%)", name, count, pct);
+        }
+    }
+    println!("  Unknown: {} ({:.2}%)", num_unknown, unknown_pct);
+    if !max_program.is_empty() {
+        println!("Max Halting Program: {} ({} steps)", max_program, max_steps);
+    }
+    println!("Decider Runtime Breakdown:");
+    for (name, duration) in &total_stats.runtimes {
+        println!("  {}: {:.2?}", name, duration);
+    }
+}

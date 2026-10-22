@@ -26,11 +26,6 @@ pub enum InfiniteReason {
         moduli: Vec<u32>,
         seed: Vec<crate::deciders::congruence::Val>,
     },
-    Bouncer {
-        start_by: u64,
-        period: u64,
-        is_min_start: bool,
-    },
     BackwardsUnreachable,
 }
 
@@ -42,7 +37,6 @@ impl InfiniteReason {
             InfiniteReason::Polyhedral { .. } => "Polyhedral",
             InfiniteReason::Semilinear1D { .. } => "Semilinear1D",
             InfiniteReason::Congruence { .. } => "Congruence",
-            InfiniteReason::Bouncer { .. } => "Bouncer",
             InfiniteReason::BackwardsUnreachable => "Backwards Unreachable",
         }
     }
@@ -73,7 +67,6 @@ pub trait Decider {
     fn decide(&self, prog: &Program) -> DeciderResult;
 }
 pub mod backwards;
-pub mod bouncers;
 pub mod congruence;
 pub mod congruence_guesser;
 pub mod polyhedral;
@@ -101,7 +94,6 @@ impl DeciderStats {
 pub struct DeciderConfig {
     pub simulate_direct: bool,
     pub backwards: bool,
-    pub bouncers: bool,
     pub congruence: bool,
     pub polyhedral: bool,
     pub semilinear1d: bool,
@@ -112,7 +104,6 @@ impl Default for DeciderConfig {
         Self {
             simulate_direct: true,
             backwards: true,
-            bouncers: true,
             congruence: true,
             polyhedral: true,
             semilinear1d: false,
@@ -154,14 +145,12 @@ impl DeciderConfig {
             match name {
                 "simulate" | "simulate_direct" => config.simulate_direct = add,
                 "backwards" => config.backwards = add,
-                "bouncers" | "bouncer" => config.bouncers = add,
                 "congruence" => config.congruence = add,
                 "polyhedral" => config.polyhedral = add,
                 "semilinear1d" | "semilinear" => config.semilinear1d = add,
                 "all" => {
                     config.simulate_direct = add;
                     config.backwards = add;
-                    config.bouncers = add;
                     config.congruence = add;
                     config.polyhedral = add;
                     config.semilinear1d = add;
@@ -170,7 +159,6 @@ impl DeciderConfig {
                     let set = !add;
                     config.simulate_direct = set;
                     config.backwards = set;
-                    config.bouncers = set;
                     config.congruence = set;
                     config.polyhedral = set;
                     config.semilinear1d = set;
@@ -211,15 +199,6 @@ pub fn decide_with_stats(
         stats.add_time("Backwards", t0.elapsed());
         if is_unreachable {
             return DeciderResult::Infinite(InfiniteReason::BackwardsUnreachable);
-        }
-    }
-
-    if config.bouncers {
-        let t0 = std::time::Instant::now();
-        let bouncers_res = crate::deciders::bouncers::BouncersDecider { step_limit }.decide(prog);
-        stats.add_time("Bouncers", t0.elapsed());
-        if bouncers_res != DeciderResult::Unknown {
-            return bouncers_res;
         }
     }
 

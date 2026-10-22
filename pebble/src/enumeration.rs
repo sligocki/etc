@@ -1,6 +1,6 @@
 use crate::deciders::{
     check_edge_glider_sparse, decide_bouncer, decide_ctl_from_sim, decide_cycler_from_sim,
-    decide_separated_components_from_sim, decide_static_backtrack, Decider,
+    decide_separated_components_from_sim, decide_static_backtrack, Decider, StepDeciderOutcome,
 };
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
@@ -10,14 +10,10 @@ use std::time::{Duration, Instant};
 /// Kind of pipeline step executed during enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineStageKind {
-    /// Intermediate branching point in TNF tree.
-    PrefixSim,
-    /// Initial simulation of the leaf program up to `steps`.
-    LeafSim { steps: u64 },
+    /// Simulation of the program up to `steps` (including prefix branching and edge glider check).
+    Simulation { steps: u64 },
     /// Static backtracking analysis on program rules.
     StaticBacktrack,
-    /// Edge glider analysis on the current simulation tape.
-    EdgeGliderCurrent,
     /// Cycler and translated cycler detection up to `steps`.
     Cycler { steps: u64 },
     /// Separated components detection up to `steps`.
@@ -49,20 +45,12 @@ impl PipelineConfig {
     pub fn default_for(_size: usize, early_steps: u64, deep_steps: u64) -> Self {
         let mut stages = vec![
             PipelineStageSpec {
-                name: "Prefix Sim (Branching)".to_string(),
-                kind: PipelineStageKind::PrefixSim,
-            },
-            PipelineStageSpec {
                 name: format!("Simulation ({early_steps} steps)"),
-                kind: PipelineStageKind::LeafSim { steps: early_steps },
+                kind: PipelineStageKind::Simulation { steps: early_steps },
             },
             PipelineStageSpec {
                 name: "StaticBacktrack".to_string(),
                 kind: PipelineStageKind::StaticBacktrack,
-            },
-            PipelineStageSpec {
-                name: "EdgeGlider (sparse)".to_string(),
-                kind: PipelineStageKind::EdgeGliderCurrent,
             },
             PipelineStageSpec {
                 name: format!("Cycler / TransCycler ({early_steps} steps)"),
@@ -86,10 +74,6 @@ impl PipelineConfig {
             stages.push(PipelineStageSpec {
                 name: format!("Simulation ({deep_steps} steps)"),
                 kind: PipelineStageKind::ExtendedSim { steps: deep_steps },
-            });
-            stages.push(PipelineStageSpec {
-                name: "EdgeGlider (deep)".to_string(),
-                kind: PipelineStageKind::EdgeGliderCurrent,
             });
             stages.push(PipelineStageSpec {
                 name: format!("Cycler / TransCycler ({deep_steps} steps)"),
@@ -120,16 +104,18 @@ impl PipelineConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StageMetrics {
     pub invocations: u64,
+    pub splits: u64,
     pub decided_halting: u64,
-    pub decided_infinite: u64,
+    pub decided_inf: u64,
     pub total_time_nanos: u64,
 }
 
 impl StageMetrics {
     pub fn merge(&mut self, other: &StageMetrics) {
         self.invocations += other.invocations;
+        self.splits += other.splits;
         self.decided_halting += other.decided_halting;
-        self.decided_infinite += other.decided_infinite;
+        self.decided_inf += other.decided_inf;
         self.total_time_nanos += other.total_time_nanos;
     }
 
@@ -169,9 +155,9 @@ pub struct EnumStats {
     pub total_programs: u64,
     /// Number of enumerated TNF programs that halted.
     pub halted_programs: u64,
-    /// Number of enumerated TNF programs proven non-halting by the decider pipeline.
-    pub decided_programs: u64,
-    /// Breakdown of decided non-halting programs by decider:
+    /// Number of enumerated TNF programs proven infinite by the decider pipeline.
+    pub inf_programs: u64,
+    /// Breakdown of infinite programs by decider:
     /// `[EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents, Bouncer, Ctl, StaticBacktrack]`.
     pub decided_by_kind: [u64; 7],
     /// Maximum halting step count observed across all halted programs.
@@ -206,7 +192,7 @@ impl PartialEq for EnumStats {
             && self.max_steps == other.max_steps
             && self.total_programs == other.total_programs
             && self.halted_programs == other.halted_programs
-            && self.decided_programs == other.decided_programs
+            && self.inf_programs == other.inf_programs
             && self.decided_by_kind == other.decided_by_kind
             && self.max_halting_steps == other.max_halting_steps
             && self.champion == other.champion
@@ -265,8 +251,8 @@ impl EnumStats {
                     self.champion = Some(entry.program.clone());
                 }
             }
-            SimOutcome::DecidedNonHalting { decider, .. } => {
-                self.decided_programs += 1;
+            SimOutcome::Inf { decider, .. } => {
+                self.inf_programs += 1;
                 let idx = match decider {
                     Decider::EdgeGlider => 0,
                     Decider::Cycler => 1,
@@ -298,7 +284,7 @@ impl EnumStats {
                 };
                 self.decided_by_kind[idx] += 1;
             }
-            SimOutcome::MaxStepsReached { .. } | SimOutcome::MissingRule { .. } => {}
+            SimOutcome::Unknown { .. } | SimOutcome::MissingRule { .. } => {}
         }
     }
 
@@ -316,12 +302,24 @@ impl EnumStats {
         self.decided_by_kind[idx]
     }
 
-    /// Number of remaining undecided holdout programs (`total - halted - decided`).
+    /// Number of remaining undecided unknown programs (`total - halted - inf`).
     #[inline]
-    pub fn holdout_programs(&self) -> u64 {
+    pub fn unknown_programs(&self) -> u64 {
         self.total_programs
             .saturating_sub(self.halted_programs)
-            .saturating_sub(self.decided_programs)
+            .saturating_sub(self.inf_programs)
+    }
+
+    /// Backward-compatibility alias for `unknown_programs`.
+    #[inline]
+    pub fn holdout_programs(&self) -> u64 {
+        self.unknown_programs()
+    }
+
+    /// Backward-compatibility alias for `inf_programs`.
+    #[inline]
+    pub fn decided_programs(&self) -> u64 {
+        self.inf_programs
     }
 
     /// Percentage of enumerated TNF programs that halted (`0.0..=100.0`).
@@ -333,22 +331,32 @@ impl EnumStats {
         }
     }
 
-    /// Percentage of enumerated TNF programs proven non-halting by deciders (`0.0..=100.0`).
-    pub fn decided_percentage(&self) -> f64 {
+    /// Percentage of enumerated TNF programs proven infinite by deciders (`0.0..=100.0`).
+    pub fn inf_percentage(&self) -> f64 {
         if self.total_programs == 0 {
             0.0
         } else {
-            (self.decided_programs as f64 / self.total_programs as f64) * 100.0
+            (self.inf_programs as f64 / self.total_programs as f64) * 100.0
         }
     }
 
+    /// Backward-compatibility alias for `inf_percentage`.
+    pub fn decided_percentage(&self) -> f64 {
+        self.inf_percentage()
+    }
+
     /// Percentage of enumerated TNF programs that remain undecided holdouts (`0.0..=100.0`).
-    pub fn holdout_percentage(&self) -> f64 {
+    pub fn unknown_percentage(&self) -> f64 {
         if self.total_programs == 0 {
             0.0
         } else {
-            (self.holdout_programs() as f64 / self.total_programs as f64) * 100.0
+            (self.unknown_programs() as f64 / self.total_programs as f64) * 100.0
         }
+    }
+
+    /// Backward-compatibility alias for `unknown_percentage`.
+    pub fn holdout_percentage(&self) -> f64 {
+        self.unknown_percentage()
     }
 
     /// Merge an external stage metrics slice into `self`.
@@ -362,7 +370,7 @@ impl EnumStats {
     pub fn merge(&mut self, other: EnumStats) {
         self.total_programs += other.total_programs;
         self.halted_programs += other.halted_programs;
-        self.decided_programs += other.decided_programs;
+        self.inf_programs += other.inf_programs;
         for (dst, src) in self
             .decided_by_kind
             .iter_mut()
@@ -532,34 +540,21 @@ pub fn resolve_leaf_outcome_timed(
     metrics: &mut [StageMetrics],
 ) -> SimOutcome {
     if !use_deciders {
-        return SimOutcome::MaxStepsReached { steps: sim.steps() };
+        return SimOutcome::Unknown { steps: sim.steps() };
     }
 
-    // Stages 0 and 1 are PrefixSim and LeafSim; subsequent stages are evaluated on holdouts.
-    for (i, spec) in pipeline.stages.iter().enumerate().skip(2) {
+    // Stage 0 is Simulation; subsequent stages are evaluated on holdouts.
+    for (i, spec) in pipeline.stages.iter().enumerate().skip(1) {
         match spec.kind {
-            PipelineStageKind::PrefixSim | PipelineStageKind::LeafSim { .. } => unreachable!(),
+            PipelineStageKind::Simulation { .. } => unreachable!(),
             PipelineStageKind::StaticBacktrack => {
                 metrics[i].invocations += 1;
                 let t0 = Instant::now();
                 let res = decide_static_backtrack(prog);
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
                 if let Some(decider) = res {
-                    metrics[i].decided_infinite += 1;
-                    return SimOutcome::DecidedNonHalting {
-                        decider,
-                        steps: sim.steps(),
-                    };
-                }
-            }
-            PipelineStageKind::EdgeGliderCurrent => {
-                metrics[i].invocations += 1;
-                let t0 = Instant::now();
-                let res = check_edge_glider_sparse(prog, sim.sparse_entries());
-                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                if let Some(decider) = res {
-                    metrics[i].decided_infinite += 1;
-                    return SimOutcome::DecidedNonHalting {
+                    metrics[i].decided_inf += 1;
+                    return SimOutcome::Inf {
                         decider,
                         steps: sim.steps(),
                     };
@@ -570,12 +565,23 @@ pub fn resolve_leaf_outcome_timed(
                 let t0 = Instant::now();
                 let res = decide_cycler_from_sim(prog, sim, steps);
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                if let Some(decider) = res {
-                    metrics[i].decided_infinite += 1;
-                    return SimOutcome::DecidedNonHalting {
-                        decider,
-                        steps: sim.steps(),
-                    };
+                match res {
+                    StepDeciderOutcome::Proved(decider) => {
+                        metrics[i].decided_inf += 1;
+                        return SimOutcome::Inf {
+                            decider,
+                            steps: sim.steps(),
+                        };
+                    }
+                    StepDeciderOutcome::Halted { steps } => {
+                        metrics[i].decided_halting += 1;
+                        return SimOutcome::Halted { steps };
+                    }
+                    StepDeciderOutcome::MissingRule { pebbles, steps } => {
+                        metrics[i].splits += 1;
+                        return SimOutcome::MissingRule { pebbles, steps };
+                    }
+                    StepDeciderOutcome::Undecided => {}
                 }
             }
             PipelineStageKind::SeparatedComponents { steps } => {
@@ -583,12 +589,23 @@ pub fn resolve_leaf_outcome_timed(
                 let t0 = Instant::now();
                 let res = decide_separated_components_from_sim(prog, sim, steps);
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
-                if let Some(decider) = res {
-                    metrics[i].decided_infinite += 1;
-                    return SimOutcome::DecidedNonHalting {
-                        decider,
-                        steps: sim.steps(),
-                    };
+                match res {
+                    StepDeciderOutcome::Proved(decider) => {
+                        metrics[i].decided_inf += 1;
+                        return SimOutcome::Inf {
+                            decider,
+                            steps: sim.steps(),
+                        };
+                    }
+                    StepDeciderOutcome::Halted { steps } => {
+                        metrics[i].decided_halting += 1;
+                        return SimOutcome::Halted { steps };
+                    }
+                    StepDeciderOutcome::MissingRule { pebbles, steps } => {
+                        metrics[i].splits += 1;
+                        return SimOutcome::MissingRule { pebbles, steps };
+                    }
+                    StepDeciderOutcome::Undecided => {}
                 }
             }
             PipelineStageKind::Bouncer { steps } => {
@@ -597,8 +614,8 @@ pub fn resolve_leaf_outcome_timed(
                 let res = decide_bouncer(prog, steps);
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
                 if let Some(decider) = res {
-                    metrics[i].decided_infinite += 1;
-                    return SimOutcome::DecidedNonHalting {
+                    metrics[i].decided_inf += 1;
+                    return SimOutcome::Inf {
                         decider,
                         steps: sim.steps(),
                     };
@@ -610,12 +627,12 @@ pub fn resolve_leaf_outcome_timed(
                 let res = decide_ctl_from_sim(prog, sim, steps);
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
                 if let Some(decider) = res {
-                    metrics[i].decided_infinite += 1;
+                    metrics[i].decided_inf += 1;
                     let proof_steps = match decider {
                         Decider::Ctl(Some(proof)) => proof.num_steps,
                         _ => sim.steps(),
                     };
-                    return SimOutcome::DecidedNonHalting {
+                    return SimOutcome::Inf {
                         decider,
                         steps: proof_steps,
                     };
@@ -627,7 +644,7 @@ pub fn resolve_leaf_outcome_timed(
                 let outcome = if sim.steps() < steps {
                     sim.run(prog, steps)
                 } else {
-                    SimOutcome::MaxStepsReached { steps: sim.steps() }
+                    SimOutcome::Unknown { steps: sim.steps() }
                 };
                 metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
                 match outcome {
@@ -635,20 +652,29 @@ pub fn resolve_leaf_outcome_timed(
                         metrics[i].decided_halting += 1;
                         return SimOutcome::Halted { steps };
                     }
-                    SimOutcome::DecidedNonHalting { decider, steps } => {
-                        metrics[i].decided_infinite += 1;
-                        return SimOutcome::DecidedNonHalting { decider, steps };
-                    }
                     SimOutcome::MissingRule { pebbles, steps } => {
+                        metrics[i].splits += 1;
                         return SimOutcome::MissingRule { pebbles, steps };
                     }
-                    _ => {}
+                    SimOutcome::Unknown { .. } => {
+                        if let Some(decider) = check_edge_glider_sparse(prog, sim.sparse_entries()) {
+                            metrics[i].decided_inf += 1;
+                            return SimOutcome::Inf {
+                                decider,
+                                steps: sim.steps(),
+                            };
+                        }
+                    }
+                    SimOutcome::Inf { decider, steps } => {
+                        metrics[i].decided_inf += 1;
+                        return SimOutcome::Inf { decider, steps };
+                    }
                 }
             }
         }
     }
 
-    SimOutcome::MaxStepsReached { steps: sim.steps() }
+    SimOutcome::Unknown { steps: sim.steps() }
 }
 
 impl Iterator for TnfEnumerator {
@@ -656,14 +682,15 @@ impl Iterator for TnfEnumerator {
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((prog, mut sim, is_symmetric)) = self.stack.pop() {
+            self.metrics[0].invocations += 1;
             let t0 = Instant::now();
             let outcome = sim.run(&prog, self.pipeline.initial_steps);
             let elapsed_nanos = t0.elapsed().as_nanos() as u64;
+            self.metrics[0].total_time_nanos += elapsed_nanos;
 
             match outcome {
                 SimOutcome::MissingRule { pebbles, .. } => {
-                    self.metrics[0].invocations += 1;
-                    self.metrics[0].total_time_nanos += elapsed_nanos;
+                    self.metrics[0].splits += 1;
 
                     let choices = &self.rule_table[pebbles as usize - 1];
                     // Push in reverse so the stack pops in standard lexicographical order.
@@ -681,18 +708,24 @@ impl Iterator for TnfEnumerator {
                     }
                 }
                 SimOutcome::Halted { steps } => {
-                    self.metrics[1].invocations += 1;
-                    self.metrics[1].decided_halting += 1;
-                    self.metrics[1].total_time_nanos += elapsed_nanos;
+                    self.metrics[0].decided_halting += 1;
 
                     return Some(EnumEntry {
                         program: prog,
                         outcome: SimOutcome::Halted { steps },
                     });
                 }
-                SimOutcome::MaxStepsReached { .. } => {
-                    self.metrics[1].invocations += 1;
-                    self.metrics[1].total_time_nanos += elapsed_nanos;
+                SimOutcome::Unknown { steps } => {
+                    let t_edge = Instant::now();
+                    if let Some(decider) = check_edge_glider_sparse(&prog, sim.sparse_entries()) {
+                        self.metrics[0].total_time_nanos += t_edge.elapsed().as_nanos() as u64;
+                        self.metrics[0].decided_inf += 1;
+                        return Some(EnumEntry {
+                            program: prog,
+                            outcome: SimOutcome::Inf { decider, steps },
+                        });
+                    }
+                    self.metrics[0].total_time_nanos += t_edge.elapsed().as_nanos() as u64;
 
                     let outcome = resolve_leaf_outcome_timed(
                         &prog,
@@ -725,14 +758,12 @@ impl Iterator for TnfEnumerator {
                         }
                     }
                 }
-                outcome @ SimOutcome::DecidedNonHalting { .. } => {
-                    self.metrics[1].invocations += 1;
-                    self.metrics[1].decided_infinite += 1;
-                    self.metrics[1].total_time_nanos += elapsed_nanos;
+                SimOutcome::Inf { decider, steps } => {
+                    self.metrics[0].decided_inf += 1;
 
                     return Some(EnumEntry {
                         program: prog,
-                        outcome,
+                        outcome: SimOutcome::Inf { decider, steps },
                     });
                 }
             }
@@ -776,14 +807,15 @@ fn build_frontier(
             match node {
                 FrontierNode::Leaf(entry) => next_frontier.push(FrontierNode::Leaf(entry)),
                 FrontierNode::Branch(prog, mut sim, is_symmetric) => {
+                    metrics[0].invocations += 1;
                     let start = Instant::now();
                     let outcome = sim.run(&prog, pipeline.initial_steps);
                     let elapsed_nanos = start.elapsed().as_nanos() as u64;
+                    metrics[0].total_time_nanos += elapsed_nanos;
 
                     match outcome {
                         SimOutcome::MissingRule { pebbles, .. } => {
-                            metrics[0].invocations += 1;
-                            metrics[0].total_time_nanos += elapsed_nanos;
+                            metrics[0].splits += 1;
 
                             let choices = &rule_table[pebbles as usize - 1];
                             for &rule in choices {
@@ -804,18 +836,25 @@ fn build_frontier(
                             }
                         }
                         SimOutcome::Halted { steps } => {
-                            metrics[1].invocations += 1;
-                            metrics[1].decided_halting += 1;
-                            metrics[1].total_time_nanos += elapsed_nanos;
+                            metrics[0].decided_halting += 1;
 
                             next_frontier.push(FrontierNode::Leaf(EnumEntry {
                                 program: prog,
                                 outcome: SimOutcome::Halted { steps },
                             }));
                         }
-                        SimOutcome::MaxStepsReached { .. } => {
-                            metrics[1].invocations += 1;
-                            metrics[1].total_time_nanos += elapsed_nanos;
+                        SimOutcome::Unknown { steps } => {
+                            let t_edge = Instant::now();
+                            if let Some(decider) = check_edge_glider_sparse(&prog, sim.sparse_entries()) {
+                                metrics[0].total_time_nanos += t_edge.elapsed().as_nanos() as u64;
+                                metrics[0].decided_inf += 1;
+                                next_frontier.push(FrontierNode::Leaf(EnumEntry {
+                                    program: prog,
+                                    outcome: SimOutcome::Inf { decider, steps },
+                                }));
+                                continue;
+                            }
+                            metrics[0].total_time_nanos += t_edge.elapsed().as_nanos() as u64;
 
                             let outcome = resolve_leaf_outcome_timed(
                                 &prog,
@@ -853,14 +892,12 @@ fn build_frontier(
                                 }
                             }
                         }
-                        outcome @ SimOutcome::DecidedNonHalting { .. } => {
-                            metrics[1].invocations += 1;
-                            metrics[1].decided_infinite += 1;
-                            metrics[1].total_time_nanos += elapsed_nanos;
+                        SimOutcome::Inf { decider, steps } => {
+                            metrics[0].decided_inf += 1;
 
                             next_frontier.push(FrontierNode::Leaf(EnumEntry {
                                 program: prog,
-                                outcome,
+                                outcome: SimOutcome::Inf { decider, steps },
                             }));
                         }
                     }
@@ -878,9 +915,21 @@ fn build_frontier(
 pub struct ProgressSnapshot {
     pub total_programs: u64,
     pub halted_programs: u64,
-    pub decided_programs: u64,
-    pub holdout_programs: u64,
+    pub inf_programs: u64,
+    pub unknown_programs: u64,
     pub max_halting_steps: Option<u64>,
+}
+
+impl ProgressSnapshot {
+    #[inline]
+    pub fn decided_programs(&self) -> u64 {
+        self.inf_programs
+    }
+
+    #[inline]
+    pub fn holdout_programs(&self) -> u64 {
+        self.unknown_programs
+    }
 }
 
 /// Enumerate all TNF programs of `size` in parallel using Rayon, returning the exact
@@ -954,8 +1003,8 @@ where
         let snap = ProgressSnapshot {
             total_programs: tot,
             halted_programs: halt,
-            decided_programs: dec,
-            holdout_programs: tot.saturating_sub(halt).saturating_sub(dec),
+            inf_programs: dec,
+            unknown_programs: tot.saturating_sub(halt).saturating_sub(dec),
             max_halting_steps: if raw_max == u64::MAX {
                 None
             } else {
@@ -981,7 +1030,7 @@ where
                     local_stats.record(&entry);
                     let b_halt = u64::from(matches!(entry.outcome, SimOutcome::Halted { .. }));
                     let b_dec =
-                        u64::from(matches!(entry.outcome, SimOutcome::DecidedNonHalting { .. }));
+                        u64::from(matches!(entry.outcome, SimOutcome::Inf { .. }));
                     flush_batch(1, b_halt, b_dec, local_stats.max_halting_steps);
                     if collect_entries && (!holdouts_only || entry.outcome.is_holdout()) {
                         local_entries.push(entry);
@@ -1011,7 +1060,7 @@ where
                                 b_halt += 1;
                                 b_max = Some(b_max.map_or(steps, |prev| prev.max(steps)));
                             }
-                            SimOutcome::DecidedNonHalting { .. } => {
+                            SimOutcome::Inf { .. } => {
                                 b_dec += 1;
                             }
                             _ => {}
@@ -1072,7 +1121,7 @@ mod tests {
 
             assert_eq!(stats.total_programs, exp_total, "size {size} total");
             assert_eq!(stats.halted_programs, exp_halted, "size {size} halted");
-            assert_eq!(stats.decided_programs, exp_decided, "size {size} decided");
+            assert_eq!(stats.inf_programs, exp_decided, "size {size} inf");
             assert_eq!(
                 stats.holdout_programs(),
                 exp_holdouts,
@@ -1092,7 +1141,7 @@ mod tests {
         }
         assert_eq!(stats.total_programs, 12_161);
         assert_eq!(stats.halted_programs, 2_365);
-        assert_eq!(stats.decided_programs, 9_796);
+        assert_eq!(stats.inf_programs, 9_796);
         assert_eq!(stats.holdout_programs(), 0);
         assert_eq!(stats.max_halting_steps, Some(11));
 
@@ -1123,7 +1172,7 @@ mod tests {
 
             assert_eq!(stats.total_programs, exp_total, "size {size} total");
             assert_eq!(stats.halted_programs, exp_halted, "size {size} halted");
-            assert_eq!(stats.decided_programs, exp_decided, "size {size} decided");
+            assert_eq!(stats.inf_programs, exp_decided, "size {size} inf");
             assert_eq!(
                 stats.holdout_programs(),
                 exp_holdouts,
@@ -1163,7 +1212,7 @@ mod tests {
 
         println!("Total programs from partial split: {}", stats.total_programs);
         println!("Halted: {}", stats.halted_programs);
-        println!("Decided: {}", stats.decided_programs);
+        println!("Inf: {}", stats.inf_programs);
         println!("Holdouts: {}", stats.holdout_programs());
         println!("Max halting steps: {:?}", stats.max_halting_steps);
         println!("Champion: {:?}", stats.champion);
@@ -1196,7 +1245,7 @@ mod tests {
         let mut stats1 = EnumStats::default();
         stats1.record(&EnumEntry {
             program: "00_20_10_04_21_21_07_50_17_01".parse().unwrap(),
-            outcome: SimOutcome::DecidedNonHalting {
+            outcome: SimOutcome::Inf {
                 decider: Decider::Ctl(Some(proof1)),
                 steps: 60,
             },
@@ -1215,7 +1264,7 @@ mod tests {
         let mut stats2 = EnumStats::default();
         stats2.record(&EnumEntry {
             program: "01_01".parse().unwrap(),
-            outcome: SimOutcome::DecidedNonHalting {
+            outcome: SimOutcome::Inf {
                 decider: Decider::Ctl(Some(proof2)),
                 steps: 80,
             },

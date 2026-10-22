@@ -117,7 +117,7 @@ fn format_record_line(prog: &Program, outcome: &CtlSearchOutcome) -> String {
     match outcome {
         CtlSearchOutcome::Proved(proof) => {
             format!(
-                "{prog}\tDECIDED\tCTL\t{} # states={} floor={} mod={} method={}",
+                "{prog}\tINF\tCTL\t{} # states={} floor={} mod={} method={}",
                 proof.num_steps, proof.num_states, proof.floor, proof.modulus, proof.method
             )
         }
@@ -128,13 +128,13 @@ fn format_record_line(prog: &Program, outcome: &CtlSearchOutcome) -> String {
             format!("{prog}\tMISSING_RULE\t{pebbles}\t{step}")
         }
         CtlSearchOutcome::ClosureHitUndefinedRule { step, pebbles, .. } => {
-            format!("{prog}\tMAX_STEPS\t{step} # closure hit undefined rule for {pebbles} pebbles")
+            format!("{prog}\tUNKNOWN\t{step} # closure hit undefined rule for {pebbles} pebbles")
         }
         CtlSearchOutcome::ClosureHitHalt { step, .. } => {
-            format!("{prog}\tMAX_STEPS\t{step} # closure hit halting configuration")
+            format!("{prog}\tUNKNOWN\t{step} # closure hit halting configuration")
         }
         CtlSearchOutcome::LimitReached { max_steps, .. } => {
-            format!("{prog}\tMAX_STEPS\t{max_steps}")
+            format!("{prog}\tUNKNOWN\t{max_steps}")
         }
     }
 }

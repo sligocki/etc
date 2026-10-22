@@ -138,20 +138,31 @@ pub fn decide_edge_glider(program: &Program, max_steps: u64) -> Option<Decider> 
     None
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepDeciderOutcome {
+    Proved(Decider),
+    Halted { steps: u64 },
+    MissingRule { pebbles: u8, steps: u64 },
+    Undecided,
+}
+
 /// Decider 2: Simulate `program` up to `max_steps` and detect `Cycler` (`dx == 0`)
 /// or `TranslatedCycler` (`dx != 0`).
 pub fn decide_cycler(program: &Program, max_steps: u64) -> Option<Decider> {
     let mut sim = Simulator::new(program.size());
-    decide_cycler_from_sim(program, &mut sim, max_steps)
+    match decide_cycler_from_sim(program, &mut sim, max_steps) {
+        StepDeciderOutcome::Proved(d) => Some(d),
+        _ => None,
+    }
 }
 
 /// Simulate `program` starting from an existing `sim` state up to `max_steps` additional steps
-/// and detect `Cycler` (`dx == 0`) or `TranslatedCycler` (`dx != 0`).
+/// and detect `Cycler` (`dx == 0`) or `TranslatedCycler` (`dx != 0`), or observe if it halts or splits.
 pub fn decide_cycler_from_sim(
     program: &Program,
     sim: &mut Simulator,
     max_steps: u64,
-) -> Option<Decider> {
+) -> StepDeciderOutcome {
     let mut seen_shapes: HashMap<Vec<(isize, u8)>, isize> = HashMap::new();
 
     for _ in 0..=max_steps {
@@ -162,23 +173,42 @@ pub fn decide_cycler_from_sim(
             if let Some(&prev_offset) = seen_shapes.get(&shape) {
                 // Confirm the state is not a stationary fixed point (halted) before reporting a cycle.
                 let prev_off = sim.offset();
-                if sim.step(program) != StepResult::Stepped {
-                    return None;
-                }
-                if prev_off == prev_offset {
-                    return Some(Decider::Cycler);
-                } else {
-                    return Some(Decider::TranslatedCycler);
+                match sim.step(program) {
+                    StepResult::Stepped => {
+                        if prev_off == prev_offset {
+                            return StepDeciderOutcome::Proved(Decider::Cycler);
+                        } else {
+                            return StepDeciderOutcome::Proved(Decider::TranslatedCycler);
+                        }
+                    }
+                    StepResult::Halted => {
+                        return StepDeciderOutcome::Halted { steps: sim.steps() };
+                    }
+                    StepResult::MissingRule(pebbles) => {
+                        return StepDeciderOutcome::MissingRule {
+                            pebbles,
+                            steps: sim.steps(),
+                        };
+                    }
                 }
             }
             seen_shapes.insert(shape, sim.offset());
         }
 
-        if sim.step(program) != StepResult::Stepped {
-            return None;
+        match sim.step(program) {
+            StepResult::Stepped => {}
+            StepResult::Halted => {
+                return StepDeciderOutcome::Halted { steps: sim.steps() };
+            }
+            StepResult::MissingRule(pebbles) => {
+                return StepDeciderOutcome::MissingRule {
+                    pebbles,
+                    steps: sim.steps(),
+                };
+            }
         }
     }
-    None
+    StepDeciderOutcome::Undecided
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,7 +274,10 @@ struct ActiveCut {
 /// `SeparatedComponents` whose shapes repeat with non-shrinking separation (`dx_left <= dx_right`).
 pub fn decide_separated_components(program: &Program, max_steps: u64) -> Option<Decider> {
     let mut sim = Simulator::new(program.size());
-    decide_separated_components_from_sim(program, &mut sim, max_steps)
+    match decide_separated_components_from_sim(program, &mut sim, max_steps) {
+        StepDeciderOutcome::Proved(d) => Some(d),
+        _ => None,
+    }
 }
 
 /// Detect causally independent `SeparatedComponents` starting from an existing `sim` state.
@@ -252,7 +285,7 @@ pub fn decide_separated_components_from_sim(
     program: &Program,
     sim: &mut Simulator,
     max_steps: u64,
-) -> Option<Decider> {
+) -> StepDeciderOutcome {
     let mut active_cuts: Vec<ActiveCut> = Vec::new();
 
     for _ in 0..=max_steps {
@@ -272,11 +305,16 @@ pub fn decide_separated_components_from_sim(
                             let dx_l = next_l.offset - prev_l_off;
                             let dx_r = next_r.offset - prev_r_off;
                             if dx_l <= dx_r {
-                                // Ensure the full tape is not already halted at this step
-                                if sim.step(program) == StepResult::Stepped {
-                                    return Some(Decider::SeparatedComponents);
-                                } else {
-                                    return None;
+                                match sim.step(program) {
+                                    StepResult::Stepped => {
+                                        return StepDeciderOutcome::Proved(Decider::SeparatedComponents);
+                                    }
+                                    StepResult::Halted => {
+                                        return StepDeciderOutcome::Halted { steps: sim.steps() };
+                                    }
+                                    StepResult::MissingRule(pebbles) => {
+                                        return StepDeciderOutcome::MissingRule { pebbles, steps: sim.steps() };
+                                    }
                                 }
                             }
                         } else if cut.seen.len() < 128 {
@@ -306,11 +344,17 @@ pub fn decide_separated_components_from_sim(
             active_cuts = next_cuts;
         }
 
-        if sim.step(program) != StepResult::Stepped {
-            return None;
+        match sim.step(program) {
+            StepResult::Stepped => {}
+            StepResult::Halted => {
+                return StepDeciderOutcome::Halted { steps: sim.steps() };
+            }
+            StepResult::MissingRule(pebbles) => {
+                return StepDeciderOutcome::MissingRule { pebbles, steps: sim.steps() };
+            }
         }
     }
-    None
+    StepDeciderOutcome::Undecided
 }
 
 fn is_stationary_slice(program: &Program, slice: &[u8]) -> bool {

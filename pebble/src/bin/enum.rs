@@ -168,21 +168,21 @@ fn main() {
         }
         let tot_f = snap.total_programs.max(1) as f64;
         let halt_pct = (snap.halted_programs as f64 / tot_f) * 100.0;
-        let dec_pct = (snap.decided_programs as f64 / tot_f) * 100.0;
-        let hold_pct = (snap.holdout_programs as f64 / tot_f) * 100.0;
+        let inf_pct = (snap.inf_programs as f64 / tot_f) * 100.0;
+        let unk_pct = (snap.unknown_programs as f64 / tot_f) * 100.0;
         let max_steps_str = snap
             .max_halting_steps
             .map(|s| s.to_string())
             .unwrap_or_else(|| "-".to_string());
         println!(
-            "[Progress] programs: {} | halted: {} ({:.2}%) | decided: {} ({:.2}%) | holdouts: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
+            "[Progress] programs: {} | halted: {} ({:.2}%) | inf: {} ({:.2}%) | unknown: {} ({:.2}%) | max steps: {} | elapsed: {:.2?}",
             snap.total_programs,
             snap.halted_programs,
             halt_pct,
-            snap.decided_programs,
-            dec_pct,
-            snap.holdout_programs,
-            hold_pct,
+            snap.inf_programs,
+            inf_pct,
+            snap.unknown_programs,
+            unk_pct,
             max_steps_str,
             start.elapsed()
         );
@@ -234,15 +234,15 @@ fn main() {
     );
     if use_deciders {
         println!(
-            "Decided non-halting:    {} ({:.2}%)",
-            stats.decided_programs,
-            stats.decided_percentage()
+            "Infinite programs:      {} ({:.2}%)",
+            stats.inf_programs,
+            stats.inf_percentage()
         );
     }
     println!(
-        "Holdout programs:       {} ({:.2}%)",
-        stats.holdout_programs(),
-        stats.holdout_percentage()
+        "Unknown programs:       {} ({:.2}%)",
+        stats.unknown_programs(),
+        stats.unknown_percentage()
     );
     match (&stats.max_halting_steps, &stats.champion) {
         (Some(max_s), Some(champ)) => {
@@ -260,10 +260,10 @@ fn main() {
         println!();
         println!("=== Pipeline & Decider Performance ===");
         println!(
-            "{:<42} {:>10} {:>10} {:>10} {:>14} {:>14}",
-            "Stage / Decider", "Run On", "Halted", "Infinite", "Total Time", "Avg / Prog"
+            "{:<38} {:>10} {:>10} {:>10} {:>10} {:>14} {:>14}",
+            "Stage / Decider", "Run On", "Split On", "Halted", "Inf", "Total Time", "Avg / Prog"
         );
-        println!("{:-<104}", "");
+        println!("{:-<102}", "");
         for stage in &stats.stages {
             let m = &stage.metrics;
             let tot_time_str = format_duration(m.total_time());
@@ -272,16 +272,17 @@ fn main() {
                 .map(format_duration)
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "{:<42} {:>10} {:>10} {:>10} {:>14} {:>14}",
+                "{:<38} {:>10} {:>10} {:>10} {:>10} {:>14} {:>14}",
                 stage.name,
                 m.invocations,
+                m.splits,
                 m.decided_halting,
-                m.decided_infinite,
+                m.decided_inf,
                 tot_time_str,
                 avg_time_str,
             );
         }
-        println!("{:-<104}", "");
+        println!("{:-<102}", "");
 
         if stats.ctl_proofs_count > 0 {
             println!();

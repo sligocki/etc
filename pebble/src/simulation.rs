@@ -18,10 +18,10 @@ pub enum StepResult {
 pub enum SimOutcome {
     /// The automaton stabilized after `steps` transitions.
     Halted { steps: u64 },
-    /// The automaton was proven non-halting by `decider` after simulating `steps` transitions.
-    DecidedNonHalting { decider: Decider, steps: u64 },
+    /// The automaton was proven non-halting (infinite) by `decider` after simulating `steps` transitions.
+    Inf { decider: Decider, steps: u64 },
     /// The automaton did not stabilize within `steps` transitions and was not decided.
-    MaxStepsReached { steps: u64 },
+    Unknown { steps: u64 },
     /// Simulation paused at `steps` because rule for `pebbles` is undefined.
     MissingRule { pebbles: u8, steps: u64 },
 }
@@ -33,16 +33,28 @@ impl SimOutcome {
         matches!(self, SimOutcome::Halted { .. })
     }
 
-    /// Returns `true` if the outcome is `SimOutcome::DecidedNonHalting`.
+    /// Returns `true` if the outcome is `SimOutcome::Inf`.
     #[inline]
-    pub fn is_decided_non_halting(&self) -> bool {
-        matches!(self, SimOutcome::DecidedNonHalting { .. })
+    pub fn is_inf(&self) -> bool {
+        matches!(self, SimOutcome::Inf { .. })
     }
 
-    /// Returns `true` if the outcome is an undecided holdout (`SimOutcome::MaxStepsReached`).
+    /// Backward compatibility alias for `is_inf`.
+    #[inline]
+    pub fn is_decided_non_halting(&self) -> bool {
+        self.is_inf()
+    }
+
+    /// Returns `true` if the outcome is unknown (`SimOutcome::Unknown`).
+    #[inline]
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, SimOutcome::Unknown { .. })
+    }
+
+    /// Backward compatibility alias for `is_unknown`.
     #[inline]
     pub fn is_holdout(&self) -> bool {
-        matches!(self, SimOutcome::MaxStepsReached { .. })
+        self.is_unknown()
     }
 
     /// Returns the step count associated with this outcome.
@@ -50,8 +62,8 @@ impl SimOutcome {
     pub fn steps(&self) -> u64 {
         match *self {
             SimOutcome::Halted { steps }
-            | SimOutcome::DecidedNonHalting { steps, .. }
-            | SimOutcome::MaxStepsReached { steps }
+            | SimOutcome::Inf { steps, .. }
+            | SimOutcome::Unknown { steps }
             | SimOutcome::MissingRule { steps, .. } => steps,
         }
     }
@@ -61,13 +73,13 @@ impl fmt::Display for SimOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SimOutcome::Halted { steps } => write!(f, "HALT\t{steps}"),
-            SimOutcome::DecidedNonHalting { decider, steps } => match decider {
+            SimOutcome::Inf { decider, steps } => match decider {
                 Decider::Ctl(Some(proof)) => {
-                    write!(f, "DECIDED\tCTL\t{} # {proof}", proof.num_steps)
+                    write!(f, "INF\tCTL\t{} # {proof}", proof.num_steps)
                 }
-                _ => write!(f, "DECIDED\t{decider}\t{steps}"),
+                _ => write!(f, "INF\t{decider}\t{steps}"),
             },
-            SimOutcome::MaxStepsReached { steps } => write!(f, "MAX_STEPS\t{steps}"),
+            SimOutcome::Unknown { steps } => write!(f, "UNKNOWN\t{steps}"),
             SimOutcome::MissingRule { pebbles, steps } => {
                 write!(f, "MISSING_RULE\t{pebbles}\t{steps}")
             }
@@ -715,7 +727,7 @@ impl Simulator {
                 if self.is_current_state_stable(program) {
                     return SimOutcome::Halted { steps: self.steps };
                 }
-                return SimOutcome::MaxStepsReached { steps: self.steps };
+                return SimOutcome::Unknown { steps: self.steps };
             }
 
             match self.tape.step(program, &mut scratch, &mut scratch_len) {
@@ -743,7 +755,7 @@ impl Simulator {
             if let Some(decider) =
                 crate::deciders::check_edge_glider_sparse(program, self.tape.entries())
             {
-                return SimOutcome::DecidedNonHalting {
+                return SimOutcome::Inf {
                     decider,
                     steps: self.steps,
                 };
@@ -760,7 +772,7 @@ impl Simulator {
                 if self.is_current_state_stable(program) {
                     return SimOutcome::Halted { steps: self.steps };
                 }
-                return SimOutcome::MaxStepsReached { steps: self.steps };
+                return SimOutcome::Unknown { steps: self.steps };
             }
 
             match self.tape.step(program, &mut scratch, &mut scratch_len) {
@@ -891,12 +903,12 @@ mod tests {
                 "champion {code} with exact max_steps={expected_steps} failed"
             );
 
-            // And 1 step less than halting should report MaxStepsReached
+            // And 1 step less than halting should report Unknown
             if expected_steps > 0 {
                 let short_outcome = simulate(&prog, expected_steps - 1);
                 assert_eq!(
                     short_outcome,
-                    SimOutcome::MaxStepsReached {
+                    SimOutcome::Unknown {
                         steps: expected_steps - 1
                     }
                 );
@@ -930,7 +942,7 @@ mod tests {
         let prog: Program = "01".parse().unwrap();
         let mut sim = Simulator::new(prog.size());
         let outcome = sim.run(&prog, 25);
-        assert_eq!(outcome, SimOutcome::MaxStepsReached { steps: 25 });
+        assert_eq!(outcome, SimOutcome::Unknown { steps: 25 });
         assert_eq!(sim.offset(), 25);
         assert_eq!(sim.cells(), vec![1]);
         assert_eq!(sim.total_pebbles(), 1);

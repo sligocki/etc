@@ -478,11 +478,11 @@ fn print_outcome(outcome: &SimOutcome, elapsed: std::time::Duration) {
         SimOutcome::Halted { steps } => {
             println!("Status:  HALTED (stabilized) after {steps} steps");
         }
-        SimOutcome::DecidedNonHalting { decider, steps } => {
-            println!("Status:  NON-HALTING decided by {decider} (simulated {steps} steps)");
+        SimOutcome::Inf { decider, steps } => {
+            println!("Status:  INF decided by {decider} (simulated {steps} steps)");
         }
-        SimOutcome::MaxStepsReached { steps } => {
-            println!("Status:  MAX_STEPS reached ({steps} steps) without halting (undecided)");
+        SimOutcome::Unknown { steps } => {
+            println!("Status:  UNKNOWN reached ({steps} steps) without halting (undecided)");
         }
         SimOutcome::MissingRule { pebbles, steps } => {
             println!("Status:  MISSING_RULE for {pebbles} pebbles at step {steps}");

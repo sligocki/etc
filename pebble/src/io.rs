@@ -63,7 +63,8 @@ impl fmt::Display for ProgramRecord {
 /// - `<program>`
 /// - `<program>\tHALT\t<steps>`
 /// - `<program>\t<steps>` (shorthand for `Halted { steps }`)
-/// - `<program>\tMAX_STEPS\t<steps>` (or `HOLD` / `TIMEOUT`)
+/// - `<program>\tINF\t<decider>\t<steps>` (or `DECIDED`)
+/// - `<program>\tUNKNOWN\t<steps>` (or `MAX_STEPS` / `HOLD` / `TIMEOUT`)
 /// - `<program>\tMISSING_RULE\t<pebbles>\t<steps>`
 pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, IoError> {
     let (code_part, comment_part) = match line.split_once('#') {
@@ -103,10 +104,10 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
             })?;
             SimOutcome::Halted { steps }
         }
-        "DECIDED" => {
+        "INF" | "DECIDED" => {
             let decider_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
                 line: line_num,
-                detail: "missing decider name after DECIDED".to_string(),
+                detail: format!("missing decider name after {status_or_steps}"),
             })?;
             let mut decider: crate::deciders::Decider = decider_str
                 .parse()
@@ -116,7 +117,7 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                 })?;
             let steps_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
                 line: line_num,
-                detail: "missing step count after DECIDED decider name".to_string(),
+                detail: format!("missing step count after {status_or_steps} decider name"),
             })?;
             let steps: u64 = steps_str.parse().map_err(|_| IoError::ParseOutcome {
                 line: line_num,
@@ -129,9 +130,9 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                     }
                 }
             }
-            SimOutcome::DecidedNonHalting { decider, steps }
+            SimOutcome::Inf { decider, steps }
         }
-        "MAX_STEPS" | "HOLD" | "HOLDOUT" | "TIMEOUT" => {
+        "UNKNOWN" | "MAX_STEPS" | "HOLD" | "HOLDOUT" | "TIMEOUT" | "UNK" => {
             let steps_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
                 line: line_num,
                 detail: format!("missing step count after {status_or_steps}"),
@@ -140,7 +141,7 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                 line: line_num,
                 detail: format!("invalid step count '{steps_str}'"),
             })?;
-            SimOutcome::MaxStepsReached { steps }
+            SimOutcome::Unknown { steps }
         }
         "MISSING_RULE" => {
             let pebbles_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
@@ -308,14 +309,14 @@ mod tests {
             ),
             ProgramRecord::new(
                 "01_01".parse().unwrap(),
-                Some(SimOutcome::DecidedNonHalting {
+                Some(SimOutcome::Inf {
                     decider: Decider::EdgeGlider,
                     steps: 50,
                 }),
             ),
             ProgramRecord::new(
                 "01_11_03_21_04".parse().unwrap(),
-                Some(SimOutcome::MaxStepsReached { steps: 100 }),
+                Some(SimOutcome::Unknown { steps: 100 }),
             ),
             ProgramRecord::new(
                 "00_--_--_--_14".parse().unwrap(),
@@ -326,7 +327,7 @@ mod tests {
             ),
             ProgramRecord::new(
                 "00_20_10_04_21_21_07_50_17_01".parse().unwrap(),
-                Some(SimOutcome::DecidedNonHalting {
+                Some(SimOutcome::Inf {
                     decider: Decider::Ctl(Some(crate::ctl::CtlProof {
                         num_steps: 60,
                         num_states: 4757,
@@ -340,7 +341,7 @@ mod tests {
             ),
             ProgramRecord::new(
                 "01_00_02_03_05_60_23_05_13_19".parse().unwrap(),
-                Some(SimOutcome::DecidedNonHalting {
+                Some(SimOutcome::Inf {
                     decider: Decider::Ctl(Some(crate::ctl::CtlProof {
                         num_steps: 240,
                         num_states: 63,
@@ -354,7 +355,7 @@ mod tests {
             ),
             ProgramRecord::new(
                 "00_02_21_40_11_--_10_08_43_11".parse().unwrap(),
-                Some(SimOutcome::DecidedNonHalting {
+                Some(SimOutcome::Inf {
                     decider: Decider::Ctl(Some(crate::ctl::CtlProof {
                         num_steps: 40,
                         num_states: 300,
@@ -391,7 +392,7 @@ mod tests {
         assert_eq!(records.len(), 3);
 
         match &records[0].outcome {
-            Some(SimOutcome::DecidedNonHalting {
+            Some(SimOutcome::Inf {
                 decider: Decider::Ctl(Some(proof)),
                 ..
             }) => {
@@ -403,7 +404,7 @@ mod tests {
         }
 
         match &records[1].outcome {
-            Some(SimOutcome::DecidedNonHalting {
+            Some(SimOutcome::Inf {
                 decider: Decider::Ctl(Some(proof)),
                 ..
             }) => {
@@ -414,7 +415,7 @@ mod tests {
         }
 
         match &records[2].outcome {
-            Some(SimOutcome::DecidedNonHalting {
+            Some(SimOutcome::Inf {
                 decider: Decider::Ctl(Some(proof)),
                 ..
             }) => {
@@ -442,7 +443,7 @@ mod tests {
         assert_eq!(records[1].outcome, Some(SimOutcome::Halted { steps: 6 }));
         assert_eq!(
             records[2].outcome,
-            Some(SimOutcome::MaxStepsReached { steps: 50 })
+            Some(SimOutcome::Unknown { steps: 50 })
         );
         assert_eq!(records[3].outcome, None);
 

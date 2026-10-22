@@ -10,10 +10,12 @@ use std::time::{Duration, Instant};
 /// Kind of pipeline step executed during enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineStageKind {
-    /// Simulation of the program up to `steps` (including prefix branching and edge glider check).
+    /// Simulation of the program up to `steps` (including prefix branching).
     Simulation { steps: u64 },
     /// Static backtracking analysis on program rules.
     StaticBacktrack,
+    /// Edge glider analysis on the current simulation tape.
+    EdgeGliderCurrent,
     /// Cycler and translated cycler detection up to `steps`.
     Cycler { steps: u64 },
     /// Separated components detection up to `steps`.
@@ -53,6 +55,10 @@ impl PipelineConfig {
                 kind: PipelineStageKind::StaticBacktrack,
             },
             PipelineStageSpec {
+                name: "EdgeGlider (sparse)".to_string(),
+                kind: PipelineStageKind::EdgeGliderCurrent,
+            },
+            PipelineStageSpec {
                 name: format!("Cycler / TransCycler ({early_steps} steps)"),
                 kind: PipelineStageKind::Cycler { steps: early_steps },
             },
@@ -74,6 +80,10 @@ impl PipelineConfig {
             stages.push(PipelineStageSpec {
                 name: format!("Simulation ({deep_steps} steps)"),
                 kind: PipelineStageKind::ExtendedSim { steps: deep_steps },
+            });
+            stages.push(PipelineStageSpec {
+                name: "EdgeGlider (deep)".to_string(),
+                kind: PipelineStageKind::EdgeGliderCurrent,
             });
             stages.push(PipelineStageSpec {
                 name: format!("Cycler / TransCycler ({deep_steps} steps)"),
@@ -560,6 +570,19 @@ pub fn resolve_leaf_outcome_timed(
                     };
                 }
             }
+            PipelineStageKind::EdgeGliderCurrent => {
+                metrics[i].invocations += 1;
+                let t0 = Instant::now();
+                let res = check_edge_glider_sparse(prog, sim.sparse_entries());
+                metrics[i].total_time_nanos += t0.elapsed().as_nanos() as u64;
+                if let Some(decider) = res {
+                    metrics[i].decided_inf += 1;
+                    return SimOutcome::Inf {
+                        decider,
+                        steps: sim.steps(),
+                    };
+                }
+            }
             PipelineStageKind::Cycler { steps } => {
                 metrics[i].invocations += 1;
                 let t0 = Instant::now();
@@ -715,18 +738,7 @@ impl Iterator for TnfEnumerator {
                         outcome: SimOutcome::Halted { steps },
                     });
                 }
-                SimOutcome::Unknown { steps } => {
-                    let t_edge = Instant::now();
-                    if let Some(decider) = check_edge_glider_sparse(&prog, sim.sparse_entries()) {
-                        self.metrics[0].total_time_nanos += t_edge.elapsed().as_nanos() as u64;
-                        self.metrics[0].decided_inf += 1;
-                        return Some(EnumEntry {
-                            program: prog,
-                            outcome: SimOutcome::Inf { decider, steps },
-                        });
-                    }
-                    self.metrics[0].total_time_nanos += t_edge.elapsed().as_nanos() as u64;
-
+                SimOutcome::Unknown { .. } => {
                     let outcome = resolve_leaf_outcome_timed(
                         &prog,
                         &mut sim,
@@ -843,19 +855,7 @@ fn build_frontier(
                                 outcome: SimOutcome::Halted { steps },
                             }));
                         }
-                        SimOutcome::Unknown { steps } => {
-                            let t_edge = Instant::now();
-                            if let Some(decider) = check_edge_glider_sparse(&prog, sim.sparse_entries()) {
-                                metrics[0].total_time_nanos += t_edge.elapsed().as_nanos() as u64;
-                                metrics[0].decided_inf += 1;
-                                next_frontier.push(FrontierNode::Leaf(EnumEntry {
-                                    program: prog,
-                                    outcome: SimOutcome::Inf { decider, steps },
-                                }));
-                                continue;
-                            }
-                            metrics[0].total_time_nanos += t_edge.elapsed().as_nanos() as u64;
-
+                        SimOutcome::Unknown { .. } => {
                             let outcome = resolve_leaf_outcome_timed(
                                 &prog,
                                 &mut sim,

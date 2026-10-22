@@ -35,6 +35,21 @@ impl From<io::Error> for IoError {
     }
 }
 
+/// Format an integer count with comma thousands separators (e.g. `23,884,622`).
+pub fn format_count(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(b as char);
+    }
+    out
+}
+
 /// A program alongside an optional simulation outcome, corresponding to a single line in a results file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgramRecord {
@@ -450,6 +465,15 @@ mod tests {
         let programs = read_programs(Cursor::new(input)).unwrap();
         assert_eq!(programs.len(), 4);
         assert_eq!(programs[0].to_string(), "00_11_03_21_04");
+    }
+
+    #[test]
+    fn test_format_count() {
+        assert_eq!(format_count(0), "0");
+        assert_eq!(format_count(9), "9");
+        assert_eq!(format_count(999), "999");
+        assert_eq!(format_count(1000), "1,000");
+        assert_eq!(format_count(23884622), "23,884,622");
     }
 
     #[test]

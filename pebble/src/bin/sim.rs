@@ -1,5 +1,5 @@
 use pebble::enumeration::{EnumEntry, EnumStats};
-use pebble::io::{read_records_from_file, write_records_to_file, ProgramRecord};
+use pebble::io::{format_count, read_records_from_file, write_records_to_file, ProgramRecord};
 use pebble::program::{Program, Rule};
 use pebble::simulation::{
     format_trace_bounds, simulate_from_sim_with_trace, SimOutcome, Simulator, SparseTape,
@@ -225,7 +225,7 @@ fn run_file_mode(
         }
         println!(
             "Wrote {} records to {}",
-            out_records.len(),
+            format_count(out_records.len() as u64),
             out_path.display()
         );
         println!();
@@ -246,20 +246,20 @@ fn run_file_mode(
     };
 
     println!("=== Batch Simulation Summary (max_steps = {max_steps}) ===");
-    println!("Total input programs:   {total_input}");
-    println!("Total output programs:  {}", stats.total_programs);
+    println!("Total input programs:   {}", format_count(total_input as u64));
+    println!("Total output programs:  {}", format_count(stats.total_programs));
     println!(
         "Halted programs:        {} ({:.2}%)",
-        stats.halted_programs,
+        format_count(stats.halted_programs),
         stats.halted_percentage()
     );
-    println!("Holdout programs:       {holdouts} ({hold_pct:.2}%)");
+    println!("Holdout programs:       {} ({hold_pct:.2}%)", format_count(holdouts));
     if let (Some(max_s), Some(champ)) = (&stats.max_halting_steps, &stats.champion) {
-        println!("Max halting step count: {max_s}");
+        println!("Max halting step count: {}", format_count(*max_s));
         println!("Champion program:       {champ}");
     }
     println!("Wallclock runtime:      {:.3?}", elapsed);
-    println!("Throughput:             {:.0} programs/s", programs_per_sec);
+    println!("Throughput:             {} programs/s", format_count(programs_per_sec as u64));
 }
 
 fn main() {
@@ -433,11 +433,11 @@ fn main() {
                 stats.record(entry);
             }
             println!("Total input programs:   1");
-            println!("Total output programs:  {}", stats.total_programs);
-            println!("Halted programs:        {}", stats.halted_programs);
-            println!("Holdout programs:       {}", stats.holdout_programs());
+            println!("Total output programs:  {}", format_count(stats.total_programs));
+            println!("Halted programs:        {}", format_count(stats.halted_programs));
+            println!("Holdout programs:       {}", format_count(stats.holdout_programs()));
             if let (Some(max_s), Some(champ)) = (&stats.max_halting_steps, &stats.champion) {
-                println!("Max halting step count: {max_s}");
+                println!("Max halting step count: {}", format_count(*max_s));
                 println!("Champion program:       {champ}");
             }
             println!("Runtime: {:.3?}", elapsed);

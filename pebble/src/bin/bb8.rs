@@ -5,18 +5,27 @@
 // Unknown programs:       0 (0.00%)
 // Max halting step count: 63
 // Champion program:       00_11_03_21_50_30_24_01
-// Wallclock runtime:      16.071s
-// Throughput:             1,467,727 programs/s
+// Wallclock runtime:      4.673s
+// Throughput:             5,047,882 programs/s
 //
 // === Pipeline & Decider Performance ===
-// Stage / Decider                                        Run On     Split On       Halted          Inf     Total Time     Avg / Prog
-// ------------------------------------------------------------------------------------------------------------------------
-// StaticBacktrack                                    25,688,761            0            0    7,065,148         5.09 s         198 ns
-// Simulation (100 steps)                             18,623,613    2,100,654    4,517,508   10,806,942       176.89 s        9.50 µs
-// Cycler / TransCycler (100 steps)                    1,198,509            0            0      863,081        26.65 s       22.23 µs
-// SeparatedComponents (100 steps)                       335,428            0            0      330,496         4.57 s       13.61 µs
-// CTL (100 steps, moduli=[1])                             4,932            0            0        4,932         2.52 s      511.70 µs
-// ------------------------------------------------------------------------------------------------------------------------
+// Stage / Decider                      Run On     Split On       Halted          Inf     Total Time     Avg / Prog
+// ----------------------------------------------------------------------------------------------------------------
+// StaticBacktrack                  25,688,761            0            0    7,065,148         1.27 s          49 ns
+// Simulation (100 steps)           18,623,613    2,100,654    4,517,508   10,806,942        51.12 s        2.74 µs
+// Cycler (100 steps)                1,198,509            0            0      863,081         8.21 s        6.85 µs
+// SeparatedComponents (100 steps)     335,428            0            0      330,496         1.25 s        3.72 µs
+// CTL (100 steps, moduli=[1])           4,932            0            0        4,932      793.27 ms      160.84 µs
+// ----------------------------------------------------------------------------------------------------------------
+//
+// === Cycler Proof Statistics (863,081 proved) ===
+// Periods:          min = 1, avg = 3.4, max = 69
+// Top periods:      p=2 (294,194), p=1 (167,303), p=3 (102,463), p=4 (86,322), p=5 (63,385)
+// Displacements:    dx=0 (523,074), dx=1 (132,025), dx=-1 (108,632), dx=2 (48,472), dx=-2 (30,641)
+//
+// === SeparatedComponents Proof Statistics (330,496 proved) ===
+// Periods:          min = 2, avg = 3.3, max = 27
+// Top periods:      p=2 (137,277), p=3 (92,681), p=4 (44,065), p=5 (21,747), p=6 (16,544)
 //
 // === CTL Proof Statistics (4,932 proved) ===
 // Steps:            min = 304, avg = 304.0, max = 304

@@ -1,22 +1,9 @@
-use pebble::enumeration::{enumerate_parallel, ProgressSnapshot};
+use pebble::enumeration::{enumerate_parallel, print_enum_report, ProgressSnapshot};
 use pebble::io::{format_count, write_records_to_file, ProgramRecord};
 use std::path::PathBuf;
 use std::process;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-
-fn format_duration(d: Duration) -> String {
-    let nanos = d.as_nanos();
-    if nanos < 1_000 {
-        format!("{nanos} ns")
-    } else if nanos < 1_000_000 {
-        format!("{:.2} µs", nanos as f64 / 1_000.0)
-    } else if nanos < 1_000_000_000 {
-        format!("{:.2} ms", nanos as f64 / 1_000_000.0)
-    } else {
-        format!("{:.2} s", nanos as f64 / 1_000_000_000.0)
-    }
-}
 
 use clap::Parser;
 
@@ -134,7 +121,7 @@ fn main() {
     println!(
         "Deciders:         {}",
         if use_deciders {
-            "enabled (EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents, Bouncer, CTL, StaticBacktrack)"
+            "enabled (EdgeGlider, Cycler, SeparatedComponents, Bouncer, CTL, StaticBacktrack)"
         } else {
             "disabled"
         }
@@ -205,12 +192,6 @@ fn main() {
         .collect();
 
     let elapsed = start.elapsed();
-    let secs = elapsed.as_secs_f64();
-    let programs_per_sec = if secs > 0.0 {
-        stats.total_programs as f64 / secs
-    } else {
-        stats.total_programs as f64
-    };
 
     if let Some(ref path) = output_path {
         if let Err(err) = write_records_to_file(path, &records_to_write) {
@@ -225,101 +206,5 @@ fn main() {
         println!();
     }
 
-    println!("=== Final Statistics (peBBle({size}), early_steps = {early_steps}, deep_steps = {deep_steps}) ===");
-    println!("Total programs:         {}", format_count(stats.total_programs));
-    println!(
-        "Halted programs:        {} ({:.2}%)",
-        format_count(stats.halted_programs),
-        stats.halted_percentage()
-    );
-    if use_deciders {
-        println!(
-            "Infinite programs:      {} ({:.2}%)",
-            format_count(stats.inf_programs),
-            stats.inf_percentage()
-        );
-    }
-    println!(
-        "Unknown programs:       {} ({:.2}%)",
-        format_count(stats.unknown_programs()),
-        stats.unknown_percentage()
-    );
-    match (&stats.max_halting_steps, &stats.champion) {
-        (Some(max_s), Some(champ)) => {
-            println!("Max halting step count: {}", format_count(*max_s));
-            println!("Champion program:       {champ}");
-        }
-        _ => {
-            println!("Max halting step count: none");
-        }
-    }
-    println!("Wallclock runtime:      {:.3?}", elapsed);
-    println!("Throughput:             {} programs/s", format_count(programs_per_sec as u64));
-
-    if use_deciders {
-        println!();
-        println!("=== Pipeline & Decider Performance ===");
-        println!(
-            "{:<36} {:>12} {:>12} {:>12} {:>12} {:>14} {:>14}",
-            "Stage / Decider", "Run On", "Split On", "Halted", "Inf", "Total Time", "Avg / Prog"
-        );
-        println!("{:-<108}", "");
-        for stage in &stats.stages {
-            let m = &stage.metrics;
-            let tot_time_str = format_duration(m.total_time());
-            let avg_time_str = m
-                .avg_time()
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_string());
-            println!(
-                "{:<36} {:>12} {:>12} {:>12} {:>12} {:>14} {:>14}",
-                stage.name,
-                format_count(m.invocations),
-                format_count(m.splits),
-                format_count(m.decided_halting),
-                format_count(m.decided_inf),
-                tot_time_str,
-                avg_time_str,
-            );
-        }
-        println!("{:-<108}", "");
-
-        if stats.ctl_proofs_count > 0 {
-            println!();
-            println!(
-                "=== CTL Proof Statistics ({} proved) ===",
-                format_count(stats.ctl_proofs_count)
-            );
-            let avg_steps = stats.ctl_total_steps as f64 / stats.ctl_proofs_count as f64;
-            println!(
-                "Steps:            min = {}, avg = {:.1}, max = {}",
-                format_count(stats.ctl_min_steps),
-                avg_steps,
-                format_count(stats.ctl_max_steps)
-            );
-            let avg_states = stats.ctl_total_states as f64 / stats.ctl_proofs_count as f64;
-            println!(
-                "States:           min = {}, avg = {:.1}, max = {}",
-                format_count(stats.ctl_min_states as u64),
-                avg_states,
-                format_count(stats.ctl_max_states as u64)
-            );
-
-            let floor_str = stats
-                .ctl_floor_counts
-                .iter()
-                .map(|(f, c)| format!("floor={f} ({})", format_count(*c)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            println!("Floors:           {}", floor_str);
-
-            let mod_str = stats
-                .ctl_mod_counts
-                .iter()
-                .map(|(m, c)| format!("mod={m} ({})", format_count(*c)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            println!("Moduli:           {}", mod_str);
-        }
-    }
+    print_enum_report(&stats, elapsed, use_deciders);
 }

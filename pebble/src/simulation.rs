@@ -77,6 +77,15 @@ impl fmt::Display for SimOutcome {
                 Decider::Ctl(Some(proof)) => {
                     write!(f, "INF\tCTL\t{} # {proof}", proof.num_steps)
                 }
+                Decider::Cycler(Some(proof)) => {
+                    write!(f, "INF\tCycler\t{steps} # {proof}")
+                }
+                Decider::SeparatedComponents(Some(proof)) => {
+                    write!(f, "INF\tSeparatedComponents\t{steps} # {proof}")
+                }
+                Decider::Bouncer(Some(proof)) => {
+                    write!(f, "INF\tBouncer\t{steps} # {proof}")
+                }
                 _ => write!(f, "INF\t{decider}\t{steps}"),
             },
             SimOutcome::Unknown { steps } => write!(f, "UNKNOWN\t{steps}"),

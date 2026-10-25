@@ -48,7 +48,7 @@ impl PipelineStage {
             PipelineStage::StaticBacktrack => "StaticBacktrack".to_string(),
             PipelineStage::Simulation { steps } => format!("Simulation ({steps} steps)"),
             PipelineStage::EdgeGliderCurrent => "EdgeGliderCurrent".to_string(),
-            PipelineStage::Cycler { steps } => format!("Cycler / TransCycler ({steps} steps)"),
+            PipelineStage::Cycler { steps } => format!("Cycler ({steps} steps)"),
             PipelineStage::SeparatedComponents { steps } => {
                 format!("SeparatedComponents ({steps} steps)")
             }
@@ -211,8 +211,8 @@ pub struct EnumStats {
     /// Number of enumerated TNF programs proven infinite by the decider pipeline.
     pub inf_programs: u64,
     /// Breakdown of infinite programs by decider:
-    /// `[EdgeGlider, Cycler, TranslatedCycler, SeparatedComponents, Bouncer, Ctl, StaticBacktrack]`.
-    pub decided_by_kind: [u64; 7],
+    /// `[EdgeGlider, Cycler, SeparatedComponents, Bouncer, Ctl, StaticBacktrack]`.
+    pub decided_by_kind: [u64; 6],
     /// Maximum halting step count observed across all halted programs.
     pub max_halting_steps: Option<u64>,
     /// First champion program achieving `max_halting_steps`.
@@ -237,6 +237,29 @@ pub struct EnumStats {
     pub ctl_floor_counts: std::collections::BTreeMap<usize, u64>,
     /// Distribution of moduli in CTL proofs.
     pub ctl_mod_counts: std::collections::BTreeMap<usize, u64>,
+
+    /// Number of Cycler proofs found.
+    pub cycler_proofs_count: u64,
+    pub cycler_min_period: u64,
+    pub cycler_max_period: u64,
+    pub cycler_total_period: u64,
+    pub cycler_period_counts: std::collections::BTreeMap<u64, u64>,
+    pub cycler_dx_counts: std::collections::BTreeMap<isize, u64>,
+
+    /// Number of SeparatedComponents proofs found.
+    pub sep_comp_proofs_count: u64,
+    pub sep_comp_min_period: u64,
+    pub sep_comp_max_period: u64,
+    pub sep_comp_total_period: u64,
+    pub sep_comp_period_counts: std::collections::BTreeMap<u64, u64>,
+
+    /// Number of Bouncer proofs found.
+    pub bouncer_proofs_count: u64,
+    pub bouncer_min_bounce_steps: u64,
+    pub bouncer_max_bounce_steps: u64,
+    pub bouncer_total_bounce_steps: u64,
+    pub bouncer_bounce_steps_counts: std::collections::BTreeMap<u64, u64>,
+    pub bouncer_gap_growth_counts: std::collections::BTreeMap<usize, u64>,
 }
 
 impl PartialEq for EnumStats {
@@ -258,6 +281,14 @@ impl PartialEq for EnumStats {
             && self.ctl_total_states == other.ctl_total_states
             && self.ctl_floor_counts == other.ctl_floor_counts
             && self.ctl_mod_counts == other.ctl_mod_counts
+            && self.cycler_proofs_count == other.cycler_proofs_count
+            && self.cycler_period_counts == other.cycler_period_counts
+            && self.cycler_dx_counts == other.cycler_dx_counts
+            && self.sep_comp_proofs_count == other.sep_comp_proofs_count
+            && self.sep_comp_period_counts == other.sep_comp_period_counts
+            && self.bouncer_proofs_count == other.bouncer_proofs_count
+            && self.bouncer_bounce_steps_counts == other.bouncer_bounce_steps_counts
+            && self.bouncer_gap_growth_counts == other.bouncer_gap_growth_counts
     }
 }
 
@@ -308,10 +339,61 @@ impl EnumStats {
                 self.inf_programs += 1;
                 let idx = match decider {
                     Decider::EdgeGlider => 0,
-                    Decider::Cycler => 1,
-                    Decider::TranslatedCycler => 2,
-                    Decider::SeparatedComponents => 3,
-                    Decider::Bouncer => 4,
+                    Decider::Cycler(proof_opt) => {
+                        if let Some(proof) = proof_opt {
+                            self.cycler_proofs_count += 1;
+                            if self.cycler_proofs_count == 1 {
+                                self.cycler_min_period = proof.period;
+                                self.cycler_max_period = proof.period;
+                            } else {
+                                self.cycler_min_period = self.cycler_min_period.min(proof.period);
+                                self.cycler_max_period = self.cycler_max_period.max(proof.period);
+                            }
+                            self.cycler_total_period += proof.period;
+                            *self.cycler_period_counts.entry(proof.period).or_insert(0) += 1;
+                            *self.cycler_dx_counts.entry(proof.dx).or_insert(0) += 1;
+                        }
+                        1
+                    }
+                    Decider::SeparatedComponents(proof_opt) => {
+                        if let Some(proof) = proof_opt {
+                            self.sep_comp_proofs_count += 1;
+                            if self.sep_comp_proofs_count == 1 {
+                                self.sep_comp_min_period = proof.period;
+                                self.sep_comp_max_period = proof.period;
+                            } else {
+                                self.sep_comp_min_period = self.sep_comp_min_period.min(proof.period);
+                                self.sep_comp_max_period = self.sep_comp_max_period.max(proof.period);
+                            }
+                            self.sep_comp_total_period += proof.period;
+                            *self.sep_comp_period_counts.entry(proof.period).or_insert(0) += 1;
+                        }
+                        2
+                    }
+                    Decider::Bouncer(proof_opt) => {
+                        if let Some(proof) = proof_opt {
+                            self.bouncer_proofs_count += 1;
+                            if self.bouncer_proofs_count == 1 {
+                                self.bouncer_min_bounce_steps = proof.bounce_steps;
+                                self.bouncer_max_bounce_steps = proof.bounce_steps;
+                            } else {
+                                self.bouncer_min_bounce_steps =
+                                    self.bouncer_min_bounce_steps.min(proof.bounce_steps);
+                                self.bouncer_max_bounce_steps =
+                                    self.bouncer_max_bounce_steps.max(proof.bounce_steps);
+                            }
+                            self.bouncer_total_bounce_steps += proof.bounce_steps;
+                            *self
+                                .bouncer_bounce_steps_counts
+                                .entry(proof.bounce_steps)
+                                .or_insert(0) += 1;
+                            *self
+                                .bouncer_gap_growth_counts
+                                .entry(proof.gap_growth)
+                                .or_insert(0) += 1;
+                        }
+                        3
+                    }
                     Decider::Ctl(proof_opt) => {
                         if let Some(proof) = proof_opt {
                             self.ctl_proofs_count += 1;
@@ -331,9 +413,9 @@ impl EnumStats {
                             *self.ctl_floor_counts.entry(proof.floor).or_insert(0) += 1;
                             *self.ctl_mod_counts.entry(proof.modulus).or_insert(0) += 1;
                         }
-                        5
+                        4
                     }
-                    Decider::StaticBacktrack => 6,
+                    Decider::StaticBacktrack => 5,
                 };
                 self.decided_by_kind[idx] += 1;
             }
@@ -345,12 +427,11 @@ impl EnumStats {
     pub fn decided_count(&self, decider: Decider) -> u64 {
         let idx = match decider {
             Decider::EdgeGlider => 0,
-            Decider::Cycler => 1,
-            Decider::TranslatedCycler => 2,
-            Decider::SeparatedComponents => 3,
-            Decider::Bouncer => 4,
-            Decider::Ctl(_) => 5,
-            Decider::StaticBacktrack => 6,
+            Decider::Cycler(_) => 1,
+            Decider::SeparatedComponents(_) => 2,
+            Decider::Bouncer(_) => 3,
+            Decider::Ctl(_) => 4,
+            Decider::StaticBacktrack => 5,
         };
         self.decided_by_kind[idx]
     }
@@ -442,6 +523,56 @@ impl EnumStats {
             if is_better {
                 self.max_halting_steps = Some(other_max);
                 self.champion = other.champion;
+            }
+        }
+        if other.cycler_proofs_count > 0 {
+            if self.cycler_proofs_count == 0 {
+                self.cycler_min_period = other.cycler_min_period;
+                self.cycler_max_period = other.cycler_max_period;
+            } else {
+                self.cycler_min_period = self.cycler_min_period.min(other.cycler_min_period);
+                self.cycler_max_period = self.cycler_max_period.max(other.cycler_max_period);
+            }
+            self.cycler_proofs_count += other.cycler_proofs_count;
+            self.cycler_total_period += other.cycler_total_period;
+            for (k, v) in other.cycler_period_counts {
+                *self.cycler_period_counts.entry(k).or_insert(0) += v;
+            }
+            for (k, v) in other.cycler_dx_counts {
+                *self.cycler_dx_counts.entry(k).or_insert(0) += v;
+            }
+        }
+        if other.sep_comp_proofs_count > 0 {
+            if self.sep_comp_proofs_count == 0 {
+                self.sep_comp_min_period = other.sep_comp_min_period;
+                self.sep_comp_max_period = other.sep_comp_max_period;
+            } else {
+                self.sep_comp_min_period = self.sep_comp_min_period.min(other.sep_comp_min_period);
+                self.sep_comp_max_period = self.sep_comp_max_period.max(other.sep_comp_max_period);
+            }
+            self.sep_comp_proofs_count += other.sep_comp_proofs_count;
+            self.sep_comp_total_period += other.sep_comp_total_period;
+            for (k, v) in other.sep_comp_period_counts {
+                *self.sep_comp_period_counts.entry(k).or_insert(0) += v;
+            }
+        }
+        if other.bouncer_proofs_count > 0 {
+            if self.bouncer_proofs_count == 0 {
+                self.bouncer_min_bounce_steps = other.bouncer_min_bounce_steps;
+                self.bouncer_max_bounce_steps = other.bouncer_max_bounce_steps;
+            } else {
+                self.bouncer_min_bounce_steps =
+                    self.bouncer_min_bounce_steps.min(other.bouncer_min_bounce_steps);
+                self.bouncer_max_bounce_steps =
+                    self.bouncer_max_bounce_steps.max(other.bouncer_max_bounce_steps);
+            }
+            self.bouncer_proofs_count += other.bouncer_proofs_count;
+            self.bouncer_total_bounce_steps += other.bouncer_total_bounce_steps;
+            for (k, v) in other.bouncer_bounce_steps_counts {
+                *self.bouncer_bounce_steps_counts.entry(k).or_insert(0) += v;
+            }
+            for (k, v) in other.bouncer_gap_growth_counts {
+                *self.bouncer_gap_growth_counts.entry(k).or_insert(0) += v;
             }
         }
         if other.ctl_proofs_count > 0 {
@@ -1142,6 +1273,25 @@ pub fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs_f64(secs))
 }
 
+fn format_top_counts<K: std::fmt::Display + Ord>(
+    map: &std::collections::BTreeMap<K, u64>,
+    prefix: &str,
+    limit: usize,
+) -> String {
+    let mut pairs: Vec<(&K, &u64)> = map.iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    let formatted: Vec<String> = pairs
+        .into_iter()
+        .take(limit)
+        .map(|(k, count)| format!("{prefix}{k} ({})", format_count(*count)))
+        .collect();
+    if formatted.is_empty() {
+        "-".to_string()
+    } else {
+        formatted.join(", ")
+    }
+}
+
 /// Prints the formatted summary and decider metrics report for an enumeration run.
 pub fn print_enum_report(stats: &EnumStats, elapsed: Duration, use_deciders: bool) {
     let secs = elapsed.as_secs_f64();
@@ -1209,6 +1359,62 @@ pub fn print_enum_report(stats: &EnumStats, elapsed: Duration, use_deciders: boo
             );
         }
         println!("{:-<120}", "");
+
+        if stats.cycler_proofs_count > 0 {
+            println!();
+            println!(
+                "=== Cycler Proof Statistics ({} proved) ===",
+                format_count(stats.cycler_proofs_count)
+            );
+            let avg_p = stats.cycler_total_period as f64 / stats.cycler_proofs_count as f64;
+            println!(
+                "Periods:          min = {}, avg = {:.1}, max = {}",
+                format_count(stats.cycler_min_period),
+                avg_p,
+                format_count(stats.cycler_max_period)
+            );
+            let top_periods = format_top_counts(&stats.cycler_period_counts, "p=", 8);
+            println!("Top periods:      {}", top_periods);
+            let dx_str = format_top_counts(&stats.cycler_dx_counts, "dx=", 8);
+            println!("Displacements:    {}", dx_str);
+        }
+
+        if stats.sep_comp_proofs_count > 0 {
+            println!();
+            println!(
+                "=== SeparatedComponents Proof Statistics ({} proved) ===",
+                format_count(stats.sep_comp_proofs_count)
+            );
+            let avg_p = stats.sep_comp_total_period as f64 / stats.sep_comp_proofs_count as f64;
+            println!(
+                "Periods:          min = {}, avg = {:.1}, max = {}",
+                format_count(stats.sep_comp_min_period),
+                avg_p,
+                format_count(stats.sep_comp_max_period)
+            );
+            let top_periods = format_top_counts(&stats.sep_comp_period_counts, "p=", 8);
+            println!("Top periods:      {}", top_periods);
+        }
+
+        if stats.bouncer_proofs_count > 0 {
+            println!();
+            println!(
+                "=== Bouncer Proof Statistics ({} proved) ===",
+                format_count(stats.bouncer_proofs_count)
+            );
+            let avg_bounce =
+                stats.bouncer_total_bounce_steps as f64 / stats.bouncer_proofs_count as f64;
+            println!(
+                "Bounce steps:     min = {}, avg = {:.1}, max = {}",
+                format_count(stats.bouncer_min_bounce_steps),
+                avg_bounce,
+                format_count(stats.bouncer_max_bounce_steps)
+            );
+            let top_bounce = format_top_counts(&stats.bouncer_bounce_steps_counts, "s=", 8);
+            println!("Top bounce steps: {}", top_bounce);
+            let growth_str = format_top_counts(&stats.bouncer_gap_growth_counts, "Δg=", 8);
+            println!("Gap growths:      {}", growth_str);
+        }
 
         if stats.ctl_proofs_count > 0 {
             println!();
@@ -1585,6 +1791,83 @@ mod tests {
     }
 
     #[test]
+    fn test_enum_stats_decider_proof_recording_and_merging() {
+        use crate::deciders::{BouncerProof, CyclerProof, SeparatedComponentsProof};
+        let mut stats1 = EnumStats::default();
+        stats1.record(&EnumEntry {
+            program: "00_20_02".parse().unwrap(),
+            outcome: SimOutcome::Inf {
+                decider: Decider::Cycler(Some(CyclerProof { period: 2, dx: 0 })),
+                steps: 3,
+            },
+        });
+        stats1.record(&EnumEntry {
+            program: "00_02_01".parse().unwrap(),
+            outcome: SimOutcome::Inf {
+                decider: Decider::Cycler(Some(CyclerProof { period: 4, dx: 1 })),
+                steps: 4,
+            },
+        });
+        stats1.record(&EnumEntry {
+            program: "00_02_01_13_04_01".parse().unwrap(),
+            outcome: SimOutcome::Inf {
+                decider: Decider::SeparatedComponents(Some(SeparatedComponentsProof {
+                    period: 8,
+                    dx_left: -1,
+                    dx_right: 1,
+                })),
+                steps: 8,
+            },
+        });
+        stats1.record(&EnumEntry {
+            program: "00_02_01_40_12_01".parse().unwrap(),
+            outcome: SimOutcome::Inf {
+                decider: Decider::Bouncer(Some(BouncerProof {
+                    bounce_steps: 18,
+                    gap_growth: 2,
+                })),
+                steps: 18,
+            },
+        });
+
+        assert_eq!(stats1.cycler_proofs_count, 2);
+        assert_eq!(stats1.cycler_min_period, 2);
+        assert_eq!(stats1.cycler_max_period, 4);
+        assert_eq!(stats1.cycler_total_period, 6);
+        assert_eq!(stats1.cycler_period_counts.get(&2), Some(&1));
+        assert_eq!(stats1.cycler_period_counts.get(&4), Some(&1));
+        assert_eq!(stats1.cycler_dx_counts.get(&0), Some(&1));
+        assert_eq!(stats1.cycler_dx_counts.get(&1), Some(&1));
+
+        assert_eq!(stats1.sep_comp_proofs_count, 1);
+        assert_eq!(stats1.sep_comp_min_period, 8);
+
+        assert_eq!(stats1.bouncer_proofs_count, 1);
+        assert_eq!(stats1.bouncer_min_bounce_steps, 18);
+        assert_eq!(stats1.bouncer_gap_growth_counts.get(&2), Some(&1));
+
+        let mut stats2 = EnumStats::default();
+        stats2.record(&EnumEntry {
+            program: "00_01_10_00_03".parse().unwrap(),
+            outcome: SimOutcome::Inf {
+                decider: Decider::Cycler(Some(CyclerProof { period: 6, dx: 0 })),
+                steps: 10,
+            },
+        });
+
+        stats1.merge(stats2);
+        assert_eq!(stats1.cycler_proofs_count, 3);
+        assert_eq!(stats1.cycler_min_period, 2);
+        assert_eq!(stats1.cycler_max_period, 6);
+        assert_eq!(stats1.cycler_total_period, 12);
+        assert_eq!(stats1.cycler_period_counts.get(&2), Some(&1));
+        assert_eq!(stats1.cycler_period_counts.get(&4), Some(&1));
+        assert_eq!(stats1.cycler_period_counts.get(&6), Some(&1));
+        assert_eq!(stats1.cycler_dx_counts.get(&0), Some(&2));
+        assert_eq!(stats1.cycler_dx_counts.get(&1), Some(&1));
+    }
+
+    #[test]
     fn test_pipeline_config_and_stage_names() {
         let pipeline = PipelineConfig {
             stages: vec![
@@ -1611,7 +1894,7 @@ mod tests {
 
         assert_eq!(pipeline.stages[0].name(), "StaticBacktrack");
         assert_eq!(pipeline.stages[1].name(), "Simulation (50 steps)");
-        assert_eq!(pipeline.stages[2].name(), "Cycler / TransCycler (50 steps)");
+        assert_eq!(pipeline.stages[2].name(), "Cycler (50 steps)");
         assert_eq!(pipeline.stages[3].name(), "SeparatedComponents (50 steps)");
         assert_eq!(pipeline.stages[4].name(), "Bouncer (50 steps)");
         assert_eq!(pipeline.stages[5].name(), "CTL (50 steps)");

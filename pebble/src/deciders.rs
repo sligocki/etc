@@ -5,23 +5,70 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
+/// Proof metrics for cyclers (stationary `dx == 0` or translated `dx != 0`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CyclerProof {
+    pub period: u64,
+    pub dx: isize,
+}
+
+impl fmt::Display for CyclerProof {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "period={} dx={}", self.period, self.dx)
+    }
+}
+
+/// Proof metrics for separated components with non-shrinking separation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SeparatedComponentsProof {
+    pub period: u64,
+    pub dx_left: isize,
+    pub dx_right: isize,
+}
+
+impl fmt::Display for SeparatedComponentsProof {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "period={} dx_l={} dx_r={}",
+            self.period, self.dx_left, self.dx_right
+        )
+    }
+}
+
+/// Proof metrics for recurrent expanding bouncers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BouncerProof {
+    pub bounce_steps: u64,
+    pub gap_growth: usize,
+}
+
+impl fmt::Display for BouncerProof {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "bounce_steps={} gap_growth={}",
+            self.bounce_steps, self.gap_growth
+        )
+    }
+}
+
 /// Non-halting decider classification for Pebble Automata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Decider {
     /// Leftmost non-zero cell `k` has `L(k) == k`, or rightmost non-zero cell `k` has `R(k) == k`.
     /// By the light-cone invariant (`c = 1` cell/step), this edge particle escapes to infinity.
     EdgeGlider,
-    /// Exact tape configuration `(offset, cells)` repeats with period >= 2 (`dx == 0`).
-    Cycler,
-    /// Normalized tape shape `cells` repeats at a shifted position (`dx != 0`).
-    TranslatedCycler,
+    /// Normalized tape shape `cells` repeats with period >= 1 and displacement `dx`.
+    /// Stationary cyclers have `dx == 0`; translated cyclers have `dx != 0`.
+    Cycler(Option<CyclerProof>),
     /// Tape partitions into 2 causally isolated segments (separated by >= 2 zeros at all steps)
     /// whose shapes both repeat with non-shrinking separation (`dx_left <= dx_right`).
-    SeparatedComponents,
+    SeparatedComponents(Option<SeparatedComponentsProof>),
     /// A period-1 shuttle bounces back and forth between two stationary walls (`W_L` and `W_R`)
     /// with strictly growing total gap (`g_2 > g_1`), while each wall remains causally isolated
     /// during the opposite bounce.
-    Bouncer,
+    Bouncer(Option<BouncerProof>),
     /// Closed Tape Language (CTL) regular-set proof: a set of symbolic configurations with
     /// modular zero-star gaps `0^r (0^m)*` is entered during simulation, closed under exact
     /// 1-step symbolic transitions, and contains no halting configurations.
@@ -32,12 +79,11 @@ pub enum Decider {
 }
 
 impl Decider {
-    pub const ALL: [Decider; 7] = [
+    pub const ALL: [Decider; 6] = [
         Decider::EdgeGlider,
-        Decider::Cycler,
-        Decider::TranslatedCycler,
-        Decider::SeparatedComponents,
-        Decider::Bouncer,
+        Decider::Cycler(None),
+        Decider::SeparatedComponents(None),
+        Decider::Bouncer(None),
         Decider::Ctl(None),
         Decider::StaticBacktrack,
     ];
@@ -47,10 +93,9 @@ impl fmt::Display for Decider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Decider::EdgeGlider => write!(f, "EdgeGlider"),
-            Decider::Cycler => write!(f, "Cycler"),
-            Decider::TranslatedCycler => write!(f, "TranslatedCycler"),
-            Decider::SeparatedComponents => write!(f, "SeparatedComponents"),
-            Decider::Bouncer => write!(f, "Bouncer"),
+            Decider::Cycler(_) => write!(f, "Cycler"),
+            Decider::SeparatedComponents(_) => write!(f, "SeparatedComponents"),
+            Decider::Bouncer(_) => write!(f, "Bouncer"),
             Decider::Ctl(_) => write!(f, "CTL"),
             Decider::StaticBacktrack => write!(f, "StaticBacktrack"),
         }
@@ -63,10 +108,9 @@ impl FromStr for Decider {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
             "edgeglider" | "edge_glider" => Ok(Decider::EdgeGlider),
-            "cycler" => Ok(Decider::Cycler),
-            "translatedcycler" | "translated_cycler" => Ok(Decider::TranslatedCycler),
-            "separatedcomponents" | "separated_components" => Ok(Decider::SeparatedComponents),
-            "bouncer" => Ok(Decider::Bouncer),
+            "cycler" | "translatedcycler" | "translated_cycler" => Ok(Decider::Cycler(None)),
+            "separatedcomponents" | "separated_components" => Ok(Decider::SeparatedComponents(None)),
+            "bouncer" => Ok(Decider::Bouncer(None)),
             "ctl" => Ok(Decider::Ctl(None)),
             "staticbacktrack" | "static_backtrack" | "backtrack" => Ok(Decider::StaticBacktrack),
             other => Err(format!("unknown decider '{other}'")),
@@ -156,8 +200,7 @@ impl StepDeciderOutcome {
     }
 }
 
-/// Decider 2: Simulate `program` up to `max_steps` and detect `Cycler` (`dx == 0`)
-/// or `TranslatedCycler` (`dx != 0`).
+/// Decider 2: Simulate `program` up to `max_steps` and detect `Cycler` (`dx == 0` or `dx != 0`).
 pub fn decide_cycler(program: &Program, max_steps: u64) -> Option<Decider> {
     let mut sim = Simulator::new(program.size());
     match decide_cycler_from_sim(program, &mut sim, max_steps) {
@@ -167,29 +210,29 @@ pub fn decide_cycler(program: &Program, max_steps: u64) -> Option<Decider> {
 }
 
 /// Simulate `program` starting from an existing `sim` state up to `max_steps` additional steps
-/// and detect `Cycler` (`dx == 0`) or `TranslatedCycler` (`dx != 0`), or observe if it halts or splits.
+/// and detect `Cycler` (`dx == 0` or `dx != 0`), or observe if it halts or splits.
 pub fn decide_cycler_from_sim(
     program: &Program,
     sim: &mut Simulator,
     max_steps: u64,
 ) -> StepDeciderOutcome {
-    let mut seen_shapes: HashMap<Vec<(isize, u8)>, isize> = HashMap::new();
+    let mut seen_shapes: HashMap<Vec<(isize, u8)>, (u64, isize)> = HashMap::new();
 
     for _ in 0..=max_steps {
         let entries = sim.sparse_entries();
         if !entries.is_empty() {
             let x0 = entries[0].0;
             let shape: Vec<(isize, u8)> = entries.iter().map(|&(x, k)| (x - x0, k)).collect();
-            if let Some(&prev_offset) = seen_shapes.get(&shape) {
+            if let Some(&(prev_step, prev_offset)) = seen_shapes.get(&shape) {
                 // Confirm the state is not a stationary fixed point (halted) before reporting a cycle.
                 let prev_off = sim.offset();
+                let period = sim.steps().saturating_sub(prev_step);
+                let dx = prev_off - prev_offset;
                 match sim.step(program) {
                     StepResult::Stepped => {
-                        if prev_off == prev_offset {
-                            return StepDeciderOutcome::Proved(Decider::Cycler);
-                        } else {
-                            return StepDeciderOutcome::Proved(Decider::TranslatedCycler);
-                        }
+                        return StepDeciderOutcome::Proved(Decider::Cycler(Some(
+                            CyclerProof { period, dx },
+                        )));
                     }
                     StepResult::Halted => {
                         return StepDeciderOutcome::Halted { steps: sim.steps() };
@@ -202,7 +245,7 @@ pub fn decide_cycler_from_sim(
                     }
                 }
             }
-            seen_shapes.insert(shape, sim.offset());
+            seen_shapes.insert(shape, (sim.steps(), sim.offset()));
         }
 
         match sim.step(program) {
@@ -277,7 +320,7 @@ fn extract_bipartitions(offset: isize, cells: &[u8]) -> Vec<[Segment; 2]> {
 
 struct ActiveCut {
     segments: [Segment; 2],
-    seen: HashMap<(Vec<u8>, Vec<u8>), (isize, isize)>,
+    seen: HashMap<(Vec<u8>, Vec<u8>), (u64, isize, isize)>,
 }
 
 /// Decider 3: Simulate `program` up to `max_steps` and detect causally independent
@@ -311,13 +354,22 @@ pub fn decide_separated_components_from_sim(
                     let right_start = next_r.offset;
                     if right_start - left_end - 1 >= 2 {
                         let key = (next_l.cells.clone(), next_r.cells.clone());
-                        if let Some(&(prev_l_off, prev_r_off)) = cut.seen.get(&key) {
+                        if let Some(&(prev_step, prev_l_off, prev_r_off)) = cut.seen.get(&key) {
                             let dx_l = next_l.offset - prev_l_off;
                             let dx_r = next_r.offset - prev_r_off;
+                            let period = sim.steps().saturating_sub(prev_step);
                             if dx_l <= dx_r {
                                 match sim.step(program) {
                                     StepResult::Stepped => {
-                                        return StepDeciderOutcome::Proved(Decider::SeparatedComponents);
+                                        return StepDeciderOutcome::Proved(
+                                            Decider::SeparatedComponents(Some(
+                                                SeparatedComponentsProof {
+                                                    period,
+                                                    dx_left: dx_l,
+                                                    dx_right: dx_r,
+                                                },
+                                            )),
+                                        );
                                     }
                                     StepResult::Halted => {
                                         return StepDeciderOutcome::Halted { steps: sim.steps() };
@@ -328,7 +380,7 @@ pub fn decide_separated_components_from_sim(
                                 }
                             }
                         } else if cut.seen.len() < 128 {
-                            cut.seen.insert(key, (next_l.offset, next_r.offset));
+                            cut.seen.insert(key, (sim.steps(), next_l.offset, next_r.offset));
                         } else {
                             continue;
                         }
@@ -343,7 +395,7 @@ pub fn decide_separated_components_from_sim(
                     let mut seen = HashMap::new();
                     seen.insert(
                         (pair[0].cells.clone(), pair[1].cells.clone()),
-                        (pair[0].offset, pair[1].offset),
+                        (sim.steps(), pair[0].offset, pair[1].offset),
                     );
                     next_cuts.push(ActiveCut {
                         segments: pair,
@@ -491,6 +543,7 @@ fn right_wall_isolated(offset: isize, cells: &[u8], w_r: &[u8], x_r: isize) -> b
 
 #[derive(Debug, Clone)]
 struct BounceCandidate {
+    start_step: u64,
     started_right: bool,
     w_l: Vec<u8>,
     shuttle_1: Vec<u8>,
@@ -540,7 +593,12 @@ pub fn decide_bouncer_outcome(program: &Program, max_steps: u64) -> StepDeciderO
                         && tr.w_r == cand.w_r
                         && tr.total_gap > cand.g_1
                     {
-                        return StepDeciderOutcome::Proved(Decider::Bouncer);
+                        let bounce_steps = sim.steps().saturating_sub(cand.start_step);
+                        let gap_growth = tr.total_gap.saturating_sub(cand.g_1);
+                        return StepDeciderOutcome::Proved(Decider::Bouncer(Some(BouncerProof {
+                            bounce_steps,
+                            gap_growth,
+                        })));
                     }
                 }
                 next_return.push(cand);
@@ -581,6 +639,7 @@ pub fn decide_bouncer_outcome(program: &Program, max_steps: u64) -> StepDeciderO
                         });
                         if !already_tracked {
                             next_return.push(BounceCandidate {
+                                start_step: cand.start_step,
                                 started_right: cand.started_right,
                                 w_l: cand.w_l.clone(),
                                 shuttle_1: cand.shuttle_1.clone(),
@@ -608,6 +667,7 @@ pub fn decide_bouncer_outcome(program: &Program, max_steps: u64) -> StepDeciderO
                     });
                     if !already_tracked {
                         next_opposite.push(BounceCandidate {
+                            start_step: sim.steps(),
                             started_right,
                             w_l: tr.w_l.clone(),
                             shuttle_1: tr.shuttle.clone(),
@@ -719,7 +779,7 @@ pub fn decide_static_backtrack(program: &Program) -> Option<Decider> {
 }
 
 /// Run the staged decider pipeline
-/// (`StaticBacktrack` -> `EdgeGlider` -> `Cycler`/`TranslatedCycler` -> `SeparatedComponents` -> `Bouncer` -> `Ctl`)
+/// (`StaticBacktrack` -> `EdgeGlider` -> `Cycler` -> `SeparatedComponents` -> `Bouncer` -> `Ctl`)
 /// on a holdout program.
 ///
 /// `StaticBacktrack` runs first in pure $O(n)$ time with zero simulation steps.
@@ -799,40 +859,49 @@ mod tests {
     }
 
     #[test]
-    fn test_cycler_and_translated_cycler_decider() {
+    fn test_cycler_decider() {
         // Period-2 stationary cycler: 3 <-> 12
         let cycler: Program = "00_20_02".parse().unwrap();
-        assert_eq!(decide_cycler(&cycler, 10), Some(Decider::Cycler));
+        assert_eq!(
+            decide_cycler(&cycler, 10),
+            Some(Decider::Cycler(Some(CyclerProof { period: 2, dx: 0 })))
+        );
 
         // Period-2 translated cycler (speed 1/2): 3 -> 21 -> .3
         let trans_cycler: Program = "00_02_01".parse().unwrap();
         assert_eq!(
             decide_cycler(&trans_cycler, 10),
-            Some(Decider::TranslatedCycler)
+            Some(Decider::Cycler(Some(CyclerProof {
+                period: 2,
+                dx: 1
+            })))
         );
 
         // Period-1 dynamic equilibrium cycler:
         // 5 -> 0|2|3 (03), 2 -> 0|1|1 (01), 3 -> 1|2|0 (10)
         // Tape reaches [2, 3] at t=1, then shuttles pebbles continuously in period-1 equilibrium
         let dyn_cycler: Program = "00_01_10_00_03".parse().unwrap();
-        assert_eq!(decide_cycler(&dyn_cycler, 10), Some(Decider::Cycler));
+        assert_eq!(
+            decide_cycler(&dyn_cycler, 10),
+            Some(Decider::Cycler(Some(CyclerProof { period: 1, dx: 0 })))
+        );
     }
 
     #[test]
     fn test_separated_components_decider() {
         // Left component stays `1`, right component `3 -> 21 -> .3` translates right at speed 1/2
         let sep1: Program = "00_02_01_13_04_01".parse().unwrap();
-        assert_eq!(
+        assert!(matches!(
             decide_separated_components(&sep1, 30),
-            Some(Decider::SeparatedComponents)
-        );
+            Some(Decider::SeparatedComponents(_))
+        ));
 
         // Left component stays `1`, right component `5` undergoes an 8-step internal split/merge cycle with dx = +2
         let sep2: Program = "00_11_30_04_22_01".parse().unwrap();
-        assert_eq!(
+        assert!(matches!(
             decide_separated_components(&sep2, 30),
-            Some(Decider::SeparatedComponents)
-        );
+            Some(Decider::SeparatedComponents(_))
+        ));
     }
 
     #[test]
@@ -857,9 +926,8 @@ mod tests {
         ];
         for code in n6_bouncers {
             let p: Program = code.parse().unwrap();
-            assert_eq!(
-                decide_bouncer(&p, 50),
-                Some(Decider::Bouncer),
+            assert!(
+                matches!(decide_bouncer(&p, 50), Some(Decider::Bouncer(_))),
                 "expected n=6 bouncer {code} to be decided"
             );
         }
@@ -872,9 +940,8 @@ mod tests {
         ];
         for code in n7_bouncers {
             let p: Program = code.parse().unwrap();
-            assert_eq!(
-                decide_bouncer(&p, 50),
-                Some(Decider::Bouncer),
+            assert!(
+                matches!(decide_bouncer(&p, 50), Some(Decider::Bouncer(_))),
                 "expected n=7 bouncer {code} to be decided"
             );
         }

@@ -138,11 +138,29 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                 line: line_num,
                 detail: format!("invalid step count '{steps_str}'"),
             })?;
-            if matches!(decider, crate::deciders::Decider::Ctl(_)) {
-                if let Some(comment) = comment_part {
-                    if let Some(proof) = parse_ctl_proof_comment(steps, comment) {
-                        decider = crate::deciders::Decider::Ctl(Some(proof));
+            if let Some(comment) = comment_part {
+                match decider {
+                    crate::deciders::Decider::Ctl(_) => {
+                        if let Some(proof) = parse_ctl_proof_comment(steps, comment) {
+                            decider = crate::deciders::Decider::Ctl(Some(proof));
+                        }
                     }
+                    crate::deciders::Decider::Cycler(_) => {
+                        if let Some(proof) = parse_cycler_proof_comment(comment) {
+                            decider = crate::deciders::Decider::Cycler(Some(proof));
+                        }
+                    }
+                    crate::deciders::Decider::SeparatedComponents(_) => {
+                        if let Some(proof) = parse_separated_components_proof_comment(comment) {
+                            decider = crate::deciders::Decider::SeparatedComponents(Some(proof));
+                        }
+                    }
+                    crate::deciders::Decider::Bouncer(_) => {
+                        if let Some(proof) = parse_bouncer_proof_comment(comment) {
+                            decider = crate::deciders::Decider::Bouncer(Some(proof));
+                        }
+                    }
+                    _ => {}
                 }
             }
             SimOutcome::Inf { decider, steps }
@@ -233,6 +251,72 @@ fn parse_ctl_proof_comment(num_steps: u64, comment: &str) -> Option<crate::ctl::
         floor,
         modulus: modulus?,
         method,
+    })
+}
+
+fn parse_cycler_proof_comment(comment: &str) -> Option<crate::deciders::CyclerProof> {
+    let mut period = None;
+    let mut dx = None;
+    for part in comment.split_whitespace() {
+        let part = part.trim_start_matches('#');
+        if let Some(v) = part.strip_prefix("period=").or_else(|| part.strip_prefix("p=")) {
+            period = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("dx=") {
+            dx = v.parse().ok();
+        }
+    }
+    Some(crate::deciders::CyclerProof {
+        period: period?,
+        dx: dx.unwrap_or(0),
+    })
+}
+
+fn parse_separated_components_proof_comment(
+    comment: &str,
+) -> Option<crate::deciders::SeparatedComponentsProof> {
+    let mut period = None;
+    let mut dx_left = None;
+    let mut dx_right = None;
+    for part in comment.split_whitespace() {
+        let part = part.trim_start_matches('#');
+        if let Some(v) = part.strip_prefix("period=").or_else(|| part.strip_prefix("p=")) {
+            period = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("dx_l=").or_else(|| part.strip_prefix("dx_left=")) {
+            dx_left = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("dx_r=").or_else(|| part.strip_prefix("dx_right=")) {
+            dx_right = v.parse().ok();
+        }
+    }
+    Some(crate::deciders::SeparatedComponentsProof {
+        period: period?,
+        dx_left: dx_left.unwrap_or(0),
+        dx_right: dx_right.unwrap_or(0),
+    })
+}
+
+fn parse_bouncer_proof_comment(comment: &str) -> Option<crate::deciders::BouncerProof> {
+    let mut bounce_steps = None;
+    let mut gap_growth = None;
+    for part in comment.split_whitespace() {
+        let part = part.trim_start_matches('#');
+        if let Some(v) = part
+            .strip_prefix("bounce_steps=")
+            .or_else(|| part.strip_prefix("bounce="))
+            .or_else(|| part.strip_prefix("period="))
+            .or_else(|| part.strip_prefix("p="))
+        {
+            bounce_steps = v.parse().ok();
+        } else if let Some(v) = part
+            .strip_prefix("gap_growth=")
+            .or_else(|| part.strip_prefix("growth="))
+            .or_else(|| part.strip_prefix("dg="))
+        {
+            gap_growth = v.parse().ok();
+        }
+    }
+    Some(crate::deciders::BouncerProof {
+        bounce_steps: bounce_steps?,
+        gap_growth: gap_growth.unwrap_or(1),
     })
 }
 
@@ -380,6 +464,45 @@ mod tests {
                         method: crate::ctl::CtlSearchMethod::Exhaustive,
                     })),
                     steps: 40,
+                }),
+            ),
+            ProgramRecord::new(
+                "00_20_02".parse().unwrap(),
+                Some(SimOutcome::Inf {
+                    decider: Decider::Cycler(Some(crate::deciders::CyclerProof { period: 2, dx: 0 })),
+                    steps: 3,
+                }),
+            ),
+            ProgramRecord::new(
+                "00_02_01".parse().unwrap(),
+                Some(SimOutcome::Inf {
+                    decider: Decider::Cycler(Some(
+                        crate::deciders::CyclerProof { period: 2, dx: 1 },
+                    )),
+                    steps: 2,
+                }),
+            ),
+            ProgramRecord::new(
+                "00_02_01_40_12_01".parse().unwrap(),
+                Some(SimOutcome::Inf {
+                    decider: Decider::Bouncer(Some(crate::deciders::BouncerProof {
+                        bounce_steps: 18,
+                        gap_growth: 2,
+                    })),
+                    steps: 18,
+                }),
+            ),
+            ProgramRecord::new(
+                "00_02_01_13_04_01".parse().unwrap(),
+                Some(SimOutcome::Inf {
+                    decider: Decider::SeparatedComponents(Some(
+                        crate::deciders::SeparatedComponentsProof {
+                            period: 4,
+                            dx_left: -1,
+                            dx_right: 1,
+                        },
+                    )),
+                    steps: 4,
                 }),
             ),
             ProgramRecord::new("00_01_20_03".parse().unwrap(), None),

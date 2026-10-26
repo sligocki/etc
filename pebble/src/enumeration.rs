@@ -11,12 +11,6 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-/// Helper function to allow concise record updates, e.g. `..default()`.
-#[inline]
-pub fn default<T: Default>() -> T {
-    Default::default()
-}
-
 /// Configuration parameters for the CTL pipeline stage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CtlConfig {
@@ -1933,7 +1927,7 @@ mod tests {
                 PipelineStage::Bouncer { steps: 50 },
                 PipelineStage::Ctl(CtlConfig {
                     steps: 50,
-                    ..default()
+                    ..Default::default()
                 }),
                 PipelineStage::Simulation { steps: 10_000 },
                 PipelineStage::Ctl(CtlConfig {
@@ -1941,7 +1935,7 @@ mod tests {
                     max_states: 8000,
                     floors: vec![6, 8, 10],
                     moduli: vec![1, 2, 4],
-                    ..default()
+                    ..Default::default()
                 }),
             ],
         };

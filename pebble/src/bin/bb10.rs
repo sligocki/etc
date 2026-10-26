@@ -5,22 +5,23 @@
 // Unknown programs:       0 (0.00%)
 // Max halting step count: 5,778
 // Champion program:       00_02_01_40_14_12_00_17_63_18
-// Wallclock runtime:      7117.999s
-// Throughput:             1,738,687 programs/s
+// Wallclock runtime:      3456.729s
+// Throughput:             3,580,256 programs/s
 // 
 // === Pipeline & Decider Performance ===
-// Stage / Decider                                          Run On     Split On         Halted            Inf     Total Time     Avg / Prog
-// ----------------------------------------------------------------------------------------------------------------------------------------
-// StaticBacktrack                                  13,176,285,367            0              0  2,876,013,874       977.30 s          74 ns
-// Simulation (100 steps)                           10,300,271,493  800,308,821  2,198,067,738  6,562,243,904     42133.86 s        4.09 µs
-// Cycler / TransCycler (100 steps)                    739,651,030          395          1,155    500,659,319      7332.25 s        9.91 µs
-// SeparatedComponents (100 steps)                     238,990,161           11             43    234,415,235      1267.49 s        5.30 µs
-// CTL (100 steps)                                       4,574,872            7             22      4,572,125       926.21 s      202.46 µs
-// Bouncer (100 steps)                                       2,718            0              0          1,514      120.30 ms       44.26 µs
-// Simulation (10000 steps)                                  1,204            4              6             78      885.32 ms      735.32 µs
-// Cycler (10000 steps)                                      1,116            0              0            731         2.46 s        2.20 ms
-// SeparatedComponents (10000 steps)                           385            0              0             19        25.34 s       65.81 ms
-// CTL (10000 steps, states=4000, thresh=[2, 3], floors=[6, 8])366            0              0            366         6.88 s       18.81 ms
+// Stage / Decider                                        Run On     Split On         Halted            Inf     Total Time     Avg / Prog
+// --------------------------------------------------------------------------------------------------------------------------------------
+// StaticBacktrack                                13,176,285,367            0              0  2,876,013,874       749.99 s          56 ns
+// Simulation (100 steps)                         10,300,271,493  800,308,821  2,198,067,738  6,562,243,904     32187.03 s        3.12 µs
+// Cycler (100 steps)                                739,651,030          395          1,155    500,659,319      5730.95 s        7.75 µs
+// SeparatedComponents (100 steps)                   238,990,161           11             43    234,415,235      1009.22 s        4.22 µs
+// CTL (100 steps)                                     4,574,872            7             22      4,572,125       682.62 s      149.21 µs
+// Bouncer (100 steps)                                     2,718            0              0          1,514       41.84 ms       15.39 µs
+// Simulation (10000 steps)                                1,204            4              6             78      424.78 ms      352.81 µs
+// Cycler (10000 steps)                                    1,116            0              0            731      986.31 ms      883.79 µs
+// SeparatedComponents (10000 steps)                         385            0              0             19        10.05 s       26.11 ms
+// CTL (10000 steps, states=4000, thresh=[2, 3],
+//      floors=[6, 8, 10])                                   366            0              0            366         3.44 s        9.39 ms
 // ----------------------------------------------------------------------------------------------------------------------------------------
 // 
 // === Cycler Proof Statistics (500,660,050 proved) ===

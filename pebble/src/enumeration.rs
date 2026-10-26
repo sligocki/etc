@@ -11,6 +11,71 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+/// Helper function to allow concise record updates, e.g. `..default()`.
+#[inline]
+pub fn default<T: Default>() -> T {
+    Default::default()
+}
+
+/// Configuration parameters for the CTL pipeline stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CtlConfig {
+    pub steps: u64,
+    pub max_states: usize,
+    pub split_thresh: Vec<usize>,
+    pub floors: Vec<usize>,
+    pub moduli: Vec<usize>,
+}
+
+pub type Ctl = CtlConfig;
+
+impl Default for CtlConfig {
+    fn default() -> Self {
+        Self {
+            steps: 100,
+            max_states: 1024,
+            split_thresh: vec![2],
+            floors: vec![6],
+            moduli: vec![1, 2, 3, 4, 6, 12],
+        }
+    }
+}
+
+impl CtlConfig {
+    pub fn new(steps: u64) -> Self {
+        Self {
+            steps,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_states(mut self, max_states: usize) -> Self {
+        self.max_states = max_states;
+        self
+    }
+
+    pub fn with_split_thresh(mut self, split_thresh: Vec<usize>) -> Self {
+        self.split_thresh = split_thresh;
+        self
+    }
+
+    pub fn with_floors(mut self, floors: Vec<usize>) -> Self {
+        self.floors = floors;
+        self
+    }
+
+    pub fn with_moduli(mut self, moduli: Vec<usize>) -> Self {
+        self.moduli = moduli;
+        self
+    }
+}
+
+impl From<CtlConfig> for PipelineStage {
+    fn from(cfg: CtlConfig) -> Self {
+        PipelineStage::Ctl(cfg)
+    }
+}
+
 /// Individual pipeline stage identifier in order of execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineStage {
@@ -27,15 +92,15 @@ pub enum PipelineStage {
     /// Bouncer detection up to `steps`.
     Bouncer { steps: u64 },
     /// CTL regular language verification up to `steps`.
-    Ctl {
-        steps: u64,
-        max_states: usize,
-        floors: Vec<usize>,
-        moduli: Vec<usize>,
-    },
+    Ctl(CtlConfig),
 }
 
 impl PipelineStage {
+    /// Convenience constructor for a default CTL stage with specified steps.
+    pub fn ctl(steps: u64) -> Self {
+        PipelineStage::Ctl(CtlConfig::new(steps))
+    }
+
     /// Returns true if this stage is a mathematical decider (as opposed to raw simulation).
     #[inline]
     pub fn is_decider(&self) -> bool {
@@ -53,31 +118,31 @@ impl PipelineStage {
                 format!("SeparatedComponents ({steps} steps)")
             }
             PipelineStage::Bouncer { steps } => format!("Bouncer ({steps} steps)"),
-            PipelineStage::Ctl {
-                steps,
-                max_states,
-                floors,
-                moduli,
-            } => {
+            PipelineStage::Ctl(cfg) => {
                 let default_floors = &[6];
                 let default_moduli = &[1, 2, 3, 4, 6, 12];
-                if *max_states == 1024
-                    && floors.as_slice() == default_floors
-                    && moduli.as_slice() == default_moduli
+                let default_split = &[2];
+                if cfg.max_states == 1024
+                    && cfg.split_thresh.as_slice() == default_split
+                    && cfg.floors.as_slice() == default_floors
+                    && cfg.moduli.as_slice() == default_moduli
                 {
-                    format!("CTL ({steps} steps)")
+                    format!("CTL ({} steps)", cfg.steps)
                 } else {
                     let mut extra = Vec::new();
-                    if *max_states != 1024 {
-                        extra.push(format!("states={max_states}"));
+                    if cfg.max_states != 1024 {
+                        extra.push(format!("states={}", cfg.max_states));
                     }
-                    if floors.as_slice() != default_floors {
-                        extra.push(format!("floors={floors:?}"));
+                    if cfg.split_thresh.as_slice() != default_split {
+                        extra.push(format!("thresh={:?}", cfg.split_thresh));
                     }
-                    if moduli.as_slice() != default_moduli {
-                        extra.push(format!("moduli={moduli:?}"));
+                    if cfg.floors.as_slice() != default_floors {
+                        extra.push(format!("floors={:?}", cfg.floors));
                     }
-                    format!("CTL ({steps} steps, {})", extra.join(", "))
+                    if cfg.moduli.as_slice() != default_moduli {
+                        extra.push(format!("moduli={:?}", cfg.moduli));
+                    }
+                    format!("CTL ({} steps, {})", cfg.steps, extra.join(", "))
                 }
             }
         }
@@ -99,20 +164,16 @@ pub struct PipelineConfig {
 impl PipelineConfig {
     /// Generates the data-driven default pipeline configuration for a given program size and maximum steps.
     pub fn default_for(_size: usize, early_steps: u64, deep_steps: u64) -> Self {
-        let default_floors = vec![6];
-        let default_moduli = vec![1, 2, 3, 4, 6, 12];
         let mut stages = vec![
             PipelineStage::StaticBacktrack,
             PipelineStage::Simulation { steps: early_steps },
             PipelineStage::Cycler { steps: early_steps },
             PipelineStage::SeparatedComponents { steps: early_steps },
             PipelineStage::Bouncer { steps: early_steps },
-            PipelineStage::Ctl {
+            PipelineStage::Ctl(CtlConfig {
                 steps: early_steps,
-                max_states: 1024,
-                floors: default_floors.clone(),
-                moduli: default_moduli.clone(),
-            },
+                ..Default::default()
+            }),
         ];
 
         if deep_steps > early_steps {
@@ -120,12 +181,10 @@ impl PipelineConfig {
             stages.push(PipelineStage::Cycler { steps: deep_steps });
             stages.push(PipelineStage::SeparatedComponents { steps: deep_steps });
             stages.push(PipelineStage::Bouncer { steps: deep_steps });
-            stages.push(PipelineStage::Ctl {
+            stages.push(PipelineStage::Ctl(CtlConfig {
                 steps: deep_steps,
-                max_states: 1024,
-                floors: default_floors,
-                moduli: default_moduli,
-            });
+                ..Default::default()
+            }));
         }
 
         Self { stages }
@@ -823,20 +882,16 @@ pub fn run_stage(
                 StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
             }
         }
-        PipelineStage::Ctl {
-            steps,
-            max_states,
-            floors,
-            moduli,
-        } => {
+        PipelineStage::Ctl(cfg) => {
             let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
             let res = decide_ctl_from_sim_outcome_with_params(
                 prog,
                 s,
-                *steps,
-                *max_states,
-                floors,
-                moduli,
+                cfg.steps,
+                cfg.max_states,
+                &cfg.split_thresh,
+                &cfg.floors,
+                &cfg.moduli,
             );
             match res {
                 StepDeciderOutcome::Proved(d) => {
@@ -1876,19 +1931,18 @@ mod tests {
                 PipelineStage::Cycler { steps: 50 },
                 PipelineStage::SeparatedComponents { steps: 50 },
                 PipelineStage::Bouncer { steps: 50 },
-                PipelineStage::Ctl {
+                PipelineStage::Ctl(CtlConfig {
                     steps: 50,
-                    max_states: 1024,
-                    floors: vec![6],
-                    moduli: vec![1, 2, 3, 4, 6, 12],
-                },
+                    ..default()
+                }),
                 PipelineStage::Simulation { steps: 10_000 },
-                PipelineStage::Ctl {
+                PipelineStage::Ctl(CtlConfig {
                     steps: 10_000,
                     max_states: 8000,
                     floors: vec![6, 8, 10],
                     moduli: vec![1, 2, 4],
-                },
+                    ..default()
+                }),
             ],
         };
 

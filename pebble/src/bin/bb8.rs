@@ -33,7 +33,7 @@
 // Floors:           floor=6 (4,932)
 // Moduli:           mod=1 (4,932)
 
-use pebble::enumeration::{run_enumeration_cli, PipelineConfig, PipelineStage};
+use pebble::enumeration::{default, run_enumeration_cli, CtlConfig, PipelineConfig, PipelineStage};
 
 fn main() {
     let pipeline = PipelineConfig {
@@ -42,12 +42,11 @@ fn main() {
             PipelineStage::Simulation { steps: 100 },
             PipelineStage::Cycler { steps: 100 },
             PipelineStage::SeparatedComponents { steps: 100 },
-            PipelineStage::Ctl {
+            PipelineStage::Ctl(CtlConfig {
                 steps: 100,
-                max_states: 1024,
-                floors: vec![6],
                 moduli: vec![1],
-            },
+                ..default()
+            }),
         ],
     };
 

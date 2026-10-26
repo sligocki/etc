@@ -1282,9 +1282,16 @@ pub fn decide_ctl_from_sim_outcome_with_params(
     sim: &mut Simulator,
     max_steps: u64,
     max_states: usize,
+    split_thresh: &[usize],
     floors: &[usize],
     moduli: &[usize],
 ) -> StepDeciderOutcome {
+    let default_splits = [2];
+    let effective_splits: &[usize] = if split_thresh.is_empty() {
+        &default_splits
+    } else {
+        split_thresh
+    };
     let default_floors = [6];
     let effective_floors: &[usize] = if floors.is_empty() {
         &default_floors
@@ -1299,19 +1306,22 @@ pub fn decide_ctl_from_sim_outcome_with_params(
 
     for _ in 0..=max_steps {
         if sim.steps() % 4 == 0 {
-            if let TapeProofResult::Proved(proof) = try_prove_ctl_from_tape_with_floors_and_method(
-                program,
-                &sim.cells(),
-                sim.steps(),
-                max_states,
-                2,
-                effective_floors,
-                effective_moduli,
-                CtlSearchMethod::Exhaustive,
-                false,
-                None,
-            ) {
-                return StepDeciderOutcome::Proved(Decider::Ctl(Some(proof)));
+            let cells = sim.cells();
+            for &thresh in effective_splits {
+                if let TapeProofResult::Proved(proof) = try_prove_ctl_from_tape_with_floors_and_method(
+                    program,
+                    &cells,
+                    sim.steps(),
+                    max_states,
+                    thresh,
+                    effective_floors,
+                    effective_moduli,
+                    CtlSearchMethod::Exhaustive,
+                    false,
+                    None,
+                ) {
+                    return StepDeciderOutcome::Proved(Decider::Ctl(Some(proof)));
+                }
             }
         }
         match sim.step(program) {
@@ -1334,7 +1344,15 @@ pub fn decide_ctl_from_sim_outcome(
     sim: &mut Simulator,
     max_steps: u64,
 ) -> StepDeciderOutcome {
-    decide_ctl_from_sim_outcome_with_params(program, sim, max_steps, 1024, &[6], &[1, 2, 3, 4, 6, 12])
+    decide_ctl_from_sim_outcome_with_params(
+        program,
+        sim,
+        max_steps,
+        1024,
+        &[2],
+        &[6],
+        &[1, 2, 3, 4, 6, 12],
+    )
 }
 
 /// Run CTL decider sampling tapes starting from an existing `sim` state.

@@ -50,15 +50,15 @@ struct Cli {
     #[arg(long = "min-step", default_value_t = 0)]
     min_step: u64,
 
-    /// Split threshold for separating blocks
-    #[arg(long = "split-threshold", visible_alias = "thresh", default_value_t = 2)]
+    /// Split threshold for separating blocks (minimum 2)
+    #[arg(long = "split-threshold", visible_alias = "thresh", default_value_t = 2, value_parser = clap::value_parser!(usize))]
     split_threshold: usize,
 
     /// Gap floor value(s) for widening (e.g. -f 8 or -f 6,8,10)
     #[arg(short = 'f', long = "floor", value_delimiter = ',', num_args = 1..)]
     floor: Option<Vec<usize>>,
 
-    /// Modulus for gap widening (default: auto [1, 2, 3, 4, 6, 12])
+    /// Modulus for gap widening (default: auto [1, 2, 3, 4, 6, 12], minimum 1)
     #[arg(long = "modulus", visible_alias = "mod")]
     modulus: Option<usize>,
 
@@ -355,8 +355,8 @@ fn main() {
     let max_states = cli.max_states;
     let step_interval = cli.step_interval;
     let min_step = cli.min_step;
-    let split_threshold = cli.split_threshold;
-    let modulus = cli.modulus;
+    let split_threshold = cli.split_threshold.max(2);
+    let modulus = cli.modulus.map(|m| m.max(1));
     let num_threads = cli.threads;
     let progress_interval = cli.progress;
     let proved_only = cli.proved_only;

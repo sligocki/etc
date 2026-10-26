@@ -11,6 +11,7 @@ pub struct ZeroGap {
 impl ZeroGap {
     #[inline]
     pub fn new(rem: usize, floor: usize, modulus: usize) -> Self {
+        let modulus = modulus.max(1);
         Self {
             rem: if rem >= floor {
                 floor + (rem - floor) % modulus
@@ -23,21 +24,26 @@ impl ZeroGap {
 
     #[inline]
     pub fn widen(self, floor: usize) -> Self {
+        let modulus = self.modulus.max(1);
         if self.rem >= floor {
             Self {
-                rem: floor + (self.rem - floor) % self.modulus,
-                modulus: self.modulus,
+                rem: floor + (self.rem - floor) % modulus,
+                modulus,
             }
         } else {
-            self
+            Self {
+                rem: self.rem,
+                modulus,
+            }
         }
     }
 
     #[inline]
     pub fn is_subset_of(&self, other: &ZeroGap) -> bool {
+        let other_mod = other.modulus.max(1);
         self.rem >= other.rem
-            && self.modulus % other.modulus == 0
-            && (self.rem - other.rem) % other.modulus == 0
+            && self.modulus % other_mod == 0
+            && (self.rem - other.rem) % other_mod == 0
     }
 }
 
@@ -96,6 +102,7 @@ pub fn merge_blocks_with_zeros(b1: &[u8], zeros: usize, b2: &[u8]) -> Vec<u8> {
 }
 
 pub fn split_slice_by_threshold(slice: &[u8], split_threshold: usize) -> (Vec<Vec<u8>>, Vec<usize>) {
+    let split_threshold = split_threshold.max(2);
     let mut blocks = Vec::new();
     let mut gaps = Vec::new();
     let mut last_idx = 0;
@@ -120,12 +127,13 @@ pub fn split_slice_by_threshold(slice: &[u8], split_threshold: usize) -> (Vec<Ve
     (blocks, gaps)
 }
 
-pub fn unroll_ctl_state(state: &CtlState) -> Result<Vec<CtlState>, ()> {
+pub fn unroll_ctl_state(state: &CtlState) -> Vec<CtlState> {
     if state.gaps.is_empty() {
-        return Ok(vec![state.clone()]);
+        return vec![state.clone()];
     }
     if let Some(idx) = state.gaps.iter().position(|g| g.rem < 2) {
         let g = state.gaps[idx];
+        let step_mod = g.modulus.max(1);
         let mut branches = Vec::new();
         let mut cur_rem = g.rem;
         while cur_rem < 2 {
@@ -145,23 +153,23 @@ pub fn unroll_ctl_state(state: &CtlState) -> Result<Vec<CtlState>, ()> {
                 blocks: next_blocks,
                 gaps: next_gaps,
             };
-            branches.extend(unroll_ctl_state(&reduced)?);
-            cur_rem += g.modulus;
+            branches.extend(unroll_ctl_state(&reduced));
+            cur_rem += step_mod;
         }
         let mut tail_gaps = state.gaps.clone();
         tail_gaps[idx] = ZeroGap {
             rem: cur_rem,
-            modulus: g.modulus,
+            modulus: step_mod,
         };
         let tail_state = CtlState {
             modulus: state.modulus,
             blocks: state.blocks.clone(),
             gaps: tail_gaps,
         };
-        branches.extend(unroll_ctl_state(&tail_state)?);
-        Ok(branches)
+        branches.extend(unroll_ctl_state(&tail_state));
+        branches
     } else {
-        Ok(vec![state.clone()])
+        vec![state.clone()]
     }
 }
 
@@ -172,7 +180,6 @@ pub enum CtlStepError {
     BlockTooLarge { len: usize, max: usize },
     AllStationary,
     NegativeGap,
-    UnrollFailed,
 }
 
 pub fn step_isolated_block(
@@ -296,9 +303,6 @@ pub enum CtlFailureDetail {
     HitHalt {
         state: CtlState,
     },
-    PrematureCollapse {
-        state: CtlState,
-    },
     BlockTooLarge {
         len: usize,
         max: usize,
@@ -337,18 +341,6 @@ impl CtlFailureDiagnostic {
             self.step, self.modulus, self.floor
         ));
         match &self.detail {
-            CtlFailureDetail::PrematureCollapse { state } => {
-                out.push_str(&format!("  Failing state: {state}\n"));
-                out.push_str("  Problem: Premature block collapse (gap shrank to < 2, leaving 0 separated blocks).\n");
-                out.push_str(&format!(
-                    "  Explanation: Floor {} allows the gap to shrink too small during symbolic expansion, merging all blocks into one.\n",
-                    self.floor
-                ));
-                out.push_str(&format!(
-                    "  Suggestion: Try increasing --floor (e.g. -f {} or -f {}).\n",
-                    self.floor + 2, self.floor + 4
-                ));
-            }
             CtlFailureDetail::HitUndefinedRule { pebbles, state } => {
                 out.push_str(&format!("  Failing state: {state}\n"));
                 out.push_str(&format!(
@@ -619,14 +611,7 @@ pub fn verify_ctl_closure(
 
     while let Some(curr_id) = queue.pop_front() {
         let curr = state_nodes[curr_id].state.clone();
-        let Ok(pre_branches) = unroll_ctl_state(&curr) else {
-            let path = get_path(curr_id, None, &state_nodes);
-            return CtlVerificationOutcome::StructuralFailure {
-                error: CtlStepError::UnrollFailed,
-                state: curr,
-                path,
-            };
-        };
+        let pre_branches = unroll_ctl_state(&curr);
         for pre in pre_branches {
             let next_state = match step_ctl_pre_state(&pre, program, split_threshold, floor) {
                 Ok(s) => s,
@@ -666,7 +651,12 @@ pub fn verify_ctl_closure(
                         path,
                     };
                 }
-                language.retain(|&existing_id| !state_nodes[existing_id].state.is_subset_of(&next_state));
+                language.retain(|&existing_id| {
+                    !state_nodes[existing_id].state.is_subset_of(&next_state)
+                });
+                queue.retain(|&queued_id| {
+                    !state_nodes[queued_id].state.is_subset_of(&next_state)
+                });
                 let next_id = state_nodes.len();
                 state_nodes.push(StateNode {
                     state: next_state,
@@ -858,6 +848,7 @@ impl CtlTrajectoryTracker {
             None => return (0, 0),
         };
         let num_gaps = history.first().map(|(_, g)| g.len()).unwrap_or(0);
+        let modulus = modulus.max(1);
         let max_possible = if modulus <= 1 {
             1
         } else {
@@ -1126,11 +1117,8 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
         if max_gap < floor {
             continue;
         }
-        let mut skip_remaining_moduli_for_floor = false;
-        for &modulus in moduli {
-            if skip_remaining_moduli_for_floor {
-                break;
-            }
+        for &raw_modulus in moduli {
+            let modulus = raw_modulus.max(1);
             if show_progress {
                 use std::io::Write;
                 let res_info = if let Some(tr) = tracker {
@@ -1210,12 +1198,8 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                     });
                 }
                 CtlVerificationOutcome::StructuralFailure { error, state, path } => {
-                    let is_collapse = matches!(error, CtlStepError::UnrollFailed);
                     if show_progress {
                         match error {
-                            CtlStepError::UnrollFailed => {
-                                println!("failed (premature block collapse: gap shrank to < 2)");
-                            }
                             CtlStepError::BlockTooLarge { len, max } => {
                                 println!("failed (block grew to len {len} > {max})");
                             }
@@ -1235,9 +1219,6 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                             CtlFailureDetail::BlockTooLarge { len, max, state }
                         }
                         CtlStepError::NegativeGap => CtlFailureDetail::NegativeGap { state },
-                        CtlStepError::UnrollFailed => {
-                            CtlFailureDetail::PrematureCollapse { state }
-                        }
                         CtlStepError::UndefinedRule { pebbles } => {
                             CtlFailureDetail::HitUndefinedRule { pebbles, state }
                         }
@@ -1252,14 +1233,6 @@ pub fn try_prove_ctl_from_tape_with_floors_and_method(
                         detail,
                         path: make_derivation_path(path),
                     });
-                    if is_collapse {
-                        if show_progress {
-                            println!("  Skipping remaining moduli for floor {floor} (spatial collapse)");
-                        }
-                        // Failure-directed pruning: spatial gap collapsed (< 2).
-                        // Other moduli at this same floor will also collapse spatially.
-                        skip_remaining_moduli_for_floor = true;
-                    }
                 }
             }
         }
@@ -2017,6 +1990,23 @@ mod tests {
         assert!(floors.contains(&6));
         assert!(floors.contains(&8));
         assert!(floors.contains(&10));
+    }
+
+    #[test]
+    fn test_zero_gap_and_split_threshold_clamping() {
+        let g = ZeroGap::new(10, 6, 0);
+        assert_eq!(g.modulus, 1);
+        assert_eq!(g.rem, 6);
+
+        let widened = (ZeroGap { rem: 12, modulus: 0 }).widen(6);
+        assert_eq!(widened.modulus, 1);
+        assert_eq!(widened.rem, 6);
+
+        assert!(g.is_subset_of(&ZeroGap { rem: 6, modulus: 0 }));
+
+        let (blocks, gaps) = split_slice_by_threshold(&[2, 0, 3, 0, 0, 1], 0);
+        assert_eq!(blocks, vec![vec![2, 0, 3], vec![1]]);
+        assert_eq!(gaps, vec![2]);
     }
 }
 

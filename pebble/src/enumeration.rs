@@ -7,9 +7,62 @@ use crate::io::{format_count, write_records_to_file, ProgramRecord};
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
 use clap::Parser;
+use std::collections::BTreeMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+
+pub static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+static INTERRUPT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(unix)]
+extern "C" fn sigint_handler(_sig: std::os::raw::c_int) {
+    let count = INTERRUPT_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+    if count == 1 {
+        STOP_REQUESTED.store(true, Ordering::SeqCst);
+        INTERRUPTED.store(true, Ordering::SeqCst);
+        let msg = b"\nInterrupted! Stopping gracefully and printing report (press Ctrl+C again to force exit)...\n";
+        extern "C" {
+            fn write(fd: std::os::raw::c_int, buf: *const u8, count: usize) -> isize;
+        }
+        unsafe {
+            let _ = write(2, msg.as_ptr(), msg.len());
+        }
+    } else {
+        std::process::exit(130);
+    }
+}
+
+#[cfg(unix)]
+pub fn register_signal_handler() {
+    extern "C" {
+        fn signal(
+            sig: std::os::raw::c_int,
+            handler: extern "C" fn(std::os::raw::c_int),
+        ) -> extern "C" fn(std::os::raw::c_int);
+    }
+    unsafe {
+        signal(2, sigint_handler);  // SIGINT (Ctrl+C)
+        signal(15, sigint_handler); // SIGTERM
+    }
+}
+
+#[cfg(not(unix))]
+pub fn register_signal_handler() {}
+
+#[inline]
+pub fn is_interrupted() -> bool {
+    INTERRUPTED.load(Ordering::SeqCst)
+}
+
+#[inline]
+pub fn reset_interrupted() {
+    INTERRUPTED.store(false, Ordering::SeqCst);
+    STOP_REQUESTED.store(false, Ordering::SeqCst);
+    INTERRUPT_COUNT.store(0, Ordering::SeqCst);
+}
 
 /// Configuration parameters for the CTL pipeline stage.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -765,6 +818,12 @@ impl TnfEnumerator {
             metrics,
         }
     }
+
+    /// Returns true if the enumerator stack is empty and traversal has finished.
+    #[inline]
+    pub fn is_finished(&self) -> bool {
+        self.stack.is_empty()
+    }
 }
 
 /// Outcome of evaluating a single stage on a candidate program.
@@ -1092,14 +1151,38 @@ impl ProgressSnapshot {
     }
 }
 
-/// Enumerate all TNF programs of `size` in parallel using Rayon and a custom `PipelineConfig`.
-pub fn enumerate_parallel_with_pipeline<F, P>(
+fn find_coprime_stride(n: usize) -> usize {
+    if n <= 1 {
+        return 1;
+    }
+    let candidate = 257.min(n - 1).max(1);
+    for stride in (candidate..n).chain(1..candidate) {
+        if gcd(stride, n) == 1 {
+            return stride;
+        }
+    }
+    1
+}
+
+fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+/// Enumerate TNF programs of `size` in parallel using Rayon with support for sampling,
+/// checkpointing/resumption, and graceful interruption.
+pub fn enumerate_parallel_advanced<F, P>(
     size: usize,
     pipeline: PipelineConfig,
     use_deciders: bool,
     break_symmetry: bool,
     collect_entries: bool,
     holdouts_only: bool,
+    options: EnumerateOptions,
     on_progress: P,
     filter_fn: F,
 ) -> (EnumStats, Vec<EnumEntry>)
@@ -1108,8 +1191,11 @@ where
     P: Fn(&ProgressSnapshot) + Sync,
 {
     use rayon::prelude::*;
+    use std::collections::HashSet;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
+
+    reset_interrupted();
 
     let deep_steps = pipeline.max_simulation_steps();
     if size == 0 {
@@ -1118,20 +1204,111 @@ where
 
     let rule_table: Vec<Vec<Rule>> = (1..=size as u8).map(Rule::all_for_pebbles).collect();
     let mut frontier_metrics = vec![StageMetrics::default(); pipeline.stages.len()];
+    let target_width = 4096;
     let frontier = build_frontier(
         size,
         &pipeline,
         use_deciders,
         break_symmetry,
         &rule_table,
-        4096,
+        target_width,
         &mut frontier_metrics,
     );
 
-    let live_total = AtomicU64::new(0);
-    let live_halted = AtomicU64::new(0);
-    let live_decided = AtomicU64::new(0);
-    let live_max_steps = AtomicU64::new(u64::MAX);
+    let mut start_total_nanos: u128 = 0;
+    let mut completed_set: HashSet<usize> = HashSet::new();
+    let mut completed_vec: Vec<usize> = Vec::new();
+    let mut base_stats = EnumStats::with_pipeline(size, deep_steps, &pipeline);
+
+    if let Some(ref ckpt_path) = options.checkpoint_path {
+        if ckpt_path.exists() {
+            match CheckpointData::load_from_file(ckpt_path) {
+                Ok(ckpt) => {
+                    if ckpt.size == size
+                        && ckpt.max_steps == deep_steps
+                        && ckpt.use_deciders == use_deciders
+                        && ckpt.break_symmetry == break_symmetry
+                        && ckpt.total_chunks == frontier.len()
+                    {
+                        eprintln!(
+                            "[Checkpoint] Resuming from '{}': {}/{} chunks ({:.1}%) completed, {} programs previously evaluated",
+                            ckpt_path.display(),
+                            ckpt.completed_chunks.len(),
+                            frontier.len(),
+                            if frontier.is_empty() {
+                                0.0
+                            } else {
+                                ckpt.completed_chunks.len() as f64 / frontier.len() as f64 * 100.0
+                            },
+                            format_count(ckpt.stats.total_programs)
+                        );
+                        start_total_nanos = ckpt.elapsed_nanos;
+                        for &idx in &ckpt.completed_chunks {
+                            completed_set.insert(idx);
+                        }
+                        completed_vec = ckpt.completed_chunks;
+                        base_stats = ckpt.stats;
+                    } else {
+                        eprintln!(
+                            "[Checkpoint] Warning: Checkpoint '{}' configuration mismatch. Starting fresh.",
+                            ckpt_path.display()
+                        );
+                        base_stats.merge_metrics(&frontier_metrics);
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "[Checkpoint] Warning: Failed to load '{}' ({err}). Starting fresh.",
+                        ckpt_path.display()
+                    );
+                    base_stats.merge_metrics(&frontier_metrics);
+                }
+            }
+        } else {
+            base_stats.merge_metrics(&frontier_metrics);
+        }
+    } else {
+        base_stats.merge_metrics(&frontier_metrics);
+    }
+
+    let run_start = Instant::now();
+
+    // Check if already finished or already at sample limit
+    if completed_set.len() >= frontier.len() {
+        return (base_stats, Vec::new());
+    }
+    if let Some(limit) = options.sample_limit {
+        if base_stats.total_programs >= limit {
+            return (base_stats, Vec::new());
+        }
+    }
+
+    // Determine visitation order. When sampling, stride uniformly across frontier branches;
+    // otherwise evaluate sequentially for optimal cache locality and deterministic ordering.
+    let remaining_indices: Vec<usize> = if options.sample_limit.is_some() {
+        let stride = find_coprime_stride(frontier.len());
+        let mut indices = Vec::with_capacity(frontier.len() - completed_set.len());
+        for i in 0..frontier.len() {
+            let idx = (i * stride) % frontier.len();
+            if !completed_set.contains(&idx) {
+                indices.push(idx);
+            }
+        }
+        indices
+    } else {
+        let mut indices = Vec::with_capacity(frontier.len() - completed_set.len());
+        for idx in 0..frontier.len() {
+            if !completed_set.contains(&idx) {
+                indices.push(idx);
+            }
+        }
+        indices
+    };
+
+    let live_total = AtomicU64::new(base_stats.total_programs);
+    let live_halted = AtomicU64::new(base_stats.halted_programs);
+    let live_decided = AtomicU64::new(base_stats.inf_programs);
+    let live_max_steps = AtomicU64::new(base_stats.max_halting_steps.unwrap_or(u64::MAX));
     let progress_lock = Mutex::new(());
 
     let flush_batch = |b_tot: u64, b_halt: u64, b_dec: u64, b_max: Option<u64>| {
@@ -1176,30 +1353,59 @@ where
         }
     };
 
-    let chunk_results: Vec<(EnumStats, Vec<EnumEntry>)> = frontier
+    let completed_chunks_lock = Mutex::new(completed_vec);
+    let periodic_stats_lock = Mutex::new(base_stats.clone());
+    let last_ckpt_save = Mutex::new(Instant::now());
+
+    let batch_flush_size = if options.sample_limit.is_some() { 256u64 } else { 2048u64 };
+
+    let mut chunk_results: Vec<(usize, EnumStats, Vec<EnumEntry>, bool)> = remaining_indices
         .into_par_iter()
-        .map(|node| {
+        .map(|idx| {
+            if STOP_REQUESTED.load(Ordering::Relaxed) {
+                return (
+                    idx,
+                    EnumStats::with_pipeline(size, deep_steps, &pipeline),
+                    Vec::new(),
+                    false,
+                );
+            }
+            if let Some(limit) = options.sample_limit {
+                if live_total.load(Ordering::Relaxed) >= limit {
+                    STOP_REQUESTED.store(true, Ordering::Relaxed);
+                    return (
+                        idx,
+                        EnumStats::with_pipeline(size, deep_steps, &pipeline),
+                        Vec::new(),
+                        false,
+                    );
+                }
+            }
+
             let mut local_stats = EnumStats::with_pipeline(size, deep_steps, &pipeline);
             let mut local_entries = Vec::new();
-            match node {
+            let is_finished: bool;
+
+            match &frontier[idx] {
                 FrontierNode::Leaf(entry) => {
+                    let entry = entry.clone();
                     local_stats.record(&entry);
                     let b_halt = u64::from(matches!(entry.outcome, SimOutcome::Halted { .. }));
-                    let b_dec =
-                        u64::from(matches!(entry.outcome, SimOutcome::Inf { .. }));
+                    let b_dec = u64::from(matches!(entry.outcome, SimOutcome::Inf { .. }));
                     flush_batch(1, b_halt, b_dec, local_stats.max_halting_steps);
                     if collect_entries && (!holdouts_only || entry.outcome.is_holdout()) {
                         local_entries.push(entry);
                     }
+                    is_finished = true;
                 }
                 FrontierNode::Branch(prog, is_symmetric) => {
                     let mut sub_enum = TnfEnumerator::from_subtree(
-                        prog,
+                        prog.clone(),
                         Simulator::new(size),
                         deep_steps,
                         use_deciders,
                         break_symmetry,
-                        is_symmetric,
+                        *is_symmetric,
                         rule_table.clone(),
                         pipeline.clone(),
                     );
@@ -1224,33 +1430,180 @@ where
                         if collect_entries && (!holdouts_only || entry.outcome.is_holdout()) {
                             local_entries.push(entry);
                         }
-                        if b_tot >= 2048 {
+                        if b_tot >= batch_flush_size {
                             flush_batch(b_tot, b_halt, b_dec, b_max);
                             b_tot = 0;
                             b_halt = 0;
                             b_dec = 0;
                             b_max = None;
                         }
+                        if STOP_REQUESTED.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        if let Some(limit) = options.sample_limit {
+                            if live_total.load(Ordering::Relaxed) >= limit {
+                                STOP_REQUESTED.store(true, Ordering::Relaxed);
+                                break;
+                            }
+                        }
                     }
                     local_stats.merge_metrics(&sub_enum.metrics);
                     flush_batch(b_tot, b_halt, b_dec, b_max);
+                    is_finished = sub_enum.is_finished();
                 }
             }
-            (local_stats, local_entries)
+
+            if is_finished {
+                let mut comp = completed_chunks_lock.lock().unwrap();
+                comp.push(idx);
+                let mut st = periodic_stats_lock.lock().unwrap();
+                st.merge(local_stats.clone());
+
+                // Periodic checkpoint save check
+                if options.checkpoint_path.is_some() {
+                    if let Ok(mut last_save) = last_ckpt_save.try_lock() {
+                        if last_save.elapsed() >= options.checkpoint_interval {
+                            *last_save = Instant::now();
+                            let ckpt = CheckpointData {
+                                version: 1,
+                                size,
+                                max_steps: deep_steps,
+                                use_deciders,
+                                break_symmetry,
+                                target_width,
+                                elapsed_nanos: start_total_nanos
+                                    + run_start.elapsed().as_nanos(),
+                                total_chunks: frontier.len(),
+                                completed_chunks: comp.clone(),
+                                stats: st.clone(),
+                            };
+                            if let Some(path) = &options.checkpoint_path {
+                                let _ = ckpt.save_to_file(path);
+                            }
+                        }
+                    }
+                }
+            }
+
+            (idx, local_stats, local_entries, is_finished)
         })
         .collect();
 
-    let mut final_stats = EnumStats::with_pipeline(size, deep_steps, &pipeline);
-    final_stats.merge_metrics(&frontier_metrics);
+    // Sort chunk results by original frontier index for 100% deterministic merge order
+    chunk_results.sort_by_key(|(idx, _, _, _)| *idx);
+
+    let mut final_completed_set = completed_set;
+    let mut final_completed_vec = Vec::new();
+    let mut final_stats = base_stats;
+    let mut partial_stats = Vec::new();
     let mut final_entries = Vec::new();
-    for (sub_stats, mut sub_entries) in chunk_results {
-        final_stats.merge(sub_stats);
+
+    for (idx, local_stats, mut local_entries, is_finished) in chunk_results {
+        if is_finished {
+            final_completed_set.insert(idx);
+            final_stats.merge(local_stats);
+        } else if local_stats.total_programs > 0 {
+            partial_stats.push(local_stats);
+        }
         if collect_entries {
-            final_entries.append(&mut sub_entries);
+            final_entries.append(&mut local_entries);
         }
     }
 
+    final_completed_vec.extend(final_completed_set.into_iter());
+    final_completed_vec.sort_unstable();
+
+    // Save final checkpoint if configured
+    if let Some(ckpt_path) = &options.checkpoint_path {
+        let ckpt = CheckpointData {
+            version: 1,
+            size,
+            max_steps: deep_steps,
+            use_deciders,
+            break_symmetry,
+            target_width,
+            elapsed_nanos: start_total_nanos + run_start.elapsed().as_nanos(),
+            total_chunks: frontier.len(),
+            completed_chunks: final_completed_vec.clone(),
+            stats: final_stats.clone(),
+        };
+        if let Err(e) = ckpt.save_to_file(ckpt_path) {
+            eprintln!("[Checkpoint] Error saving to '{}': {e}", ckpt_path.display());
+        } else {
+            eprintln!(
+                "[Checkpoint] Saved progress to '{}' ({}/{} chunks completed)",
+                ckpt_path.display(),
+                ckpt.completed_chunks.len(),
+                frontier.len(),
+            );
+        }
+    }
+
+    // Merge partial stats for reporting
+    for p in partial_stats {
+        final_stats.merge(p);
+    }
+
     (final_stats, final_entries)
+}
+
+/// Enumerate all TNF programs of `size` in parallel using Rayon and a custom `PipelineConfig`.
+pub fn enumerate_parallel_with_pipeline<F, P>(
+    size: usize,
+    pipeline: PipelineConfig,
+    use_deciders: bool,
+    break_symmetry: bool,
+    collect_entries: bool,
+    holdouts_only: bool,
+    on_progress: P,
+    filter_fn: F,
+) -> (EnumStats, Vec<EnumEntry>)
+where
+    F: Fn(&ProgressSnapshot) -> bool + Sync,
+    P: Fn(&ProgressSnapshot) + Sync,
+{
+    enumerate_parallel_advanced(
+        size,
+        pipeline,
+        use_deciders,
+        break_symmetry,
+        collect_entries,
+        holdouts_only,
+        EnumerateOptions::default(),
+        on_progress,
+        filter_fn,
+    )
+}
+
+/// Enumerate all TNF programs of `size` in parallel using Rayon and `EnumerateOptions`.
+pub fn enumerate_parallel_options<F, P>(
+    size: usize,
+    early_steps: u64,
+    deep_steps: u64,
+    use_deciders: bool,
+    break_symmetry: bool,
+    collect_entries: bool,
+    holdouts_only: bool,
+    options: EnumerateOptions,
+    on_progress: P,
+    filter_fn: F,
+) -> (EnumStats, Vec<EnumEntry>)
+where
+    F: Fn(&ProgressSnapshot) -> bool + Sync,
+    P: Fn(&ProgressSnapshot) + Sync,
+{
+    let pipeline = PipelineConfig::default_for(size, early_steps, deep_steps);
+    enumerate_parallel_advanced(
+        size,
+        pipeline,
+        use_deciders,
+        break_symmetry,
+        collect_entries,
+        holdouts_only,
+        options,
+        on_progress,
+        filter_fn,
+    )
 }
 
 /// Enumerate all TNF programs of `size` in parallel using Rayon, returning the exact
@@ -1272,14 +1625,15 @@ where
     F: Fn(&ProgressSnapshot) -> bool + Sync,
     P: Fn(&ProgressSnapshot) + Sync,
 {
-    let pipeline = PipelineConfig::default_for(size, early_steps, deep_steps);
-    enumerate_parallel_with_pipeline(
+    enumerate_parallel_options(
         size,
-        pipeline,
+        early_steps,
+        deep_steps,
         use_deciders,
         break_symmetry,
         collect_entries,
         holdouts_only,
+        EnumerateOptions::default(),
         on_progress,
         filter_fn,
     )
@@ -1320,6 +1674,379 @@ pub fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
         return Err(format!("invalid duration '{raw}'"));
     }
     Ok(Duration::from_secs_f64(secs))
+}
+
+/// Parses a human program count string (e.g. "100k", "1M", "10B", "1_000_000") into a `u64`.
+pub fn parse_count_arg(raw: &str) -> Result<u64, String> {
+    let s: String = raw.chars().filter(|c| !c.is_whitespace() && *c != '_').collect();
+    if s.is_empty() {
+        return Err("empty count argument".to_string());
+    }
+    let (num_str, multiplier) = if let Some(stripped) = s.strip_suffix(|c| c == 'k' || c == 'K') {
+        (stripped, 1_000u64)
+    } else if let Some(stripped) = s.strip_suffix(|c| c == 'm' || c == 'M') {
+        (stripped, 1_000_000u64)
+    } else if let Some(stripped) = s.strip_suffix(|c| c == 'b' || c == 'B') {
+        (stripped, 1_000_000_000u64)
+    } else {
+        (s.as_str(), 1u64)
+    };
+
+    let base: u64 = num_str
+        .parse()
+        .map_err(|_| format!("invalid program count '{raw}'"))?;
+    Ok(base.saturating_mul(multiplier))
+}
+
+fn format_ranges(indices: &[usize]) -> String {
+    if indices.is_empty() {
+        return String::new();
+    }
+    let mut sorted = indices.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut out = Vec::new();
+    let mut start = sorted[0];
+    let mut prev = sorted[0];
+    for &idx in &sorted[1..] {
+        if idx == prev + 1 {
+            prev = idx;
+        } else {
+            if start == prev {
+                out.push(format!("{start}"));
+            } else {
+                out.push(format!("{start}-{prev}"));
+            }
+            start = idx;
+            prev = idx;
+        }
+    }
+    if start == prev {
+        out.push(format!("{start}"));
+    } else {
+        out.push(format!("{start}-{prev}"));
+    }
+    out.join(",")
+}
+
+fn parse_ranges(raw: &str) -> Result<Vec<usize>, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((start_s, end_s)) = part.split_once('-') {
+            let start: usize = start_s.trim().parse().map_err(|e| format!("{e}"))?;
+            let end: usize = end_s.trim().parse().map_err(|e| format!("{e}"))?;
+            for i in start..=end {
+                out.push(i);
+            }
+        } else {
+            let single: usize = part.parse().map_err(|e| format!("{e}"))?;
+            out.push(single);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
+}
+
+fn format_map<K: std::fmt::Display, V: std::fmt::Display>(map: &BTreeMap<K, V>) -> String {
+    map.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join(",")
+}
+
+fn parse_map<K: std::str::FromStr + Ord, V: std::str::FromStr>(raw: &str) -> Result<BTreeMap<K, V>, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut map = BTreeMap::new();
+    for item in s.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if let Some((k_s, v_s)) = item.split_once(':') {
+            let k = k_s.trim().parse::<K>().map_err(|_| format!("key error in '{item}'"))?;
+            let v = v_s.trim().parse::<V>().map_err(|_| format!("val error in '{item}'"))?;
+            map.insert(k, v);
+        }
+    }
+    Ok(map)
+}
+
+/// Options for advanced parallel enumeration including sampling and checkpointing.
+#[derive(Debug, Clone, Default)]
+pub struct EnumerateOptions {
+    /// Stop evaluation after evaluating at least this many programs (sample run).
+    pub sample_limit: Option<u64>,
+    /// Path to checkpoint file for saving progress and resuming interrupted runs.
+    pub checkpoint_path: Option<PathBuf>,
+    /// Checkpoint save interval.
+    pub checkpoint_interval: Duration,
+}
+
+/// Persistent state saved for resuming interrupted enumerations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointData {
+    pub version: u32,
+    pub size: usize,
+    pub max_steps: u64,
+    pub use_deciders: bool,
+    pub break_symmetry: bool,
+    pub target_width: usize,
+    pub elapsed_nanos: u128,
+    pub total_chunks: usize,
+    pub completed_chunks: Vec<usize>,
+    pub stats: EnumStats,
+}
+
+impl CheckpointData {
+    pub fn save_to_file(&self, path: &Path) -> Result<(), std::io::Error> {
+        let text = self.serialize();
+        let tmp_path = path.with_extension("tmp");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&tmp_path, text)?;
+        std::fs::rename(&tmp_path, path)?;
+        Ok(())
+    }
+
+    pub fn load_from_file(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Self::deserialize(&text)
+    }
+
+    pub fn serialize(&self) -> String {
+        let mut out = String::new();
+        out.push_str("# PEBBLE ENUMERATION CHECKPOINT v1\n");
+        out.push_str(&format!("version={}\n", self.version));
+        out.push_str(&format!("size={}\n", self.size));
+        out.push_str(&format!("max_steps={}\n", self.max_steps));
+        out.push_str(&format!("use_deciders={}\n", self.use_deciders));
+        out.push_str(&format!("break_symmetry={}\n", self.break_symmetry));
+        out.push_str(&format!("target_width={}\n", self.target_width));
+        out.push_str(&format!("elapsed_nanos={}\n", self.elapsed_nanos));
+        out.push_str(&format!("total_chunks={}\n", self.total_chunks));
+        out.push_str(&format!("completed_chunks={}\n", format_ranges(&self.completed_chunks)));
+
+        out.push_str("[stats]\n");
+        let s = &self.stats;
+        out.push_str(&format!("total_programs={}\n", s.total_programs));
+        out.push_str(&format!("halted_programs={}\n", s.halted_programs));
+        out.push_str(&format!("inf_programs={}\n", s.inf_programs));
+        out.push_str(&format!(
+            "decided_by_kind={}\n",
+            s.decided_by_kind
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+        out.push_str(&format!(
+            "max_halting_steps={}\n",
+            s.max_halting_steps
+                .map(|x| x.to_string())
+                .unwrap_or_else(|| "None".to_string())
+        ));
+        out.push_str(&format!(
+            "champion={}\n",
+            s.champion
+                .as_ref()
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "None".to_string())
+        ));
+        out.push_str(&format!("ctl_proofs_count={}\n", s.ctl_proofs_count));
+        out.push_str(&format!("ctl_min_steps={}\n", s.ctl_min_steps));
+        out.push_str(&format!("ctl_max_steps={}\n", s.ctl_max_steps));
+        out.push_str(&format!("ctl_total_steps={}\n", s.ctl_total_steps));
+        out.push_str(&format!("ctl_min_states={}\n", s.ctl_min_states));
+        out.push_str(&format!("ctl_max_states={}\n", s.ctl_max_states));
+        out.push_str(&format!("ctl_total_states={}\n", s.ctl_total_states));
+        out.push_str(&format!("ctl_floor_counts={}\n", format_map(&s.ctl_floor_counts)));
+        out.push_str(&format!("ctl_mod_counts={}\n", format_map(&s.ctl_mod_counts)));
+
+        out.push_str(&format!("cycler_proofs_count={}\n", s.cycler_proofs_count));
+        out.push_str(&format!("cycler_min_period={}\n", s.cycler_min_period));
+        out.push_str(&format!("cycler_max_period={}\n", s.cycler_max_period));
+        out.push_str(&format!("cycler_total_period={}\n", s.cycler_total_period));
+        out.push_str(&format!("cycler_period_counts={}\n", format_map(&s.cycler_period_counts)));
+        out.push_str(&format!("cycler_dx_counts={}\n", format_map(&s.cycler_dx_counts)));
+
+        out.push_str(&format!("sep_comp_proofs_count={}\n", s.sep_comp_proofs_count));
+        out.push_str(&format!("sep_comp_min_period={}\n", s.sep_comp_min_period));
+        out.push_str(&format!("sep_comp_max_period={}\n", s.sep_comp_max_period));
+        out.push_str(&format!("sep_comp_total_period={}\n", s.sep_comp_total_period));
+        out.push_str(&format!("sep_comp_period_counts={}\n", format_map(&s.sep_comp_period_counts)));
+
+        out.push_str(&format!("bouncer_proofs_count={}\n", s.bouncer_proofs_count));
+        out.push_str(&format!("bouncer_min_bounce_steps={}\n", s.bouncer_min_bounce_steps));
+        out.push_str(&format!("bouncer_max_bounce_steps={}\n", s.bouncer_max_bounce_steps));
+        out.push_str(&format!("bouncer_total_bounce_steps={}\n", s.bouncer_total_bounce_steps));
+        out.push_str(&format!("bouncer_bounce_steps_counts={}\n", format_map(&s.bouncer_bounce_steps_counts)));
+        out.push_str(&format!("bouncer_gap_growth_counts={}\n", format_map(&s.bouncer_gap_growth_counts)));
+
+        out.push_str("[stages]\n");
+        for stage in &s.stages {
+            let m = &stage.metrics;
+            out.push_str(&format!(
+                "{}|{}|{}|{}|{}|{}\n",
+                stage.name,
+                m.invocations,
+                m.splits,
+                m.decided_halting,
+                m.decided_inf,
+                m.total_time_nanos
+            ));
+        }
+
+        out
+    }
+
+    pub fn deserialize(text: &str) -> Result<Self, String> {
+        let mut section = "header";
+        let mut kv = BTreeMap::new();
+        let mut stage_lines = Vec::new();
+
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line == "[stats]" {
+                section = "stats";
+                continue;
+            }
+            if line == "[stages]" {
+                section = "stages";
+                continue;
+            }
+
+            if section == "stages" {
+                stage_lines.push(line.to_string());
+            } else if let Some((k, v)) = line.split_once('=') {
+                kv.insert(k.trim().to_string(), v.trim().to_string());
+            }
+        }
+
+        let get = |k: &str| -> Result<&String, String> {
+            kv.get(k).ok_or_else(|| format!("missing key '{k}'"))
+        };
+        let get_u64 = |k: &str| -> Result<u64, String> {
+            get(k)?.parse().map_err(|e| format!("{k}: {e}"))
+        };
+        let get_usize = |k: &str| -> Result<usize, String> {
+            get(k)?.parse().map_err(|e| format!("{k}: {e}"))
+        };
+
+        let version: u32 = get("version")?.parse().map_err(|e| format!("version: {e}"))?;
+        let size = get_usize("size")?;
+        let max_steps = get_u64("max_steps")?;
+        let use_deciders: bool = get("use_deciders")?.parse().map_err(|e| format!("use_deciders: {e}"))?;
+        let break_symmetry: bool = get("break_symmetry")?.parse().map_err(|e| format!("break_symmetry: {e}"))?;
+        let target_width = get_usize("target_width")?;
+        let elapsed_nanos: u128 = get("elapsed_nanos")?.parse().map_err(|e| format!("elapsed_nanos: {e}"))?;
+        let total_chunks = get_usize("total_chunks")?;
+        let completed_chunks = parse_ranges(get("completed_chunks")?)?;
+
+        let total_programs = get_u64("total_programs")?;
+        let halted_programs = get_u64("halted_programs")?;
+        let inf_programs = get_u64("inf_programs")?;
+
+        let kind_parts: Vec<u64> = get("decided_by_kind")?
+            .split(',')
+            .map(|s| s.trim().parse().map_err(|e| format!("decided_by_kind: {e}")))
+            .collect::<Result<_, _>>()?;
+        if kind_parts.len() != 6 {
+            return Err("decided_by_kind must have 6 items".to_string());
+        }
+        let mut decided_by_kind = [0u64; 6];
+        decided_by_kind.copy_from_slice(&kind_parts);
+
+        let max_halting_steps = match get("max_halting_steps")?.as_str() {
+            "None" | "" => None,
+            v => Some(v.parse().map_err(|e| format!("max_halting_steps: {e}"))?),
+        };
+        let champion = match get("champion")?.as_str() {
+            "None" | "" => None,
+            v => Some(v.parse::<Program>().map_err(|e| format!("champion: {e}"))?),
+        };
+
+        let mut stages = Vec::new();
+        for sl in stage_lines {
+            let parts: Vec<&str> = sl.split('|').collect();
+            if parts.len() != 6 {
+                return Err(format!("invalid stage line: '{sl}'"));
+            }
+            stages.push(StageReport {
+                name: parts[0].to_string(),
+                metrics: StageMetrics {
+                    invocations: parts[1].parse().map_err(|e| format!("{e}"))?,
+                    splits: parts[2].parse().map_err(|e| format!("{e}"))?,
+                    decided_halting: parts[3].parse().map_err(|e| format!("{e}"))?,
+                    decided_inf: parts[4].parse().map_err(|e| format!("{e}"))?,
+                    total_time_nanos: parts[5].parse().map_err(|e| format!("{e}"))?,
+                },
+            });
+        }
+
+        let stats = EnumStats {
+            size,
+            max_steps,
+            total_programs,
+            halted_programs,
+            inf_programs,
+            decided_by_kind,
+            max_halting_steps,
+            champion,
+            stages,
+            ctl_proofs_count: get_u64("ctl_proofs_count")?,
+            ctl_min_steps: get_u64("ctl_min_steps")?,
+            ctl_max_steps: get_u64("ctl_max_steps")?,
+            ctl_total_steps: get_u64("ctl_total_steps")?,
+            ctl_min_states: get_usize("ctl_min_states")?,
+            ctl_max_states: get_usize("ctl_max_states")?,
+            ctl_total_states: get_u64("ctl_total_states")?,
+            ctl_floor_counts: parse_map(get("ctl_floor_counts")?)?,
+            ctl_mod_counts: parse_map(get("ctl_mod_counts")?)?,
+            cycler_proofs_count: get_u64("cycler_proofs_count")?,
+            cycler_min_period: get_u64("cycler_min_period")?,
+            cycler_max_period: get_u64("cycler_max_period")?,
+            cycler_total_period: get_u64("cycler_total_period")?,
+            cycler_period_counts: parse_map(get("cycler_period_counts")?)?,
+            cycler_dx_counts: parse_map(get("cycler_dx_counts")?)?,
+            sep_comp_proofs_count: get_u64("sep_comp_proofs_count")?,
+            sep_comp_min_period: get_u64("sep_comp_min_period")?,
+            sep_comp_max_period: get_u64("sep_comp_max_period")?,
+            sep_comp_total_period: get_u64("sep_comp_total_period")?,
+            sep_comp_period_counts: parse_map(get("sep_comp_period_counts")?)?,
+            bouncer_proofs_count: get_u64("bouncer_proofs_count")?,
+            bouncer_min_bounce_steps: get_u64("bouncer_min_bounce_steps")?,
+            bouncer_max_bounce_steps: get_u64("bouncer_max_bounce_steps")?,
+            bouncer_total_bounce_steps: get_u64("bouncer_total_bounce_steps")?,
+            bouncer_bounce_steps_counts: parse_map(get("bouncer_bounce_steps_counts")?)?,
+            bouncer_gap_growth_counts: parse_map(get("bouncer_gap_growth_counts")?)?,
+        };
+
+        Ok(CheckpointData {
+            version,
+            size,
+            max_steps,
+            use_deciders,
+            break_symmetry,
+            target_width,
+            elapsed_nanos,
+            total_chunks,
+            completed_chunks,
+            stats,
+        })
+    }
 }
 
 fn format_top_counts<K: std::fmt::Display + Ord>(
@@ -1520,6 +2247,18 @@ pub struct CustomPipelineCli {
     #[arg(short = 'p', long = "progress", default_value = "10s", value_parser = parse_duration_arg)]
     pub progress: Duration,
 
+    /// Stop enumeration after evaluating a sample of at least this many programs (e.g. 50k, 1M, 100000)
+    #[arg(long = "sample", visible_alias = "limit", value_parser = parse_count_arg)]
+    pub sample: Option<u64>,
+
+    /// Checkpoint file path to save progress and resume interrupted runs
+    #[arg(long = "checkpoint")]
+    pub checkpoint: Option<PathBuf>,
+
+    /// Checkpoint save interval (default: 60s)
+    #[arg(long = "checkpoint-interval", default_value = "60s", value_parser = parse_duration_arg)]
+    pub checkpoint_interval: Duration,
+
     /// Write program results to <FILE>
     #[arg(short = 'o', long = "output")]
     pub output: Option<PathBuf>,
@@ -1543,6 +2282,7 @@ pub struct CustomPipelineCli {
 
 /// Convenience driver for custom size binaries (`bb8`, `bb9`, `bb10`, etc.).
 pub fn run_enumeration_cli(size: usize, pipeline: PipelineConfig) {
+    register_signal_handler();
     let cli = CustomPipelineCli::parse();
 
     if let Some(threads) = cli.threads {
@@ -1578,6 +2318,13 @@ pub fn run_enumeration_cli(size: usize, pipeline: PipelineConfig) {
             "full"
         }
     );
+    if let Some(sample) = cli.sample {
+        println!("Sample limit:     {} programs", format_count(sample));
+    }
+    if let Some(ref ckpt) = cli.checkpoint {
+        println!("Checkpoint file:  {}", ckpt.display());
+        println!("Save interval:    {:?}", cli.checkpoint_interval);
+    }
     println!();
 
     let start = Instant::now();
@@ -1619,13 +2366,20 @@ pub fn run_enumeration_cli(size: usize, pipeline: PipelineConfig) {
         );
     };
 
-    let (stats, entries) = enumerate_parallel_with_pipeline(
+    let options = EnumerateOptions {
+        sample_limit: cli.sample,
+        checkpoint_path: cli.checkpoint.clone(),
+        checkpoint_interval: cli.checkpoint_interval,
+    };
+
+    let (stats, entries) = enumerate_parallel_advanced(
         size,
         pipeline,
         use_deciders,
         break_symmetry,
         output_path.is_some(),
         holdouts_only,
+        options,
         on_progress,
         should_report,
     );
@@ -1649,7 +2403,25 @@ pub fn run_enumeration_cli(size: usize, pipeline: PipelineConfig) {
         println!();
     }
 
+    if is_interrupted() {
+        println!();
+        println!("Run interrupted early by user. Partial statistics below:");
+    } else if let Some(sample) = cli.sample {
+        if stats.total_programs >= sample {
+            println!();
+            println!(
+                "Sample limit reached ({} evaluated >= {} requested). Sample statistics below:",
+                format_count(stats.total_programs),
+                format_count(sample)
+            );
+        }
+    }
+
     print_enum_report(&stats, elapsed, use_deciders);
+
+    if is_interrupted() {
+        std::process::exit(130);
+    }
 }
 
 #[cfg(test)]
@@ -1662,8 +2434,8 @@ mod tests {
             // (size, expected_total, expected_halted, expected_decided, expected_holdouts, expected_max_steps)
             (1, 3u64, 1u64, 2u64, 0u64, 0u64),
             (2, 12, 4, 8, 0, 1),
-            (3, 114, 26, 88, 0, 3),
-            (4, 933, 217, 716, 0, 6),
+            (3, 102, 26, 76, 0, 3),
+            (4, 921, 217, 704, 0, 6),
         ];
 
         for (size, exp_total, exp_halted, exp_decided, exp_holdouts, exp_max_steps) in expected {
@@ -1694,9 +2466,9 @@ mod tests {
         for entry in TnfEnumerator::with_options(size, max_steps, max_steps, true, false) {
             stats.record(&entry);
         }
-        assert_eq!(stats.total_programs, 12_161);
+        assert_eq!(stats.total_programs, 11_725);
         assert_eq!(stats.halted_programs, 2_365);
-        assert_eq!(stats.inf_programs, 9_796);
+        assert_eq!(stats.inf_programs, 9_360);
         assert_eq!(stats.holdout_programs(), 0);
         assert_eq!(stats.max_halting_steps, Some(11));
 
@@ -1712,9 +2484,9 @@ mod tests {
             // (size, expected_total, expected_halted, expected_decided, expected_holdouts, expected_max_steps)
             (1, 2u64, 1u64, 1u64, 0u64, 0u64),
             (2, 7, 3, 4, 0, 1),
-            (3, 58, 14, 44, 0, 3),
-            (4, 469, 111, 358, 0, 6),
-            (5, 6084, 1186, 4898, 0, 11),
+            (3, 54, 14, 40, 0, 3),
+            (4, 465, 111, 354, 0, 6),
+            (5, 5866, 1186, 4680, 0, 11),
         ];
 
         for (size, exp_total, exp_halted, exp_decided, exp_holdouts, exp_max_steps) in expected {

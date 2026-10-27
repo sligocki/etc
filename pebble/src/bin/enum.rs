@@ -1,4 +1,7 @@
-use pebble::enumeration::{enumerate_parallel, print_enum_report, ProgressSnapshot};
+use pebble::enumeration::{
+    enumerate_parallel_options, is_interrupted, parse_count_arg, parse_duration_arg,
+    print_enum_report, register_signal_handler, EnumerateOptions, ProgressSnapshot,
+};
 use pebble::io::{format_count, write_records_to_file, ProgramRecord};
 use std::path::PathBuf;
 use std::process;
@@ -6,28 +9,6 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-
-fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
-    let s = raw.trim();
-    if let Some(ms_str) = s.strip_suffix("ms") {
-        let ms: f64 = ms_str
-            .trim()
-            .parse()
-            .map_err(|_| format!("invalid duration '{raw}'"))?;
-        if ms < 0.0 || !ms.is_finite() {
-            return Err(format!("invalid duration '{raw}'"));
-        }
-        return Ok(Duration::from_secs_f64(ms / 1000.0));
-    }
-    let secs_str = s.strip_suffix('s').unwrap_or(s).trim();
-    let secs: f64 = secs_str
-        .parse()
-        .map_err(|_| format!("invalid duration '{raw}'"))?;
-    if secs < 0.0 || !secs.is_finite() {
-        return Err(format!("invalid duration '{raw}'"));
-    }
-    Ok(Duration::from_secs_f64(secs))
-}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -60,6 +41,18 @@ struct Cli {
     #[arg(short = 'p', long = "progress", default_value = "10s", value_parser = parse_duration_arg)]
     progress: Duration,
 
+    /// Stop enumeration after evaluating a sample of at least this many programs (e.g. 50k, 1M, 100000)
+    #[arg(long = "sample", visible_alias = "limit", value_parser = parse_count_arg)]
+    sample: Option<u64>,
+
+    /// Checkpoint file path to save progress and resume interrupted runs
+    #[arg(long = "checkpoint")]
+    checkpoint: Option<PathBuf>,
+
+    /// Checkpoint save interval (default: 60s)
+    #[arg(long = "checkpoint-interval", default_value = "60s", value_parser = parse_duration_arg)]
+    checkpoint_interval: Duration,
+
     /// Write program results to <FILE>
     #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
@@ -82,6 +75,7 @@ struct Cli {
 }
 
 fn main() {
+    register_signal_handler();
     let cli = Cli::parse();
 
     let size = cli.size;
@@ -134,6 +128,13 @@ fn main() {
             "full (enumerating all mirror programs)"
         }
     );
+    if let Some(sample) = cli.sample {
+        println!("Sample limit:     {} programs", format_count(sample));
+    }
+    if let Some(ref ckpt) = cli.checkpoint {
+        println!("Checkpoint file:  {}", ckpt.display());
+        println!("Save interval:    {:?}", cli.checkpoint_interval);
+    }
     println!();
 
     let start = Instant::now();
@@ -175,7 +176,13 @@ fn main() {
         );
     };
 
-    let (stats, entries) = enumerate_parallel(
+    let options = EnumerateOptions {
+        sample_limit: cli.sample,
+        checkpoint_path: cli.checkpoint.clone(),
+        checkpoint_interval: cli.checkpoint_interval,
+    };
+
+    let (stats, entries) = enumerate_parallel_options(
         size,
         early_steps,
         deep_steps,
@@ -183,6 +190,7 @@ fn main() {
         break_symmetry,
         output_path.is_some(),
         holdouts_only,
+        options,
         on_progress,
         should_report,
     );
@@ -206,5 +214,23 @@ fn main() {
         println!();
     }
 
+    if is_interrupted() {
+        println!();
+        println!("Run interrupted early by user. Partial statistics below:");
+    } else if let Some(sample) = cli.sample {
+        if stats.total_programs >= sample {
+            println!();
+            println!(
+                "Sample limit reached ({} evaluated >= {} requested). Sample statistics below:",
+                format_count(stats.total_programs),
+                format_count(sample)
+            );
+        }
+    }
+
     print_enum_report(&stats, elapsed, use_deciders);
+
+    if is_interrupted() {
+        process::exit(130);
+    }
 }

@@ -126,7 +126,7 @@ impl From<CtlConfig> for PipelineStage {
 /// Individual pipeline stage identifier in order of execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineStage {
-    /// Simulation of the program up to `steps` (including prefix branching).
+    /// Simulation of the program up to `steps` (splitting on missing rules).
     Simulation { steps: u64 },
     /// Static backtracking analysis on program rules.
     StaticBacktrack,
@@ -709,8 +709,7 @@ impl EnumStats {
 /// Tree-Normal-Form (TNF) enumerator that lazily branches on rules for pebble counts `k`
 /// only when a cell with `k` pebbles is actually reached during simulation.
 ///
-/// Shares simulation prefixes across branches by snapshotting the `Simulator` at the branch point.
-/// When a leaf reaches the step limit without halting, executes the configured pipeline stages.
+/// Evaluates programs through the configured pipeline stages, splitting on missing rules.
 pub struct TnfEnumerator {
     max_steps: u64,
     use_deciders: bool,
@@ -799,7 +798,6 @@ impl TnfEnumerator {
 
     pub fn from_subtree(
         prog: Program,
-        _sim: Simulator,
         max_steps: u64,
         use_deciders: bool,
         break_symmetry: bool,
@@ -1401,7 +1399,6 @@ where
                 FrontierNode::Branch(prog, is_symmetric) => {
                     let mut sub_enum = TnfEnumerator::from_subtree(
                         prog.clone(),
-                        Simulator::new(size),
                         deep_steps,
                         use_deciders,
                         break_symmetry,
@@ -2523,7 +2520,6 @@ mod tests {
 
         let mut sub_enum = TnfEnumerator::from_subtree(
             partial_prog,
-            Simulator::new(9),
             70_000,
             true,
             false,

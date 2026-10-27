@@ -1037,6 +1037,78 @@ pub fn evaluate_pipeline(
     })
 }
 
+/// Ultra-fast non-cryptographic 64-bit PRNG (SplitMix64) for Monte Carlo tree sampling.
+#[derive(Debug, Clone)]
+pub struct FastRng {
+    state: u64,
+}
+
+impl FastRng {
+    #[inline]
+    pub fn new(seed: u64) -> Self {
+        Self {
+            state: if seed == 0 { 0xda942042e4dd58b5 } else { seed },
+        }
+    }
+
+    #[inline]
+    pub fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e3779b97f4a7c15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+        z ^ (z >> 31)
+    }
+
+    #[inline]
+    pub fn next_usize(&mut self, bound: usize) -> usize {
+        debug_assert!(bound > 0);
+        (self.next_u64() as usize) % bound
+    }
+}
+
+/// Evaluates a single random descent path from a partial program down to a leaf or decider outcome.
+pub fn sample_random_descent(
+    start_prog: &Program,
+    start_symmetric: bool,
+    use_deciders: bool,
+    pipeline: &PipelineConfig,
+    rule_table: &[Vec<Rule>],
+    rng: &mut FastRng,
+    metrics: &mut [StageMetrics],
+) -> EnumEntry {
+    let mut cur_prog = start_prog.clone();
+    let mut cur_symmetric = start_symmetric;
+
+    loop {
+        let res = evaluate_pipeline(
+            cur_prog,
+            cur_symmetric,
+            use_deciders,
+            pipeline,
+            metrics,
+            rule_table,
+        );
+        match res {
+            PipelineEvalResult::Done(entry) => {
+                return entry;
+            }
+            PipelineEvalResult::Split { mut children } => {
+                if children.is_empty() {
+                    return EnumEntry {
+                        program: Program::empty(start_prog.size()).expect("valid size"),
+                        outcome: SimOutcome::Unknown { steps: 0 },
+                    };
+                }
+                let idx = rng.next_usize(children.len());
+                let (next_prog, next_symmetric) = children.swap_remove(idx);
+                cur_prog = next_prog;
+                cur_symmetric = next_symmetric;
+            }
+        }
+    }
+}
+
 impl Iterator for TnfEnumerator {
     type Item = EnumEntry;
 
@@ -1271,29 +1343,181 @@ where
 
     let run_start = Instant::now();
 
-    // Check if already finished or already at sample limit
+    // Check if already finished
     if completed_set.len() >= frontier.len() {
         return (base_stats, Vec::new());
     }
-    if let Some(limit) = options.sample_limit {
-        if base_stats.total_programs >= limit {
+
+    // If a sample limit is configured, execute random path sampling (Option A) across all frontier branches
+    if let Some(sample_limit) = options.sample_limit {
+        let total_chunks = frontier.len();
+        if total_chunks == 0 {
             return (base_stats, Vec::new());
         }
-    }
 
-    // Determine visitation order. When sampling, stride uniformly across frontier branches;
-    // otherwise evaluate sequentially for optimal cache locality and deterministic ordering.
-    let remaining_indices: Vec<usize> = if options.sample_limit.is_some() {
-        let stride = find_coprime_stride(frontier.len());
-        let mut indices = Vec::with_capacity(frontier.len() - completed_set.len());
-        for i in 0..frontier.len() {
-            let idx = (i * stride) % frontier.len();
-            if !completed_set.contains(&idx) {
-                indices.push(idx);
+        let mut chunk_budgets = vec![0u64; total_chunks];
+        if sample_limit >= total_chunks as u64 {
+            let base = sample_limit / (total_chunks as u64);
+            let remainder = (sample_limit % (total_chunks as u64)) as usize;
+            for i in 0..total_chunks {
+                chunk_budgets[i] = base + if i < remainder { 1 } else { 0 };
+            }
+        } else {
+            let stride = find_coprime_stride(total_chunks);
+            for i in 0..(sample_limit as usize) {
+                let idx = (i * stride) % total_chunks;
+                chunk_budgets[idx] += 1;
             }
         }
-        indices
-    } else {
+
+        let chunk_indices: Vec<usize> = (0..total_chunks)
+            .filter(|&idx| chunk_budgets[idx] > 0)
+            .collect();
+
+        let live_total = AtomicU64::new(base_stats.total_programs);
+        let live_halted = AtomicU64::new(base_stats.halted_programs);
+        let live_decided = AtomicU64::new(base_stats.inf_programs);
+        let live_max_steps = AtomicU64::new(base_stats.max_halting_steps.unwrap_or(u64::MAX));
+        let progress_lock = Mutex::new(());
+
+        let flush_batch = |b_tot: u64, b_halt: u64, b_dec: u64, b_max: Option<u64>| {
+            if b_tot == 0 {
+                return;
+            }
+            let tot = live_total.fetch_add(b_tot, Ordering::Relaxed) + b_tot;
+            let halt = live_halted.fetch_add(b_halt, Ordering::Relaxed) + b_halt;
+            let dec = live_decided.fetch_add(b_dec, Ordering::Relaxed) + b_dec;
+            if let Some(m) = b_max {
+                let mut cur = live_max_steps.load(Ordering::Relaxed);
+                while cur == u64::MAX || m > cur {
+                    match live_max_steps.compare_exchange_weak(
+                        cur,
+                        m,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(actual) => cur = actual,
+                    }
+                }
+            }
+            let raw_max = live_max_steps.load(Ordering::Relaxed);
+            let snap = ProgressSnapshot {
+                total_programs: tot,
+                halted_programs: halt,
+                inf_programs: dec,
+                unknown_programs: tot.saturating_sub(halt).saturating_sub(dec),
+                max_halting_steps: if raw_max == u64::MAX {
+                    None
+                } else {
+                    Some(raw_max)
+                },
+            };
+            if filter_fn(&snap) {
+                if let Ok(_guard) = progress_lock.try_lock() {
+                    if filter_fn(&snap) {
+                        on_progress(&snap);
+                    }
+                }
+            }
+        };
+
+        let mut chunk_results: Vec<(usize, EnumStats, Vec<EnumEntry>)> = chunk_indices
+            .into_par_iter()
+            .map(|idx| {
+                if STOP_REQUESTED.load(Ordering::Relaxed) {
+                    return (
+                        idx,
+                        EnumStats::with_pipeline(size, deep_steps, &pipeline),
+                        Vec::new(),
+                    );
+                }
+
+                let mut local_stats = EnumStats::with_pipeline(size, deep_steps, &pipeline);
+                let mut local_entries = Vec::new();
+                let chunk_seed = (idx as u64).wrapping_mul(0x9e3779b97f4a7c15) ^ 0x517cc1b727220a95;
+                let mut rng = FastRng::new(chunk_seed);
+
+                match &frontier[idx] {
+                    FrontierNode::Leaf(entry) => {
+                        let entry = entry.clone();
+                        local_stats.record(&entry);
+                        let b_halt = u64::from(matches!(entry.outcome, SimOutcome::Halted { .. }));
+                        let b_dec = u64::from(matches!(entry.outcome, SimOutcome::Inf { .. }));
+                        flush_batch(1, b_halt, b_dec, local_stats.max_halting_steps);
+                        if collect_entries && (!holdouts_only || entry.outcome.is_holdout()) {
+                            local_entries.push(entry);
+                        }
+                    }
+                    FrontierNode::Branch(prog, is_symmetric) => {
+                        let budget = chunk_budgets[idx];
+                        let mut b_tot = 0u64;
+                        let mut b_halt = 0u64;
+                        let mut b_dec = 0u64;
+                        let mut b_max: Option<u64> = None;
+                        let mut descent_metrics = vec![StageMetrics::default(); pipeline.stages.len()];
+
+                        for _ in 0..budget {
+                            if STOP_REQUESTED.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            let entry = sample_random_descent(
+                                prog,
+                                *is_symmetric,
+                                use_deciders,
+                                &pipeline,
+                                &rule_table,
+                                &mut rng,
+                                &mut descent_metrics,
+                            );
+                            local_stats.record(&entry);
+                            b_tot += 1;
+                            match entry.outcome {
+                                SimOutcome::Halted { steps } => {
+                                    b_halt += 1;
+                                    b_max = Some(b_max.map_or(steps, |prev| prev.max(steps)));
+                                }
+                                SimOutcome::Inf { .. } => {
+                                    b_dec += 1;
+                                }
+                                _ => {}
+                            }
+                            if collect_entries && (!holdouts_only || entry.outcome.is_holdout()) {
+                                local_entries.push(entry);
+                            }
+                            if b_tot >= 256 {
+                                flush_batch(b_tot, b_halt, b_dec, b_max);
+                                b_tot = 0;
+                                b_halt = 0;
+                                b_dec = 0;
+                                b_max = None;
+                            }
+                        }
+                        local_stats.merge_metrics(&descent_metrics);
+                        flush_batch(b_tot, b_halt, b_dec, b_max);
+                    }
+                }
+
+                (idx, local_stats, local_entries)
+            })
+            .collect();
+
+        chunk_results.sort_by_key(|(idx, _, _)| *idx);
+
+        let mut final_stats = base_stats;
+        let mut final_entries = Vec::new();
+        for (_idx, local_stats, mut local_entries) in chunk_results {
+            final_stats.merge(local_stats);
+            if collect_entries {
+                final_entries.append(&mut local_entries);
+            }
+        }
+
+        return (final_stats, final_entries);
+    }
+
+    // Otherwise, perform exhaustive deterministic parallel DFS enumeration
+    let remaining_indices: Vec<usize> = {
         let mut indices = Vec::with_capacity(frontier.len() - completed_set.len());
         for idx in 0..frontier.len() {
             if !completed_set.contains(&idx) {
@@ -1355,7 +1579,7 @@ where
     let periodic_stats_lock = Mutex::new(base_stats.clone());
     let last_ckpt_save = Mutex::new(Instant::now());
 
-    let batch_flush_size = if options.sample_limit.is_some() { 256u64 } else { 2048u64 };
+    let batch_flush_size = 2048u64;
 
     let mut chunk_results: Vec<(usize, EnumStats, Vec<EnumEntry>, bool)> = remaining_indices
         .into_par_iter()
@@ -1367,17 +1591,6 @@ where
                     Vec::new(),
                     false,
                 );
-            }
-            if let Some(limit) = options.sample_limit {
-                if live_total.load(Ordering::Relaxed) >= limit {
-                    STOP_REQUESTED.store(true, Ordering::Relaxed);
-                    return (
-                        idx,
-                        EnumStats::with_pipeline(size, deep_steps, &pipeline),
-                        Vec::new(),
-                        false,
-                    );
-                }
             }
 
             let mut local_stats = EnumStats::with_pipeline(size, deep_steps, &pipeline);
@@ -1436,12 +1649,6 @@ where
                         }
                         if STOP_REQUESTED.load(Ordering::Relaxed) {
                             break;
-                        }
-                        if let Some(limit) = options.sample_limit {
-                            if live_total.load(Ordering::Relaxed) >= limit {
-                                STOP_REQUESTED.store(true, Ordering::Relaxed);
-                                break;
-                            }
                         }
                     }
                     local_stats.merge_metrics(&sub_enum.metrics);
@@ -2244,7 +2451,7 @@ pub struct CustomPipelineCli {
     #[arg(short = 'p', long = "progress", default_value = "10s", value_parser = parse_duration_arg)]
     pub progress: Duration,
 
-    /// Stop enumeration after evaluating a sample of at least this many programs (e.g. 50k, 1M, 100000)
+    /// Stop enumeration after evaluating a sample of at least this many programs (e.g. 50k, 1M, 1B)
     #[arg(long = "sample", visible_alias = "limit", value_parser = parse_count_arg)]
     pub sample: Option<u64>,
 
@@ -2723,5 +2930,14 @@ mod tests {
         let stats = EnumStats::with_pipeline(5, 10_000, &pipeline);
         assert_eq!(stats.stages.len(), 8);
         assert_eq!(stats.stages[7].name, pipeline.stages[7].name());
+    }
+
+    #[test]
+    fn test_sample_count_parsing() {
+        assert_eq!(parse_count_arg("50k"), Ok(50_000));
+        assert_eq!(parse_count_arg("1M"), Ok(1_000_000));
+        assert_eq!(parse_count_arg("1B"), Ok(1_000_000_000));
+        assert_eq!(parse_count_arg("100"), Ok(100));
+        assert_eq!(parse_count_arg("100_000"), Ok(100_000));
     }
 }

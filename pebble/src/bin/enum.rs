@@ -41,7 +41,7 @@ struct Cli {
     #[arg(short = 'p', long = "progress", default_value = "10s", value_parser = parse_duration_arg)]
     progress: Duration,
 
-    /// Stop enumeration after evaluating a sample of at least this many programs (e.g. 50k, 1M, 100000)
+    /// Stop enumeration after evaluating a sample of at least this many programs (e.g. 50k, 1M, 1B)
     #[arg(long = "sample", visible_alias = "limit", value_parser = parse_count_arg)]
     sample: Option<u64>,
 

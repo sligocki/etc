@@ -10,3 +10,4 @@ pub mod tandem_repeat;
 pub mod transcript;
 pub mod vec_set;
 pub mod bouncer;
+pub mod symbolic;

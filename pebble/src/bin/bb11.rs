@@ -52,11 +52,11 @@ fn main() {
             PipelineStage::Simulation { steps: 100 },
             PipelineStage::Cycler { steps: 100 },
             PipelineStage::SeparatedComponents { steps: 100 },
+            PipelineStage::Bouncer { steps: 100 },
             PipelineStage::Ctl(CtlConfig {
                 steps: 100,
                 ..Default::default()
             }),
-            PipelineStage::Bouncer { steps: 100 },
             PipelineStage::Simulation { steps: 10_000 },
             PipelineStage::Cycler { steps: 10_000 },
             PipelineStage::SeparatedComponents { steps: 10_000 },

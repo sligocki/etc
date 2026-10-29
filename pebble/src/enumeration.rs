@@ -321,6 +321,14 @@ pub struct EnumStats {
     pub decided_by_kind: [u64; 6],
     /// Maximum halting step count observed across all halted programs.
     pub max_halting_steps: Option<u64>,
+    /// Minimum halting step count observed across all halted programs.
+    pub min_halting_steps: Option<u64>,
+    /// Total halting steps simulated across all halted programs.
+    pub total_halting_steps: u64,
+    /// Number of halted programs that halted in 0 steps (if any).
+    pub halting_zero_steps: u64,
+    /// Distribution of halting step counts bucketed by power of two: [2^k, 2^{k+1}) -> count.
+    pub halting_step_histogram: std::collections::BTreeMap<u32, u64>,
     /// First champion program achieving `max_halting_steps`.
     pub champion: Option<Program>,
     /// Runtime and decision metrics for each pipeline stage.
@@ -377,6 +385,10 @@ impl PartialEq for EnumStats {
             && self.inf_programs == other.inf_programs
             && self.decided_by_kind == other.decided_by_kind
             && self.max_halting_steps == other.max_halting_steps
+            && self.min_halting_steps == other.min_halting_steps
+            && self.total_halting_steps == other.total_halting_steps
+            && self.halting_zero_steps == other.halting_zero_steps
+            && self.halting_step_histogram == other.halting_step_histogram
             && self.champion == other.champion
             && self.ctl_proofs_count == other.ctl_proofs_count
             && self.ctl_min_steps == other.ctl_min_steps
@@ -431,6 +443,11 @@ impl EnumStats {
         match entry.outcome {
             SimOutcome::Halted { steps } => {
                 self.halted_programs += 1;
+                self.total_halting_steps += steps;
+
+                if self.min_halting_steps.is_none() || Some(steps) < self.min_halting_steps {
+                    self.min_halting_steps = Some(steps);
+                }
 
                 let is_new_max = match self.max_halting_steps {
                     None => true,
@@ -439,6 +456,13 @@ impl EnumStats {
                 if is_new_max {
                     self.max_halting_steps = Some(steps);
                     self.champion = Some(entry.program.clone());
+                }
+
+                if steps == 0 {
+                    self.halting_zero_steps += 1;
+                } else {
+                    let k = steps.ilog2();
+                    *self.halting_step_histogram.entry(k).or_insert(0) += 1;
                 }
             }
             SimOutcome::Inf { decider, .. } => {
@@ -630,6 +654,17 @@ impl EnumStats {
                 self.max_halting_steps = Some(other_max);
                 self.champion = other.champion;
             }
+        }
+        if let Some(other_min) = other.min_halting_steps {
+            self.min_halting_steps = match self.min_halting_steps {
+                None => Some(other_min),
+                Some(cur_min) => Some(cur_min.min(other_min)),
+            };
+        }
+        self.total_halting_steps += other.total_halting_steps;
+        self.halting_zero_steps += other.halting_zero_steps;
+        for (k, v) in other.halting_step_histogram {
+            *self.halting_step_histogram.entry(k).or_insert(0) += v;
         }
         if other.cycler_proofs_count > 0 {
             if self.cycler_proofs_count == 0 {
@@ -2164,6 +2199,18 @@ impl CheckpointData {
                 .unwrap_or_else(|| "None".to_string())
         ));
         out.push_str(&format!(
+            "min_halting_steps={}\n",
+            s.min_halting_steps
+                .map(|x| x.to_string())
+                .unwrap_or_else(|| "None".to_string())
+        ));
+        out.push_str(&format!("total_halting_steps={}\n", s.total_halting_steps));
+        out.push_str(&format!("halting_zero_steps={}\n", s.halting_zero_steps));
+        out.push_str(&format!(
+            "halting_step_histogram={}\n",
+            format_map(&s.halting_step_histogram)
+        ));
+        out.push_str(&format!(
             "champion={}\n",
             s.champion
                 .as_ref()
@@ -2281,6 +2328,22 @@ impl CheckpointData {
             "None" | "" => None,
             v => Some(v.parse().map_err(|e| format!("max_halting_steps: {e}"))?),
         };
+        let min_halting_steps = match kv.get("min_halting_steps").map(|s| s.as_str()) {
+            Some("None") | Some("") | None => None,
+            Some(v) => Some(v.parse().map_err(|e| format!("min_halting_steps: {e}"))?),
+        };
+        let total_halting_steps = match kv.get("total_halting_steps") {
+            Some(s) => s.parse().map_err(|e| format!("total_halting_steps: {e}"))?,
+            None => 0,
+        };
+        let halting_zero_steps = match kv.get("halting_zero_steps") {
+            Some(s) => s.parse().map_err(|e| format!("halting_zero_steps: {e}"))?,
+            None => 0,
+        };
+        let halting_step_histogram = match kv.get("halting_step_histogram") {
+            Some(s) => parse_map(s)?,
+            None => BTreeMap::new(),
+        };
         let champion = match get("champion")?.as_str() {
             "None" | "" => None,
             v => Some(v.parse::<Program>().map_err(|e| format!("champion: {e}"))?),
@@ -2312,6 +2375,10 @@ impl CheckpointData {
             inf_programs,
             decided_by_kind,
             max_halting_steps,
+            min_halting_steps,
+            total_halting_steps,
+            halting_zero_steps,
+            halting_step_histogram,
             champion,
             stages,
             ctl_proofs_count: get_u64("ctl_proofs_count")?,
@@ -2443,6 +2510,69 @@ pub fn print_enum_report(stats: &EnumStats, elapsed: Duration, use_deciders: boo
             );
         }
         println!("{:-<120}", "");
+    }
+
+    if stats.halted_programs > 0 {
+        println!();
+        println!(
+            "=== Halting Step Distribution ({} halted) ===",
+            format_count(stats.halted_programs)
+        );
+        let min_s = stats.min_halting_steps.unwrap_or(0);
+        let max_s = stats.max_halting_steps.unwrap_or(0);
+        let avg_s = stats.total_halting_steps as f64 / stats.halted_programs as f64;
+        println!(
+            "Steps:            min = {}, avg = {:.1}, max = {}",
+            format_count(min_s),
+            avg_s,
+            format_count(max_s)
+        );
+        println!();
+        println!(
+            "{:<24} {:<8} {:>14} {:>12}  {:<25}",
+            "Step Range", "k", "Count", "Pct Halted", "Distribution"
+        );
+        println!("{:-<88}", "");
+        if stats.halting_zero_steps > 0 {
+            let pct = (stats.halting_zero_steps as f64 / stats.halted_programs as f64) * 100.0;
+            let bar_len = ((pct / 100.0) * 25.0).round() as usize;
+            let bar = "█".repeat(bar_len);
+            println!(
+                "{:<24} {:<8} {:>14} {:>11.2}%  {}",
+                "0", "-", format_count(stats.halting_zero_steps), pct, bar
+            );
+        }
+        if !stats.halting_step_histogram.is_empty() {
+            let min_k = *stats.halting_step_histogram.keys().next().unwrap();
+            let max_k = *stats.halting_step_histogram.keys().next_back().unwrap();
+            for k in min_k..=max_k {
+                let count = stats.halting_step_histogram.get(&k).copied().unwrap_or(0);
+                if count > 0 || (max_k - min_k <= 32) {
+                    let low_str = format_count(1u64.checked_shl(k).unwrap_or(u64::MAX));
+                    let high_str = if k >= 63 {
+                        "inf".to_string()
+                    } else {
+                        format_count(1u64 << (k + 1))
+                    };
+                    let range_str = format!("[{}, {})", low_str, high_str);
+                    let pct = (count as f64 / stats.halted_programs as f64) * 100.0;
+                    let bar_len = ((pct / 100.0) * 25.0).round() as usize;
+                    let bar = "█".repeat(bar_len);
+                    println!(
+                        "{:<24} {:<8} {:>14} {:>11.2}%  {}",
+                        range_str,
+                        format!("k={k}"),
+                        format_count(count),
+                        pct,
+                        bar
+                    );
+                }
+            }
+        }
+        println!("{:-<88}", "");
+    }
+
+    if use_deciders {
 
         if stats.cycler_proofs_count > 0 {
             println!();
@@ -2917,6 +3047,57 @@ mod tests {
         assert_eq!(stats1.ctl_floor_counts.get(&12), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&1), Some(&1));
         assert_eq!(stats1.ctl_mod_counts.get(&2), Some(&1));
+    }
+
+    #[test]
+    fn test_enum_stats_halting_histogram_and_merging() {
+        let mut stats1 = EnumStats::default();
+        let p1: Program = "00_01_00".parse().unwrap();
+        let p2: Program = "00_01_01".parse().unwrap();
+        let p3: Program = "00_01_02".parse().unwrap();
+
+        stats1.record(&EnumEntry {
+            program: p1.clone(),
+            outcome: SimOutcome::Halted { steps: 1 }, // 2^0 <= 1 < 2^1 -> k=0
+        });
+        stats1.record(&EnumEntry {
+            program: p2.clone(),
+            outcome: SimOutcome::Halted { steps: 3 }, // 2^1 <= 3 < 2^2 -> k=1
+        });
+        stats1.record(&EnumEntry {
+            program: p3.clone(),
+            outcome: SimOutcome::Halted { steps: 7 }, // 2^2 <= 7 < 2^3 -> k=2
+        });
+
+        assert_eq!(stats1.halted_programs, 3);
+        assert_eq!(stats1.min_halting_steps, Some(1));
+        assert_eq!(stats1.max_halting_steps, Some(7));
+        assert_eq!(stats1.total_halting_steps, 11);
+        assert_eq!(stats1.halting_step_histogram.get(&0), Some(&1));
+        assert_eq!(stats1.halting_step_histogram.get(&1), Some(&1));
+        assert_eq!(stats1.halting_step_histogram.get(&2), Some(&1));
+
+        let mut stats2 = EnumStats::default();
+        let p4: Program = "00_01_03".parse().unwrap();
+        let p5: Program = "00_01_10".parse().unwrap();
+        stats2.record(&EnumEntry {
+            program: p4.clone(),
+            outcome: SimOutcome::Halted { steps: 15 }, // 2^3 <= 15 < 2^4 -> k=3
+        });
+        stats2.record(&EnumEntry {
+            program: p5.clone(),
+            outcome: SimOutcome::Halted { steps: 2 }, // 2^1 <= 2 < 2^2 -> k=1
+        });
+
+        stats1.merge(stats2);
+        assert_eq!(stats1.halted_programs, 5);
+        assert_eq!(stats1.min_halting_steps, Some(1));
+        assert_eq!(stats1.max_halting_steps, Some(15));
+        assert_eq!(stats1.total_halting_steps, 28);
+        assert_eq!(stats1.halting_step_histogram.get(&0), Some(&1));
+        assert_eq!(stats1.halting_step_histogram.get(&1), Some(&2)); // steps 3 and 2
+        assert_eq!(stats1.halting_step_histogram.get(&2), Some(&1));
+        assert_eq!(stats1.halting_step_histogram.get(&3), Some(&1));
     }
 
     #[test]

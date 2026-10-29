@@ -349,15 +349,24 @@ pub fn write_records<W: Write>(mut writer: W, records: &[ProgramRecord]) -> Resu
     Ok(())
 }
 
-/// Write `ProgramRecord`s to a file path.
+/// Write `ProgramRecord`s to a file path atomically via a temporary file.
 pub fn write_records_to_file<P: AsRef<Path>>(
     path: P,
     records: &[ProgramRecord],
 ) -> Result<(), IoError> {
-    let file = File::create(path)?;
+    let path = path.as_ref();
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp_path = path.with_file_name(tmp_name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = File::create(&tmp_path)?;
     let mut writer = BufWriter::new(file);
     write_records(&mut writer, records)?;
     writer.flush()?;
+    drop(writer);
+    std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
 

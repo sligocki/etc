@@ -3,7 +3,7 @@ use crate::deciders::{
     decide_cycler_from_sim, decide_separated_components_from_sim, decide_static_backtrack, Decider,
     StepDeciderOutcome,
 };
-use crate::io::{format_count, write_records_to_file, ProgramRecord};
+use crate::io::{format_count, read_records_from_file, write_records_to_file, ProgramRecord};
 use crate::program::{Program, Rule};
 use crate::simulation::{SimOutcome, Simulator};
 use clap::Parser;
@@ -1266,6 +1266,7 @@ where
     use std::sync::Mutex;
 
     reset_interrupted();
+    let collect_entries = collect_entries || options.output_path.is_some();
 
     let deep_steps = pipeline.max_simulation_steps();
     if size == 0 {
@@ -1341,11 +1342,42 @@ where
         base_stats.merge_metrics(&frontier_metrics);
     }
 
+    let mut resumed_records = Vec::new();
+    if !completed_set.is_empty() {
+        if let Some(ref out_path) = options.output_path {
+            if out_path.exists() {
+                match read_records_from_file(out_path) {
+                    Ok(records) => {
+                        eprintln!(
+                            "[Checkpoint] Loaded {} previously written records from '{}'",
+                            format_count(records.len() as u64),
+                            out_path.display()
+                        );
+                        resumed_records = records;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[Checkpoint] Warning: could not read existing records from '{}': {e}",
+                            out_path.display()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     let run_start = Instant::now();
 
     // Check if already finished
     if completed_set.len() >= frontier.len() {
-        return (base_stats, Vec::new());
+        let entries = resumed_records
+            .into_iter()
+            .map(|r| EnumEntry {
+                program: r.program,
+                outcome: r.outcome.unwrap_or(SimOutcome::Unknown { steps: 0 }),
+            })
+            .collect();
+        return (base_stats, entries);
     }
 
     // If a sample limit is configured, execute random path sampling (Option A) across all frontier branches
@@ -1576,6 +1608,7 @@ where
     };
 
     let completed_chunks_lock = Mutex::new(completed_vec);
+    let completed_entries_lock = Mutex::new(BTreeMap::<usize, Vec<EnumEntry>>::new());
     let periodic_stats_lock = Mutex::new(base_stats.clone());
     let last_ckpt_save = Mutex::new(Instant::now());
 
@@ -1662,6 +1695,10 @@ where
                 comp.push(idx);
                 let mut st = periodic_stats_lock.lock().unwrap();
                 st.merge(local_stats.clone());
+                if collect_entries {
+                    let mut entries_map = completed_entries_lock.lock().unwrap();
+                    entries_map.insert(idx, local_entries.clone());
+                }
 
                 // Periodic checkpoint save check
                 if options.checkpoint_path.is_some() {
@@ -1684,6 +1721,37 @@ where
                             if let Some(path) = &options.checkpoint_path {
                                 let _ = ckpt.save_to_file(path);
                             }
+                            if let Some(ref out_path) = options.output_path {
+                                let entries_map = completed_entries_lock.lock().unwrap();
+                                let mut records = resumed_records.clone();
+                                let mut seen: HashSet<Program> =
+                                    records.iter().map(|r| r.program.clone()).collect();
+                                for (_chunk_idx, chunk_entries) in entries_map.iter() {
+                                    for e in chunk_entries {
+                                        if seen.insert(e.program.clone()) {
+                                            records.push(ProgramRecord::new(
+                                                e.program.clone(),
+                                                Some(e.outcome),
+                                            ));
+                                        }
+                                    }
+                                }
+                                if let Err(e) = write_records_to_file(out_path, &records) {
+                                    eprintln!(
+                                        "[Checkpoint] Error flushing output file '{}': {e}",
+                                        out_path.display()
+                                    );
+                                } else if let Some(path) = &options.checkpoint_path {
+                                    eprintln!(
+                                        "[Checkpoint] Saved progress to '{}' ({}/{} chunks completed, {} records flushed to '{}')",
+                                        path.display(),
+                                        comp.len(),
+                                        frontier.len(),
+                                        format_count(records.len() as u64),
+                                        out_path.display(),
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -1701,8 +1769,18 @@ where
     let mut final_stats = base_stats;
     let mut partial_stats = Vec::new();
     let mut final_entries = Vec::new();
+    let mut seen_final: HashSet<Program> = HashSet::new();
 
-    for (idx, local_stats, mut local_entries, is_finished) in chunk_results {
+    for r in resumed_records {
+        if seen_final.insert(r.program.clone()) {
+            final_entries.push(EnumEntry {
+                program: r.program,
+                outcome: r.outcome.unwrap_or(SimOutcome::Unknown { steps: 0 }),
+            });
+        }
+    }
+
+    for (idx, local_stats, local_entries, is_finished) in chunk_results {
         if is_finished {
             final_completed_set.insert(idx);
             final_stats.merge(local_stats);
@@ -1710,7 +1788,11 @@ where
             partial_stats.push(local_stats);
         }
         if collect_entries {
-            final_entries.append(&mut local_entries);
+            for e in local_entries {
+                if seen_final.insert(e.program.clone()) {
+                    final_entries.push(e);
+                }
+            }
         }
     }
 
@@ -1733,6 +1815,26 @@ where
         };
         if let Err(e) = ckpt.save_to_file(ckpt_path) {
             eprintln!("[Checkpoint] Error saving to '{}': {e}", ckpt_path.display());
+        } else if let Some(ref out_path) = options.output_path {
+            let records: Vec<ProgramRecord> = final_entries
+                .iter()
+                .map(|e| ProgramRecord::new(e.program.clone(), Some(e.outcome)))
+                .collect();
+            if let Err(e) = write_records_to_file(out_path, &records) {
+                eprintln!(
+                    "[Checkpoint] Error flushing output file '{}': {e}",
+                    out_path.display()
+                );
+            } else {
+                eprintln!(
+                    "[Checkpoint] Saved progress to '{}' ({}/{} chunks completed, {} records flushed to '{}')",
+                    ckpt_path.display(),
+                    ckpt.completed_chunks.len(),
+                    frontier.len(),
+                    format_count(records.len() as u64),
+                    out_path.display(),
+                );
+            }
         } else {
             eprintln!(
                 "[Checkpoint] Saved progress to '{}' ({}/{} chunks completed)",
@@ -1984,7 +2086,7 @@ fn parse_map<K: std::str::FromStr + Ord, V: std::str::FromStr>(raw: &str) -> Res
     Ok(map)
 }
 
-/// Options for advanced parallel enumeration including sampling and checkpointing.
+/// Options for advanced parallel enumeration including sampling, checkpointing, and output flushing.
 #[derive(Debug, Clone, Default)]
 pub struct EnumerateOptions {
     /// Stop evaluation after evaluating at least this many programs (sample run).
@@ -1993,6 +2095,8 @@ pub struct EnumerateOptions {
     pub checkpoint_path: Option<PathBuf>,
     /// Checkpoint save interval.
     pub checkpoint_interval: Duration,
+    /// Path to output file for recording evaluated programs / holdouts (flushed on checkpoint updates).
+    pub output_path: Option<PathBuf>,
 }
 
 /// Persistent state saved for resuming interrupted enumerations.
@@ -2574,6 +2678,7 @@ pub fn run_enumeration_cli(size: usize, pipeline: PipelineConfig) {
         sample_limit: cli.sample,
         checkpoint_path: cli.checkpoint.clone(),
         checkpoint_interval: cli.checkpoint_interval,
+        output_path: output_path.clone(),
     };
 
     let (stats, entries) = enumerate_parallel_advanced(
@@ -2939,5 +3044,82 @@ mod tests {
         assert_eq!(parse_count_arg("1B"), Ok(1_000_000_000));
         assert_eq!(parse_count_arg("100"), Ok(100));
         assert_eq!(parse_count_arg("100_000"), Ok(100_000));
+    }
+
+    #[test]
+    fn test_checkpoint_and_output_file_flushing() {
+        let temp_dir = std::env::temp_dir().join(format!("pebble_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let ckpt_path = temp_dir.join("test.ckpt");
+        let out_path = temp_dir.join("test.out");
+
+        let options = EnumerateOptions {
+            sample_limit: None,
+            checkpoint_path: Some(ckpt_path.clone()),
+            checkpoint_interval: Duration::from_millis(1),
+            output_path: Some(out_path.clone()),
+        };
+
+        let (stats, entries) = enumerate_parallel_options(
+            3,
+            100,
+            100,
+            true,
+            true,
+            true,
+            false,
+            options.clone(),
+            |_| {},
+            |_| false,
+        );
+
+        assert_eq!(stats.total_programs, 54);
+        assert_eq!(entries.len(), 54);
+
+        assert!(ckpt_path.exists());
+        assert!(out_path.exists());
+
+        let records = crate::io::read_records_from_file(&out_path).expect("read records");
+        assert_eq!(records.len(), 54);
+
+        // Now test checkpoint resumption with output file:
+        // Create a synthetic partial checkpoint with half the chunks completed
+        let loaded_ckpt = CheckpointData::load_from_file(&ckpt_path).expect("load ckpt");
+        let half_count = loaded_ckpt.completed_chunks.len() / 2;
+        let partial_chunks = loaded_ckpt.completed_chunks[..half_count].to_vec();
+
+        // Write partial output file containing only records from the partial chunks
+        let partial_records = records[..half_count].to_vec();
+        crate::io::write_records_to_file(&out_path, &partial_records).expect("write partial out");
+
+        let partial_ckpt = CheckpointData {
+            total_chunks: loaded_ckpt.total_chunks,
+            completed_chunks: partial_chunks,
+            stats: EnumStats::with_pipeline(3, 100, &PipelineConfig::default_for(3, 100, 100)),
+            ..loaded_ckpt
+        };
+        partial_ckpt.save_to_file(&ckpt_path).expect("save partial ckpt");
+
+        // Resume enumeration from partial checkpoint and output file
+        let (_resumed_stats, resumed_entries) = enumerate_parallel_options(
+            3,
+            100,
+            100,
+            true,
+            true,
+            true,
+            false,
+            options.clone(),
+            |_| {},
+            |_| false,
+        );
+
+        assert_eq!(resumed_entries.len(), 54);
+        let final_disk_records = crate::io::read_records_from_file(&out_path).expect("read final disk records");
+        assert_eq!(final_disk_records.len(), 54);
+
+        let _ = std::fs::remove_file(&ckpt_path);
+        let _ = std::fs::remove_file(&out_path);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

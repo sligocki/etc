@@ -180,6 +180,7 @@ fn main() {
         sample_limit: cli.sample,
         checkpoint_path: cli.checkpoint.clone(),
         checkpoint_interval: cli.checkpoint_interval,
+        output_path: output_path.clone(),
     };
 
     let (stats, entries) = enumerate_parallel_options(

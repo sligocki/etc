@@ -1,6 +1,7 @@
 use crate::ctl::CtlProof;
 use crate::program::Program;
 use crate::simulation::{Simulator, StepResult};
+pub use crate::accelerated::{decide_accelerated_sim, decide_accelerated_sim_from_sim};
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;

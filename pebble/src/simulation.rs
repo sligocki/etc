@@ -631,6 +631,11 @@ impl Simulator {
         Self { tape, steps: 0 }
     }
 
+    /// Create a simulator initialized from an existing sparse tape with an explicit step count.
+    pub fn from_tape_with_steps(tape: SparseTape, steps: u64) -> Self {
+        Self { tape, steps }
+    }
+
     /// Create a simulator initialized from a parsed tape configuration string.
     pub fn from_config(s: &str) -> Result<Self, TapeParseError> {
         let tape = SparseTape::parse(s)?;

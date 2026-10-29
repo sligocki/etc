@@ -1,7 +1,7 @@
 use crate::deciders::{
-    check_edge_glider_sparse, decide_bouncer_outcome, decide_ctl_from_sim_outcome_with_params,
-    decide_cycler_from_sim, decide_separated_components_from_sim, decide_static_backtrack, Decider,
-    StepDeciderOutcome,
+    check_edge_glider_sparse, decide_accelerated_sim_from_sim, decide_bouncer_outcome,
+    decide_ctl_from_sim_outcome_with_params, decide_cycler_from_sim,
+    decide_separated_components_from_sim, decide_static_backtrack, Decider, StepDeciderOutcome,
 };
 use crate::io::{format_count, read_records_from_file, write_records_to_file, ProgramRecord};
 use crate::program::{Program, Rule};
@@ -138,6 +138,8 @@ pub enum PipelineStage {
     SeparatedComponents { steps: u64 },
     /// Bouncer detection up to `steps`.
     Bouncer { steps: u64 },
+    /// Accelerated simulation fast-forwarding gliders up to `sim_steps`.
+    AcceleratedSim { sim_steps: u64 },
     /// CTL regular language verification up to `steps`.
     Ctl(CtlConfig),
 }
@@ -165,6 +167,9 @@ impl PipelineStage {
                 format!("SeparatedComponents ({steps} steps)")
             }
             PipelineStage::Bouncer { steps } => format!("Bouncer ({steps} steps)"),
+            PipelineStage::AcceleratedSim { sim_steps } => {
+                format!("AcceleratedSim ({sim_steps} sim steps)")
+            }
             PipelineStage::Ctl(cfg) => {
                 let default_floors = &[6];
                 let default_moduli = &[1, 2, 3, 4, 6, 12];
@@ -961,6 +966,21 @@ pub fn run_stage(
                         steps: s_steps,
                     }
                 }
+                StepDeciderOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
+                StepDeciderOutcome::MissingRule { pebbles, steps } => {
+                    PipelineStepOutcome::Split { pebbles, steps }
+                }
+                StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
+            }
+        }
+        PipelineStage::AcceleratedSim { sim_steps } => {
+            let s = sim.get_or_insert_with(|| Simulator::new(prog.size()));
+            let res = decide_accelerated_sim_from_sim(prog, s, *sim_steps);
+            match res {
+                StepDeciderOutcome::Proved(d) => PipelineStepOutcome::Inf {
+                    decider: d,
+                    steps: s.steps(),
+                },
                 StepDeciderOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
                 StepDeciderOutcome::MissingRule { pebbles, steps } => {
                     PipelineStepOutcome::Split { pebbles, steps }
@@ -3216,6 +3236,20 @@ mod tests {
         let stats = EnumStats::with_pipeline(5, 10_000, &pipeline);
         assert_eq!(stats.stages.len(), 8);
         assert_eq!(stats.stages[7].name, pipeline.stages[7].name());
+
+        let acc_stage = PipelineStage::AcceleratedSim { sim_steps: 10_000 };
+        assert_eq!(acc_stage.name(), "AcceleratedSim (10000 sim steps)");
+        assert!(acc_stage.is_decider());
+    }
+
+    #[test]
+    fn test_accelerated_sim_pipeline_stage() {
+        let prog: Program = "00_00_00_04_41_11_33_80_22_12_56".parse().unwrap();
+        let stage = PipelineStage::AcceleratedSim { sim_steps: 100_000 };
+        let mut sim = None;
+        let outcome = run_stage(&stage, &prog, &mut sim);
+        assert_eq!(outcome, PipelineStepOutcome::Halted { steps: 25_024_260 });
+        assert_eq!(sim.unwrap().steps(), 25_024_260);
     }
 
     #[test]

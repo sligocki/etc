@@ -160,6 +160,11 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                             decider = crate::deciders::Decider::Bouncer(Some(proof));
                         }
                     }
+                    crate::deciders::Decider::MultiBouncer(_) => {
+                        if let Some(proof) = parse_multi_bouncer_proof_comment(comment) {
+                            decider = crate::deciders::Decider::MultiBouncer(Some(proof));
+                        }
+                    }
                     crate::deciders::Decider::AcceleratedInfinite(_) => {
                         if let Some(proof) = parse_accelerated_infinite_proof_comment(comment) {
                             decider = crate::deciders::Decider::AcceleratedInfinite(Some(proof));
@@ -355,6 +360,36 @@ fn parse_bouncer_proof_comment(comment: &str) -> Option<crate::deciders::Bouncer
         }
     }
     Some(crate::deciders::BouncerProof {
+        bounce_steps: bounce_steps?,
+        gap_growth: gap_growth.unwrap_or(1),
+    })
+}
+
+fn parse_multi_bouncer_proof_comment(comment: &str) -> Option<crate::deciders::MultiBouncerProof> {
+    let mut chambers = None;
+    let mut bounce_steps = None;
+    let mut gap_growth = None;
+    for part in comment.split_whitespace() {
+        let part = part.trim_start_matches('#');
+        if let Some(v) = part.strip_prefix("chambers=").or_else(|| part.strip_prefix("c=")) {
+            chambers = v.parse().ok();
+        } else if let Some(v) = part
+            .strip_prefix("bounce_steps=")
+            .or_else(|| part.strip_prefix("bounce="))
+            .or_else(|| part.strip_prefix("period="))
+            .or_else(|| part.strip_prefix("p="))
+        {
+            bounce_steps = v.parse().ok();
+        } else if let Some(v) = part
+            .strip_prefix("gap_growth=")
+            .or_else(|| part.strip_prefix("growth="))
+            .or_else(|| part.strip_prefix("dg="))
+        {
+            gap_growth = v.parse().ok();
+        }
+    }
+    Some(crate::deciders::MultiBouncerProof {
+        chambers: chambers.unwrap_or(2),
         bounce_steps: bounce_steps?,
         gap_growth: gap_growth.unwrap_or(1),
     })

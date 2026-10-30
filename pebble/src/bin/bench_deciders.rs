@@ -1,6 +1,6 @@
 use pebble::deciders::{
-    decide_bouncer, decide_ctl, decide_cycler, decide_edge_glider, decide_separated_components,
-    decide_static_backtrack,
+    decide_bouncer, decide_ctl, decide_cycler, decide_edge_glider, decide_multi_bouncer,
+    decide_separated_components, decide_static_backtrack,
 };
 use pebble::enumeration::TnfEnumerator;
 use pebble::io::read_records_from_file;
@@ -79,6 +79,10 @@ fn run_separated_components(p: &Program, steps: u64) -> bool {
 
 fn run_bouncer(p: &Program, steps: u64) -> bool {
     decide_bouncer(p, steps).is_some()
+}
+
+fn run_multi_bouncer(p: &Program, steps: u64) -> bool {
+    decide_multi_bouncer(p, steps).is_some()
 }
 
 fn run_ctl(p: &Program, steps: u64) -> bool {
@@ -254,6 +258,11 @@ fn main() {
             func: run_bouncer,
         },
         DeciderDef {
+            name: format!("MultiBouncer({max_steps})"),
+            steps: max_steps,
+            func: run_multi_bouncer,
+        },
+        DeciderDef {
             name: format!("CTL({max_steps})"),
             steps: max_steps,
             func: run_ctl,
@@ -286,6 +295,11 @@ fn main() {
             name: format!("Bouncer({ext_steps})"),
             steps: ext_steps,
             func: run_bouncer,
+        });
+        candidate_defs.push(DeciderDef {
+            name: format!("MultiBouncer({ext_steps})"),
+            steps: ext_steps,
+            func: run_multi_bouncer,
         });
         candidate_defs.push(DeciderDef {
             name: format!("CTL({ext_steps})"),

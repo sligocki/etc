@@ -1,7 +1,8 @@
 use crate::deciders::{
     check_edge_glider_sparse, decide_accelerated_sim_from_sim, decide_bouncer_outcome,
     decide_ctl_from_sim_outcome_with_params, decide_cycler_from_sim,
-    decide_separated_components_from_sim, decide_static_backtrack, Decider, StepDeciderOutcome,
+    decide_multi_bouncer_outcome, decide_separated_components_from_sim, decide_static_backtrack,
+    Decider, StepDeciderOutcome,
 };
 use crate::io::{format_count, read_records_from_file, write_records_to_file, ProgramRecord};
 use crate::program::{Program, Rule};
@@ -138,6 +139,8 @@ pub enum PipelineStage {
     SeparatedComponents { steps: u64 },
     /// Bouncer detection up to `steps`.
     Bouncer { steps: u64 },
+    /// MultiBouncer detection up to `steps`.
+    MultiBouncer { steps: u64 },
     /// Accelerated simulation fast-forwarding gliders up to `sim_steps`.
     AcceleratedSim { sim_steps: u64 },
     /// CTL regular language verification up to `steps`.
@@ -167,6 +170,7 @@ impl PipelineStage {
                 format!("SeparatedComponents ({steps} steps)")
             }
             PipelineStage::Bouncer { steps } => format!("Bouncer ({steps} steps)"),
+            PipelineStage::MultiBouncer { steps } => format!("MultiBouncer ({steps} steps)"),
             PipelineStage::AcceleratedSim { sim_steps } => {
                 format!("AcceleratedSim ({sim_steps} sim steps)")
             }
@@ -222,6 +226,7 @@ impl PipelineConfig {
             PipelineStage::Cycler { steps: early_steps },
             PipelineStage::SeparatedComponents { steps: early_steps },
             PipelineStage::Bouncer { steps: early_steps },
+            PipelineStage::MultiBouncer { steps: early_steps },
             PipelineStage::Ctl(CtlConfig {
                 steps: early_steps,
                 ..Default::default()
@@ -233,6 +238,7 @@ impl PipelineConfig {
             stages.push(PipelineStage::Cycler { steps: deep_steps });
             stages.push(PipelineStage::SeparatedComponents { steps: deep_steps });
             stages.push(PipelineStage::Bouncer { steps: deep_steps });
+            stages.push(PipelineStage::MultiBouncer { steps: deep_steps });
             stages.push(PipelineStage::Ctl(CtlConfig {
                 steps: deep_steps,
                 ..Default::default()
@@ -322,8 +328,8 @@ pub struct EnumStats {
     /// Number of enumerated TNF programs proven infinite by the decider pipeline.
     pub inf_programs: u64,
     /// Breakdown of infinite programs by decider:
-    /// `[EdgeGlider, Cycler, SeparatedComponents, Bouncer, Ctl, StaticBacktrack, AcceleratedInfinite]`.
-    pub decided_by_kind: [u64; 7],
+    /// `[EdgeGlider, Cycler, SeparatedComponents, Bouncer, Ctl, StaticBacktrack, AcceleratedInfinite, MultiBouncer]`.
+    pub decided_by_kind: [u64; 8],
     /// Maximum halting step count observed across all halted programs.
     pub max_halting_steps: Option<u64>,
     /// Minimum halting step count observed across all halted programs.
@@ -552,6 +558,7 @@ impl EnumStats {
                     }
                     Decider::StaticBacktrack => 5,
                     Decider::AcceleratedInfinite(_) => 6,
+                    Decider::MultiBouncer(_) => 7,
                 };
                 self.decided_by_kind[idx] += 1;
             }
@@ -569,6 +576,7 @@ impl EnumStats {
             Decider::Ctl(_) => 4,
             Decider::StaticBacktrack => 5,
             Decider::AcceleratedInfinite(_) => 6,
+            Decider::MultiBouncer(_) => 7,
         };
         self.decided_by_kind[idx]
     }
@@ -960,6 +968,23 @@ pub fn run_stage(
         }
         PipelineStage::Bouncer { steps } => {
             let res = decide_bouncer_outcome(prog, *steps);
+            match res {
+                StepDeciderOutcome::Proved(d) => {
+                    let s_steps = sim.as_ref().map_or(0, |s| s.steps());
+                    PipelineStepOutcome::Inf {
+                        decider: d,
+                        steps: s_steps,
+                    }
+                }
+                StepDeciderOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
+                StepDeciderOutcome::MissingRule { pebbles, steps } => {
+                    PipelineStepOutcome::Split { pebbles, steps }
+                }
+                StepDeciderOutcome::Undecided => PipelineStepOutcome::Undecided,
+            }
+        }
+        PipelineStage::MultiBouncer { steps } => {
+            let res = decide_multi_bouncer_outcome(prog, *steps);
             match res {
                 StepDeciderOutcome::Proved(d) => {
                     let s_steps = sim.as_ref().map_or(0, |s| s.steps());
@@ -2340,13 +2365,15 @@ impl CheckpointData {
             .split(',')
             .map(|s| s.trim().parse().map_err(|e| format!("decided_by_kind: {e}")))
             .collect::<Result<_, _>>()?;
-        let mut decided_by_kind = [0u64; 7];
+        let mut decided_by_kind = [0u64; 8];
         if kind_parts.len() == 6 {
             decided_by_kind[..6].copy_from_slice(&kind_parts);
         } else if kind_parts.len() == 7 {
+            decided_by_kind[..7].copy_from_slice(&kind_parts);
+        } else if kind_parts.len() == 8 {
             decided_by_kind.copy_from_slice(&kind_parts);
         } else {
-            return Err("decided_by_kind must have 6 or 7 items".to_string());
+            return Err("decided_by_kind must have 6, 7, or 8 items".to_string());
         }
 
         let max_halting_steps = match get("max_halting_steps")?.as_str() {

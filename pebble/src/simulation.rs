@@ -147,6 +147,9 @@ impl fmt::Display for SimOutcome {
                 Decider::Bouncer(Some(proof)) => {
                     write!(f, "INF\tBouncer\t{steps} # {proof}")
                 }
+                Decider::MultiBouncer(Some(proof)) => {
+                    write!(f, "INF\tMultiBouncer\t{steps} # {proof}")
+                }
                 Decider::AcceleratedInfinite(Some(proof)) => {
                     write!(f, "INF\tAcceleratedInfinite\t{steps} # {proof}")
                 }

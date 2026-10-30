@@ -54,6 +54,24 @@ impl fmt::Display for BouncerProof {
     }
 }
 
+/// Proof metrics for multi-chamber recurrent expanding bouncers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MultiBouncerProof {
+    pub chambers: usize,
+    pub bounce_steps: u64,
+    pub gap_growth: usize,
+}
+
+impl fmt::Display for MultiBouncerProof {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "chambers={} bounce_steps={} gap_growth={}",
+            self.chambers, self.bounce_steps, self.gap_growth
+        )
+    }
+}
+
 /// Maximum number of gliders recorded in an `AcceleratedInfiniteProof`.
 pub const MAX_ACCEL_GLIDERS: usize = 16;
 
@@ -147,6 +165,9 @@ pub enum Decider {
     /// with strictly growing total gap (`g_2 > g_1`), while each wall remains causally isolated
     /// during the opposite bounce.
     Bouncer(Option<BouncerProof>),
+    /// A multi-chamber system of N+1 stationary walls and N period-1 shuttles
+    /// bouncing with strictly growing uniform gap (\Delta g_0 = ... = \Delta g_{N-1} > 0).
+    MultiBouncer(Option<MultiBouncerProof>),
     /// Closed Tape Language (CTL) regular-set proof: a set of symbolic configurations with
     /// modular zero-star gaps `0^r (0^m)*` is entered during simulation, closed under exact
     /// 1-step symbolic transitions, and contains no halting configurations.
@@ -160,11 +181,12 @@ pub enum Decider {
 }
 
 impl Decider {
-    pub const ALL: [Decider; 7] = [
+    pub const ALL: [Decider; 8] = [
         Decider::EdgeGlider,
         Decider::Cycler(None),
         Decider::SeparatedComponents(None),
         Decider::Bouncer(None),
+        Decider::MultiBouncer(None),
         Decider::Ctl(None),
         Decider::StaticBacktrack,
         Decider::AcceleratedInfinite(None),
@@ -178,6 +200,7 @@ impl fmt::Display for Decider {
             Decider::Cycler(_) => write!(f, "Cycler"),
             Decider::SeparatedComponents(_) => write!(f, "SeparatedComponents"),
             Decider::Bouncer(_) => write!(f, "Bouncer"),
+            Decider::MultiBouncer(_) => write!(f, "MultiBouncer"),
             Decider::Ctl(_) => write!(f, "CTL"),
             Decider::StaticBacktrack => write!(f, "StaticBacktrack"),
             Decider::AcceleratedInfinite(_) => write!(f, "AcceleratedInfinite"),
@@ -194,6 +217,9 @@ impl FromStr for Decider {
             "cycler" | "translatedcycler" | "translated_cycler" => Ok(Decider::Cycler(None)),
             "separatedcomponents" | "separated_components" => Ok(Decider::SeparatedComponents(None)),
             "bouncer" => Ok(Decider::Bouncer(None)),
+            "multibouncer" | "multi_bouncer" | "dualbouncer" | "dual_bouncer" => {
+                Ok(Decider::MultiBouncer(None))
+            }
             "ctl" => Ok(Decider::Ctl(None)),
             "staticbacktrack" | "static_backtrack" | "backtrack" => Ok(Decider::StaticBacktrack),
             "acceleratedinfinite" | "accelerated_infinite" | "accelerated" | "accel_inf" | "accelinf" => {
@@ -788,6 +814,174 @@ pub fn decide_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
     decide_bouncer_outcome(program, max_steps).proved()
 }
 
+#[derive(Debug, Clone)]
+struct MultiBounceCandidate {
+    start_step: u64,
+    chambers: usize,
+    walls: Vec<Vec<u8>>,
+    wall_coords: Vec<i64>,
+    shuttles: Vec<(Vec<u8>, bool)>,
+    gaps: Vec<usize>,
+}
+
+/// Simulate `program` starting from an existing `sim` state up to `max_steps` additional steps
+/// and detect an N-chamber `MultiBouncer` (with N >= 1 chambers, N+1 walls, and N shuttles)
+/// with uniformly expanding chamber gaps, or observe if it halts or splits.
+pub fn decide_multi_bouncer_from_sim(
+    program: &Program,
+    sim: &mut Simulator,
+    max_steps: u64,
+) -> StepDeciderOutcome {
+    let mut candidates: Vec<MultiBounceCandidate> = Vec::new();
+
+    for _ in 0..=max_steps {
+        let offset = sim.offset();
+        let cells = sim.cells();
+        if !cells.is_empty() {
+            // Find contiguous non-zero runs
+            let mut runs = Vec::new();
+            let mut in_run = false;
+            let mut start = 0;
+            for (i, &c) in cells.iter().enumerate() {
+                if c > 0 {
+                    if !in_run {
+                        in_run = true;
+                        start = i;
+                    }
+                } else if in_run {
+                    runs.push((start, i - 1));
+                    in_run = false;
+                }
+            }
+            if in_run {
+                runs.push((start, cells.len() - 1));
+            }
+
+            let m = runs.len();
+            // Alternating Wall, Shuttle, Wall, Shuttle, ..., Wall => m must be odd and >= 3
+            if m >= 3 && m % 2 == 1 {
+                let mut is_valid = true;
+                let mut walls = Vec::with_capacity(m / 2 + 1);
+                let mut wall_coords = Vec::with_capacity(m / 2 + 1);
+                let mut shuttles = Vec::with_capacity(m / 2);
+                let mut gaps = Vec::with_capacity(m / 2);
+
+                for idx in 0..m {
+                    let (s_idx, e_idx) = runs[idx];
+                    let slice = &cells[s_idx..=e_idx];
+                    if idx % 2 == 0 {
+                        // Wall
+                        if !is_stationary_slice(program, slice) {
+                            is_valid = false;
+                            break;
+                        }
+                        walls.push(slice.to_vec());
+                        wall_coords.push(offset + s_idx as i64);
+                    } else {
+                        // Shuttle
+                        let is_r = is_right_glider_slice(program, slice);
+                        let is_l = is_left_glider_slice(program, slice);
+                        if !is_r && !is_l {
+                            is_valid = false;
+                            break;
+                        }
+                        shuttles.push((slice.to_vec(), is_r));
+
+                        let w_left = runs[idx - 1];
+                        let w_right = runs[idx + 1];
+                        let gap_l = s_idx - w_left.1 - 1;
+                        let gap_r = w_right.0 - e_idx - 1;
+                        gaps.push(gap_l + gap_r);
+                    }
+                }
+
+                if is_valid {
+                    let chambers = shuttles.len();
+                    for cand in &candidates {
+                        if cand.chambers == chambers
+                            && cand.walls == walls
+                            && cand.shuttles == shuttles
+                            && wall_coords[0] <= cand.wall_coords[0]
+                            && wall_coords[wall_coords.len() - 1]
+                                >= cand.wall_coords[cand.wall_coords.len() - 1]
+                            && (wall_coords[0] < cand.wall_coords[0]
+                                || wall_coords[wall_coords.len() - 1]
+                                    > cand.wall_coords[cand.wall_coords.len() - 1])
+                        {
+                            let mut all_grow = true;
+                            let delta = gaps[0].saturating_sub(cand.gaps[0]);
+                            if delta == 0 || gaps[0] <= cand.gaps[0] {
+                                all_grow = false;
+                            } else {
+                                for i in 1..chambers {
+                                    if gaps[i] <= cand.gaps[i] || gaps[i] - cand.gaps[i] != delta {
+                                        all_grow = false;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if all_grow {
+                                let bounce_steps = sim.steps().saturating_sub(cand.start_step);
+                                return StepDeciderOutcome::Proved(Decider::MultiBouncer(Some(
+                                    MultiBouncerProof {
+                                        chambers,
+                                        bounce_steps,
+                                        gap_growth: delta,
+                                    },
+                                )));
+                            }
+                        }
+                    }
+
+                    if !candidates.iter().any(|c| {
+                        c.chambers == chambers
+                            && c.walls == walls
+                            && c.shuttles == shuttles
+                            && c.wall_coords == wall_coords
+                    }) {
+                        if candidates.len() >= 256 {
+                            candidates.remove(0);
+                        }
+                        candidates.push(MultiBounceCandidate {
+                            start_step: sim.steps(),
+                            chambers,
+                            walls,
+                            wall_coords,
+                            shuttles,
+                            gaps,
+                        });
+                    }
+                }
+            }
+        }
+
+        match sim.step(program) {
+            StepResult::Stepped => {}
+            StepResult::Halted => return StepDeciderOutcome::Halted { steps: sim.steps() },
+            StepResult::MissingRule(pebbles) => {
+                return StepDeciderOutcome::MissingRule {
+                    pebbles,
+                    steps: sim.steps(),
+                };
+            }
+        }
+    }
+
+    StepDeciderOutcome::Undecided
+}
+
+/// Decider 7: Simulate `program` up to `max_steps` and detect an N-chamber `MultiBouncer` returning full `StepDeciderOutcome`.
+pub fn decide_multi_bouncer_outcome(program: &Program, max_steps: u64) -> StepDeciderOutcome {
+    let mut sim = Simulator::new(program.size());
+    decide_multi_bouncer_from_sim(program, &mut sim, max_steps)
+}
+
+/// Decider 7: Search for a recurrent multi-chamber bouncer.
+pub fn decide_multi_bouncer(program: &Program, max_steps: u64) -> Option<Decider> {
+    decide_multi_bouncer_outcome(program, max_steps).proved()
+}
+
 /// Decider 5: Closed Tape Language (CTL) regular-set non-halting prover.
 pub use crate::ctl::{
     decide_ctl, decide_ctl_from_sim, decide_ctl_from_sim_outcome,
@@ -1029,6 +1223,41 @@ mod tests {
             assert!(
                 matches!(decide_bouncer(&p, 50), Some(Decider::Bouncer(_))),
                 "expected n=7 bouncer {code} to be decided"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multi_bouncer_decider() {
+        // Test sample of 6 holdouts from results/sz11/ctl_sp3_me4/unk.txt
+        let holdouts = [
+            "00_02_01_40_12_12_30_--_53_28_01",
+            "00_02_01_40_11_10_06_--_02_60_01",
+            "00_20_10_04_21_31_--_14_44_82_0a",
+            "00_02_01_40_12_--_14_80_24_11_1a",
+            "00_20_10_04_11_31_50_00_81_30_47",
+            "00_20_10_04_21_31_00_00_61_72_13",
+        ];
+        for code in holdouts {
+            let p: Program = code.parse().unwrap();
+            let outcome = decide_multi_bouncer(&p, 100);
+            assert!(
+                matches!(outcome, Some(Decider::MultiBouncer(Some(proof))) if proof.chambers == 2),
+                "expected {code} to be decided as 2-chamber MultiBouncer, got {outcome:?}"
+            );
+        }
+
+        // Test single-chamber bouncers with fixed walls
+        let single_chambers = [
+            "00_00_02_40_31_22_50_08_51_10_37",
+            "00_00_02_40_31_22_50_08_53_10_37",
+        ];
+        for code in single_chambers {
+            let p: Program = code.parse().unwrap();
+            let outcome = decide_multi_bouncer(&p, 100);
+            assert!(
+                matches!(outcome, Some(Decider::MultiBouncer(Some(proof))) if proof.chambers == 1),
+                "expected {code} to be decided as 1-chamber MultiBouncer, got {outcome:?}"
             );
         }
     }

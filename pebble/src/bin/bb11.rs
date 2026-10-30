@@ -62,13 +62,12 @@ fn main() {
             PipelineStage::Cycler { steps: 1_000 },
             PipelineStage::SeparatedComponents { steps: 1_000 },
             PipelineStage::Bouncer { steps: 1_000 },
-            // PipelineStage::Ctl(CtlConfig {
-            //     steps: 10_000,
-            //     max_states: 4_000,
-            //     split_thresh: vec![2, 3],
-            //     floors: vec![6, 8, 10],
-            //     ..Default::default()
-            // }),
+            PipelineStage::Ctl(CtlConfig {
+                steps: 1_000,
+                max_states: 10_000,
+                split_thresh: vec![3],
+                ..Default::default()
+            }),
             PipelineStage::AcceleratedSim { sim_steps: 1_000_000 },
         ],
     };

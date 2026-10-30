@@ -153,6 +153,16 @@ impl Rule {
         let r = encode_pebble_digit(self.right).unwrap_or('?');
         format!("{l}{r}")
     }
+
+    /// Return the mirror image of this rule with `left` and `right` swapped.
+    #[inline]
+    pub fn mirror(&self) -> Self {
+        Self {
+            left: self.right,
+            stay: self.stay,
+            right: self.left,
+        }
+    }
 }
 
 /// A 1D Pebble Automaton program of size `n`.
@@ -246,6 +256,25 @@ impl Program {
     /// Returns true if all rules `1..=size` are defined (`Some`).
     pub fn is_complete(&self) -> bool {
         self.rules.iter().all(Option::is_some)
+    }
+
+    /// Return the mirror image of this program with all rule `left` and `right` transitions swapped.
+    pub fn mirror(&self) -> Self {
+        let mirrored_rules = self.rules.iter().map(|r| r.as_ref().map(Rule::mirror)).collect();
+        Self {
+            rules: mirrored_rules,
+        }
+    }
+
+    /// Return the canonical Prefix Normal Form (PNF) of this program,
+    /// choosing between `self` and its mirror image to make the program string lexicographically smallest.
+    pub fn to_prefix_normal_form(&self) -> Self {
+        let m = self.mirror();
+        if self.to_string() <= m.to_string() {
+            self.clone()
+        } else {
+            m
+        }
     }
 
     /// Format the program in the wiki's multi-line long notation (`k --> L | S | R`).
@@ -458,5 +487,15 @@ mod tests {
         let long_str = prog.to_long_string();
         let parsed = Program::from_long_str(&long_str).unwrap();
         assert_eq!(prog, parsed);
+    }
+
+    #[test]
+    fn test_prefix_normal_form_mirror() {
+        let p1: Program = "00_20_12_04_21_31".parse().unwrap();
+        let pnf1 = p1.to_prefix_normal_form();
+        assert_eq!(pnf1.to_string(), "00_02_21_40_12_13");
+
+        let p2: Program = "00_02_21_40_12_13".parse().unwrap();
+        assert_eq!(p2.to_prefix_normal_form().to_string(), "00_02_21_40_12_13");
     }
 }

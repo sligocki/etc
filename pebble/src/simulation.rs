@@ -13,6 +13,37 @@ pub enum StepResult {
     MissingRule(u8),
 }
 
+/// The underlying reason when a simulation finishes with `SimOutcome::Unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum UnknownReason {
+    /// Reached maximum simulation step budget without halting or deciding.
+    #[default]
+    StepLimit,
+    /// Spatial coordinates exceeded safe physical 64-bit boundaries (`i64::MAX / 2`).
+    CoordOverflow,
+}
+
+impl fmt::Display for UnknownReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StepLimit => write!(f, "STEP_LIMIT"),
+            Self::CoordOverflow => write!(f, "OVERFLOW"),
+        }
+    }
+}
+
+impl std::str::FromStr for UnknownReason {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_uppercase().as_str() {
+            "STEP_LIMIT" | "STEPS" | "LIMIT" | "MAX_STEPS" | "STEP" => Ok(Self::StepLimit),
+            "OVERFLOW" | "COORD_OVERFLOW" | "COORDS" | "COORD" => Ok(Self::CoordOverflow),
+            _ => Err(format!("unrecognized unknown reason '{s}'")),
+        }
+    }
+}
+
 /// Final outcome of running a Pebble Automaton up to a step limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimOutcome {
@@ -21,12 +52,30 @@ pub enum SimOutcome {
     /// The automaton was proven non-halting (infinite) by `decider` after simulating `steps` transitions.
     Inf { decider: Decider, steps: u64 },
     /// The automaton did not stabilize within `steps` transitions and was not decided.
-    Unknown { steps: u64 },
+    Unknown { steps: u64, reason: UnknownReason },
     /// Simulation paused at `steps` because rule for `pebbles` is undefined.
     MissingRule { pebbles: u8, steps: u64 },
 }
 
 impl SimOutcome {
+    /// Create an `Unknown` outcome due to reaching the step limit.
+    #[inline]
+    pub fn unknown_step_limit(steps: u64) -> Self {
+        Self::Unknown {
+            steps,
+            reason: UnknownReason::StepLimit,
+        }
+    }
+
+    /// Create an `Unknown` outcome due to coordinate overflow.
+    #[inline]
+    pub fn unknown_coord_overflow(steps: u64) -> Self {
+        Self::Unknown {
+            steps,
+            reason: UnknownReason::CoordOverflow,
+        }
+    }
+
     /// Returns `true` if the outcome is `SimOutcome::Halted`.
     #[inline]
     pub fn is_halted(&self) -> bool {
@@ -57,13 +106,25 @@ impl SimOutcome {
         self.is_unknown()
     }
 
+    /// Returns `true` if the outcome is unknown due to coordinate overflow.
+    #[inline]
+    pub fn is_overflow(&self) -> bool {
+        matches!(self, Self::Unknown { reason: UnknownReason::CoordOverflow, .. })
+    }
+
+    /// Returns `true` if the outcome is unknown due to step limit.
+    #[inline]
+    pub fn is_step_limit(&self) -> bool {
+        matches!(self, Self::Unknown { reason: UnknownReason::StepLimit, .. })
+    }
+
     /// Returns the step count associated with this outcome.
     #[inline]
     pub fn steps(&self) -> u64 {
         match *self {
             SimOutcome::Halted { steps }
             | SimOutcome::Inf { steps, .. }
-            | SimOutcome::Unknown { steps }
+            | SimOutcome::Unknown { steps, .. }
             | SimOutcome::MissingRule { steps, .. } => steps,
         }
     }
@@ -86,9 +147,14 @@ impl fmt::Display for SimOutcome {
                 Decider::Bouncer(Some(proof)) => {
                     write!(f, "INF\tBouncer\t{steps} # {proof}")
                 }
+                Decider::AcceleratedInfinite(Some(proof)) => {
+                    write!(f, "INF\tAcceleratedInfinite\t{steps} # {proof}")
+                }
                 _ => write!(f, "INF\t{decider}\t{steps}"),
             },
-            SimOutcome::Unknown { steps } => write!(f, "UNKNOWN\t{steps}"),
+            SimOutcome::Unknown { steps, reason } => {
+                write!(f, "UNKNOWN\t{reason}\t{steps}")
+            }
             SimOutcome::MissingRule { pebbles, steps } => {
                 write!(f, "MISSING_RULE\t{pebbles}\t{steps}")
             }
@@ -100,30 +166,30 @@ impl fmt::Display for SimOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TapeSnapshot {
     pub step: u64,
-    pub offset: isize,
+    pub offset: i64,
     pub cells: Vec<u8>,
 }
 
 impl TapeSnapshot {
     /// Minimum active x-coordinate with non-zero pebbles.
     #[inline]
-    pub fn min_x(&self) -> isize {
+    pub fn min_x(&self) -> i64 {
         self.offset
     }
 
     /// Maximum active x-coordinate with non-zero pebbles.
     #[inline]
-    pub fn max_x(&self) -> isize {
+    pub fn max_x(&self) -> i64 {
         if self.cells.is_empty() {
             self.offset
         } else {
-            self.offset + self.cells.len() as isize - 1
+            self.offset + self.cells.len() as i64 - 1
         }
     }
 
     /// Read the pebble count at coordinate `x`.
     #[inline]
-    pub fn get(&self, x: isize) -> u8 {
+    pub fn get(&self, x: i64) -> u8 {
         if x < self.offset {
             return 0;
         }
@@ -132,7 +198,7 @@ impl TapeSnapshot {
     }
 
     /// Render the tape over `[min_x..=max_x]` in wiki style (`.` for `0`, `1-9`/`a-z` for `>0`).
-    pub fn format_range(&self, min_x: isize, max_x: isize) -> String {
+    pub fn format_range(&self, min_x: i64, max_x: i64) -> String {
         let len = (max_x - min_x + 1).max(0) as usize;
         let mut out = String::with_capacity(len);
         for x in min_x..=max_x {
@@ -221,7 +287,7 @@ fn parse_pebble_value(part: &str) -> Result<u8, TapeParseError> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SparseTape {
     len: u8,
-    entries: [(isize, u8); MAX_SPARSE_PEBBLES],
+    entries: [(i64, u8); MAX_SPARSE_PEBBLES],
 }
 
 impl SparseTape {
@@ -237,7 +303,7 @@ impl SparseTape {
     }
 
     /// Create a sparse tape directly from non-zero `(x, pebbles)` coordinate entries.
-    pub fn from_entries(entries: &[(isize, u8)]) -> Self {
+    pub fn from_entries(entries: &[(i64, u8)]) -> Self {
         let mut buf = [(0, 0); MAX_SPARSE_PEBBLES];
         let mut len = 0;
         for &(x, k) in entries {
@@ -267,13 +333,13 @@ impl SparseTape {
 
     /// Slice of active `(coordinate, pebbles)` pairs sorted strictly by coordinate.
     #[inline]
-    pub fn entries(&self) -> &[(isize, u8)] {
+    pub fn entries(&self) -> &[(i64, u8)] {
         &self.entries[..self.len as usize]
     }
 
     /// Minimum x-coordinate with non-zero pebbles, or `None` if empty.
     #[inline]
-    pub fn min_x(&self) -> Option<isize> {
+    pub fn min_x(&self) -> Option<i64> {
         if self.len > 0 {
             Some(self.entries[0].0)
         } else {
@@ -283,7 +349,7 @@ impl SparseTape {
 
     /// Maximum x-coordinate with non-zero pebbles, or `None` if empty.
     #[inline]
-    pub fn max_x(&self) -> Option<isize> {
+    pub fn max_x(&self) -> Option<i64> {
         if self.len > 0 {
             Some(self.entries[self.len as usize - 1].0)
         } else {
@@ -299,7 +365,7 @@ impl SparseTape {
 
     /// Read the pebble count at coordinate `x`.
     #[inline]
-    pub fn get(&self, x: isize) -> u8 {
+    pub fn get(&self, x: i64) -> u8 {
         self.entries()
             .binary_search_by_key(&x, |&(pos, _)| pos)
             .map(|idx| self.entries[idx].1)
@@ -307,7 +373,7 @@ impl SparseTape {
     }
 
     /// Reconstruct the dense `(offset, cells)` slice representation from sparse entries.
-    pub fn to_dense(&self) -> (isize, Vec<u8>) {
+    pub fn to_dense(&self) -> (i64, Vec<u8>) {
         if self.len == 0 {
             return (0, Vec::new());
         }
@@ -328,7 +394,7 @@ impl SparseTape {
     /// - Origin marker bracket: `"0[2]30"` (cell inside bracket is at x=0)
     /// - Offset prefix: `"-1:0230"`
     /// - Sparse coordinate pairs: `"-1:2, 0:3"`, `"2@-1, 3@0"`, `"(-1, 2), (0, 3)"`
-    pub fn parse_with_offset(raw: &str, default_offset: isize) -> Result<Self, TapeParseError> {
+    pub fn parse_with_offset(raw: &str, default_offset: i64) -> Result<Self, TapeParseError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             return Err(TapeParseError::EmptyTape);
@@ -345,7 +411,7 @@ impl SparseTape {
 
         // Otherwise, treat as dense tape string with optional prefix offset `<offset>:<tape>`
         let (offset, tape_str) = if let Some((prefix, rest)) = trimmed.split_once(':') {
-            if let Ok(off) = prefix.trim().parse::<isize>() {
+            if let Ok(off) = prefix.trim().parse::<i64>() {
                 (off, rest.trim())
             } else {
                 (default_offset, trimmed)
@@ -362,7 +428,7 @@ impl SparseTape {
         Self::parse_with_offset(raw, 0)
     }
 
-    fn parse_sparse_pairs(s: &str, default_offset: isize) -> Result<Self, TapeParseError> {
+    fn parse_sparse_pairs(s: &str, default_offset: i64) -> Result<Self, TapeParseError> {
         let mut raw_pairs = Vec::new();
         if s.contains('(') {
             let mut start = None;
@@ -389,28 +455,28 @@ impl SparseTape {
             }
         }
 
-        let mut pile_map = std::collections::BTreeMap::<isize, u8>::new();
+        let mut pile_map = std::collections::BTreeMap::<i64, u8>::new();
         for pair in raw_pairs {
             let pair = pair.trim();
             if pair.is_empty() {
                 continue;
             }
             let (x, k) = if let Some((k_part, x_part)) = pair.split_once('@') {
-                let x: isize = x_part
+                let x: i64 = x_part
                     .trim()
                     .parse()
                     .map_err(|_| TapeParseError::InvalidCoordinate(x_part.trim().to_string()))?;
                 let k = parse_pebble_value(k_part.trim())?;
                 (x, k)
             } else if let Some((x_part, k_part)) = pair.split_once(':') {
-                let x: isize = x_part
+                let x: i64 = x_part
                     .trim()
                     .parse()
                     .map_err(|_| TapeParseError::InvalidCoordinate(x_part.trim().to_string()))?;
                 let k = parse_pebble_value(k_part.trim())?;
                 (x, k)
             } else if let Some((x_part, k_part)) = pair.split_once(',') {
-                let x: isize = x_part
+                let x: i64 = x_part
                     .trim()
                     .parse()
                     .map_err(|_| TapeParseError::InvalidCoordinate(x_part.trim().to_string()))?;
@@ -448,7 +514,7 @@ impl SparseTape {
         Ok(Self::from_entries(&entries))
     }
 
-    fn parse_dense_tape(s: &str, offset: isize) -> Result<Self, TapeParseError> {
+    fn parse_dense_tape(s: &str, offset: i64) -> Result<Self, TapeParseError> {
         let mut chars = Vec::new();
         let mut origin_idx = None;
         let mut in_bracket = false;
@@ -496,7 +562,7 @@ impl SparseTape {
 
         for (idx, &val) in chars.iter().enumerate() {
             if val > 0 {
-                let x = offset + (idx as isize - origin as isize);
+                let x = offset + (idx as i64 - origin as i64);
                 total_pebbles += val as usize;
                 entries.push((x, val));
             }
@@ -516,7 +582,7 @@ impl SparseTape {
     pub fn step(
         &mut self,
         program: &Program,
-        scratch: &mut [(isize, u8); MAX_SCRATCH_ENTRIES],
+        scratch: &mut [(i64, u8); MAX_SCRATCH_ENTRIES],
         scratch_len: &mut usize,
     ) -> StepResult {
         if self.len == 0 {
@@ -567,7 +633,7 @@ impl SparseTape {
         let slice = &mut scratch[..*scratch_len];
         slice.sort_unstable_by_key(|&(x, _)| x);
 
-        let mut next_entries = [(0isize, 0u8); MAX_SPARSE_PEBBLES];
+        let mut next_entries = [(0i64, 0u8); MAX_SPARSE_PEBBLES];
         let mut next_len = 0usize;
         let mut cur_x = slice[0].0;
         let mut cur_k = slice[0].1;
@@ -643,13 +709,13 @@ impl Simulator {
     }
 
     /// Create a simulator initialized from a parsed tape configuration string with explicit offset.
-    pub fn from_config_with_offset(s: &str, offset: isize) -> Result<Self, TapeParseError> {
+    pub fn from_config_with_offset(s: &str, offset: i64) -> Result<Self, TapeParseError> {
         let tape = SparseTape::parse_with_offset(s, offset)?;
         Ok(Self::from_tape(tape))
     }
 
     /// Create a simulator initialized with specific coordinate entries at `t = 0`.
-    pub fn from_entries(entries: &[(isize, u8)]) -> Self {
+    pub fn from_entries(entries: &[(i64, u8)]) -> Self {
         Self {
             tape: SparseTape::from_entries(entries),
             steps: 0,
@@ -670,25 +736,25 @@ impl Simulator {
 
     /// Active sparse entries as `&[(coordinate, pebbles)]`.
     #[inline]
-    pub fn sparse_entries(&self) -> &[(isize, u8)] {
+    pub fn sparse_entries(&self) -> &[(i64, u8)] {
         self.tape.entries()
     }
 
     /// Current x-coordinate of the leftmost non-zero cell, or `0` if empty.
     #[inline]
-    pub fn offset(&self) -> isize {
+    pub fn offset(&self) -> i64 {
         self.tape.min_x().unwrap_or(0)
     }
 
     /// Minimum x-coordinate with non-zero pebbles.
     #[inline]
-    pub fn min_x(&self) -> isize {
+    pub fn min_x(&self) -> i64 {
         self.tape.min_x().unwrap_or(0)
     }
 
     /// Maximum x-coordinate with non-zero pebbles.
     #[inline]
-    pub fn max_x(&self) -> isize {
+    pub fn max_x(&self) -> i64 {
         self.tape.max_x().unwrap_or(0)
     }
 
@@ -715,7 +781,7 @@ impl Simulator {
 
     /// Attempt to advance the simulation by 1 step.
     pub fn step(&mut self, program: &Program) -> StepResult {
-        let mut scratch = [(0isize, 0u8); MAX_SCRATCH_ENTRIES];
+        let mut scratch = [(0i64, 0u8); MAX_SCRATCH_ENTRIES];
         let mut scratch_len = 0usize;
         let res = self.tape.step(program, &mut scratch, &mut scratch_len);
         if res == StepResult::Stepped {
@@ -726,7 +792,7 @@ impl Simulator {
 
     /// Run the simulator from its current state up to `max_steps` total transitions.
     pub fn run(&mut self, program: &Program, max_steps: u64) -> SimOutcome {
-        let mut scratch = [(0isize, 0u8); MAX_SCRATCH_ENTRIES];
+        let mut scratch = [(0i64, 0u8); MAX_SCRATCH_ENTRIES];
         let mut scratch_len = 0usize;
         loop {
             if self.steps >= max_steps {
@@ -741,7 +807,7 @@ impl Simulator {
                 if self.is_current_state_stable(program) {
                     return SimOutcome::Halted { steps: self.steps };
                 }
-                return SimOutcome::Unknown { steps: self.steps };
+                return SimOutcome::unknown_step_limit(self.steps);
             }
 
             match self.tape.step(program, &mut scratch, &mut scratch_len) {
@@ -763,7 +829,7 @@ impl Simulator {
     /// Run the simulator from its current state up to `max_steps`, checking at each step
     /// whether an edge particle satisfies the light-cone escaping `EdgeGlider` invariant.
     pub fn run_with_edge_glider(&mut self, program: &Program, max_steps: u64) -> SimOutcome {
-        let mut scratch = [(0isize, 0u8); MAX_SCRATCH_ENTRIES];
+        let mut scratch = [(0i64, 0u8); MAX_SCRATCH_ENTRIES];
         let mut scratch_len = 0usize;
         loop {
             if let Some(decider) =
@@ -786,7 +852,7 @@ impl Simulator {
                 if self.is_current_state_stable(program) {
                     return SimOutcome::Halted { steps: self.steps };
                 }
-                return SimOutcome::Unknown { steps: self.steps };
+                return SimOutcome::unknown_step_limit(self.steps);
             }
 
             match self.tape.step(program, &mut scratch, &mut scratch_len) {
@@ -807,7 +873,7 @@ impl Simulator {
 
     /// Check if the current state `state(t)` satisfies `state(t+1) == state(t)`.
     pub fn is_current_state_stable(&mut self, program: &Program) -> bool {
-        let mut scratch = [(0isize, 0u8); MAX_SCRATCH_ENTRIES];
+        let mut scratch = [(0i64, 0u8); MAX_SCRATCH_ENTRIES];
         let mut scratch_len = 0usize;
         let mut clone = self.tape;
         clone.step(program, &mut scratch, &mut scratch_len) == StepResult::Halted
@@ -869,7 +935,7 @@ pub fn simulate_with_trace(program: &Program, max_steps: u64) -> (SimOutcome, Ve
 
 /// Format a slice of `TapeSnapshot`s aligned to a common `[min_x..=max_x]` bounding box,
 /// matching the visual diagram style on the BusyBeaverWiki.
-pub fn format_trace_bounds(trace: &[TapeSnapshot]) -> (isize, isize) {
+pub fn format_trace_bounds(trace: &[TapeSnapshot]) -> (i64, i64) {
     if trace.is_empty() {
         return (0, 0);
     }
@@ -922,9 +988,7 @@ mod tests {
                 let short_outcome = simulate(&prog, expected_steps - 1);
                 assert_eq!(
                     short_outcome,
-                    SimOutcome::Unknown {
-                        steps: expected_steps - 1
-                    }
+                    SimOutcome::unknown_step_limit(expected_steps - 1)
                 );
             }
         }
@@ -956,7 +1020,7 @@ mod tests {
         let prog: Program = "01".parse().unwrap();
         let mut sim = Simulator::new(prog.size());
         let outcome = sim.run(&prog, 25);
-        assert_eq!(outcome, SimOutcome::Unknown { steps: 25 });
+        assert_eq!(outcome, SimOutcome::unknown_step_limit(25));
         assert_eq!(sim.offset(), 25);
         assert_eq!(sim.cells(), vec![1]);
         assert_eq!(sim.total_pebbles(), 1);
@@ -996,7 +1060,7 @@ mod tests {
     }
 
     struct ReferenceDenseSimulator {
-        offset: isize,
+        offset: i64,
         cells: Vec<u8>,
         scratch: Vec<u8>,
     }
@@ -1052,7 +1116,7 @@ mod tests {
                 return StepResult::Stepped;
             };
             let last_nz = self.scratch.iter().rposition(|&v| v > 0).unwrap();
-            let next_offset = self.offset - 1 + first_nz as isize;
+            let next_offset = self.offset - 1 + first_nz as i64;
             let next_slice = &self.scratch[first_nz..=last_nz];
 
             self.offset = next_offset;
@@ -1127,7 +1191,7 @@ mod tests {
         assert!(SparseTape::parse("xyz!").is_err());
     }
 
-    fn min_x_val(v: isize) -> isize {
+    fn min_x_val(v: i64) -> i64 {
         v
     }
 }

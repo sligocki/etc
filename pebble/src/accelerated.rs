@@ -1,4 +1,4 @@
-use crate::deciders::{CyclerProof, Decider, SeparatedComponentsProof, StepDeciderOutcome};
+use crate::deciders::{AcceleratedInfiniteProof, CyclerProof, Decider, StepDeciderOutcome};
 use crate::program::Program;
 use crate::simulation::{SimOutcome, Simulator, SparseTape, StepResult, MAX_SPARSE_PEBBLES};
 use std::collections::HashMap;
@@ -6,21 +6,21 @@ use std::collections::HashMap;
 /// A contiguous segment of active cells on the tape at coordinate `offset`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Cluster {
-    pub offset: isize,
+    pub offset: i64,
     pub cells: Vec<u8>,
 }
 
 impl Cluster {
     /// Return the leftmost active coordinate of this cluster.
     #[inline]
-    pub fn min_x(&self) -> isize {
+    pub fn min_x(&self) -> i64 {
         self.offset
     }
 
     /// Return the rightmost active coordinate of this cluster.
     #[inline]
-    pub fn max_x(&self) -> isize {
-        self.offset + self.cells.len() as isize - 1
+    pub fn max_x(&self) -> i64 {
+        self.offset + self.cells.len() as i64 - 1
     }
 
     /// Total number of pebbles in this cluster.
@@ -36,11 +36,11 @@ pub struct GliderInfo {
     /// Period $P \ge 1$ of the glider cycle.
     pub period: u32,
     /// Spatial displacement $\Delta x$ over one period $P$.
-    pub dx: isize,
+    pub dx: i64,
     /// Whether this cluster is strictly quiescent (zero pebble movement: `rule.left == 0 && rule.right == 0`).
     pub is_quiescent: bool,
     /// Trajectory phases: `(relative_offset, cells)` for each phase $0 \le \phi < P$.
-    pub phases: Vec<(isize, Vec<u8>)>,
+    pub phases: Vec<(i64, Vec<u8>)>,
 }
 
 impl GliderInfo {
@@ -65,14 +65,14 @@ impl GliderInfo {
 
     /// Leftmost relative coordinate at phase `phi`.
     #[inline]
-    pub fn relative_min_x(&self, phi: usize) -> isize {
+    pub fn relative_min_x(&self, phi: usize) -> i64 {
         self.phases[phi].0
     }
 
     /// Rightmost relative coordinate at phase `phi`.
     #[inline]
-    pub fn relative_max_x(&self, phi: usize) -> isize {
-        self.phases[phi].0 + self.phases[phi].1.len() as isize - 1
+    pub fn relative_max_x(&self, phi: usize) -> i64 {
+        self.phases[phi].0 + self.phases[phi].1.len() as i64 - 1
     }
 }
 
@@ -114,11 +114,11 @@ impl GliderCache {
 
 /// Evaluate an isolated cluster in empty space up to `max_period` steps.
 fn evaluate_glider(program: &Program, cells: &[u8], max_period: u32) -> Option<GliderInfo> {
-    let entries: Vec<(isize, u8)> = cells
+    let entries: Vec<(i64, u8)> = cells
         .iter()
         .enumerate()
         .filter(|(_, &k)| k > 0)
-        .map(|(i, &k)| (i as isize, k))
+        .map(|(i, &k)| (i as i64, k))
         .collect();
 
     if entries.is_empty() {
@@ -127,7 +127,7 @@ fn evaluate_glider(program: &Program, cells: &[u8], max_period: u32) -> Option<G
 
     let mut sim = Simulator::from_entries(&entries);
     let base_off = sim.offset();
-    let mut history: Vec<(isize, Vec<u8>)> = Vec::new();
+    let mut history: Vec<(i64, Vec<u8>)> = Vec::new();
     history.push((base_off, sim.cells()));
 
     for step in 1..=max_period {
@@ -173,25 +173,45 @@ fn evaluate_glider(program: &Program, cells: &[u8], max_period: u32) -> Option<G
 }
 
 /// Extract clusters of non-zero cells from sparse entries separated by at least `split_threshold` zeros.
-pub fn extract_clusters(entries: &[(isize, u8)], split_threshold: usize) -> Vec<Cluster> {
+pub fn extract_clusters(entries: &[(i64, u8)], split_threshold: usize) -> Vec<Cluster> {
     if entries.is_empty() {
         return Vec::new();
     }
-    let split_threshold = split_threshold.max(1) as isize;
+    let split_threshold = split_threshold.max(1) as i64;
     let mut clusters = Vec::new();
     let mut start_idx = 0;
 
     for i in 0..entries.len() {
         let is_last = i + 1 == entries.len();
-        let split_next = !is_last && (entries[i + 1].0 - entries[i].0 - 1) >= split_threshold;
+        let split_next = if is_last {
+            false
+        } else {
+            match entries[i + 1].0.checked_sub(entries[i].0) {
+                Some(diff) => (diff - 1) >= split_threshold,
+                None => true,
+            }
+        };
 
         if is_last || split_next {
             let start_x = entries[start_idx].0;
             let end_x = entries[i].0;
-            let width = (end_x - start_x + 1) as usize;
+            let width = match end_x.checked_sub(start_x) {
+                Some(diff) => (diff as usize).saturating_add(1),
+                None => usize::MAX,
+            };
+            // A valid cluster in Pebble Automata has at most MAX_SPARSE_PEBBLES non-zero cells.
+            // With split_threshold zeros between them, width cannot exceed MAX_SPARSE_PEBBLES * (split_threshold + 2).
+            let max_allowed_width = (MAX_SPARSE_PEBBLES * (split_threshold as usize + 2)).max(128);
+            if width > max_allowed_width {
+                start_idx = i + 1;
+                continue;
+            }
             let mut cells = vec![0u8; width];
             for &(x, k) in &entries[start_idx..=i] {
-                cells[(x - start_x) as usize] = k;
+                let idx = (x - start_x) as usize;
+                if idx < width {
+                    cells[idx] = k;
+                }
             }
             clusters.push(Cluster {
                 offset: start_x,
@@ -205,7 +225,7 @@ pub fn extract_clusters(entries: &[(isize, u8)], split_threshold: usize) -> Vec<
 }
 
 /// Extract clusters of non-zero cells from a dense slice separated by at least `split_threshold` zeros.
-pub fn extract_clusters_dense(offset: isize, cells: &[u8], split_threshold: usize) -> Vec<Cluster> {
+pub fn extract_clusters_dense(offset: i64, cells: &[u8], split_threshold: usize) -> Vec<Cluster> {
     let split_threshold = split_threshold.max(1);
     let mut clusters = Vec::new();
     let mut i = 0;
@@ -230,7 +250,7 @@ pub fn extract_clusters_dense(offset: isize, cells: &[u8], split_threshold: usiz
             }
             let end = i;
             clusters.push(Cluster {
-                offset: offset + start as isize,
+                offset: offset + start as i64,
                 cells: cells[start..=end].to_vec(),
             });
         }
@@ -265,7 +285,7 @@ pub fn collision_time(
     g_left: &GliderInfo,
     c_right: &Cluster,
     g_right: &GliderInfo,
-    d_collide: isize,
+    d_collide: i64,
 ) -> Option<u64> {
     // Fast path: Period-1 gliders (e.g. single cells or rigid patterns)
     if g_left.period == 1 && g_right.period == 1 {
@@ -273,7 +293,7 @@ pub fn collision_time(
         let v_r = g_right.dx;
         let x_l_max = c_left.max_x();
         let x_r_min = c_right.min_x();
-        let dist = x_r_min - x_l_max;
+        let dist = x_r_min.checked_sub(x_l_max)?;
         let v_rel = v_l - v_r;
         if v_rel <= 0 {
             return None;
@@ -289,8 +309,8 @@ pub fn collision_time(
     let p_l = g_left.period;
     let p_r = g_right.period;
     let super_p = lcm(p_l, p_r) as u64;
-    let dx_l_super = g_left.dx * (super_p as isize / p_l as isize);
-    let dx_r_super = g_right.dx * (super_p as isize / p_r as isize);
+    let dx_l_super = (g_left.dx as i128) * (super_p as i128 / p_l as i128);
+    let dx_r_super = (g_right.dx as i128) * (super_p as i128 / p_r as i128);
     let v_rel_super = dx_l_super - dx_r_super;
 
     // Check if diverging over the super period
@@ -298,14 +318,18 @@ pub fn collision_time(
         // Verify they don't collide during the first cycle
         for t in 0..super_p {
             let phi_l = (t % p_l as u64) as usize;
-            let k_l = (t / p_l as u64) as isize;
-            let cur_max_l = c_left.offset + k_l * g_left.dx + g_left.relative_max_x(phi_l);
+            let k_l = (t / p_l as u64) as i128;
+            let cur_max_l = (c_left.offset as i128)
+                + k_l * (g_left.dx as i128)
+                + (g_left.relative_max_x(phi_l) as i128);
 
             let phi_r = (t % p_r as u64) as usize;
-            let k_r = (t / p_r as u64) as isize;
-            let cur_min_r = c_right.offset + k_r * g_right.dx + g_right.relative_min_x(phi_r);
+            let k_r = (t / p_r as u64) as i128;
+            let cur_min_r = (c_right.offset as i128)
+                + k_r * (g_right.dx as i128)
+                + (g_right.relative_min_x(phi_r) as i128);
 
-            if cur_min_r - cur_max_l <= d_collide {
+            if cur_min_r - cur_max_l <= d_collide as i128 {
                 return Some(t);
             }
         }
@@ -313,30 +337,38 @@ pub fn collision_time(
     }
 
     // Converging multi-period gliders: compute approximate period leap
-    let x_l_max = c_left.max_x();
-    let x_r_min = c_right.min_x();
+    let x_l_max = c_left.max_x() as i128;
+    let x_r_min = c_right.min_x() as i128;
     let dist = x_r_min - x_l_max;
 
-    let margin = 4 * d_collide;
+    let margin = (4 * d_collide) as i128;
     let mut t_base = 0u64;
     if dist > margin {
-        let skip_periods = ((dist - margin) / v_rel_super).max(0) as u64;
-        t_base = skip_periods * super_p;
+        let skip_periods = ((dist - margin) / v_rel_super).max(0) as u128;
+        let t_base_128 = skip_periods * (super_p as u128);
+        if t_base_128 > (u64::MAX / 2) as u128 {
+            return None;
+        }
+        t_base = t_base_128 as u64;
     }
 
     // Scan forward from t_base to locate exact first collision step
     let mut t = t_base;
-    let max_scan = t_base + 4 * super_p;
+    let max_scan = t_base.saturating_add(4 * super_p);
     while t < max_scan {
         let phi_l = (t % p_l as u64) as usize;
-        let k_l = (t / p_l as u64) as isize;
-        let cur_max_l = c_left.offset + k_l * g_left.dx + g_left.relative_max_x(phi_l);
+        let k_l = (t / p_l as u64) as i128;
+        let cur_max_l = (c_left.offset as i128)
+            + k_l * (g_left.dx as i128)
+            + (g_left.relative_max_x(phi_l) as i128);
 
         let phi_r = (t % p_r as u64) as usize;
-        let k_r = (t / p_r as u64) as isize;
-        let cur_min_r = c_right.offset + k_r * g_right.dx + g_right.relative_min_x(phi_r);
+        let k_r = (t / p_r as u64) as i128;
+        let cur_min_r = (c_right.offset as i128)
+            + k_r * (g_right.dx as i128)
+            + (g_right.relative_min_x(phi_r) as i128);
 
-        if cur_min_r - cur_max_l <= d_collide {
+        if cur_min_r - cur_max_l <= d_collide as i128 {
             return Some(t);
         }
         t += 1;
@@ -390,7 +422,7 @@ pub struct AcceleratedSimulator {
     total_steps: u64,
     cache: GliderCache,
     stats: AcceleratedStats,
-    d_collide: isize,
+    d_collide: i64,
     split_threshold: usize,
     max_period: u32,
 }
@@ -423,7 +455,7 @@ impl AcceleratedSimulator {
     }
 
     /// Create an accelerated simulator directly from `(x, pebbles)` coordinate entries.
-    pub fn from_entries(entries: &[(isize, u8)]) -> Self {
+    pub fn from_entries(entries: &[(i64, u8)]) -> Self {
         Self {
             sim: Simulator::from_entries(entries),
             total_steps: 0,
@@ -472,25 +504,25 @@ impl AcceleratedSimulator {
 
     /// Sparse `(coordinate, pebbles)` entries.
     #[inline]
-    pub fn sparse_entries(&self) -> &[(isize, u8)] {
+    pub fn sparse_entries(&self) -> &[(i64, u8)] {
         self.sim.sparse_entries()
     }
 
     /// Current coordinate offset.
     #[inline]
-    pub fn offset(&self) -> isize {
+    pub fn offset(&self) -> i64 {
         self.sim.offset()
     }
 
     /// Minimum non-zero coordinate.
     #[inline]
-    pub fn min_x(&self) -> isize {
+    pub fn min_x(&self) -> i64 {
         self.sim.min_x()
     }
 
     /// Maximum non-zero coordinate.
     #[inline]
-    pub fn max_x(&self) -> isize {
+    pub fn max_x(&self) -> i64 {
         self.sim.max_x()
     }
 
@@ -501,7 +533,7 @@ impl AcceleratedSimulator {
     }
 
     /// Configure the collision threshold margin (default: 2).
-    pub fn with_collision_margin(mut self, margin: isize) -> Self {
+    pub fn with_collision_margin(mut self, margin: i64) -> Self {
         self.d_collide = margin.max(1);
         self
     }
@@ -593,13 +625,21 @@ impl AcceleratedSimulator {
                     dx: 0,
                 }))
             } else {
-                let dx_left = gliders[0].dx;
-                let dx_right = gliders.last().unwrap().dx;
-                Decider::SeparatedComponents(Some(SeparatedComponentsProof {
-                    period: 1,
-                    dx_left,
-                    dx_right,
-                }))
+                let mut super_p = 1u32;
+                for g in &gliders {
+                    super_p = lcm(super_p, g.period);
+                }
+                let super_p = super_p as u64;
+                let dxs: Vec<i64> = gliders
+                    .iter()
+                    .map(|g| g.dx * (super_p / g.period as u64) as i64)
+                    .collect();
+                let periods: Vec<u32> = gliders.iter().map(|g| g.period).collect();
+                Decider::AcceleratedInfinite(Some(AcceleratedInfiniteProof::new(
+                    super_p,
+                    &dxs,
+                    &periods,
+                )))
             };
             return FastForwardResult::Inf(decider);
         }
@@ -608,21 +648,50 @@ impl AcceleratedSimulator {
             return FastForwardResult::None;
         };
 
-        let t_jump = t_jump.min(max_steps_jump);
-        if t_jump <= 2 {
+        const MAX_SAFE_COORD: i64 = i64::MAX / 2;
+        const MIN_SAFE_COORD: i64 = i64::MIN / 2;
+
+        let mut safe_jump = t_jump.min(max_steps_jump);
+        // Ensure total_steps does not overflow u64
+        safe_jump = safe_jump.min(u64::MAX.saturating_sub(self.total_steps));
+
+        // Limit jump so no cluster exceeds safe coordinate limits
+        for (c, g) in clusters.iter().zip(gliders.iter()) {
+            if g.dx > 0 {
+                let max_offset_gain = (MAX_SAFE_COORD.saturating_sub(c.offset)).max(0) as u128;
+                let max_k = max_offset_gain / (g.dx as u128);
+                let max_cluster_jump = (max_k * (g.period as u128)).min(u64::MAX as u128) as u64;
+                safe_jump = safe_jump.min(max_cluster_jump);
+            } else if g.dx < 0 {
+                let max_offset_loss = (c.offset.saturating_sub(MIN_SAFE_COORD)).max(0) as u128;
+                let max_k = max_offset_loss / ((-g.dx) as u128);
+                let max_cluster_jump = (max_k * (g.period as u128)).min(u64::MAX as u128) as u64;
+                safe_jump = safe_jump.min(max_cluster_jump);
+            }
+        }
+
+        if safe_jump <= 2 {
             return FastForwardResult::None;
         }
 
-        // Compute updated entries at t + t_jump
+        // Compute updated entries at t + safe_jump
         let mut new_entries = Vec::with_capacity(MAX_SPARSE_PEBBLES);
         for (c, g) in clusters.iter().zip(gliders.iter()) {
             let p = g.period as usize;
-            let phi = (t_jump as usize) % p;
-            let k = (t_jump as isize) / (p as isize);
-            let base_off = c.offset + k * g.dx + g.phases[phi].0;
+            let phi = (safe_jump as usize) % p;
+            let k = (safe_jump as i128) / (p as i128);
+            let base_off = (c.offset as i128) + k * (g.dx as i128) + (g.phases[phi].0 as i128);
+            if base_off > i64::MAX as i128 || base_off < i64::MIN as i128 {
+                return FastForwardResult::None;
+            }
+            let base_off = base_off as i64;
             for (idx, &val) in g.phases[phi].1.iter().enumerate() {
                 if val > 0 {
-                    new_entries.push((base_off + idx as isize, val));
+                    let x = match base_off.checked_add(idx as i64) {
+                        Some(coord) => coord,
+                        None => return FastForwardResult::None,
+                    };
+                    new_entries.push((x, val));
                 }
             }
         }
@@ -633,11 +702,11 @@ impl AcceleratedSimulator {
         }
 
         self.sim = Simulator::from_entries(&new_entries);
-        self.total_steps += t_jump;
+        self.total_steps += safe_jump;
         self.stats.fast_forwards += 1;
-        self.stats.steps_fast_forwarded += t_jump;
+        self.stats.steps_fast_forwarded += safe_jump;
 
-        FastForwardResult::Jumped(t_jump)
+        FastForwardResult::Jumped(safe_jump)
     }
 
     /// Advance the simulation by 1 generation or fast-forward if gliders are detected.
@@ -660,7 +729,16 @@ impl AcceleratedSimulator {
 
     /// Run the simulation up to `max_steps` generations.
     pub fn run(&mut self, program: &Program, max_steps: u64) -> SimOutcome {
+        const MAX_SAFE_COORD: i64 = i64::MAX / 2;
+        const MIN_SAFE_COORD: i64 = i64::MIN / 2;
         while self.total_steps < max_steps {
+            if self.min_x() <= MIN_SAFE_COORD
+                || self.max_x() >= MAX_SAFE_COORD
+                || self.total_steps >= u64::MAX - 100_000
+            {
+                return SimOutcome::unknown_coord_overflow(self.total_steps);
+            }
+
             let remaining = max_steps - self.total_steps;
             match self.try_fast_forward(program, remaining) {
                 FastForwardResult::Halted => {
@@ -699,16 +777,23 @@ impl AcceleratedSimulator {
             }
         }
 
-        SimOutcome::Unknown {
-            steps: self.total_steps,
-        }
+        SimOutcome::unknown_step_limit(self.total_steps)
     }
 
     /// Run the simulation until `max_sim_steps` simulation steps have been evaluated
     /// (where `sim_steps = normal_steps + fast_forwards`).
     pub fn run_sim_steps(&mut self, program: &Program, max_sim_steps: u64) -> SimOutcome {
+        const MAX_SAFE_COORD: i64 = i64::MAX / 2;
+        const MIN_SAFE_COORD: i64 = i64::MIN / 2;
         let initial_sim_steps = self.sim_steps();
         while self.sim_steps().saturating_sub(initial_sim_steps) < max_sim_steps {
+            if self.min_x() <= MIN_SAFE_COORD
+                || self.max_x() >= MAX_SAFE_COORD
+                || self.total_steps >= u64::MAX - 100_000
+            {
+                return SimOutcome::unknown_coord_overflow(self.total_steps);
+            }
+
             match self.try_fast_forward(program, u64::MAX) {
                 FastForwardResult::Halted => {
                     return SimOutcome::Halted {
@@ -746,9 +831,7 @@ impl AcceleratedSimulator {
             }
         }
 
-        SimOutcome::Unknown {
-            steps: self.total_steps,
-        }
+        SimOutcome::unknown_step_limit(self.total_steps)
     }
 }
 
@@ -887,6 +970,36 @@ mod tests {
         assert_eq!(
             acc_sim.sparse_entries(),
             &[(-4004, 3), (-4003, 1), (-4002, 3), (-4001, 3), (3026, 1)]
+        );
+    }
+
+    #[test]
+    fn test_exponential_glider_safety_bounds() {
+        // Program with exponential collision doubling (reaches > 10^18 generations)
+        let prog: Program = "00_02_01_40_13_41_00_17_13_28_01".parse().unwrap();
+        let mut acc_sim = AcceleratedSimulator::new(prog.size());
+        let outcome = acc_sim.run_sim_steps(&prog, 5000);
+        // Must safely terminate as Unknown without panicking or capacity overflow
+        assert!(outcome.is_unknown());
+        assert!(acc_sim.steps() > 1_000_000_000_000_000);
+    }
+
+    #[test]
+    fn test_diverging_gliders_accelerated_infinite() {
+        let prog: Program = "00_00_00_04_41_11_33_80_22_12_56".parse().unwrap();
+        // Pebble 8 moves left (dx = -1), Pebble 4 moves right (dx = 1)
+        let mut acc_sim = AcceleratedSimulator::from_entries(&[(-10, 8), (10, 4)]);
+        let outcome = acc_sim.run(&prog, 100);
+        assert_eq!(
+            outcome,
+            SimOutcome::Inf {
+                decider: Decider::AcceleratedInfinite(Some(AcceleratedInfiniteProof::new(
+                    1,
+                    &[-1, 1],
+                    &[1, 1],
+                ))),
+                steps: 0,
+            }
         );
     }
 }

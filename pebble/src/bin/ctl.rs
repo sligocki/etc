@@ -128,13 +128,13 @@ fn format_record_line(prog: &Program, outcome: &CtlSearchOutcome) -> String {
             format!("{prog}\tMISSING_RULE\t{pebbles}\t{step}")
         }
         CtlSearchOutcome::ClosureHitUndefinedRule { step, pebbles, .. } => {
-            format!("{prog}\tUNKNOWN\t{step} # closure hit undefined rule for {pebbles} pebbles")
+            format!("{prog}\tUNKNOWN\tSTEP_LIMIT\t{step} # closure hit undefined rule for {pebbles} pebbles")
         }
         CtlSearchOutcome::ClosureHitHalt { step, .. } => {
-            format!("{prog}\tUNKNOWN\t{step} # closure hit halting configuration")
+            format!("{prog}\tUNKNOWN\tSTEP_LIMIT\t{step} # closure hit halting configuration")
         }
         CtlSearchOutcome::LimitReached { max_steps, .. } => {
-            format!("{prog}\tUNKNOWN\t{max_steps}")
+            format!("{prog}\tUNKNOWN\tSTEP_LIMIT\t{max_steps}")
         }
     }
 }

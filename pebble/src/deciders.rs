@@ -10,7 +10,7 @@ use std::str::FromStr;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CyclerProof {
     pub period: u64,
-    pub dx: isize,
+    pub dx: i64,
 }
 
 impl fmt::Display for CyclerProof {
@@ -23,8 +23,8 @@ impl fmt::Display for CyclerProof {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SeparatedComponentsProof {
     pub period: u64,
-    pub dx_left: isize,
-    pub dx_right: isize,
+    pub dx_left: i64,
+    pub dx_right: i64,
 }
 
 impl fmt::Display for SeparatedComponentsProof {
@@ -54,6 +54,83 @@ impl fmt::Display for BouncerProof {
     }
 }
 
+/// Maximum number of gliders recorded in an `AcceleratedInfiniteProof`.
+pub const MAX_ACCEL_GLIDERS: usize = 16;
+
+/// Proof metrics for non-halting proven by accelerated simulation (glider separation without collision).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AcceleratedInfiniteProof {
+    /// Common joint period (LCM of individual glider periods).
+    pub period: u64,
+    /// Number of gliders recorded.
+    pub count: usize,
+    /// Displacements of each glider (from left to right) over one joint `period`.
+    pub dxs: [i64; MAX_ACCEL_GLIDERS],
+    /// Base cycle periods of each glider (from left to right).
+    pub periods: [u32; MAX_ACCEL_GLIDERS],
+}
+
+impl AcceleratedInfiniteProof {
+    /// Create a new `AcceleratedInfiniteProof` from slices of displacements and base periods.
+    pub fn new(period: u64, dxs_slice: &[i64], periods_slice: &[u32]) -> Self {
+        let count = dxs_slice.len().min(MAX_ACCEL_GLIDERS);
+        let mut dxs = [0i64; MAX_ACCEL_GLIDERS];
+        let mut periods = [0u32; MAX_ACCEL_GLIDERS];
+        dxs[..count].copy_from_slice(&dxs_slice[..count]);
+        let p_count = periods_slice.len().min(count);
+        periods[..p_count].copy_from_slice(&periods_slice[..p_count]);
+        Self {
+            period,
+            count,
+            dxs,
+            periods,
+        }
+    }
+
+    /// Number of gliders.
+    #[inline]
+    pub fn glider_count(&self) -> usize {
+        self.count
+    }
+
+    /// Slice of glider displacements over the joint period.
+    #[inline]
+    pub fn dxs(&self) -> &[i64] {
+        &self.dxs[..self.count]
+    }
+
+    /// Slice of individual glider base periods.
+    #[inline]
+    pub fn periods(&self) -> &[u32] {
+        &self.periods[..self.count]
+    }
+
+    /// Displacement of the leftmost glider over the joint period.
+    #[inline]
+    pub fn dx_left(&self) -> Option<i64> {
+        self.dxs().first().copied()
+    }
+
+    /// Displacement of the rightmost glider over the joint period.
+    #[inline]
+    pub fn dx_right(&self) -> Option<i64> {
+        self.dxs().last().copied()
+    }
+}
+
+impl fmt::Display for AcceleratedInfiniteProof {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let dxs_str: Vec<String> = self.dxs().iter().map(|d| d.to_string()).collect();
+        write!(f, "period={} dxs=[{}]", self.period, dxs_str.join(","))?;
+        let all_match = self.periods().iter().all(|&p| p as u64 == self.period);
+        if !all_match && self.count > 0 {
+            let periods_str: Vec<String> = self.periods().iter().map(|p| p.to_string()).collect();
+            write!(f, " periods=[{}]", periods_str.join(","))?;
+        }
+        Ok(())
+    }
+}
+
 /// Non-halting decider classification for Pebble Automata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Decider {
@@ -77,16 +154,20 @@ pub enum Decider {
     /// Static backtrack / invariant decider: proves non-halting via stationary-rule graph
     /// reachability and monotone pebble threshold invariants.
     StaticBacktrack,
+    /// Accelerated simulator decider: proves non-halting when all separated clusters are
+    /// gliders with non-converging relative velocities.
+    AcceleratedInfinite(Option<AcceleratedInfiniteProof>),
 }
 
 impl Decider {
-    pub const ALL: [Decider; 6] = [
+    pub const ALL: [Decider; 7] = [
         Decider::EdgeGlider,
         Decider::Cycler(None),
         Decider::SeparatedComponents(None),
         Decider::Bouncer(None),
         Decider::Ctl(None),
         Decider::StaticBacktrack,
+        Decider::AcceleratedInfinite(None),
     ];
 }
 
@@ -99,6 +180,7 @@ impl fmt::Display for Decider {
             Decider::Bouncer(_) => write!(f, "Bouncer"),
             Decider::Ctl(_) => write!(f, "CTL"),
             Decider::StaticBacktrack => write!(f, "StaticBacktrack"),
+            Decider::AcceleratedInfinite(_) => write!(f, "AcceleratedInfinite"),
         }
     }
 }
@@ -114,6 +196,9 @@ impl FromStr for Decider {
             "bouncer" => Ok(Decider::Bouncer(None)),
             "ctl" => Ok(Decider::Ctl(None)),
             "staticbacktrack" | "static_backtrack" | "backtrack" => Ok(Decider::StaticBacktrack),
+            "acceleratedinfinite" | "accelerated_infinite" | "accelerated" | "accel_inf" | "accelinf" => {
+                Ok(Decider::AcceleratedInfinite(None))
+            }
             other => Err(format!("unknown decider '{other}'")),
         }
     }
@@ -147,7 +232,7 @@ pub fn check_edge_glider_tape(program: &Program, cells: &[u8]) -> Option<Decider
 
 /// Fast $O(1)$ check on active sparse tape entries for an escaping light-cone edge glider.
 #[inline]
-pub fn check_edge_glider_sparse(program: &Program, entries: &[(isize, u8)]) -> Option<Decider> {
+pub fn check_edge_glider_sparse(program: &Program, entries: &[(i64, u8)]) -> Option<Decider> {
     if let Some(&(_, first)) = entries.first() {
         if first > 0 {
             if let Some(r) = program.rule(first) {
@@ -217,13 +302,13 @@ pub fn decide_cycler_from_sim(
     sim: &mut Simulator,
     max_steps: u64,
 ) -> StepDeciderOutcome {
-    let mut seen_shapes: HashMap<Vec<(isize, u8)>, (u64, isize)> = HashMap::new();
+    let mut seen_shapes: HashMap<Vec<(i64, u8)>, (u64, i64)> = HashMap::new();
 
     for _ in 0..=max_steps {
         let entries = sim.sparse_entries();
         if !entries.is_empty() {
             let x0 = entries[0].0;
-            let shape: Vec<(isize, u8)> = entries.iter().map(|&(x, k)| (x - x0, k)).collect();
+            let shape: Vec<(i64, u8)> = entries.iter().map(|&(x, k)| (x - x0, k)).collect();
             if let Some(&(prev_step, prev_offset)) = seen_shapes.get(&shape) {
                 // Confirm the state is not a stationary fixed point (halted) before reporting a cycle.
                 let prev_off = sim.offset();
@@ -267,7 +352,7 @@ pub fn decide_cycler_from_sim(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Segment {
-    offset: isize,
+    offset: i64,
     cells: Vec<u8>,
 }
 
@@ -286,13 +371,13 @@ fn step_segment(seg: &Segment, program: &Program) -> Option<Segment> {
     let first_nz = next.iter().position(|&v| v > 0)?;
     let last_nz = next.iter().rposition(|&v| v > 0)?;
     Some(Segment {
-        offset: seg.offset - 1 + first_nz as isize,
+        offset: seg.offset - 1 + first_nz as i64,
         cells: next[first_nz..=last_nz].to_vec(),
     })
 }
 
 /// Extract all 2-segment causal cuts `[left_seg, right_seg]` separated by at least 2 zeros.
-fn extract_bipartitions(offset: isize, cells: &[u8]) -> Vec<[Segment; 2]> {
+fn extract_bipartitions(offset: i64, cells: &[u8]) -> Vec<[Segment; 2]> {
     let mut nz_indices = Vec::new();
     for (i, &c) in cells.iter().enumerate() {
         if c > 0 {
@@ -310,7 +395,7 @@ fn extract_bipartitions(offset: isize, cells: &[u8]) -> Vec<[Segment; 2]> {
                 cells: cells[0..=left_end_idx].to_vec(),
             };
             let right_seg = Segment {
-                offset: offset + right_start_idx as isize,
+                offset: offset + right_start_idx as i64,
                 cells: cells[right_start_idx..].to_vec(),
             };
             cuts.push([left_seg, right_seg]);
@@ -321,7 +406,7 @@ fn extract_bipartitions(offset: isize, cells: &[u8]) -> Vec<[Segment; 2]> {
 
 struct ActiveCut {
     segments: [Segment; 2],
-    seen: HashMap<(Vec<u8>, Vec<u8>), (u64, isize, isize)>,
+    seen: HashMap<(Vec<u8>, Vec<u8>), (u64, i64, i64)>,
 }
 
 /// Decider 3: Simulate `program` up to `max_steps` and detect causally independent
@@ -351,7 +436,7 @@ pub fn decide_separated_components_from_sim(
                     step_segment(&cut.segments[0], program),
                     step_segment(&cut.segments[1], program),
                 ) {
-                    let left_end = next_l.offset + next_l.cells.len() as isize - 1;
+                    let left_end = next_l.offset + next_l.cells.len() as i64 - 1;
                     let right_start = next_r.offset;
                     if right_start - left_end - 1 >= 2 {
                         let key = (next_l.cells.clone(), next_r.cells.clone());
@@ -461,12 +546,12 @@ struct Transit {
     w_l: Vec<u8>,
     shuttle: Vec<u8>,
     w_r: Vec<u8>,
-    x_l: isize,
-    x_r: isize,
+    x_l: i64,
+    x_r: i64,
     total_gap: usize,
 }
 
-fn extract_transits(program: &Program, offset: isize, cells: &[u8]) -> (Vec<Transit>, Vec<Transit>) {
+fn extract_transits(program: &Program, offset: i64, cells: &[u8]) -> (Vec<Transit>, Vec<Transit>) {
     let mut islands: Vec<(usize, usize)> = Vec::new();
     let mut i = 0;
     while i < cells.len() {
@@ -510,8 +595,8 @@ fn extract_transits(program: &Program, offset: isize, cells: &[u8]) -> (Vec<Tran
                 w_l: w_l.to_vec(),
                 shuttle: shuttle.to_vec(),
                 w_r: w_r.to_vec(),
-                x_l: offset + islands[0].0 as isize,
-                x_r: offset + islands[right_split + 1].0 as isize,
+                x_l: offset + islands[0].0 as i64,
+                x_r: offset + islands[right_split + 1].0 as i64,
                 total_gap: gap_a + gap_b,
             };
             if is_right {
@@ -527,7 +612,7 @@ fn extract_transits(program: &Program, offset: isize, cells: &[u8]) -> (Vec<Tran
 }
 
 #[inline]
-fn left_wall_isolated(offset: isize, cells: &[u8], w_l: &[u8], x_l: isize) -> bool {
+fn left_wall_isolated(offset: i64, cells: &[u8], w_l: &[u8], x_l: i64) -> bool {
     offset == x_l
         && cells.len() > w_l.len()
         && cells.starts_with(w_l)
@@ -535,8 +620,8 @@ fn left_wall_isolated(offset: isize, cells: &[u8], w_l: &[u8], x_l: isize) -> bo
 }
 
 #[inline]
-fn right_wall_isolated(offset: isize, cells: &[u8], w_r: &[u8], x_r: isize) -> bool {
-    offset + (cells.len() as isize) == x_r + (w_r.len() as isize)
+fn right_wall_isolated(offset: i64, cells: &[u8], w_r: &[u8], x_r: i64) -> bool {
+    offset + (cells.len() as i64) == x_r + (w_r.len() as i64)
         && cells.len() > w_r.len()
         && cells.ends_with(w_r)
         && cells[cells.len() - w_r.len() - 1] == 0
@@ -549,7 +634,7 @@ struct BounceCandidate {
     w_l: Vec<u8>,
     shuttle_1: Vec<u8>,
     w_r: Vec<u8>,
-    fixed_wall_offset: isize,
+    fixed_wall_offset: i64,
     g_1: usize,
 }
 
@@ -818,7 +903,7 @@ pub fn run_decider_pipeline(
 /// Run the staged decider pipeline using active sparse tape entries.
 pub fn run_decider_pipeline_sparse(
     program: &Program,
-    final_entries: Option<&[(isize, u8)]>,
+    final_entries: Option<&[(i64, u8)]>,
     max_steps: u64,
 ) -> Option<Decider> {
     if let Some(d) = decide_static_backtrack(program) {

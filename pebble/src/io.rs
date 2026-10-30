@@ -1,5 +1,5 @@
 use crate::program::{Program, ProgramError};
-use crate::simulation::SimOutcome;
+use crate::simulation::{SimOutcome, UnknownReason};
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -79,7 +79,7 @@ impl fmt::Display for ProgramRecord {
 /// - `<program>\tHALT\t<steps>`
 /// - `<program>\t<steps>` (shorthand for `Halted { steps }`)
 /// - `<program>\tINF\t<decider>\t<steps>` (or `DECIDED`)
-/// - `<program>\tUNKNOWN\t<steps>` (or `MAX_STEPS` / `HOLD` / `TIMEOUT`)
+/// - `<program>\tUNKNOWN\t<reason>\t<steps>` (or `MAX_STEPS` / `HOLD` / `TIMEOUT` / `UNK`, or legacy `UNKNOWN\t<steps>`)
 /// - `<program>\tMISSING_RULE\t<pebbles>\t<steps>`
 pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, IoError> {
     let (code_part, comment_part) = match line.split_once('#') {
@@ -160,12 +160,17 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                             decider = crate::deciders::Decider::Bouncer(Some(proof));
                         }
                     }
+                    crate::deciders::Decider::AcceleratedInfinite(_) => {
+                        if let Some(proof) = parse_accelerated_infinite_proof_comment(comment) {
+                            decider = crate::deciders::Decider::AcceleratedInfinite(Some(proof));
+                        }
+                    }
                     _ => {}
                 }
             }
             SimOutcome::Inf { decider, steps }
         }
-        "UNKNOWN" | "MAX_STEPS" | "HOLD" | "HOLDOUT" | "TIMEOUT" | "UNK" => {
+        "OVERFLOW" | "COORD_OVERFLOW" => {
             let steps_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
                 line: line_num,
                 detail: format!("missing step count after {status_or_steps}"),
@@ -174,7 +179,42 @@ pub fn parse_record_line(line: &str, line_num: usize) -> Result<ProgramRecord, I
                 line: line_num,
                 detail: format!("invalid step count '{steps_str}'"),
             })?;
-            SimOutcome::Unknown { steps }
+            SimOutcome::Unknown {
+                steps,
+                reason: UnknownReason::CoordOverflow,
+            }
+        }
+        "UNKNOWN" | "MAX_STEPS" | "HOLD" | "HOLDOUT" | "TIMEOUT" | "UNK" => {
+            let token2 = fields.next().ok_or_else(|| IoError::ParseOutcome {
+                line: line_num,
+                detail: format!("missing step count or reason after {status_or_steps}"),
+            })?;
+            if let Ok(steps) = token2.parse::<u64>() {
+                // Legacy format: UNKNOWN <steps> [optional reason]
+                let reason = match fields.next() {
+                    Some(r) => r.parse::<UnknownReason>().map_err(|detail| IoError::ParseOutcome {
+                        line: line_num,
+                        detail,
+                    })?,
+                    None => UnknownReason::StepLimit,
+                };
+                SimOutcome::Unknown { steps, reason }
+            } else {
+                // Canonical format: UNKNOWN <reason> <steps>
+                let reason = token2.parse::<UnknownReason>().map_err(|detail| IoError::ParseOutcome {
+                    line: line_num,
+                    detail,
+                })?;
+                let steps_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
+                    line: line_num,
+                    detail: format!("missing step count after UNKNOWN {token2}"),
+                })?;
+                let steps: u64 = steps_str.parse().map_err(|_| IoError::ParseOutcome {
+                    line: line_num,
+                    detail: format!("invalid step count '{steps_str}'"),
+                })?;
+                SimOutcome::Unknown { steps, reason }
+            }
         }
         "MISSING_RULE" => {
             let pebbles_str = fields.next().ok_or_else(|| IoError::ParseOutcome {
@@ -320,6 +360,59 @@ fn parse_bouncer_proof_comment(comment: &str) -> Option<crate::deciders::Bouncer
     })
 }
 
+fn parse_accelerated_infinite_proof_comment(
+    comment: &str,
+) -> Option<crate::deciders::AcceleratedInfiniteProof> {
+    let mut period = None;
+    let mut dxs = Vec::new();
+    let mut periods = Vec::new();
+    let mut dx_left = None;
+    let mut dx_right = None;
+
+    for part in comment.split_whitespace() {
+        let part = part.trim_start_matches('#');
+        if let Some(v) = part.strip_prefix("period=").or_else(|| part.strip_prefix("p=")) {
+            period = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("dxs=").or_else(|| part.strip_prefix("dx=")) {
+            let v = v.trim_matches(|c| c == '[' || c == ']');
+            for item in v.split(',') {
+                if let Ok(d) = item.trim().parse::<i64>() {
+                    dxs.push(d);
+                }
+            }
+        } else if let Some(v) = part.strip_prefix("periods=") {
+            let v = v.trim_matches(|c| c == '[' || c == ']');
+            for item in v.split(',') {
+                if let Ok(p) = item.trim().parse::<u32>() {
+                    periods.push(p);
+                }
+            }
+        } else if let Some(v) = part.strip_prefix("dx_l=").or_else(|| part.strip_prefix("dx_left=")) {
+            dx_left = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("dx_r=").or_else(|| part.strip_prefix("dx_right=")) {
+            dx_right = v.parse().ok();
+        }
+    }
+
+    if dxs.is_empty() {
+        if let (Some(l), Some(r)) = (dx_left, dx_right) {
+            dxs.push(l);
+            dxs.push(r);
+        }
+    }
+
+    let p = period.unwrap_or(1);
+    if periods.is_empty() {
+        periods = vec![p as u32; dxs.len()];
+    }
+
+    Some(crate::deciders::AcceleratedInfiniteProof::new(
+        p,
+        &dxs,
+        &periods,
+    ))
+}
+
 /// Read `ProgramRecord`s from any `BufRead` source, ignoring comment-only and blank lines.
 pub fn read_records<R: BufRead>(reader: R) -> Result<Vec<ProgramRecord>, IoError> {
     let mut records = Vec::new();
@@ -424,7 +517,7 @@ mod tests {
             ),
             ProgramRecord::new(
                 "01_11_03_21_04".parse().unwrap(),
-                Some(SimOutcome::Unknown { steps: 100 }),
+                Some(SimOutcome::unknown_step_limit(100)),
             ),
             ProgramRecord::new(
                 "00_--_--_--_14".parse().unwrap(),
@@ -514,6 +607,23 @@ mod tests {
                     steps: 4,
                 }),
             ),
+            ProgramRecord::new(
+                "00_00_00_04_41_11_33_80_22_12_56".parse().unwrap(),
+                Some(SimOutcome::Inf {
+                    decider: Decider::AcceleratedInfinite(Some(
+                        crate::deciders::AcceleratedInfiniteProof::new(
+                            1,
+                            &[-1, 1],
+                            &[1, 1],
+                        ),
+                    )),
+                    steps: 25,
+                }),
+            ),
+            ProgramRecord::new(
+                "00_01_20_03".parse().unwrap(),
+                Some(SimOutcome::unknown_coord_overflow(9_223_372_036_854_776_075)),
+            ),
             ProgramRecord::new("00_01_20_03".parse().unwrap(), None),
         ];
 
@@ -590,7 +700,7 @@ mod tests {
         assert_eq!(records[1].outcome, Some(SimOutcome::Halted { steps: 6 }));
         assert_eq!(
             records[2].outcome,
-            Some(SimOutcome::Unknown { steps: 50 })
+            Some(SimOutcome::unknown_step_limit(50))
         );
         assert_eq!(records[3].outcome, None);
 
@@ -606,6 +716,51 @@ mod tests {
         assert_eq!(format_count(999), "999");
         assert_eq!(format_count(1000), "1,000");
         assert_eq!(format_count(23884622), "23,884,622");
+    }
+
+    #[test]
+    fn test_accelerated_infinite_differing_periods_roundtrip() {
+        let proof = crate::deciders::AcceleratedInfiniteProof::new(
+            4,
+            &[-4, 0, 2],
+            &[1, 2, 4],
+        );
+        let outcome = SimOutcome::Inf {
+            decider: Decider::AcceleratedInfinite(Some(proof)),
+            steps: 40,
+        };
+        assert_eq!(
+            outcome.to_string(),
+            "INF\tAcceleratedInfinite\t40 # period=4 dxs=[-4,0,2] periods=[1,2,4]"
+        );
+
+        let input = "00_01\tINF\tAcceleratedInfinite\t40 # period=4 dxs=[-4,0,2] periods=[1,2,4]\n";
+        let records = read_records(Cursor::new(input)).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].outcome, Some(outcome));
+    }
+
+    #[test]
+    fn test_unknown_reason_io_formats() {
+        let step_lim = SimOutcome::unknown_step_limit(1000);
+        let overflow = SimOutcome::unknown_coord_overflow(2000);
+
+        assert_eq!(step_lim.to_string(), "UNKNOWN\tSTEP_LIMIT\t1000");
+        assert_eq!(overflow.to_string(), "UNKNOWN\tOVERFLOW\t2000");
+
+        let input = "\
+            00_01\tUNKNOWN\tSTEP_LIMIT\t1000\n\
+            00_02\tUNKNOWN\tOVERFLOW\t2000\n\
+            00_11\tUNKNOWN\t3000\n\
+            00_20\tOVERFLOW\t4000\n\
+        ";
+
+        let records = read_records(Cursor::new(input)).unwrap();
+        assert_eq!(records.len(), 4);
+        assert_eq!(records[0].outcome, Some(SimOutcome::unknown_step_limit(1000)));
+        assert_eq!(records[1].outcome, Some(SimOutcome::unknown_coord_overflow(2000)));
+        assert_eq!(records[2].outcome, Some(SimOutcome::unknown_step_limit(3000)));
+        assert_eq!(records[3].outcome, Some(SimOutcome::unknown_coord_overflow(4000)));
     }
 
     #[test]

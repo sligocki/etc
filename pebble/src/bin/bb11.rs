@@ -55,11 +55,13 @@ fn main() {
             PipelineStage::Bouncer { steps: 100 },
             PipelineStage::Ctl(CtlConfig {
                 steps: 100,
+                moduli: vec![1, 2, 3],
                 ..Default::default()
             }),
-            PipelineStage::Simulation { steps: 10_000 },
-            PipelineStage::Cycler { steps: 10_000 },
-            PipelineStage::SeparatedComponents { steps: 10_000 },
+            PipelineStage::AcceleratedSim { sim_steps: 1_000 },
+            PipelineStage::Cycler { steps: 1_000 },
+            PipelineStage::SeparatedComponents { steps: 1_000 },
+            PipelineStage::Bouncer { steps: 1_000 },
             // PipelineStage::Ctl(CtlConfig {
             //     steps: 10_000,
             //     max_states: 4_000,
@@ -67,7 +69,7 @@ fn main() {
             //     floors: vec![6, 8, 10],
             //     ..Default::default()
             // }),
-            PipelineStage::Simulation { steps: 10_000_000 },
+            PipelineStage::AcceleratedSim { sim_steps: 1_000_000 },
         ],
     };
 

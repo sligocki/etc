@@ -322,8 +322,8 @@ pub struct EnumStats {
     /// Number of enumerated TNF programs proven infinite by the decider pipeline.
     pub inf_programs: u64,
     /// Breakdown of infinite programs by decider:
-    /// `[EdgeGlider, Cycler, SeparatedComponents, Bouncer, Ctl, StaticBacktrack]`.
-    pub decided_by_kind: [u64; 6],
+    /// `[EdgeGlider, Cycler, SeparatedComponents, Bouncer, Ctl, StaticBacktrack, AcceleratedInfinite]`.
+    pub decided_by_kind: [u64; 7],
     /// Maximum halting step count observed across all halted programs.
     pub max_halting_steps: Option<u64>,
     /// Minimum halting step count observed across all halted programs.
@@ -363,7 +363,7 @@ pub struct EnumStats {
     pub cycler_max_period: u64,
     pub cycler_total_period: u64,
     pub cycler_period_counts: std::collections::BTreeMap<u64, u64>,
-    pub cycler_dx_counts: std::collections::BTreeMap<isize, u64>,
+    pub cycler_dx_counts: std::collections::BTreeMap<i64, u64>,
 
     /// Number of SeparatedComponents proofs found.
     pub sep_comp_proofs_count: u64,
@@ -551,6 +551,7 @@ impl EnumStats {
                         4
                     }
                     Decider::StaticBacktrack => 5,
+                    Decider::AcceleratedInfinite(_) => 6,
                 };
                 self.decided_by_kind[idx] += 1;
             }
@@ -567,6 +568,7 @@ impl EnumStats {
             Decider::Bouncer(_) => 3,
             Decider::Ctl(_) => 4,
             Decider::StaticBacktrack => 5,
+            Decider::AcceleratedInfinite(_) => 6,
         };
         self.decided_by_kind[idx]
     }
@@ -893,7 +895,7 @@ pub fn run_stage(
             let outcome = if s.steps() < *steps {
                 s.run(prog, *steps)
             } else {
-                SimOutcome::Unknown { steps: s.steps() }
+                SimOutcome::unknown_step_limit(s.steps())
             };
             match outcome {
                 SimOutcome::Halted { steps } => PipelineStepOutcome::Halted { steps },
@@ -1088,7 +1090,7 @@ pub fn evaluate_pipeline(
     let final_steps = sim.as_ref().map_or(0, |s| s.steps());
     PipelineEvalResult::Done(EnumEntry {
         program: prog,
-        outcome: SimOutcome::Unknown { steps: final_steps },
+        outcome: SimOutcome::unknown_step_limit(final_steps),
     })
 }
 
@@ -1152,7 +1154,7 @@ pub fn sample_random_descent(
                 if children.is_empty() {
                     return EnumEntry {
                         program: Program::empty(start_prog.size()).expect("valid size"),
-                        outcome: SimOutcome::Unknown { steps: 0 },
+                        outcome: SimOutcome::unknown_step_limit(0),
                     };
                 }
                 let idx = rng.next_usize(children.len());
@@ -1429,7 +1431,7 @@ where
             .into_iter()
             .map(|r| EnumEntry {
                 program: r.program,
-                outcome: r.outcome.unwrap_or(SimOutcome::Unknown { steps: 0 }),
+                outcome: r.outcome.unwrap_or(SimOutcome::unknown_step_limit(0)),
             })
             .collect();
         return (base_stats, entries);
@@ -1830,7 +1832,7 @@ where
         if seen_final.insert(r.program.clone()) {
             final_entries.push(EnumEntry {
                 program: r.program,
-                outcome: r.outcome.unwrap_or(SimOutcome::Unknown { steps: 0 }),
+                outcome: r.outcome.unwrap_or(SimOutcome::unknown_step_limit(0)),
             });
         }
     }
@@ -2338,11 +2340,14 @@ impl CheckpointData {
             .split(',')
             .map(|s| s.trim().parse().map_err(|e| format!("decided_by_kind: {e}")))
             .collect::<Result<_, _>>()?;
-        if kind_parts.len() != 6 {
-            return Err("decided_by_kind must have 6 items".to_string());
+        let mut decided_by_kind = [0u64; 7];
+        if kind_parts.len() == 6 {
+            decided_by_kind[..6].copy_from_slice(&kind_parts);
+        } else if kind_parts.len() == 7 {
+            decided_by_kind.copy_from_slice(&kind_parts);
+        } else {
+            return Err("decided_by_kind must have 6 or 7 items".to_string());
         }
-        let mut decided_by_kind = [0u64; 6];
-        decided_by_kind.copy_from_slice(&kind_parts);
 
         let max_halting_steps = match get("max_halting_steps")?.as_str() {
             "None" | "" => None,

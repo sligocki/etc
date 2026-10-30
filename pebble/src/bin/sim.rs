@@ -33,7 +33,7 @@ struct Cli {
 
     /// Coordinate offset for initial tape (default: 0)
     #[arg(long = "offset", visible_alias = "origin", default_value_t = 0)]
-    offset: isize,
+    offset: i64,
 
     /// Read programs to simulate from <FILE>
     #[arg(short = 'i', long = "input", visible_alias = "infile")]
@@ -481,9 +481,14 @@ fn print_outcome(outcome: &SimOutcome, elapsed: std::time::Duration) {
         SimOutcome::Inf { decider, steps } => {
             println!("Status:  INF decided by {decider} (simulated {steps} steps)");
         }
-        SimOutcome::Unknown { steps } => {
-            println!("Status:  UNKNOWN reached ({steps} steps) without halting (undecided)");
-        }
+        SimOutcome::Unknown { steps, reason } => match reason {
+            pebble::simulation::UnknownReason::StepLimit => {
+                println!("Status:  UNKNOWN reached ({steps} steps) without halting (undecided)");
+            }
+            pebble::simulation::UnknownReason::CoordOverflow => {
+                println!("Status:  OVERFLOW reached at step {steps} (coordinates exceeded 64-bit limits)");
+            }
+        },
         SimOutcome::MissingRule { pebbles, steps } => {
             println!("Status:  MISSING_RULE for {pebbles} pebbles at step {steps}");
         }

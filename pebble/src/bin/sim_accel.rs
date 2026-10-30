@@ -2,7 +2,7 @@ use clap::Parser;
 use pebble::accelerated::{AcceleratedSimulator, FastForwardResult};
 use pebble::io::{format_count, read_records_from_file, write_records_to_file, ProgramRecord};
 use pebble::program::Program;
-use pebble::simulation::{SimOutcome, SparseTape, StepResult};
+use pebble::simulation::{SimOutcome, SparseTape, StepResult, UnknownReason};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -31,7 +31,7 @@ struct Cli {
 
     /// Coordinate offset for initial tape (default: 0)
     #[arg(long = "offset", visible_alias = "origin", default_value_t = 0)]
-    offset: isize,
+    offset: i64,
 
     /// Read programs to simulate from <FILE>
     #[arg(short = 'i', long = "input", visible_alias = "infile")]
@@ -111,7 +111,8 @@ fn run_file_mode(
     let completed = AtomicU64::new(0);
     let halted_count = AtomicU64::new(0);
     let inf_count = AtomicU64::new(0);
-    let holdout_count = AtomicU64::new(0);
+    let holdout_step_limit_count = AtomicU64::new(0);
+    let holdout_overflow_count = AtomicU64::new(0);
 
     let output_records = Mutex::new(Vec::with_capacity(records.len()));
     let start_time = Instant::now();
@@ -130,8 +131,10 @@ fn run_file_mode(
             halted_count.fetch_add(1, Ordering::Relaxed);
         } else if outcome.is_inf() {
             inf_count.fetch_add(1, Ordering::Relaxed);
+        } else if outcome.is_overflow() {
+            holdout_overflow_count.fetch_add(1, Ordering::Relaxed);
         } else {
-            holdout_count.fetch_add(1, Ordering::Relaxed);
+            holdout_step_limit_count.fetch_add(1, Ordering::Relaxed);
         }
 
         if output_file.is_some() && (!holdouts_only || outcome.is_holdout()) {
@@ -145,24 +148,39 @@ fn run_file_mode(
             *lp = Instant::now();
             let elapsed = start_time.elapsed().as_secs_f64();
             let rate = if elapsed > 0.0 { done as f64 / elapsed } else { 0.0 };
+            let total_holdouts = holdout_step_limit_count.load(Ordering::Relaxed)
+                + holdout_overflow_count.load(Ordering::Relaxed);
             eprintln!(
                 "Progress: {done}/{total} ({:.1}%) | Halted: {} | Inf: {} | Holdout: {} | {:.0} prog/s",
                 (done as f64 / total as f64) * 100.0,
                 halted_count.load(Ordering::Relaxed),
                 inf_count.load(Ordering::Relaxed),
-                holdout_count.load(Ordering::Relaxed),
+                total_holdouts,
                 rate
             );
         }
     });
 
     let elapsed = start_time.elapsed();
+    let step_limit_n = holdout_step_limit_count.load(Ordering::Relaxed);
+    let overflow_n = holdout_overflow_count.load(Ordering::Relaxed);
+    let holdout_n = step_limit_n + overflow_n;
+
     println!();
     println!("=== Summary ===");
     println!("Total programs:     {}", format_count(total));
     println!("Halted:             {}", format_count(halted_count.load(Ordering::Relaxed)));
     println!("Infinite decided:   {}", format_count(inf_count.load(Ordering::Relaxed)));
-    println!("Holdouts (undecided): {}", format_count(holdout_count.load(Ordering::Relaxed)));
+    if overflow_n > 0 {
+        println!(
+            "Holdouts (undecided): {} ({} step limit, {} coordinate overflow)",
+            format_count(holdout_n),
+            format_count(step_limit_n),
+            format_count(overflow_n)
+        );
+    } else {
+        println!("Holdouts (undecided): {}", format_count(holdout_n));
+    }
     println!("Wallclock runtime:  {:.3?}", elapsed);
 
     if let Some(out_path) = output_file {
@@ -306,10 +324,10 @@ fn main() {
     let start = Instant::now();
 
     if verbose {
-        let mut trace_snaps: Vec<(u64, u64, Vec<(isize, u8)>)> = Vec::new(); // (sim_step, base_step, entries)
+        let mut trace_snaps: Vec<(u64, u64, Vec<(i64, u8)>)> = Vec::new(); // (sim_step, base_step, entries)
         trace_snaps.push((sim.sim_steps(), sim.steps(), sim.tape().entries().to_vec()));
 
-        let mut outcome = SimOutcome::Unknown { steps: sim.steps() };
+        let mut outcome = SimOutcome::unknown_step_limit(sim.steps());
 
         while sim.sim_steps() < max_sim_steps && max_base_steps.map_or(true, |b| sim.steps() < b) {
             let max_jump = max_base_steps.map_or(u64::MAX, |b| b.saturating_sub(sim.steps()));
@@ -345,7 +363,7 @@ fn main() {
         }
 
         if matches!(outcome, SimOutcome::Unknown { .. }) {
-            outcome = SimOutcome::Unknown { steps: sim.steps() };
+            outcome = SimOutcome::unknown_step_limit(sim.steps());
         }
 
         let elapsed = start.elapsed();
@@ -501,9 +519,14 @@ fn print_final_summary(
         SimOutcome::Inf { decider, steps } => {
             println!("Status:           INF decided by {decider} (at step {steps})");
         }
-        SimOutcome::Unknown { steps } => {
-            println!("Status:           UNKNOWN reached ({steps} base generations) without halting (undecided)");
-        }
+        SimOutcome::Unknown { steps, reason } => match reason {
+            UnknownReason::StepLimit => {
+                println!("Status:           UNKNOWN reached ({steps} base generations) without halting (undecided)");
+            }
+            UnknownReason::CoordOverflow => {
+                println!("Status:           OVERFLOW (coordinates exceeded 64-bit limits at {steps} base generations)");
+            }
+        },
         SimOutcome::MissingRule { pebbles, steps } => {
             println!("Status:           MISSING_RULE for {pebbles} pebbles at base generation {steps}");
         }

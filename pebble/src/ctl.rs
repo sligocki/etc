@@ -185,7 +185,7 @@ pub enum CtlStepError {
 pub fn step_isolated_block(
     block: &[u8],
     program: &Program,
-) -> Result<(Vec<u8>, isize, isize), CtlStepError> {
+) -> Result<(Vec<u8>, i64, i64), CtlStepError> {
     let mut next = vec![0u8; block.len() + 2];
     for (i, &k) in block.iter().enumerate() {
         if k == 0 {
@@ -211,8 +211,8 @@ pub fn step_isolated_block(
             max: 28,
         });
     }
-    let delta_left = (first_nz as isize) - 1;
-    let delta_right = (last_nz as isize) - (block.len() as isize);
+    let delta_left = (first_nz as i64) - 1;
+    let delta_right = (last_nz as i64) - (block.len() as i64);
     Ok((out, delta_left, delta_right))
 }
 
@@ -250,7 +250,7 @@ pub fn step_ctl_pre_state(
     let mut inter_gaps = Vec::with_capacity(pre.gaps.len());
     for (i, g) in pre.gaps.iter().enumerate() {
         let dg = delta_lefts[i + 1] - delta_rights[i];
-        let next_rem = (g.rem as isize) + dg;
+        let next_rem = (g.rem as i64) + dg;
         if next_rem < 0 {
             return Err(CtlStepError::NegativeGap);
         }
@@ -895,7 +895,7 @@ impl CtlTrajectoryTracker {
             }
             let mut diffs = Vec::with_capacity(values.len() - 1);
             for w in values.windows(2) {
-                let d = (w[1] as isize - w[0] as isize).unsigned_abs();
+                let d = (w[1] as i64 - w[0] as i64).unsigned_abs() as usize;
                 if d > 0 {
                     diffs.push(d);
                 }

@@ -211,6 +211,197 @@ impl fmt::Display for PipelineStage {
     }
 }
 
+impl std::str::FromStr for PipelineStage {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let raw = s.trim();
+        if raw.is_empty() {
+            return Err("empty pipeline stage".to_string());
+        }
+
+        let (name, args_str) = if let Some(open) = raw.find('(') {
+            if !raw.ends_with(')') {
+                return Err(format!("mismatched parentheses in stage '{raw}'"));
+            }
+            (&raw[..open], &raw[open + 1..raw.len() - 1])
+        } else if let Some(colon) = raw.find(':') {
+            (&raw[..colon], &raw[colon + 1..])
+        } else {
+            (raw, "")
+        };
+
+        let name = name.trim().to_ascii_lowercase();
+        let args_str = args_str.trim();
+
+        let single_num = if !args_str.is_empty() && args_str.chars().all(|c| c.is_ascii_digit()) {
+            Some(args_str.parse::<u64>().map_err(|e| format!("invalid steps '{args_str}': {e}"))?)
+        } else {
+            None
+        };
+
+        match name.as_str() {
+            "staticbacktrack" | "static_backtrack" | "backtrack" | "sb" => {
+                Ok(PipelineStage::StaticBacktrack)
+            }
+            "edgeglider" | "edge_glider" | "edgeglidercurrent" | "edge_glider_current" | "eg" => {
+                Ok(PipelineStage::EdgeGliderCurrent)
+            }
+            "simulation" | "sim" | "s" => {
+                let steps = single_num.unwrap_or(0);
+                Ok(PipelineStage::Simulation { steps })
+            }
+            "cycler" | "c" => {
+                let steps = single_num.unwrap_or(0);
+                Ok(PipelineStage::Cycler { steps })
+            }
+            "separatedcomponents" | "separated_components" | "sep_comp" | "sc" => {
+                let steps = single_num.unwrap_or(0);
+                Ok(PipelineStage::SeparatedComponents { steps })
+            }
+            "bouncer" | "b" => {
+                let steps = single_num.unwrap_or(0);
+                Ok(PipelineStage::Bouncer { steps })
+            }
+            "multibouncer" | "multi_bouncer" | "dualbouncer" | "dual_bouncer" | "mb" => {
+                let steps = single_num.unwrap_or(0);
+                Ok(PipelineStage::MultiBouncer { steps })
+            }
+            "acceleratedsim" | "accelerated_sim" | "accelsim" | "accel" | "acc" => {
+                let sim_steps = single_num.unwrap_or(0);
+                Ok(PipelineStage::AcceleratedSim { sim_steps })
+            }
+            "ctl" => {
+                let mut cfg = CtlConfig::default();
+                if let Some(steps) = single_num {
+                    cfg.steps = steps;
+                } else if !args_str.is_empty() {
+                    let mut current_key: Option<String> = None;
+                    let mut floors_cleared = false;
+                    let mut moduli_cleared = false;
+                    for part in args_str.split(',') {
+                        let part = part.trim();
+                        if let Some((k, v)) = part.split_once('=') {
+                            let k = k.trim().to_ascii_lowercase();
+                            let v = v.trim();
+                            current_key = Some(k.clone());
+                            parse_ctl_key_val(
+                                &mut cfg,
+                                &k,
+                                v,
+                                &mut floors_cleared,
+                                &mut moduli_cleared,
+                            )?;
+                        } else if let Some(ref k) = current_key {
+                            parse_ctl_key_val(
+                                &mut cfg,
+                                k,
+                                part,
+                                &mut floors_cleared,
+                                &mut moduli_cleared,
+                            )?;
+                        } else if part.chars().all(|c| c.is_ascii_digit()) {
+                            cfg.steps = part
+                                .parse::<u64>()
+                                .map_err(|e| format!("invalid steps: {e}"))?;
+                        }
+                    }
+                }
+                Ok(PipelineStage::Ctl(cfg))
+            }
+            other => Err(format!(
+                "unknown decider stage '{other}'. Available: static_backtrack, edge_glider, cycler, separated_components, bouncer, multibouncer, accelerated, ctl, simulation"
+            )),
+        }
+    }
+}
+
+fn parse_ctl_key_val(
+    cfg: &mut CtlConfig,
+    key: &str,
+    val: &str,
+    floors_cleared: &mut bool,
+    moduli_cleared: &mut bool,
+) -> Result<(), String> {
+    match key {
+        "steps" | "s" | "max_steps" => {
+            cfg.steps = val
+                .parse::<u64>()
+                .map_err(|e| format!("invalid ctl steps '{val}': {e}"))?;
+        }
+        "states" | "m" | "max_states" => {
+            cfg.max_states = val
+                .parse::<usize>()
+                .map_err(|e| format!("invalid ctl states '{val}': {e}"))?;
+        }
+        "floors" | "floor" | "f" => {
+            let f = val
+                .parse::<usize>()
+                .map_err(|e| format!("invalid ctl floor '{val}': {e}"))?;
+            if !*floors_cleared {
+                cfg.floors.clear();
+                *floors_cleared = true;
+            }
+            if !cfg.floors.contains(&f) {
+                cfg.floors.push(f);
+            }
+        }
+        "moduli" | "modulus" | "mod" => {
+            let m = val
+                .parse::<usize>()
+                .map_err(|e| format!("invalid ctl modulus '{val}': {e}"))?;
+            if !*moduli_cleared {
+                cfg.moduli.clear();
+                *moduli_cleared = true;
+            }
+            if !cfg.moduli.contains(&m) {
+                cfg.moduli.push(m);
+            }
+        }
+        "thresh" | "split" | "split_threshold" => {
+            let t = val
+                .parse::<usize>()
+                .map_err(|e| format!("invalid ctl split_threshold '{val}': {e}"))?;
+            cfg.split_thresh = vec![t];
+        }
+        _ => return Err(format!("unknown ctl parameter '{key}'")),
+    }
+    Ok(())
+}
+
+impl PipelineStage {
+    /// If this stage has steps == 0 (unspecified in stage expression), override with `default_steps`.
+    pub fn with_default_steps(self, default_steps: u64) -> Self {
+        match self {
+            PipelineStage::Simulation { steps } if steps == 0 => {
+                PipelineStage::Simulation { steps: default_steps }
+            }
+            PipelineStage::Cycler { steps } if steps == 0 => {
+                PipelineStage::Cycler { steps: default_steps }
+            }
+            PipelineStage::SeparatedComponents { steps } if steps == 0 => {
+                PipelineStage::SeparatedComponents { steps: default_steps }
+            }
+            PipelineStage::Bouncer { steps } if steps == 0 => {
+                PipelineStage::Bouncer { steps: default_steps }
+            }
+            PipelineStage::MultiBouncer { steps } if steps == 0 => {
+                PipelineStage::MultiBouncer { steps: default_steps }
+            }
+            PipelineStage::AcceleratedSim { sim_steps } if sim_steps == 0 => {
+                PipelineStage::AcceleratedSim {
+                    sim_steps: default_steps,
+                }
+            }
+            PipelineStage::Ctl(mut cfg) if cfg.steps == 0 => {
+                cfg.steps = default_steps;
+                PipelineStage::Ctl(cfg)
+            }
+            other => other,
+        }
+    }
+}
+
 /// Overall pipeline configuration defining the execution stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PipelineConfig {
@@ -3368,5 +3559,68 @@ mod tests {
         let _ = std::fs::remove_file(&ckpt_path);
         let _ = std::fs::remove_file(&out_path);
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_pipeline_stage_from_str() {
+        use std::str::FromStr;
+
+        assert_eq!(
+            PipelineStage::from_str("multibouncer").unwrap(),
+            PipelineStage::MultiBouncer { steps: 0 }
+        );
+        assert_eq!(
+            PipelineStage::from_str("multibouncer:150").unwrap(),
+            PipelineStage::MultiBouncer { steps: 150 }
+        );
+        assert_eq!(
+            PipelineStage::from_str("multibouncer(200)").unwrap(),
+            PipelineStage::MultiBouncer { steps: 200 }
+        );
+        assert_eq!(
+            PipelineStage::from_str("bouncer:50").unwrap(),
+            PipelineStage::Bouncer { steps: 50 }
+        );
+        assert_eq!(
+            PipelineStage::from_str("cycler:80").unwrap(),
+            PipelineStage::Cycler { steps: 80 }
+        );
+        assert_eq!(
+            PipelineStage::from_str("sep_comp:90").unwrap(),
+            PipelineStage::SeparatedComponents { steps: 90 }
+        );
+        assert_eq!(
+            PipelineStage::from_str("backtrack").unwrap(),
+            PipelineStage::StaticBacktrack
+        );
+        assert_eq!(
+            PipelineStage::from_str("edge_glider").unwrap(),
+            PipelineStage::EdgeGliderCurrent
+        );
+        assert_eq!(
+            PipelineStage::from_str("accel:1000").unwrap(),
+            PipelineStage::AcceleratedSim { sim_steps: 1000 }
+        );
+
+        // Test CTL parsing
+        let ctl_stage = PipelineStage::from_str(
+            "ctl:steps=2000,states=5000,floors=6,8,moduli=1,2,3,split=3",
+        )
+        .unwrap();
+        if let PipelineStage::Ctl(cfg) = ctl_stage {
+            assert_eq!(cfg.steps, 2000);
+            assert_eq!(cfg.max_states, 5000);
+            assert_eq!(cfg.floors, vec![6, 8]);
+            assert_eq!(cfg.moduli, vec![1, 2, 3]);
+            assert_eq!(cfg.split_thresh, vec![3]);
+        } else {
+            panic!("expected ctl stage");
+        }
+
+        // Test with_default_steps
+        let mb = PipelineStage::from_str("multibouncer")
+            .unwrap()
+            .with_default_steps(120);
+        assert_eq!(mb, PipelineStage::MultiBouncer { steps: 120 });
     }
 }

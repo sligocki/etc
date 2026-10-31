@@ -824,6 +824,438 @@ struct MultiBounceCandidate {
     gaps: Vec<usize>,
 }
 
+#[inline]
+fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
+    a = a.abs();
+    b = b.abs();
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+#[inline]
+fn lcm_i64(a: i64, b: i64) -> i64 {
+    if a == 0 || b == 0 {
+        0
+    } else {
+        (a / gcd_i64(a, b)).saturating_mul(b)
+    }
+}
+
+/// Split dense cell slice by runs of at least `thresh` zeros into `(clusters, gaps)`.
+fn split_clusters_and_gaps(cells: &[u8], thresh: usize) -> (Vec<Vec<u8>>, Vec<usize>) {
+    let thresh = thresh.max(1);
+    let mut clusters = Vec::new();
+    let mut gaps = Vec::new();
+    let n = cells.len();
+    let mut i = 0;
+    while i < n && cells[i] == 0 {
+        i += 1;
+    }
+    while i < n {
+        let start = i;
+        while i < n {
+            if cells[i] == 0 {
+                let mut z = i;
+                while z < n && cells[z] == 0 {
+                    z += 1;
+                }
+                if z == n || (z - i) >= thresh {
+                    break;
+                }
+                i = z;
+            } else {
+                i += 1;
+            }
+        }
+        clusters.push(cells[start..i].to_vec());
+        let mut z = i;
+        while z < n && cells[z] == 0 {
+            z += 1;
+        }
+        if z < n {
+            gaps.push(z - i);
+        }
+        i = z;
+    }
+    (clusters, gaps)
+}
+
+/// Step a single isolated cluster by 1 generation, returning `(left_shift, new_cells)`.
+fn step_isolated_cluster(program: &Program, cells: &[u8]) -> Option<(i64, Vec<u8>)> {
+    if cells.is_empty() {
+        return Some((0, Vec::new()));
+    }
+    let mut next = vec![0u8; cells.len() + 2];
+    let mut any_moved = false;
+    for (i, &val) in cells.iter().enumerate() {
+        if val > 0 {
+            let rule = program.rule(val)?;
+            if rule.left > 0 || rule.right > 0 {
+                any_moved = true;
+            }
+            next[i] = next[i].saturating_add(rule.left);
+            next[i + 1] = next[i + 1].saturating_add(rule.stay);
+            next[i + 2] = next[i + 2].saturating_add(rule.right);
+        }
+    }
+    let first = next.iter().position(|&x| x > 0)?;
+    let last = next.iter().rposition(|&x| x > 0)?;
+    let d_left = (first as i64) - 1;
+    let out = next[first..=last].to_vec();
+    // If nothing moved inside a single-cluster tape, it would halt; but for an isolated cluster
+    // in a multi-cluster tape (like a stationary wall), `any_moved == false` is normal.
+    let _ = any_moved;
+    Some((d_left, out))
+}
+
+#[derive(Debug, Clone)]
+struct SymbolicTape {
+    clusters: Vec<Vec<u8>>,
+    /// Each gap is `(a, b)` representing `a * k + b` zeros for integer `k >= min_k`.
+    gaps: Vec<(i64, i64)>,
+    k_val: i64,
+    k_scale: i64,
+    k_rem: i64,
+    min_k: i64,
+}
+
+impl SymbolicTape {
+    fn new(clusters: Vec<Vec<u8>>, gaps: Vec<(i64, i64)>, k_val: i64) -> Self {
+        Self {
+            clusters,
+            gaps,
+            k_val,
+            k_scale: 1,
+            k_rem: 0,
+            min_k: 0,
+        }
+    }
+
+    fn normalize(&mut self, thresh: usize) -> bool {
+        let thresh_i64 = thresh as i64;
+        let mut i = 0;
+        while i < self.gaps.len() {
+            let (a, b) = self.gaps[i];
+            if a == 0 && b < thresh_i64 {
+                if b < 0 || b > 128 {
+                    return false;
+                }
+                let mut merged =
+                    Vec::with_capacity(self.clusters[i].len() + (b as usize) + self.clusters[i + 1].len());
+                merged.extend_from_slice(&self.clusters[i]);
+                merged.resize(self.clusters[i].len() + (b as usize), 0);
+                merged.extend_from_slice(&self.clusters[i + 1]);
+                if merged.len() > 256 {
+                    return false;
+                }
+                self.clusters[i] = merged;
+                self.clusters.remove(i + 1);
+                self.gaps.remove(i);
+            } else {
+                if a < 0 {
+                    return false;
+                }
+                if a > 0 {
+                    if a.saturating_mul(self.k_val).saturating_add(b) < thresh_i64 {
+                        return false;
+                    }
+                    if a.saturating_mul(self.min_k).saturating_add(b) < thresh_i64 {
+                        let needed = thresh_i64 - b;
+                        let req_k = (needed + a - 1) / a;
+                        if req_k > self.min_k {
+                            self.min_k = req_k;
+                        }
+                    }
+                    if self.k_val < self.min_k {
+                        return false;
+                    }
+                }
+                i += 1;
+            }
+        }
+
+        let mut new_clusters = Vec::with_capacity(self.clusters.len() + 2);
+        let mut new_gaps = Vec::with_capacity(self.gaps.len() + 2);
+        for (idx, c) in self.clusters.iter().enumerate() {
+            let (sub_c, sub_g) = split_clusters_and_gaps(c, thresh);
+            if sub_c.is_empty() {
+                return false;
+            }
+            new_clusters.extend(sub_c);
+            for g in sub_g {
+                new_gaps.push((0, g as i64));
+            }
+            if idx < self.gaps.len() {
+                new_gaps.push(self.gaps[idx]);
+            }
+        }
+        if new_clusters.len() > 16 {
+            return false;
+        }
+        self.clusters = new_clusters;
+        self.gaps = new_gaps;
+        true
+    }
+
+    fn step_one(&mut self, program: &Program, thresh: usize) -> bool {
+        if !self.normalize(thresh) {
+            return false;
+        }
+        // Check if entire tape is quiescent (halted)
+        let all_quiescent = self.clusters.iter().all(|c| is_stationary_slice(program, c));
+        if all_quiescent {
+            return false;
+        }
+        let mut shifts = Vec::with_capacity(self.clusters.len());
+        let mut next_clusters = Vec::with_capacity(self.clusters.len());
+        for c in &self.clusters {
+            let old_len = c.len() as i64;
+            let Some((d_left, nxt)) = step_isolated_cluster(program, c) else {
+                return false;
+            };
+            let d_right = d_left + (nxt.len() as i64) - old_len;
+            shifts.push((d_left, d_right));
+            next_clusters.push(nxt);
+        }
+        self.clusters = next_clusters;
+        for i in 0..self.gaps.len() {
+            self.gaps[i].1 = self.gaps[i]
+                .1
+                .saturating_add(shifts[i + 1].0)
+                .saturating_sub(shifts[i].1);
+        }
+        self.normalize(thresh)
+    }
+
+    fn try_fast_forward(
+        &mut self,
+        program: &Program,
+        cache: &mut crate::accelerated::GliderCache,
+        thresh: usize,
+    ) -> bool {
+        if !self.normalize(thresh) || self.gaps.is_empty() {
+            return false;
+        }
+        let mut gliders = Vec::with_capacity(self.clusters.len());
+        for c in &self.clusters {
+            let Some(g) = cache.get_or_evaluate(program, c, 32) else {
+                return false;
+            };
+            gliders.push(g);
+        }
+        if gliders.iter().all(|g| g.is_quiescent) {
+            return false;
+        }
+        let mut joint_p = 1i64;
+        for g in &gliders {
+            joint_p = lcm_i64(joint_p, g.period as i64);
+            if joint_p > 1024 {
+                return false;
+            }
+        }
+        let dxs: Vec<i64> = gliders
+            .iter()
+            .map(|g| g.dx * (joint_p / (g.period as i64)))
+            .collect();
+        let d_gaps: Vec<i64> = (0..self.gaps.len())
+            .map(|i| dxs[i + 1] - dxs[i])
+            .collect();
+
+        let thresh_i64 = thresh as i64;
+        // If any constant gap (a == 0) is shrinking, step concretely instead
+        for (i, &(a, b)) in self.gaps.iter().enumerate() {
+            if a == 0 && b >= thresh_i64 && d_gaps[i] < 0 {
+                return false;
+            }
+        }
+
+        let mut shrinking_indices = Vec::new();
+        for (i, &(a, _)) in self.gaps.iter().enumerate() {
+            if a > 0 && d_gaps[i] < 0 {
+                shrinking_indices.push(i);
+            }
+        }
+        if shrinking_indices.is_empty() {
+            return false;
+        }
+
+        // Refine k -> m * k' + r so all shrinking gaps have `a` divisible by `v = -d_gap`
+        for &i in &shrinking_indices {
+            let a = self.gaps[i].0;
+            let v = -d_gaps[i];
+            let g = gcd_i64(a, v);
+            let m = v / g;
+            if m > 1 {
+                if self.k_scale.checked_mul(m).is_none() || self.k_scale * m > 1_000_000 {
+                    return false;
+                }
+                let r = self.k_val.rem_euclid(m);
+                for gap in &mut self.gaps {
+                    gap.1 = gap.1.saturating_add(gap.0.saturating_mul(r));
+                    gap.0 = gap.0.saturating_mul(m);
+                }
+                self.k_rem = self.k_rem.saturating_add(self.k_scale.saturating_mul(r));
+                self.k_scale = self.k_scale.saturating_mul(m);
+                self.k_val = (self.k_val - r) / m;
+                self.min_k = (self.min_k - r + m - 1).max(0) / m;
+                if self.k_val < self.min_k {
+                    return false;
+                }
+            }
+        }
+
+        // Choose the shrinking gap with minimum slope c_jump = a / v
+        let mut min_c = i64::MAX;
+        for &i in &shrinking_indices {
+            let a = self.gaps[i].0;
+            let v = -d_gaps[i];
+            min_c = min_c.min(a / v);
+        }
+        let mut best_d = i64::MAX;
+        for &i in &shrinking_indices {
+            let (a, b) = self.gaps[i];
+            let v = -d_gaps[i];
+            let c_jump = a / v;
+            if c_jump == min_c {
+                let d_jump = (b - thresh_i64 - v).div_euclid(v);
+                best_d = best_d.min(d_jump);
+            }
+        }
+        let c_jump = min_c;
+        let d_jump = best_d;
+        if c_jump.saturating_mul(self.k_val).saturating_add(d_jump) <= 0 {
+            return false;
+        }
+        while c_jump.saturating_mul(self.min_k).saturating_add(d_jump) <= 0 {
+            self.min_k += 1;
+            if self.min_k > self.k_val {
+                return false;
+            }
+        }
+
+        for i in 0..self.gaps.len() {
+            self.gaps[i].0 = self.gaps[i]
+                .0
+                .saturating_add(c_jump.saturating_mul(d_gaps[i]));
+            self.gaps[i].1 = self.gaps[i]
+                .1
+                .saturating_add(d_jump.saturating_mul(d_gaps[i]));
+        }
+        self.normalize(thresh)
+    }
+}
+
+/// Attempt to prove an inductive cycle starting from two concrete gap snapshots `g1` and `g2`
+/// of the same cluster pattern `clusters`.
+fn try_prove_symbolic_bouncer(
+    program: &Program,
+    cache: &mut crate::accelerated::GliderCache,
+    clusters: &[Vec<u8>],
+    g1: &[usize],
+    g2: &[usize],
+    start_step: u64,
+    cur_step: u64,
+) -> Option<MultiBouncerProof> {
+    if g1.len() != g2.len() || g1.is_empty() {
+        return None;
+    }
+    let mut diffs = Vec::with_capacity(g1.len());
+    let mut any_pos = false;
+    for (&x1, &x2) in g1.iter().zip(g2.iter()) {
+        if x2 < x1 {
+            return None;
+        }
+        let d = (x2 - x1) as i64;
+        if d > 0 {
+            any_pos = true;
+        }
+        diffs.push(d);
+    }
+    if !any_pos {
+        return None;
+    }
+    let mut g_d = 0i64;
+    for &d in &diffs {
+        if d > 0 {
+            g_d = if g_d == 0 { d } else { gcd_i64(g_d, d) };
+        }
+    }
+    let alphas: Vec<i64> = diffs.iter().map(|&d| d / g_d).collect();
+    let k_0 = (0..g2.len())
+        .filter(|&i| alphas[i] > 0)
+        .map(|i| (g2[i] as i64) / alphas[i])
+        .min()?;
+    if k_0 < 1 {
+        return None;
+    }
+    let betas: Vec<i64> = (0..g2.len())
+        .map(|i| (g2[i] as i64) - alphas[i] * k_0)
+        .collect();
+    let init_gaps: Vec<(i64, i64)> = alphas.iter().copied().zip(betas.iter().copied()).collect();
+
+    let mut st = SymbolicTape::new(clusters.to_vec(), init_gaps, k_0);
+    for _ in 0..250 {
+        if !st.try_fast_forward(program, cache, 2) && !st.step_one(program, 2) {
+            return None;
+        }
+        if st.clusters == clusters && st.gaps.len() == g2.len() && st.k_val >= st.min_k {
+            let mut k_next: Option<(i64, i64)> = None;
+            let mut ok = true;
+            for i in 0..g2.len() {
+                let (a_end, b_end) = st.gaps[i];
+                if alphas[i] == 0 {
+                    if a_end != 0 || b_end != betas[i] {
+                        ok = false;
+                        break;
+                    }
+                } else {
+                    if a_end % alphas[i] != 0 || (b_end - betas[i]) % alphas[i] != 0 {
+                        ok = false;
+                        break;
+                    }
+                    let big_a = a_end / alphas[i];
+                    let big_b = (b_end - betas[i]) / alphas[i];
+                    if let Some(prev) = k_next {
+                        if prev != (big_a, big_b) {
+                            ok = false;
+                            break;
+                        }
+                    } else {
+                        k_next = Some((big_a, big_b));
+                    }
+                }
+            }
+            if ok {
+                if let Some((big_a, big_b)) = k_next {
+                    let growth_at_min_k =
+                        (big_a - st.k_scale).saturating_mul(st.min_k) + (big_b - st.k_rem);
+                    if big_a >= st.k_scale
+                        && growth_at_min_k > 0
+                        && big_a % st.k_scale == 0
+                        && (big_b - st.k_rem).rem_euclid(st.k_scale) == 0
+                    {
+                        let growth_concrete = ((big_a - st.k_scale)
+                            .saturating_mul(st.k_val)
+                            .saturating_add(big_b - st.k_rem)
+                            .saturating_mul(g_d))
+                        .max(1) as usize;
+                        return Some(MultiBouncerProof {
+                            chambers: g2.len(),
+                            bounce_steps: cur_step.saturating_sub(start_step),
+                            gap_growth: growth_concrete,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Simulate `program` starting from an existing `sim` state up to `max_steps` additional steps
 /// and detect an N-chamber `MultiBouncer` (with N >= 1 chambers, N+1 walls, and N shuttles)
 /// with uniformly expanding chamber gaps, or observe if it halts or splits.
@@ -833,6 +1265,8 @@ pub fn decide_multi_bouncer_from_sim(
     max_steps: u64,
 ) -> StepDeciderOutcome {
     let mut candidates: Vec<MultiBounceCandidate> = Vec::new();
+    let mut sym_history: HashMap<Vec<Vec<u8>>, Vec<(u64, Vec<usize>)>> = HashMap::new();
+    let mut glider_cache = crate::accelerated::GliderCache::new();
 
     for _ in 0..=max_steps {
         let offset = sim.offset();
@@ -952,6 +1386,34 @@ pub fn decide_multi_bouncer_from_sim(
                             gaps,
                         });
                     }
+                }
+            }
+
+            // Also check relational Symbolic Accelerated Bouncer on cluster decomposition
+            let (cls, gps) = split_clusters_and_gaps(&cells, 2);
+            if !gps.is_empty() && gps.iter().copied().max().unwrap_or(0) >= 8 {
+                let cur_step = sim.steps();
+                let hist = sym_history.entry(cls.clone()).or_default();
+                for (prev_step, prev_gps) in hist.iter().rev().take(4) {
+                    if prev_gps != &gps {
+                        if let Some(proof) = try_prove_symbolic_bouncer(
+                            program,
+                            &mut glider_cache,
+                            &cls,
+                            prev_gps,
+                            &gps,
+                            *prev_step,
+                            cur_step,
+                        ) {
+                            return StepDeciderOutcome::Proved(Decider::MultiBouncer(Some(proof)));
+                        }
+                    }
+                }
+                if hist.last().map(|(_, g)| g) != Some(&gps) {
+                    if hist.len() >= 8 {
+                        hist.remove(0);
+                    }
+                    hist.push((cur_step, gps));
                 }
             }
         }
@@ -1258,6 +1720,22 @@ mod tests {
             assert!(
                 matches!(outcome, Some(Decider::MultiBouncer(Some(proof))) if proof.chambers == 1),
                 "expected {code} to be decided as 1-chamber MultiBouncer, got {outcome:?}"
+            );
+        }
+
+        // Test relational symbolic bouncers (exponential/synchronized gliders & breathing walls)
+        let symbolic_bouncers = [
+            "01_00_12_40_41_23_--_61_62_20_10",
+            "00_02_01_40_14_01_51_00_51_23_37",
+            "00_02_01_40_13_41_00_17_13_28_01",
+            "00_20_10_04_21_05_--_80_53_26_18",
+        ];
+        for code in symbolic_bouncers {
+            let p: Program = code.parse().unwrap();
+            let outcome = decide_multi_bouncer(&p, 350);
+            assert!(
+                matches!(outcome, Some(Decider::MultiBouncer(Some(_)))),
+                "expected {code} to be decided by symbolic MultiBouncer, got {outcome:?}"
             );
         }
     }

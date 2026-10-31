@@ -1370,6 +1370,7 @@ pub struct CtlConfig {
     pub floor: Option<usize>,
     pub floors: Vec<usize>,
     pub modulus: Option<usize>,
+    pub moduli: Vec<usize>,
     pub verbose: bool,
     pub show_progress: bool,
 }
@@ -1385,6 +1386,7 @@ impl Default for CtlConfig {
             floor: None,
             floors: Vec::new(),
             modulus: None,
+            moduli: Vec::new(),
             verbose: false,
             show_progress: false,
         }
@@ -1433,7 +1435,12 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
     let mut printed_inferred_signatures: std::collections::HashSet<Vec<Vec<u8>>> =
         std::collections::HashSet::new();
 
-    let is_manual = config.modulus.is_some() || config.floor.is_some();
+    let custom_moduli: Option<Vec<usize>> = if !config.moduli.is_empty() {
+        Some(config.moduli.clone())
+    } else {
+        config.modulus.map(|m| vec![m])
+    };
+    let is_manual = custom_moduli.is_some() || config.floor.is_some();
     let fallback_method = if is_manual {
         CtlSearchMethod::Manual
     } else {
@@ -1716,15 +1723,15 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                 );
                 if is_manual {
                     println!(
-                        "  Candidate parameters: floors={:?}, modulus={:?}",
-                        floors, config.modulus
+                        "  Candidate parameters: floors={:?}, moduli={:?}",
+                        floors,
+                        custom_moduli.as_deref().unwrap_or(&[1, 2, 3, 4, 6, 12])
                     );
                 } else {
                     let default_moduli = [1, 2, 3, 4, 6, 12];
-                    let moduli_to_test = config
-                        .modulus
-                        .map(|m| vec![m])
-                        .unwrap_or_else(|| default_moduli.to_vec());
+                    let moduli_to_test = custom_moduli
+                        .as_deref()
+                        .unwrap_or(&default_moduli);
                     println!(
                         "  Testing grid:        floors={:?}, moduli={:?}",
                         floors, moduli_to_test
@@ -1739,7 +1746,7 @@ pub fn run_ctl_search(program: &Program, config: &CtlConfig) -> CtlSearchOutcome
                 config.max_states,
                 config.split_threshold,
                 &floors,
-                config.modulus.map(|m| vec![m]).as_deref(),
+                custom_moduli.as_deref(),
                 fallback_method,
                 config.show_progress,
                 Some(&tracker),
@@ -1812,6 +1819,7 @@ mod tests {
             floor: None,
             floors: Vec::new(),
             modulus: None,
+            moduli: Vec::new(),
             verbose: false,
             show_progress: false,
         };
@@ -1920,6 +1928,7 @@ mod tests {
             floor: Some(6),
             floors: Vec::new(),
             modulus: None,
+            moduli: Vec::new(),
             verbose: false,
             show_progress: false,
         };
@@ -1945,6 +1954,7 @@ mod tests {
             floor: Some(6),
             floors: Vec::new(),
             modulus: Some(2),
+            moduli: Vec::new(),
             verbose: false,
             show_progress: false,
         };
@@ -1970,6 +1980,7 @@ mod tests {
             floor: None,
             floors: vec![6, 8, 10],
             modulus: None,
+            moduli: Vec::new(),
             verbose: false,
             show_progress: false,
         };

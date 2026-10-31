@@ -35,13 +35,12 @@ struct Cli {
     #[arg(short = 'o', long = "output", visible_alias = "outfile")]
     output: Option<PathBuf>,
 
-    /// One or more decider stages to run in sequence (e.g. -d multibouncer:150 -d ctl:1000).
+    /// One or more decider stages to run in sequence (e.g. -d multibouncer:150 -d ctl:steps=10000,states=10000,mod=8,10,11,13).
     /// Supports: multibouncer, bouncer, cycler, separated_components, static_backtrack, edge_glider, ctl, accel, sim.
     #[arg(
         short = 'd',
         long = "decider",
         visible_alias = "stage",
-        value_delimiter = ',',
         num_args = 1..
     )]
     stages: Vec<PipelineStage>,

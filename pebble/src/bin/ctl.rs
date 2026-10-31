@@ -58,9 +58,9 @@ struct Cli {
     #[arg(short = 'f', long = "floor", value_delimiter = ',', num_args = 1..)]
     floor: Option<Vec<usize>>,
 
-    /// Modulus for gap widening (default: auto [1, 2, 3, 4, 6, 12], minimum 1)
-    #[arg(long = "modulus", visible_alias = "mod")]
-    modulus: Option<usize>,
+    /// Modulus value(s) for gap widening (e.g. --mod 8 or --mod 8,10,11,13)
+    #[arg(long = "modulus", visible_alias = "mod", value_delimiter = ',', num_args = 1..)]
+    modulus: Option<Vec<usize>>,
 
     /// Number of Rayon worker threads for file mode (default: all cores)
     #[arg(short = 'j', long = "threads")]
@@ -170,8 +170,17 @@ fn run_file_mode(
     } else {
         format!("floors={:?}", config.floors)
     };
+    let mod_label = if config.moduli.len() == 1 {
+        format!(", mod={}", config.moduli[0])
+    } else if !config.moduli.is_empty() {
+        format!(", moduli={:?}", config.moduli)
+    } else if let Some(m) = config.modulus {
+        format!(", mod={m}")
+    } else {
+        String::new()
+    };
     println!(
-        "Parameters:       max_steps={}, max_states={}, step_interval={}, min_step={}, split_threshold={}, {floors_label}",
+        "Parameters:       max_steps={}, max_states={}, step_interval={}, min_step={}, split_threshold={}, {floors_label}{mod_label}",
         config.max_steps, config.max_states, config.step_interval, config.min_step, config.split_threshold
     );
     println!("Threads:          {}", rayon::current_num_threads());
@@ -356,7 +365,13 @@ fn main() {
     let step_interval = cli.step_interval;
     let min_step = cli.min_step;
     let split_threshold = cli.split_threshold.max(2);
-    let modulus = cli.modulus.map(|m| m.max(1));
+    let moduli: Vec<usize> = cli
+        .modulus
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| m.max(1))
+        .collect();
+    let modulus = moduli.first().copied();
     let num_threads = cli.threads;
     let progress_interval = cli.progress;
     let proved_only = cli.proved_only;
@@ -411,6 +426,7 @@ fn main() {
             floor: if is_user_floor { floors.first().copied() } else { None },
             floors,
             modulus,
+            moduli,
             verbose,
             show_progress: false,
         };
@@ -442,6 +458,7 @@ fn main() {
         floor: if is_user_floor { floors.first().copied() } else { None },
         floors,
         modulus,
+        moduli,
         verbose,
         show_progress: true,
     };
@@ -471,10 +488,16 @@ fn main() {
     } else {
         format!("floors={:?}", config.floors)
     };
-    let mod_str = config
-        .modulus
-        .map(|m| format!(", mod={m}"))
-        .unwrap_or_default();
+    let mod_str = if config.moduli.len() == 1 {
+        format!(", mod={}", config.moduli[0])
+    } else if !config.moduli.is_empty() {
+        format!(", moduli={:?}", config.moduli)
+    } else {
+        config
+            .modulus
+            .map(|m| format!(", mod={m}"))
+            .unwrap_or_default()
+    };
     println!(
         "Limits: max_steps={max_steps}, max_states={max_states}, step_interval={step_interval}, min_step={min_step}, split_threshold={split_threshold}, {floors_label}{mod_str}"
     );
